@@ -1,0 +1,176 @@
+version: '3.8'
+
+services:
+  # Rocket.Chat (Chat UI and core features)
+  rocketchat:
+    image: registry.rocket.chat/rocketchat/rocket.chat:latest
+    container_name: vutler-rocketchat
+    command: >
+      bash -c
+        "for i in `seq 1 30`; do
+          node main.js &&
+          s=$$? && break || s=$$?;
+          echo \"Tried $$i times. Waiting 5 secs...\";
+          sleep 5;
+        done; (exit $$s)"
+    restart: unless-stopped
+    volumes:
+      - ./data/uploads:/app/uploads
+    environment:
+      - PORT=3000
+      - ROOT_URL=http://localhost:3000
+      - MONGO_URL=mongodb://mongo:27017/vutler?replicaSet=rs0
+      - MONGO_OPLOG_URL=mongodb://mongo:27017/local?replicaSet=rs0
+      - DEPLOY_METHOD=docker
+      - DEPLOY_PLATFORM=
+      # Redis for rate limiting and caching
+      - REDIS_URL=redis://redis:6379
+      # Email settings (loaded from .env)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-noreply@vutler.local}
+      # IMAP settings
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASS=${IMAP_PASS:-}
+      - IMAP_TLS=${IMAP_TLS:-true}
+      # Vutler-specific settings
+      - VUTLER_AGENT_RATE_LIMIT=${VUTLER_AGENT_RATE_LIMIT:-10}
+      - VUTLER_EMAIL_WEBHOOK_URL=${VUTLER_EMAIL_WEBHOOK_URL:-}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - vutler-network
+
+  # Vutler API (AI Agent extensions)
+  vutler-api:
+    build:
+      context: ./app/custom
+      dockerfile: Dockerfile
+    container_name: vutler-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - MONGO_URL=mongodb://mongo:27017/vutler?replicaSet=rs0
+      - REDIS_URL=redis://redis:6379
+      - SMTP_HOST=${SMTP_HOST:-mailhog}
+      - SMTP_PORT=${SMTP_PORT:-1025}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-noreply@vutler.local}
+      - IMAP_HOST=${IMAP_HOST:-}
+      - IMAP_PORT=${IMAP_PORT:-993}
+      - IMAP_USER=${IMAP_USER:-}
+      - IMAP_PASS=${IMAP_PASS:-}
+      - IMAP_TLS=${IMAP_TLS:-true}
+      - IMAP_POLL_INTERVAL=${IMAP_POLL_INTERVAL:-5}
+      - VUTLER_AGENT_RATE_LIMIT=${VUTLER_AGENT_RATE_LIMIT:-10}
+      - VUTLER_EMAIL_WEBHOOK_URL=${VUTLER_EMAIL_WEBHOOK_URL:-}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - vutler-network
+
+  # MongoDB with replica set (required for Rocket.Chat)
+  mongo:
+    image: mongo:6.0
+    container_name: vutler-mongo
+    restart: unless-stopped
+    command: mongod --oplogSize 128 --replSet rs0 --bind_ip_all
+    volumes:
+      - ./data/db:/data/db
+      - ./data/dump:/dump
+    environment:
+      - MONGO_INITDB_DATABASE=vutler
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - vutler-network
+
+  # MongoDB replica set initialization
+  mongo-init-replica:
+    image: mongo:6.0
+    container_name: vutler-mongo-init
+    command: >
+      bash -c
+        "for i in `seq 1 30`; do
+          mongosh mongo/vutler --eval \"
+            rs.initiate({
+              _id: 'rs0',
+              members: [ { _id: 0, host: 'mongo:27017' } ]
+            })\" &&
+          s=$$? && break || s=$$?;
+          echo \"Tried $$i times. Waiting 5 secs...\";
+          sleep 5;
+        done; (exit $$s)"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - vutler-network
+
+  # Redis for rate limiting and caching
+  redis:
+    image: redis:7-alpine
+    container_name: vutler-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - vutler-network
+
+  # Mailhog for local email testing (SMTP + web UI)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: vutler-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - vutler-network
+
+networks:
+  vutler-network:
+    driver: bridge
+
+volumes:
+  vutler-data:
+  mongo-data:
+  redis-data:
