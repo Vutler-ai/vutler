@@ -1,0 +1,4 @@
+// Copyright 2026 Starbox Group GmbH
+// Licensed under the Vutler Enterprise License
+// See LICENSE-COMMERCIAL.md for details
+// This file is NOT open source
