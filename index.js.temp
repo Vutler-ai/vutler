@@ -1,0 +1,424 @@
+/**
+ * Vutler API Server
+ * Standalone Express API for AI agent management, email, and chat
+ */
+
+const express = require('express');
+const http = require('http');
+const { MongoClient } = require('mongodb');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
+// WebSocket module (S4.3)
+const { setupWebSocket, getStats: wsGetStats } = require('./api/websocket');
+
+// Import custom APIs
+const agentsAPI = require('./api/agents');
+const emailAPI = require('./api/email');
+const chatAPI = require('./api/chat');
+const templatesAPI = require('./api/templates');
+const templatesMarketplaceAPI = require("./api/templates-marketplace");
+const llmAPI = require('./api/llm');
+const usageAPI = require('./api/usage');
+const driveAPI = require('./api/drive');
+const openclawAPI = require('./api/openclaw');
+const runtimeAPI = require('./api/runtime');
+const workspaceAPI = require("./api/workspace");
+const sniparaAPI   = require("./api/snipara");
+const knowledgeAPI  = require("./api/knowledge");  // Agent Knowledge Bases
+const connectAPI   = require("./api/connect");
+const webhookAPI   = require("./api/webhook");    // S8.5 — Webhook Integration
+const onboardingAPI = require("./api/onboarding"); // S9.5 — Onboarding API
+const { checkConnection: pgCheck } = require('./lib/postgres');
+const { authenticateAgent, verifyApiKey } = require('./lib/auth');
+const ImapPoller = require('./services/imapPoller');
+const { loadTemplates } = require('./seeds/loadTemplates');
+// Sprint 6 — new modules
+const rcChannelsAPI  = require('./api/rcChannels');
+const agentEmailAPI  = require('./api/agentEmail');
+const healthAPI      = require('./api/health');
+const toolsAPI       = require('./api/tools');       // S11.2 — Agent Tools Framework
+const memoryAPI      = require('./api/memory');       // Agent Memory (Snipara)
+const adminAPI       = require('./api/admin');        // S12 — Admin Dashboard
+// Sprint 11 — E2E + VDrive + GitHub Connector
+const cryptoAPI = require("./api/crypto");
+const driveChatAPI = require("./api/drive-chat");
+const githubAPI = require("./api/github");
+const billingAPI = require("./api/billing");        // Stripe Billing Integration
+const analyticsAPI = require("./api/analytics-api");
+const signaturesAPI = require("./api/signatures");
+const sniparaWebhookAPI = require("./api/sniparaWebhook"); // Snipara Webhook
+const sniparaAdminAPI = require("./api/sniparaAdmin"); // Snipara Client Provisioning
+const { vchatAPI } = require("./api/vchat");
+const provisioningAPI = require("./api/provisioning"); // S8.3 — Workspace Provisioning
+const AgentRuntime   = require('./services/agentRuntime');
+const { requestLogger, setupErrorHandlers } = require('./lib/logger');
+const { configureSwagger } = require('./services/swagger'); // S11.4 — API Documentation
+
+// Create Express app
+const app = express();
+const server = http.createServer(app);
+const port = process.env.PORT || 3001;
+
+// ============================================================================
+// SECURITY MIDDLEWARE
+// ============================================================================
+
+// Helmet for HTTP security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "https://app.vutler.ai"],
+      scriptSrcAttr: null,
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// CORS configuration
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3001',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Auth-Token', 'X-User-Id', 'X-Workspace-Id']
+};
+app.use(cors(corsOptions));
+
+// Global rate limiting (100 req/min per IP)
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 100, // 100 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Too many requests',
+    details: 'Maximum 100 requests per minute'
+  }
+});
+app.use(globalLimiter);
+
+// Body parser with size limits
+app.use(express.json({ limit: '10mb' }));
+app.use(requestLogger);
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+/**
+ * Initialize Vutler API
+ */
+async function start() {
+  console.log('🚀 Starting Vutler API server...');
+  console.log('🔒 Security: Helmet + CORS + Rate Limiting enabled');
+  
+  try {
+    // Connect to MongoDB
+    const mongoUrl = process.env.MONGO_URL || 'mongodb://mongo:27017/vutler?replicaSet=rs0';
+    const client = new MongoClient(mongoUrl);
+    await client.connect();
+    const db = client.db();
+    
+    // Store DB connection in app locals for API routes
+    app.locals.db = db;
+    
+    console.log('✅ MongoDB connected');
+    
+    // Create indexes for agent queries (ignore conflicts with existing indexes)
+    try { await db.collection('users').createIndex({ type: 1 }); } catch(_) {}
+    try { await db.collection('users').createIndex({ apiKey: 1 }); } catch(_) {}
+    try { await db.collection('users').createIndex({ 'emails.address': 1 }, { unique: true, sparse: true }); } catch(_) {}
+    
+    console.log('✅ Database indexes created');
+    
+    // Load agent templates (seed data)
+    loadTemplates().catch(err => {
+      console.warn('⚠️  Failed to load templates (will retry next startup):', err.message);
+    });
+    
+    // Mount custom API routes
+    app.use('/api/v1', agentsAPI);
+    app.use('/api/v1', emailAPI);
+    app.use('/api/v1', chatAPI);
+    app.use('/api/v1', templatesMarketplaceAPI);
+    app.use('/api/v1', templatesAPI);
+    app.use('/api/v1', llmAPI);
+    app.use('/api/v1', usageAPI);
+    app.use('/api/v1', driveAPI);
+    app.use('/api/v1', openclawAPI);
+    app.use('/api/v1', runtimeAPI);
+    app.use('/api/v1', workspaceAPI);
+app.use('/api/v1', toolsAPI);       // S11.2 — Agent Tools Framework
+    app.use('/api/v1', memoryAPI);       // Agent Memory (Snipara)
+    app.use('/api/v1', adminAPI);       // S12 — Admin Dashboard
+    app.use("/api/v1", billingAPI);       // Stripe Billing Integration
+    app.use('/api/v1', analyticsAPI);
+    app.use('/api/v1', signaturesAPI);
+    app.use("/api/v1", sniparaWebhookAPI); // Snipara Webhook
+    app.use("/api/v1", sniparaAdminAPI);
+    vchatAPI(app); // Vchat Bridge
+    app.use('/api/v1', sniparaAPI);   // S5.5 — Snipara Integration
+    app.use("/api/v1", knowledgeAPI);   // Agent Knowledge Bases
+    app.use('/api/v1', connectAPI);   // S5.6 — Vutler Connect
+    app.use('/api/v1', rcChannelsAPI); // S6.1 — RC Channel Assignments + Runtime Control
+    app.use('/api/v1', agentEmailAPI); // S6.5 — Agent Email Config
+    app.use('/api/v1', healthAPI);     // S6.7 — Health Dashboard
+    app.use('/api/v1', webhookAPI);   // S8.5 — Webhook Integration
+    // Sprint 11 — E2E Encryption + VDrive Chat + GitHub Connector
+    app.use("/api/v1/crypto", cryptoAPI);         // E2E encryption endpoints
+    app.use("/api/v1/vdrive", driveChatAPI);      // VDrive-Chat integration
+    app.use("/api/v1/github", githubAPI);         // GitHub connector
+    app.use("/api/v1/onboarding", onboardingAPI); // S9.5 — Onboarding API
+    
+    console.log('✅ Vutler APIs mounted:');
+    console.log('   - POST   /api/v1/agents');
+    console.log('   - GET    /api/v1/agents');
+    console.log('   - GET    /api/v1/agents/:id');
+    console.log('   - POST   /api/v1/agents/:id/rotate-key');
+    console.log('   - POST   /api/v1/email/send');
+    console.log('   - GET    /api/v1/email/sent');
+    console.log('   - GET    /api/v1/email/inbox');
+    console.log('   - PATCH  /api/v1/email/inbox/:id/read');
+    console.log('   - POST   /api/v1/chat/send');
+    console.log('   - GET    /api/v1/chat/channels');
+    console.log('   - GET    /api/v1/chat/messages');
+    console.log('   - GET    /api/v1/templates');
+    console.log('   - GET    /api/v1/templates/:id');
+    console.log('   - POST   /api/v1/agents/from-template');
+    console.log('   - POST   /api/v1/agents/:id/chat');
+    console.log('   - PUT    /api/v1/agents/:id/llm-config');
+    console.log('   - GET    /api/v1/agents/:id/llm-config');
+    console.log('   - POST   /api/v1/agents/:id/llm-test');
+    console.log('   - GET    /api/v1/agents/:id/usage');
+    console.log('   - GET    /api/v1/usage/summary');
+    console.log('   - GET    /api/v1/usage/tiers');
+    console.log('   - POST   /api/v1/drive/upload');
+    console.log('   - GET    /api/v1/drive/files');
+    console.log('   - GET    /api/v1/drive/download/:id');
+    console.log('   - POST   /api/v1/agents/:id/start');
+    console.log('   - POST   /api/v1/agents/:id/stop');
+    console.log('   - GET    /api/v1/agents/:id/status');
+    console.log('   - GET    /api/v1/workspace/llm-providers');
+    console.log('   - POST   /api/v1/workspace/llm-providers');
+    console.log('   - PUT    /api/v1/workspace/llm-providers/:id');
+    console.log('   - DELETE /api/v1/workspace/llm-providers/:id');
+    console.log('   - GET    /api/v1/agents/:id/model');
+    console.log('   - PUT    /api/v1/agents/:id/model');
+    
+    // Setup WebSocket (S4.3 — full real-time chat + LLM routing)
+    setupWebSocket(server, app);
+    
+    // Start Agent Runtime (S6.1) — RC WebSocket listener
+    const agentRuntime = new AgentRuntime(db, app);
+    app.locals.agentRuntime = agentRuntime;
+    app.locals.runtime = agentRuntime;
+    // Expose provisioning for API endpoints
+    app.locals.provisioning = agentRuntime.provisioning;
+    agentRuntime.start().catch(err =>
+      console.error('[Runtime] Startup error:', err.message)
+    );
+
+    // WebSocket stats endpoint
+    app.get('/api/v1/ws/stats', (req, res) => {
+      res.json({ success: true, ws: wsGetStats() });
+    });
+    
+    // Start IMAP poller if configured
+    if (process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS) {
+      const imapConfig = {
+        host: process.env.IMAP_HOST,
+        port: parseInt(process.env.IMAP_PORT || '993'),
+        user: process.env.IMAP_USER,
+        password: process.env.IMAP_PASS,
+        tls: process.env.IMAP_TLS !== 'false',
+        pollIntervalMinutes: parseInt(process.env.IMAP_POLL_INTERVAL || '5')
+      };
+      
+      const poller = new ImapPoller(
+        imapConfig,
+        db,
+        process.env.VUTLER_EMAIL_WEBHOOK_URL
+      );
+      
+      poller.start().catch(err => {
+        console.error('Failed to start IMAP poller:', err);
+      });
+      
+      app.locals.imapPoller = poller;
+      console.log('✅ IMAP poller configured');
+    } else {
+      console.log('⚠️  IMAP not configured (set IMAP_HOST, IMAP_USER, IMAP_PASS)');
+    }
+    
+    // Health endpoints now handled by api/health.js (S6.7)
+    
+    // Root endpoint
+    app.get('/', (req, res) => {
+      res.json({
+        service: 'Vutler API',
+        version: '1.0.0',
+        docs: 'See README.md for API documentation'
+      });
+    });
+    
+    // Start server
+    server.listen(port, '0.0.0.0', () => {
+      console.log(`🎉 Vutler API listening on http://0.0.0.0:${port}`);
+      console.log(`   Health check: http://localhost:${port}/api/v1/health`);
+      console.log(`   WebSocket: ws://localhost:${port}/ws`);
+    });
+    
+    // Graceful shutdown
+    async function gracefulShutdown(signal) {
+      console.log(`${signal} received, shutting down gracefully...`);
+      const wsModule = require('./api/websocket');
+      if (wsModule.wsConnections) {
+        for (const [, conn] of wsModule.wsConnections) {
+          try { conn.ws.close(1001, 'Server shutting down'); } catch (_) {}
+        }
+      }
+      try { await client.close(); } catch (_) {}
+      const { closePool } = require('./lib/postgres');
+      try { await closePool(); } catch (_) {}
+      process.exit(0);
+    }
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+    
+  } catch (error) {
+    console.error('❌ Failed to start Vutler API:', error);
+    process.exit(1);
+  }
+}
+
+// S6.7 — Structured error tracking
+setupErrorHandlers();
+
+// Start the server
+if (require.main === module) {
+  start();
+}
+
+module.exports = { app, server };
+
+// ============================================================================
+// ADMIN UI — Static pages (S3.4 LLM Settings + S3.6 Usage Dashboard)
+// Philip 🎨 — Sprint 3
+// ============================================================================
+const path = require('path');
+
+// Serve admin static assets (CSS, JS)
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
+// Admin routes → serve corresponding HTML pages
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'index.html'));
+});
+app.get('/admin/agents', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'agents.html'));
+});
+app.get('/admin/templates', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'templates.html'));
+});
+app.get('/admin/llm-settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'llm-settings.html'));
+});
+app.get('/admin/usage', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'usage.html'));
+});
+app.get('/admin/providers', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'providers.html'));
+});
+app.get('/admin/agent-detail', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'agent-detail.html'));
+});
+
+
+// ============================================================================
+// ADMIN UI — Sprint 4 additions (S4.2 + S4.6)
+// Philip 🎨 — Sprint 4
+// ============================================================================
+
+// S6.2 — Agent Builder Wizard (before /:id to avoid route conflict)
+app.get('/admin/agents/new', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'agent-builder.html'));
+});
+
+// S4.6 — Agent Activity Feed
+app.get('/admin/agents/:id', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'agent-detail.html'));
+});
+app.get('/admin/agents/:id/activity', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'activity.html'));
+});
+
+// S8.3 — Analytics Dashboard (Philip 🎨 — Sprint 8)
+app.get('/admin/analytics', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'analytics.html'));
+});
+ 
+app.get("/admin/knowledge", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin", "knowledge.html"));
+});
+
+// S8.6 — Agent Logs & Debugging (Philip 🎨 — Sprint 8)
+app.get('/admin/agents/:id/logs', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'agent-logs.html'));
+});
+
+// S4.5 — Landing page (served from /admin/landing, preview at /landing)
+app.use('/landing', express.static(path.join(__dirname, 'admin', 'landing')));
+app.get('/landing', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'landing', 'index.html'));
+});
+
+// ============================================================================
+// ADMIN UI — Sprint 6 additions (S6.4 Marketplace + S6.6 Onboarding)
+// Philip 🎨 — Sprint 6
+// ============================================================================
+
+// S6.4 — Template Marketplace
+app.get('/admin/marketplace', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'marketplace.html'));
+});
+
+// Agent Memory
+// Agent Memory
+app.get('/admin/memory', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'memory.html'));
+});
+
+// Email Signatures
+app.get('/admin/signatures', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'signatures.html'));
+});
+
+// Additional Admin Pages
+app.get('/admin/users', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'users.html'));
+});
+
+app.get('/admin/billing', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'billing.html'));
+});
+
+app.get('/admin/monitoring', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'monitoring.html'));
+});
+
+app.get('/admin/settings', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'settings.html'));
+});
+
+app.get('/admin/vdrive', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'vdrive.html'));
+});
+// S6.6 — Onboarding Wizard
+app.get('/admin/onboarding', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'onboarding.html'));
+});
+

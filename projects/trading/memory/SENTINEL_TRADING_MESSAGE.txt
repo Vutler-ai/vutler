@@ -1,0 +1,33 @@
+📊 SENTINEL NEWS INTELLIGENCE REPORT
+Wednesday, February 25, 2026 — 15:01 CET
+
+🇺🇸 UNITED STATES
+• S&P 500: +1.2% YTD | Tech strength (Nvidia, Tesla earnings beat)
+• 72% beat rate across S&P 500 | Tech +8.2%, Industrials +5.1%
+• Fed watch: 35% probability 25bp cut in May | Powell speaks Thursday
+
+🇪🇺 EUROZONE
+• EUR/USD: 1.048 (weakening) | ECB spring rate cut expectations
+• DAX: +0.8% to ~19,200 | German industrial/auto earnings beat
+• Speculation: 50bp ECB cuts if disinflation continues
+
+🪙 COMMODITIES & CRYPTO
+• Gold: $2,120-2,140 range | USD strength vs. safe-haven tension
+• Bitcoin: +4.2% day to $96,500 | Eyes $100k | Spot BTC ETF: $850M inflows
+• Ethereum: +2.8% at $3,650
+
+📊 SECTOR PERFORMANCE (Daily)
+Consumer Cyclical +1.63% | Basic Materials +1.54% | Industrials +1.43% | Technology +1.27%
+
+⭐ TOP EARNERS
+PayPal (PYPL): +6.7% on 18% beat | GPV growth 9.1% YoY
+
+📍 SENTIMENT: BULLISH (Moderate)
+⚠️ RISKS: ECB/Fed divergence | BTC volatility | Healthcare weakness
+
+📄 Full analysis with 8 detailed news briefs in JSONL format
+📁 File: projects/trading/memory/news-2026-02-25.jsonl
+📎 Next update: 19:00 CET (4-hour interval)
+
+-- Sentinel 📰 News Intelligence System
+   ISTJ Analyst | Data-driven | No speculation

@@ -1,0 +1,19 @@
+# Secrets
+.secrets/
+
+# Embedded git repos (use submodules instead)
+projects/vaultbrix-dashboard/
+
+# Database files - NEVER commit
+projects/vutler/data/
+*.wt
+*.lock
+
+# Node
+node_modules/
+
+# Temp
+tmp/
+
+# Logs
+*.log

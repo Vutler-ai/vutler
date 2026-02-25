@@ -1,0 +1,123 @@
+{
+  "created": "2026-02-24",
+  "currency": "EUR",
+  "initial_capital": 10000,
+  "cash": 4500,
+  "positions": [
+    {
+      "id": "pos_001",
+      "instrument": "BTC",
+      "type": "crypto",
+      "entry_date": "2026-02-25",
+      "entry_time": "15:05",
+      "entry_price_usd": 96500,
+      "entry_price_eur": 92000,
+      "quantity": 0.0217,
+      "cost_eur": 2000,
+      "current_price_eur": 92000,
+      "current_value_eur": 2000,
+      "pnl_eur": 0,
+      "pnl_pct": 0,
+      "stop_loss_pct": -5,
+      "thesis": "Institutional demand accelerating, $100k psychological milestone imminent. Spot ETF inflows $850M today. Corporate adoption rhetoric strong.",
+      "expected_outcome": "+8-12% within 10 days if $100k breaks",
+      "news_trigger": "Sentinel brief #4 - Bitcoin surges to $96,500"
+    },
+    {
+      "id": "pos_002",
+      "instrument": "QQQ",
+      "type": "etf",
+      "entry_date": "2026-02-25",
+      "entry_time": "15:05",
+      "entry_price_eur": 420,
+      "quantity": 4.76,
+      "cost_eur": 2000,
+      "current_price_eur": 420,
+      "current_value_eur": 2000,
+      "pnl_eur": 0,
+      "pnl_pct": 0,
+      "stop_loss_pct": -5,
+      "thesis": "Tech earnings beat rate 72%, Nvidia/Tesla exceed expectations. S&P 500 momentum +1.2% YTD. AI capex guidance focus.",
+      "expected_outcome": "+3-5% through earnings season",
+      "news_trigger": "Sentinel brief #1 - S&P 500 gains on tech rally"
+    },
+    {
+      "id": "pos_003",
+      "instrument": "EXS1",
+      "type": "etf",
+      "ticker": "DAX ETF",
+      "entry_date": "2026-02-25",
+      "entry_time": "15:05",
+      "entry_price_eur": 192,
+      "quantity": 7.81,
+      "cost_eur": 1500,
+      "current_price_eur": 192,
+      "current_value_eur": 1500,
+      "pnl_eur": 0,
+      "pnl_pct": 0,
+      "stop_loss_pct": -5,
+      "thesis": "DAX reaches 19,200 on Siemens/BMW/VW earnings beat. German industrial production resilient. Economic sentiment improving.",
+      "expected_outcome": "+2-4% if industrial momentum continues",
+      "news_trigger": "Sentinel brief #3 - DAX rises 0.8%"
+    }
+  ],
+  "trades_history": [
+    {
+      "id": "trade_001",
+      "date": "2026-02-25",
+      "time": "15:05",
+      "action": "BUY",
+      "instrument": "BTC",
+      "quantity": 0.0217,
+      "price_eur": 92000,
+      "amount_eur": 2000,
+      "reason": "Institutional demand, $100k breakout setup"
+    },
+    {
+      "id": "trade_002",
+      "date": "2026-02-25",
+      "time": "15:05",
+      "action": "BUY",
+      "instrument": "QQQ",
+      "quantity": 4.76,
+      "price_eur": 420,
+      "amount_eur": 2000,
+      "reason": "Tech earnings beat momentum"
+    },
+    {
+      "id": "trade_003",
+      "date": "2026-02-25",
+      "time": "15:05",
+      "action": "BUY",
+      "instrument": "EXS1",
+      "quantity": 7.81,
+      "price_eur": 192,
+      "amount_eur": 1500,
+      "reason": "German industrial resilience"
+    }
+  ],
+  "daily_snapshots": [
+    {
+      "date": "2026-02-25",
+      "time": "15:05",
+      "total_value": 10000,
+      "cash": 4500,
+      "invested": 5500,
+      "pnl": 0,
+      "pnl_pct": 0,
+      "note": "Entry snapshot"
+    },
+    {
+      "date": "2026-02-25",
+      "time": "20:00",
+      "total_value": null,
+      "cash": 4500,
+      "invested": null,
+      "pnl": null,
+      "pnl_pct": null,
+      "note": "Evening review incomplete - price feed infrastructure not configured. web_search API missing Brave key, web_fetch unable to capture dynamic price data. Positions opened at 15:05 CET, only 5 hours elapsed. Need API setup before next review."
+    }
+  ],
+  "total_pnl": 0,
+  "total_pnl_pct": 0
+}

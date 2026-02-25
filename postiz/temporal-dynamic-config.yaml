@@ -1,0 +1,18 @@
+limit.maxCustomSearchAttributesOfTypeText:
+  - value: 20
+    constraints: {}
+limit.maxCustomSearchAttributesOfTypeKeyword:
+  - value: 40
+    constraints: {}
+limit.maxCustomSearchAttributesOfTypeInt:
+  - value: 20
+    constraints: {}
+limit.maxCustomSearchAttributesOfTypeBool:
+  - value: 20
+    constraints: {}
+limit.maxCustomSearchAttributesOfTypeDatetime:
+  - value: 20
+    constraints: {}
+limit.maxCustomSearchAttributesOfTypeDouble:
+  - value: 20
+    constraints: {}

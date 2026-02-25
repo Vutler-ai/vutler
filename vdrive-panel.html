@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VDrive Panel - Vutler</title>
+    <style>
+        :root {
+            --primary-color: #2196F3;
+            --primary-dark: #1976D2;
+            --secondary-color: #FFC107;
+            --success-color: #4CAF50;
+            --error-color: #F44336;
+            --warning-color: #FF9800;
+            --background-color: #f5f5f5;
+            --card-background: #ffffff;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --border-color: #e0e0e0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        .vdrive-panel {
+            width: 400px;
+            height: 100vh;
+            background: var(--card-background);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            transition: transform 0.3s ease;
+        }
+
+        .vdrive-panel.collapsed {
+            transform: translateX(100%);
+        }
+
+        .panel-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .panel-title {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .close-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .upload-zone {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: var(--primary-color);
+            background: rgba(33, 150, 243, 0.05);
+        }
+
+        .upload-area.dragover {
+            border-color: var(--primary-color);
+            background: rgba(33, 150, 243, 0.1);
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        .upload-text {
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        .upload-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        .upload-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .file-list {
+            flex: 1;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .file-item:hover {
+            background: var(--background-color);
+        }
+
+        .file-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: var(--background-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 12px;
+            font-size: 18px;
+        }
+
+        .file-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .file-name {
+            font-weight: 500;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 2px;
+        }
+
+        .file-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .file-item:hover .file-actions {
+            opacity: 1;
+        }
+
+        .action-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 16px;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            background: var(--background-color);
+            color: var(--text-primary);
+        }
+
+        .share-btn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .share-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .encryption-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: var(--success-color);
+            color: white;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 12px;
+            margin-left: 8px;
+        }
+
+        .search-box {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary-color);
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--background-color);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-color);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .file-preview {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 8px;
+            margin: 8px 0;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border-color);
+            border-top: 2px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 16px;
+            border-radius: 6px;
+            color: white;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+        }
+
+        .notification.show {
+            transform: translateX(0);
+        }
+
+        .notification.success {
+            background: var(--success-color);
+        }
+
+        .notification.error {
+            background: var(--error-color);
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .vdrive-panel {
+                width: 100vw;
+                position: fixed;
+                top: 0;
+                left: 0;
+                z-index: 999;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="vdrive-panel" id="vdrivePanel">
+        <div class="panel-header">
+            <div class="panel-title">
+                <span>📁</span>
+                VDrive - Fichiers
+            </div>
+            <button class="close-btn" onclick="togglePanel()">×</button>
+        </div>
+        
+        <div class="panel-content">
+            <!-- Search Box -->
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    class="search-input" 
+                    placeholder="🔍 Rechercher des fichiers..."
+                    id="searchInput"
+                >
+            </div>
+
+            <!-- Upload Zone -->
+            <div class="upload-zone">
+                <div class="upload-area" id="uploadArea">
+                    <div class="upload-icon">📤</div>
+                    <div class="upload-text">
+                        Glissez-déposez vos fichiers ici<br>
+                        ou cliquez pour sélectionner
+                    </div>
+                    <button class="upload-btn" onclick="triggerFileSelect()">
+                        Choisir des fichiers
+                    </button>
+                    <input type="file" id="fileInput" multiple style="display: none;">
+                </div>
+                <div class="progress-bar" id="uploadProgress" style="display: none;">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+
+            <!-- File List -->
+            <div class="file-list" id="fileList">
+                <div class="loading" id="loadingSpinner">
+                    <div class="spinner"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden file input -->
+    <input type="file" id="fileInput" multiple style="display: none;">
+
+    <script>
+        class VDrivePanel {
+            constructor() {
+                this.isOpen = false;
+                this.files = [];
+                this.currentChatId = null;
+                this.cryptoClient = null;
+                
+                this.initializeEventListeners();
+                this.loadFiles();
+                
+                // Initialize crypto if available
+                if (window.VutlerCrypto) {
+                    this.cryptoClient = new window.VutlerCrypto();
+                }
+            }
+
+            initializeEventListeners() {
+                const uploadArea = document.getElementById('uploadArea');
+                const fileInput = document.getElementById('fileInput');
+                const searchInput = document.getElementById('searchInput');
+
+                // Drag and drop
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    this.handleFiles(e.dataTransfer.files);
+                });
+
+                // File input
+                fileInput.addEventListener('change', (e) => {
+                    this.handleFiles(e.target.files);
+                });
+
+                // Search
+                searchInput.addEventListener('input', (e) => {
+                    this.filterFiles(e.target.value);
+                });
+
+                // Click upload area
+                uploadArea.addEventListener('click', () => {
+                    fileInput.click();
+                });
+            }
+
+            async handleFiles(files) {
+                const fileArray = Array.from(files);
+                
+                for (const file of fileArray) {
+                    await this.uploadFile(file);
+                }
+            }
+
+            async uploadFile(file) {
+                try {
+                    this.showProgress();
+                    
+                    // Create file metadata
+                    const fileId = this.generateUUID();
+                    const fileKey = await this.generateFileKey();
+                    
+                    // Encrypt file if crypto is available
+                    let encryptedFile = null;
+                    let encryptedMetadata = null;
+                    
+                    if (this.cryptoClient && this.cryptoClient.getEncryptionStatus().isSetup) {
+                        encryptedFile = await this.encryptFile(file, fileKey);
+                        encryptedMetadata = await this.encryptMetadata({
+                            originalName: file.name,
+                            size: file.size,
+                            type: file.type,
+                            uploadedAt: new Date().toISOString()
+                        });
+                    }
+
+                    // Upload to server
+                    const formData = new FormData();
+                    formData.append('file', encryptedFile || file);
+                    formData.append('metadata', JSON.stringify({
+                        fileId: fileId,
+                        encryptedFilename: encryptedMetadata?.filename || file.name,
+                        originalSize: file.size,
+                        mimeType: file.type,
+                        encryptedMetadata: encryptedMetadata,
+                        encryptionEnabled: !!encryptedFile,
+                        fileKey: fileKey ? await this.encryptFileKey(fileKey) : null
+                    }));
+
+                    const response = await fetch('/api/v1/vdrive/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${this.getAuthToken()}`
+                        },
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        this.showNotification('Fichier uploadé avec succès!', 'success');
+                        this.loadFiles(); // Refresh file list
+                    } else {
+                        throw new Error('Upload failed');
+                    }
+
+                } catch (error) {
+                    console.error('Upload error:', error);
+                    this.showNotification('Erreur lors de l\'upload', 'error');
+                } finally {
+                    this.hideProgress();
+                }
+            }
+
+            async encryptFile(file, key) {
+                if (!this.cryptoClient) return file;
+                
+                const arrayBuffer = await file.arrayBuffer();
+                const encrypted = await this.cryptoClient.encrypt(
+                    new Uint8Array(arrayBuffer), 
+                    key
+                );
+                
+                return new Blob([JSON.stringify(encrypted)], { type: 'application/json' });
+            }
+
+            async encryptMetadata(metadata) {
+                if (!this.cryptoClient) return metadata;
+                
+                const encrypted = await this.cryptoClient.encrypt(JSON.stringify(metadata));
+                return {
+                    filename: encrypted.ciphertext,
+                    iv: encrypted.iv,
+                    algorithm: encrypted.algorithm
+                };
+            }
+
+            async generateFileKey() {
+                if (!this.cryptoClient) return null;
+                
+                return await crypto.subtle.generateKey(
+                    {
+                        name: 'AES-GCM',
+                        length: 256
+                    },
+                    true,
+                    ['encrypt', 'decrypt']
+                );
+            }
+
+            async encryptFileKey(fileKey) {
+                if (!this.cryptoClient || !fileKey) return null;
+                
+                const exportedKey = await crypto.subtle.exportKey('raw', fileKey);
+                return await this.cryptoClient.encrypt(new Uint8Array(exportedKey));
+            }
+
+            async loadFiles() {
+                try {
+                    const response = await fetch(`/api/v1/vdrive/files?chatId=${this.currentChatId}`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.getAuthToken()}`
+                        }
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.files = data.files || [];
+                        this.renderFiles();
+                    }
+                } catch (error) {
+                    console.error('Load files error:', error);
+                    this.showEmptyState();
+                } finally {
+                    this.hideLoading();
+                }
+            }
+
+            renderFiles(filteredFiles = null) {
+                const fileList = document.getElementById('fileList');
+                const files = filteredFiles || this.files;
+
+                if (files.length === 0) {
+                    this.showEmptyState();
+                    return;
+                }
+
+                fileList.innerHTML = files.map(file => `
+                    <div class="file-item" data-file-id="${file.id}">
+                        <div class="file-icon" style="background: ${this.getFileColor(file.mimeType)}">
+                            ${this.getFileIcon(file.mimeType)}
+                        </div>
+                        <div class="file-info">
+                            <div class="file-name">
+                                ${this.truncateText(file.filename, 25)}
+                                ${file.encryptionStatus === 'encrypted' ? '<span class="encryption-badge">🔒 Chiffré</span>' : ''}
+                            </div>
+                            <div class="file-meta">
+                                ${this.formatFileSize(file.size)} • ${this.formatDate(file.sharedAt)}
+                            </div>
+                        </div>
+                        <div class="file-actions">
+                            <button class="action-btn" onclick="vdrivePanel.previewFile('${file.id}')" title="Aperçu">
+                                👁️
+                            </button>
+                            <button class="action-btn" onclick="vdrivePanel.downloadFile('${file.id}')" title="Télécharger">
+                                📥
+                            </button>
+                            <button class="share-btn" onclick="vdrivePanel.shareInChat('${file.id}')" title="Partager dans le chat">
+                                💬 Partager
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            async shareInChat(fileId) {
+                try {
+                    const response = await fetch(`/api/v1/vdrive/files/${fileId}/share-in-chat`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${this.getAuthToken()}`
+                        },
+                        body: JSON.stringify({
+                            chatId: this.currentChatId,
+                            permissions: {
+                                read: true,
+                                download: true
+                            }
+                        })
+                    });
+
+                    if (response.ok) {
+                        this.showNotification('Fichier partagé dans le chat!', 'success');
+                        
+                        // Notify chat interface
+                        if (window.parent && window.parent.postMessage) {
+                            window.parent.postMessage({
+                                type: 'FILE_SHARED',
+                                fileId: fileId,
+                                chatId: this.currentChatId
+                            }, '*');
+                        }
+                    }
+                } catch (error) {
+                    console.error('Share error:', error);
+                    this.showNotification('Erreur lors du partage', 'error');
+                }
+            }
+
+            async previewFile(fileId) {
+                // Implement file preview
+                console.log('Preview file:', fileId);
+            }
+
+            async downloadFile(fileId) {
+                try {
+                    const response = await fetch(`/api/v1/vdrive/files/${fileId}/download`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.getAuthToken()}`
+                        }
+                    });
+
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = this.getFileName(fileId);
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    }
+                } catch (error) {
+                    console.error('Download error:', error);
+                    this.showNotification('Erreur lors du téléchargement', 'error');
+                }
+            }
+
+            filterFiles(query) {
+                if (!query.trim()) {
+                    this.renderFiles();
+                    return;
+                }
+
+                const filtered = this.files.filter(file => 
+                    file.filename.toLowerCase().includes(query.toLowerCase())
+                );
+                this.renderFiles(filtered);
+            }
+
+            showProgress() {
+                document.getElementById('uploadProgress').style.display = 'block';
+                // Simulate progress for demo
+                let progress = 0;
+                const interval = setInterval(() => {
+                    progress += 10;
+                    document.getElementById('progressFill').style.width = progress + '%';
+                    if (progress >= 100) {
+                        clearInterval(interval);
+                    }
+                }, 100);
+            }
+
+            hideProgress() {
+                setTimeout(() => {
+                    document.getElementById('uploadProgress').style.display = 'none';
+                    document.getElementById('progressFill').style.width = '0%';
+                }, 1000);
+            }
+
+            showEmptyState() {
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📁</div>
+                        <div>Aucun fichier dans ce chat</div>
+                        <div style="font-size: 12px; margin-top: 8px;">
+                            Uploadez vos premiers fichiers ci-dessus
+                        </div>
+                    </div>
+                `;
+            }
+
+            hideLoading() {
+                const spinner = document.getElementById('loadingSpinner');
+                if (spinner) spinner.style.display = 'none';
+            }
+
+            showNotification(message, type = 'success') {
+                const notification = document.createElement('div');
+                notification.className = `notification ${type}`;
+                notification.textContent = message;
+                document.body.appendChild(notification);
+
+                setTimeout(() => notification.classList.add('show'), 100);
+                setTimeout(() => {
+                    notification.classList.remove('show');
+                    setTimeout(() => document.body.removeChild(notification), 300);
+                }, 3000);
+            }
+
+            // Utility functions
+            generateUUID() {
+                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                    const r = Math.random() * 16 | 0;
+                    const v = c == 'x' ? r : (r & 0x3 | 0x8);
+                    return v.toString(16);
+                });
+            }
+
+            getFileIcon(mimeType) {
+                if (mimeType.startsWith('image/')) return '🖼️';
+                if (mimeType.startsWith('video/')) return '🎥';
+                if (mimeType.startsWith('audio/')) return '🎵';
+                if (mimeType.includes('pdf')) return '📄';
+                if (mimeType.includes('word')) return '📝';
+                if (mimeType.includes('excel')) return '📊';
+                if (mimeType.includes('zip')) return '🗜️';
+                return '📄';
+            }
+
+            getFileColor(mimeType) {
+                if (mimeType.startsWith('image/')) return '#4CAF50';
+                if (mimeType.startsWith('video/')) return '#FF9800';
+                if (mimeType.startsWith('audio/')) return '#9C27B0';
+                if (mimeType.includes('pdf')) return '#F44336';
+                return '#2196F3';
+            }
+
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+            }
+
+            formatDate(dateString) {
+                const date = new Date(dateString);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMins / 60);
+                const diffDays = Math.floor(diffHours / 24);
+
+                if (diffMins < 60) return `il y a ${diffMins}m`;
+                if (diffHours < 24) return `il y a ${diffHours}h`;
+                if (diffDays < 7) return `il y a ${diffDays}j`;
+                return date.toLocaleDateString('fr-FR');
+            }
+
+            truncateText(text, maxLength) {
+                return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+            }
+
+            getFileName(fileId) {
+                const file = this.files.find(f => f.id === fileId);
+                return file ? file.filename : 'download';
+            }
+
+            getAuthToken() {
+                // Get auth token from localStorage or parent window
+                return localStorage.getItem('authToken') || 'demo-token';
+            }
+
+            setChatId(chatId) {
+                this.currentChatId = chatId;
+                this.loadFiles();
+            }
+
+            toggle() {
+                const panel = document.getElementById('vdrivePanel');
+                this.isOpen = !this.isOpen;
+                panel.classList.toggle('collapsed', !this.isOpen);
+            }
+        }
+
+        // Initialize panel
+        const vdrivePanel = new VDrivePanel();
+
+        // Global functions
+        function togglePanel() {
+            vdrivePanel.toggle();
+        }
+
+        function triggerFileSelect() {
+            document.getElementById('fileInput').click();
+        }
+
+        // Listen for messages from parent window
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'SET_CHAT_ID') {
+                vdrivePanel.setChatId(event.data.chatId);
+            }
+        });
+    </script>
+</body>
+</html>

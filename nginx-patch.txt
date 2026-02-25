@@ -1,0 +1,16 @@
+    # ── Rocket.Chat routes (channels, direct messages, etc) ──
+    location ~ ^/(channel|direct|group|live|account|invite|directory|omnichannel) {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+        
+        # Inject Vutler navbar script
+        sub_filter '</head>' '<script type="text/javascript">(function(){"use strict";function injectVutlerNavbar(){if(document.getElementById("vutler-topnav")){return;}var navHTML="<nav id=\"vutler-topnav\" style=\"background:#0d1117;border-bottom:1px solid rgba(255,255,255,.06);padding:10px 24px;font-size:13px;display:flex;gap:16px;align-items:center;position:fixed;top:0;left:0;right:0;z-index:9999;font-family:Inter,sans-serif\"><a href=\"/home\" style=\"color:rgba(255,255,255,.5);text-decoration:none;transition:color .15s\">Home</a><span style=\"color:rgba(255,255,255,.12)\">/</span><a href=\"/channel/general\" style=\"color:#3b82f6;font-weight:600;text-decoration:none\">Chat</a><span style=\"color:rgba(255,255,255,.12)\">/</span><a href=\"/knowledge\" style=\"color:rgba(255,255,255,.5);text-decoration:none;transition:color .15s\">Knowledge</a><span style=\"color:rgba(255,255,255,.12)\">/</span><a href=\"/memory\" style=\"color:rgba(255,255,255,.5);text-decoration:none;transition:color .15s\">Memory</a></nav>";document.body.insertAdjacentHTML("afterbegin",navHTML);var mainElement=document.querySelector("main")||document.querySelector(".main-content")||document.body.firstElementChild;if(mainElement&&mainElement.style){mainElement.style.paddingTop="50px";}var navLinks=document.querySelectorAll("#vutler-topnav a");navLinks.forEach(function(link){if(!link.style.color.includes("#3b82f6")){link.addEventListener("mouseenter",function(){this.style.color="rgba(255,255,255,.8)"});link.addEventListener("mouseleave",function(){this.style.color="rgba(255,255,255,.5)"});}});console.log("Vutler navbar injected successfully");}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",injectVutlerNavbar);}else{injectVutlerNavbar();}setTimeout(injectVutlerNavbar,500);setTimeout(injectVutlerNavbar,1000);setTimeout(injectVutlerNavbar,2000);if(window.history&&window.history.pushState){var originalPushState=window.history.pushState;window.history.pushState=function(){originalPushState.apply(window.history,arguments);setTimeout(injectVutlerNavbar,200);};var originalReplaceState=window.history.replaceState;window.history.replaceState=function(){originalReplaceState.apply(window.history,arguments);setTimeout(injectVutlerNavbar,200);};}})();</script></head>';
+        sub_filter_once on;
+    }
