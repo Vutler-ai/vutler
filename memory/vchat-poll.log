@@ -1,0 +1,1062 @@
+[2026-02-21 22:17:33] Vchat poll started
+[22:20:33] #general @alopez3006: Vchat bridge test v2
+[22:20:33] #general @andrea: **Jarvis here.**
+
+✅ **Received both transmissions clearly.**
+
+Bridge stability c
+[00:06:52] #design @philip: 🎨 **BRIEF UX — Audit Admin RC**
+
+Alex trouve le panel admin RC trop complexe pou
+[03:00:33] fetch error: <urlopen error [Errno 60] Operation timed out>
+[03:01:33] fetch error: <urlopen error [Errno 8] nodename nor servname provided, or not known>
+[09:14:48] #general @alopez3006: Jarvis?
+[09:14:48] #ops-strategy @alopez3006: Hello
+[09:15:49] #ops-strategy @alopez3006: c'est moi Alex, ou est-ce que je peux trouver les briefs?
+[09:15:49] #ops-strategy @andrea: Alex,
+
+Les briefs sont en cours de consolidation. Voici l'état :
+
+**DOCUMENTS DI
+[09:16:49] #ops-strategy @alopez3006: oui on peut faire ça rapidement
+[09:16:49] #ops-strategy @luna: Parfait. Je lance un sync immédiat.
+
+**SYNC — Agent Runtime v3 MVP**
+*Participan
+[09:19:50] #ops-strategy @alopez3006: 1. PME générique 
+2. Zapier nécessite des actions humaines qui peuvent être comp
+[09:20:50] #ops-strategy @alopez3006: au plus vite mais on ne sort le MVP que si on est sûr
+[09:20:50] #ops-strategy @andrea: **ANDREA — Analyse Compliance & Risques**
+
+Alex, je comprends. "Vite mais sûr" =
+[09:21:50] #ops-strategy @alopez3006: OK oui parallélise avec Luna... question ou ais-je accès a Vdrive pour voir les 
+[09:21:50] #ops-strategy @luna: **JARVIS — Accès Vdrive**
+
+Alex, Vdrive est notre système interne de gestion doc
+[09:26:51] #ops-strategy @alopez3006: ARCHITECTURE LÉGALE
+
+Qui est responsable quand un agent autonome agit ? Starbox 
+[09:26:51] #ops-strategy @alopez3006: 1. oui
+2. je pense que oui, il faut revalider quand il y a des nouveautés
+[09:26:51] #ops-strategy @andrea: **JARVIS — Décisions enregistrées (Update)**
+
+Alex, noté. Double validation = sé
+[09:28:52] #ops-strategy @alopez3006: sinon plus simple, on garde l'email du responsable, si il y a des nouveautés imp
+[09:28:52] #ops-strategy @luna: **JARVIS — Décision enregistrée (Optimisé)**
+
+Alex, parfait. C'est pragmatique e
+[09:30:52] #ops-strategy @alopez3006: délais: 3 jours, 7 jours, 14 hours et 31ème jour --> accepté
+blocage: oui pendan
+[09:31:52] #ops-strategy @alopez3006: VDrive : L'API Drive est accessible via https://app.vutler.ai/api/v1/drive/list 
+[09:31:52] #ops-strategy @andrea: **JARVIS — Décision enregistrée**
+
+Reçu Alex. VDrive frontend → **P1 prochain sp
+[09:34:53] #ops-strategy @alopez3006: oui en ordre de priorité
+[09:34:53] #ops-strategy @luna: **JARVIS — Priorisation juridique Agent Runtime**
+
+Alex, reçu. Voici l'ordre log
+[09:34:53] #ops-strategy @alopez3006: ok
+[09:38:54] #ops-strategy @alopez3006: 1. je verais plus selon leur plan (billing)
+2. indident ou debug avec accord
+3. 
+[09:38:54] #ops-strategy @andrea: **JARVIS — Décisions P1 enregistrées**
+
+```
+✅ 1. Rétention conversations = par p
+[09:40:54] #ops-strategy @alopez3006: ça me va on continue
+[09:40:54] #ops-strategy @luna: **JARVIS — P2 : Consentement utilisateur individuel**
+
+---
+
+**FRAMEWORK PROPOSÉ 
+[09:45:56] #ops-strategy @alopez3006: 1. N3 onboarding c'est clair dès le début
+2. par catégorie
+3. oui ça me va
+4. On
+[09:45:56] #ops-strategy @alopez3006: ok
+[09:47:56] #ops-strategy @alopez3006: on pourrait presque faire 2 produits 1) produit actuel (peu de risques) plutôt p
+[10:34:05] #ops-strategy @alopez3006: yes
+[10:34:05] #ops-strategy @alopez3006: oui
+[10:37:06] #ops-strategy @alopez3006: question aussi quel est l'incidence sur le VPS au niveau CPU/mémoire... combien 
+[10:37:06] #ops-strategy @alopez3006: pricing solo
+[10:41:07] #ops-strategy @alopez3006: voici la config : 4 CPU, 12 Go RAM, 250 Go
+tu es sûr qu'avec ces prix on est ren
+[10:54:09] #ops-jarvis @alopez3006: pourquoi la réponse aux messages est si lente?
+[10:55:09] #ops-jarvis @alopez3006: sous ops-strategy j'ai envoyé un message il y a bien 5 minutes, j'imagine que c'
+[10:55:09] #ops-jarvis @andrea: Ah, d'accord. 5 minutes, c'est très récent.
+
+**Contexte réaliste :**
+
+- Les gens
+[10:55:09] #ops-jarvis @alopez3006: d'ailleurs pourquoi c'est Andrea qui répond dans le canal ops-jarvis?
+[10:56:10] #ops-jarvis @alopez3006: oui fait ça
+[10:56:10] #ops-jarvis @andrea: Entendu. Je vais structurer ça proprement.
+
+**Action immédiate — Clarification d
+[10:57:10] #ops-jarvis @alopez3006: qui, je pense tous les agents pour qu'ils disent ou ils doivent répondre en prio
+[10:57:10] #ops-strategy @alopez3006: alors?
+[10:57:10] #ops-jarvis @alopez3006: ok
+[10:57:10] #ops-jarvis @andrea: Parfait. Je me mets au travail.
+
+**Récapitulatif — ce que tu recevras :**
+
+✓ Aud
+[10:58:10] #engineering @alopez3006: alors ce plan?
+[10:58:10] #engineering @mike: Hey 👋
+
+Ok, décortiquons ça techniquement.
+
+## 🟢 Ce qui est **solide** :
+
+**Les 4
+[10:59:11] #engineering @alopez3006: n'oublie pas qu'on peut asigner des tâches sur snipara swarm, il faut l'utiliser
+[10:59:11] #engineering @philip: Ah **excellent point** 💡
+
+Tu as raison — on a déjà Snipara Swarm, pourquoi réinv
+[11:00:11] #engineering @alopez3006: yes
+[11:00:11] #engineering @luna: Perfect. 🎯
+
+## 📋 **PLAN D'EXÉCUTION — verrouillé**
+
+### **Sprint 1-2 (Semaines 1
+[11:02:11] #ops-strategy @alopez3006: je valide la grille
+[11:02:11] #ops-strategy @alopez3006: le mac est down c'est pour ça que tu as des problèmes je vais essayer de le reme
+[11:02:11] #ops-strategy @andrea: **Reçu, Alex.**
+
+Merci pour l'info. Ça explique les délais de polling.
+
+**Action
+[21:21:07] #ops-strategy @alopez3006: alors on en est ou avec tous les documents?
+[21:21:07] #ops-strategy @luna: **STATUS DOCS — Vue d'ensemble**
+
+---
+
+### ✅ **TERMINÉS**
+
+1. **Matrice données 
+[21:29:09] #ops-strategy @alopez3006: finir p3 et documenter les CGV/CGU/Confidentialité pour le mettre plus tard sur 
+[21:30:09] #ops-strategy @alopez3006: validé a documenter
+[21:30:09] #ops-strategy @andrea: **Reçu. P3 documenté et archivé.**
+
+```
+✅ P3_LPD_SUISSE_COMPLIANCE.pdf — FIGÉ
+``
+[21:31:09] #ops-strategy @alopez3006: 1. privacy@starbox-group.com
+2. Alejandro Lopez - on va ouvrir un email alex@sta
+[21:31:09] #ops-strategy @luna: **Reçu Alex. Infos verrouillées.**
+
+```
+✅ Contact privacy : privacy@starbox-grou
+[21:32:10] #engineering @alopez3006: tu as eu un retour de Mike?
+[21:33:10] #engineering @alopez3006: relance-le tout de suite
+[21:33:10] #engineering @andrea: ✅ **Fait.**
+
+Slack direct à Mike :
+
+---
+
+> @Mike — besoin de tes réponses ASAP p
+[2026-02-22 21:48:43] Vchat poll started
+[22:34:51] #engineering @alopez3006: Jarvis tu peux ouvrir cette video, transcrire et me dire comment l'utiliser dans
+[22:34:51] #engineering @mike: Je ne peux pas accéder directement aux vidéos YouTube pour les transcrire. 
+
+**S
+[22:46:54] #engineering @alopez3006: alors?
+[22:46:54] #engineering @philip: Tu as raison, je n'ai pas de retour concret. Laisse-moi clarifier :
+
+**Je ne peu
+[22:47:54] #engineering @alopez3006: je t'ai envoyé un fichier annexé
+[22:47:54] #engineering @luna: Je n'ai pas reçu de fichier de ton côté. Il n'y a rien d'attaché dans notre conv
+[22:47:54] #engineering @alopez3006: fichier txt joint
+[22:48:54] #engineering @alopez3006: Je t'envoie en plusieurs fois :
+Ever since OpenClaw got released, many people ha
+[22:48:54] #engineering @andrea: **Reçu.** J'analyse.
+
+---
+
+## 📋 RÉSUMÉ — OpenClaw pour Developer Workflow
+
+**Cas
+[22:48:54] #engineering @alopez3006: Since our team has a YouTube channel, we actually have a Discord server where we
+[22:48:54] #engineering @mike: **Reçu partie 2.** Ça devient intéressant.
+
+---
+
+## 📋 NOUVEAUX CAS D'USAGE
+
+### 
+[22:48:54] #engineering @alopez3006: We asked it to report back any anomaly on the channels we had configured for it 
+[22:48:54] #engineering @philip: **Reçu partie 3.** Pattern clair maintenant.
+
+---
+
+## 📋 NOUVEAUX CAS D'USAGE (su
+[22:48:54] #engineering @alopez3006: This efficiency is critical for rapid prototyping and iterative workflows. Howev
+[22:49:54] #engineering @luna: **Reçu partie 4.** Les cas d'usage deviennent **hardcore**.
+
+---
+
+## 📋 NOUVEAUX 
+[22:49:54] #engineering @alopez3006: You can check out that video on the channel. But OpenClaw also comes bundled wit
+[22:49:54] #engineering @alopez3006: So, we gave it instructions to scrape the GitHub trending page and get all the t
+[22:49:54] #engineering @alopez3006: voià tout est là fait-moi un résumé de ce qui est pertinent
+[22:50:57] #engineering @mike: # 📋 RÉSUMÉ EXÉCUTIF — OpenClaw Analysis
+
+## 🎯 C'EST QUOI
+
+**OpenClaw** = Orchest
+[22:51:57] #engineering @alopez3006: non je veux juste que tu documentes tout ça on verra si on utilise ou pas
+[23:03:59] #engineering @alopez3006: OK question le mac est peut-être hors service comment puis-je te récupérer sur m
+[23:03:59] #engineering @luna: # 🔄 Plan de Migration VPS → Mac Local
+
+## 📦 CE QU'IL FAUT RÉCUPÉRER
+
+```
+VPS (Ub
+[23:32:06] #engineering @alopez3006: en réalité je pourrais récupérer les soul.md et memory.md de snipara? tout est l
+[23:33:06] #engineering @alopez3006: snipara ne prends pas les json, mais si tu le documente dans un md il le prends
+[23:33:06] #engineering @andrea: ✅ **Compris.**
+
+Je vais documenter `openclaw.json` en markdown structuré dans Sn
+[23:33:06] #engineering @alopez3006: non vas-y
+[23:33:06] #engineering @mike: ✅ **Documenté dans Snipara.**
+
+Créé `openclaw-config-backup.md` avec :
+- Structu
+[01:42:33] #engineering @alopez3006: Jarvis une question est-ce que dans tes mémoires tu as les infomraiton de connex
+[01:42:33] #engineering @philip: Non, je n'ai pas les credentials de connexion au VPS Vaultbrix dans mes mémoires
+[01:44:34] #engineering @alopez3006: si je te donne ça dans le chat c'est sécurisé et tu peux le garder de façon sécu
+[01:44:34] #engineering @luna: # ⚠️ Attends Alex
+
+**NON, ne me donne PAS les credentials ici.**
+
+## Pourquoi :
+
+[01:45:34] #engineering @alopez3006: OK il faut absolument ajouter dans la roadmap de vutler le chiffrement du chat e
+[02:00:37] #engineering @alopez3006: ajoute aussi un connecteur github dans le roadmap
+[02:00:37] #engineering @andrea: ✅ **Ajouté à la roadmap Vutler.**
+
+```
+🔗 GitHub Connector — Vutler Integration
+├
+[02:01:37] #engineering @alopez3006: non question, quelle est la difficulté de mettre en place e2e sur le chat?
+[02:01:37] #engineering @mike: # Analyse technique : E2E Encryption sur Vutler Chat
+
+## Difficulté : **MOYENNE*
+[02:03:36] #engineering @alopez3006: oui ajoute une option, le Vdrive accès directement via le drive... je sais pas s
+[02:03:36] #engineering @alopez3006: pardon Vdrive accès directement dans Vchat
+[02:07:36] #engineering @alopez3006: alors?
+[02:13:38] #engineering @alopez3006: Oui validé!
+[02:13:38] #engineering @andrea: ✅ **VALIDÉ — Roadmap Vutler mise à jour.**
+
+```
+🎯 PHASE 2 — PRIORITÉ HAUTE
+═════
+[02:15:38] #engineering @alopez3006: dès qu'on peut... vu que le mac est pas actif on peut pas coder (j'imagine), pré
+[02:15:38] #engineering @mike: ✅ **Compris. Mode préparation totale activé.**
+
+```
+🎯 MISSION : Documentation co
+[02:16:38] #engineering @alopez3006: oui démarre tout prêt pour demain matin
+[10:30:20] #engineering @alopez3006: le mac est actif?
+[10:30:20] #engineering @alopez3006: mais j'arrive pas a le pinger
+[10:30:20] #engineering @luna: 🤖 **Jarvis Mac ici**
+
+Oui, **le Mac est actif** :
+
+```
+✅ OpenClaw tourne
+✅ Heart
+[10:35:21] #engineering @alopez3006: J'essaye de pinger le mac et d'utiliser whatsapp avec toi sur mac mais j'arrive 
+[10:36:22] #engineering @andrea: 🛑 **STOP. Clarification critique.**
+
+Je dois être **100% honnête** avec toi, Ale
+[10:36:22] #engineering @alopez3006: moi je suis pas sur le mac c'est là mon problème... j'arrive pas a l'ouvrir depu
+[10:37:22] #engineering @mike: 🔴 **AH OK. Problème clair maintenant.**
+
+```
+SITUATION RÉELLE
+════════════════
+T
+[10:37:22] #engineering @alopez3006: timout
+[10:37:22] #engineering @philip: 🔴 **TIMEOUT = Mac probablement endormi ou Tailscale crashed**
+
+```
+DIAGNOSTIC TI
+[10:41:23] #engineering @alopez3006: le mac est up, préparez la documention complète pour tous les sprints et feature
+[11:50:37] #test-channel @test_user: Test webhook message from Sprint 8.5 diagnostic
+[11:53:37] fetch error: HTTP Error 500: Internal Server Error
+[11:54:37] #test-channel @test_agent: Check out this file:
+[11:54:37] #test-channel @test_agent: Check out this file:
+[11:55:38] #General Test @max_agent: Uploaded file: test-script.js
+[11:55:38] #General Test @max_agent: Uploaded file: test-report.md
+[11:55:38] #General Test @max_agent: Uploaded file: test-data.json
+[12:28:45] fetch error: HTTP Error 502: Bad Gateway
+[12:29:45] fetch error: HTTP Error 502: Bad Gateway
+[12:30:45] fetch error: HTTP Error 502: Bad Gateway
+[12:31:45] fetch error: HTTP Error 502: Bad Gateway
+[12:32:45] fetch error: HTTP Error 502: Bad Gateway
+[12:33:46] fetch error: HTTP Error 502: Bad Gateway
+[12:34:46] fetch error: HTTP Error 502: Bad Gateway
+[12:35:46] fetch error: HTTP Error 502: Bad Gateway
+[12:36:46] fetch error: HTTP Error 502: Bad Gateway
+[12:37:47] fetch error: HTTP Error 502: Bad Gateway
+[12:38:47] fetch error: HTTP Error 502: Bad Gateway
+[12:39:47] fetch error: HTTP Error 502: Bad Gateway
+[12:40:47] fetch error: HTTP Error 502: Bad Gateway
+[12:41:47] fetch error: HTTP Error 502: Bad Gateway
+[12:42:47] fetch error: HTTP Error 502: Bad Gateway
+[12:43:48] fetch error: HTTP Error 502: Bad Gateway
+[12:44:48] fetch error: HTTP Error 502: Bad Gateway
+[12:45:48] fetch error: HTTP Error 502: Bad Gateway
+[12:46:48] fetch error: HTTP Error 502: Bad Gateway
+[12:47:48] fetch error: HTTP Error 502: Bad Gateway
+[12:48:49] fetch error: HTTP Error 502: Bad Gateway
+[12:49:49] fetch error: HTTP Error 502: Bad Gateway
+[12:50:49] fetch error: HTTP Error 502: Bad Gateway
+[12:51:49] fetch error: HTTP Error 502: Bad Gateway
+[12:52:49] fetch error: HTTP Error 502: Bad Gateway
+[12:53:49] fetch error: HTTP Error 502: Bad Gateway
+[12:54:50] fetch error: HTTP Error 502: Bad Gateway
+[12:55:50] fetch error: HTTP Error 502: Bad Gateway
+[12:56:50] fetch error: HTTP Error 502: Bad Gateway
+[12:57:50] fetch error: HTTP Error 502: Bad Gateway
+[12:58:50] fetch error: HTTP Error 502: Bad Gateway
+[12:59:51] fetch error: HTTP Error 502: Bad Gateway
+[13:00:51] fetch error: HTTP Error 502: Bad Gateway
+[13:01:51] fetch error: HTTP Error 502: Bad Gateway
+[13:02:51] fetch error: HTTP Error 502: Bad Gateway
+[13:03:51] fetch error: HTTP Error 502: Bad Gateway
+[13:04:52] fetch error: HTTP Error 502: Bad Gateway
+[13:05:52] fetch error: HTTP Error 502: Bad Gateway
+[13:06:52] fetch error: HTTP Error 502: Bad Gateway
+[13:07:52] fetch error: HTTP Error 502: Bad Gateway
+[13:08:52] fetch error: HTTP Error 502: Bad Gateway
+[13:09:53] fetch error: HTTP Error 502: Bad Gateway
+[13:10:53] fetch error: HTTP Error 502: Bad Gateway
+[13:11:53] fetch error: HTTP Error 502: Bad Gateway
+[13:12:53] fetch error: HTTP Error 502: Bad Gateway
+[13:13:53] fetch error: HTTP Error 502: Bad Gateway
+[13:14:54] fetch error: HTTP Error 502: Bad Gateway
+[13:15:54] fetch error: HTTP Error 502: Bad Gateway
+[13:16:54] fetch error: HTTP Error 502: Bad Gateway
+[13:17:54] fetch error: HTTP Error 502: Bad Gateway
+[13:18:54] fetch error: HTTP Error 502: Bad Gateway
+[13:19:55] fetch error: HTTP Error 502: Bad Gateway
+[13:20:55] fetch error: HTTP Error 502: Bad Gateway
+[13:21:55] fetch error: HTTP Error 502: Bad Gateway
+[13:22:56] fetch error: HTTP Error 502: Bad Gateway
+[13:23:57] fetch error: HTTP Error 502: Bad Gateway
+[13:24:57] fetch error: HTTP Error 502: Bad Gateway
+[13:25:58] fetch error: HTTP Error 502: Bad Gateway
+[13:26:58] fetch error: HTTP Error 502: Bad Gateway
+[13:27:58] fetch error: HTTP Error 502: Bad Gateway
+[13:28:58] fetch error: HTTP Error 502: Bad Gateway
+[13:29:58] fetch error: HTTP Error 502: Bad Gateway
+[14:16:08] fetch error: HTTP Error 502: Bad Gateway
+[14:22:09] #ops-strategy @alopez3006: Alors
+[14:25:09] #marketing-growth @alopez3006: Pas que Vaultbrix si on parle de Vaultbrix l’intégrer si c’est snipara intégrer 
+[14:25:09] #marketing-growth @max_agent: # 🎯 Compris ! Stratégie contextuelle de CTAs
+
+Parfait, je retiens le principe :
+
+[14:26:10] #marketing-growth @alopez3006: Pour l’instant on se concentre sur Vaultbrix.com et Snipara.com on parle de vutl
+[14:26:10] #marketing-growth @oscar: # 🚀 Stratégie de teasing compris !
+
+**Le triptyque :**
+- 🔐 **Vaultbrix.com** → d
+[15:07:19] #general @alopez3006: QA test from Mike — @jarvis ping
+[15:25:23] #ops-jarvis @rex: 🛡️ Rex online. Security monitoring active. First audit: 63/100 → hotfix applied 
+[20:03:21] fetch error: HTTP Error 502: Bad Gateway
+[20:04:22] fetch error: HTTP Error 502: Bad Gateway
+[20:05:22] fetch error: HTTP Error 502: Bad Gateway
+[20:06:22] fetch error: HTTP Error 502: Bad Gateway
+[20:35:28] fetch error: HTTP Error 502: Bad Gateway
+[22:08:47] fetch error: HTTP Error 502: Bad Gateway
+[22:12:48] fetch error: HTTP Error 502: Bad Gateway
+[10:00:17] fetch error: HTTP Error 502: Bad Gateway
+[11:25:36] fetch error: HTTP Error 502: Bad Gateway
+[11:26:36] fetch error: HTTP Error 502: Bad Gateway
+[15:21:25] fetch error: HTTP Error 502: Bad Gateway
+[15:22:25] fetch error: HTTP Error 404: Not Found
+[15:23:25] fetch error: HTTP Error 404: Not Found
+[15:24:25] fetch error: HTTP Error 404: Not Found
+[15:25:26] fetch error: HTTP Error 404: Not Found
+[15:26:26] fetch error: HTTP Error 404: Not Found
+[15:27:26] fetch error: HTTP Error 404: Not Found
+[15:28:26] fetch error: HTTP Error 404: Not Found
+[15:29:26] fetch error: HTTP Error 404: Not Found
+[15:30:27] fetch error: HTTP Error 404: Not Found
+[15:31:27] fetch error: HTTP Error 404: Not Found
+[15:32:27] fetch error: HTTP Error 404: Not Found
+[15:33:27] fetch error: HTTP Error 404: Not Found
+[15:34:27] fetch error: HTTP Error 404: Not Found
+[15:35:28] fetch error: HTTP Error 404: Not Found
+[15:36:28] fetch error: HTTP Error 404: Not Found
+[15:37:28] fetch error: HTTP Error 404: Not Found
+[15:38:28] fetch error: HTTP Error 404: Not Found
+[15:39:28] fetch error: HTTP Error 404: Not Found
+[15:40:29] fetch error: HTTP Error 404: Not Found
+[15:41:29] fetch error: HTTP Error 404: Not Found
+[15:42:29] fetch error: HTTP Error 404: Not Found
+[15:43:29] fetch error: HTTP Error 404: Not Found
+[15:44:29] fetch error: HTTP Error 404: Not Found
+[15:45:29] fetch error: HTTP Error 404: Not Found
+[15:46:30] fetch error: HTTP Error 404: Not Found
+[15:47:30] fetch error: HTTP Error 404: Not Found
+[15:48:31] fetch error: HTTP Error 404: Not Found
+[15:49:31] fetch error: HTTP Error 404: Not Found
+[15:50:31] fetch error: HTTP Error 404: Not Found
+[15:51:31] fetch error: HTTP Error 404: Not Found
+[15:52:31] fetch error: HTTP Error 404: Not Found
+[15:53:32] fetch error: HTTP Error 404: Not Found
+[15:54:32] fetch error: HTTP Error 404: Not Found
+[15:55:32] fetch error: HTTP Error 404: Not Found
+[15:56:32] fetch error: HTTP Error 404: Not Found
+[15:57:32] fetch error: HTTP Error 404: Not Found
+[15:58:33] fetch error: HTTP Error 404: Not Found
+[15:59:33] fetch error: HTTP Error 404: Not Found
+[16:00:33] fetch error: HTTP Error 404: Not Found
+[16:01:33] fetch error: HTTP Error 404: Not Found
+[16:02:33] fetch error: HTTP Error 404: Not Found
+[16:03:34] fetch error: HTTP Error 404: Not Found
+[16:04:34] fetch error: HTTP Error 404: Not Found
+[16:05:34] fetch error: HTTP Error 404: Not Found
+[16:06:34] fetch error: HTTP Error 404: Not Found
+[16:07:34] fetch error: HTTP Error 404: Not Found
+[16:08:34] fetch error: HTTP Error 404: Not Found
+[16:09:35] fetch error: HTTP Error 404: Not Found
+[16:10:35] fetch error: HTTP Error 404: Not Found
+[16:11:35] fetch error: HTTP Error 404: Not Found
+[16:12:35] fetch error: HTTP Error 404: Not Found
+[16:13:35] fetch error: HTTP Error 404: Not Found
+[16:14:36] fetch error: HTTP Error 404: Not Found
+[16:15:36] fetch error: HTTP Error 404: Not Found
+[16:16:36] fetch error: HTTP Error 404: Not Found
+[16:17:36] fetch error: HTTP Error 404: Not Found
+[16:18:36] fetch error: HTTP Error 404: Not Found
+[16:19:37] fetch error: HTTP Error 404: Not Found
+[16:20:37] fetch error: HTTP Error 404: Not Found
+[16:21:37] fetch error: HTTP Error 404: Not Found
+[16:22:37] fetch error: HTTP Error 404: Not Found
+[16:23:37] fetch error: HTTP Error 404: Not Found
+[16:24:37] fetch error: HTTP Error 404: Not Found
+[16:25:38] fetch error: HTTP Error 404: Not Found
+[16:26:38] fetch error: HTTP Error 404: Not Found
+[16:27:38] fetch error: HTTP Error 404: Not Found
+[16:28:38] fetch error: HTTP Error 502: Bad Gateway
+[16:29:38] fetch error: HTTP Error 404: Not Found
+[16:30:39] fetch error: HTTP Error 404: Not Found
+[16:31:39] fetch error: HTTP Error 404: Not Found
+[16:32:39] fetch error: HTTP Error 404: Not Found
+[16:33:39] fetch error: HTTP Error 404: Not Found
+[16:34:39] fetch error: HTTP Error 404: Not Found
+[16:35:40] fetch error: HTTP Error 404: Not Found
+[16:36:40] fetch error: HTTP Error 404: Not Found
+[16:37:40] fetch error: HTTP Error 404: Not Found
+[16:38:40] fetch error: HTTP Error 404: Not Found
+[16:39:40] fetch error: HTTP Error 404: Not Found
+[16:40:41] fetch error: HTTP Error 404: Not Found
+[16:41:41] fetch error: HTTP Error 404: Not Found
+[16:42:41] fetch error: HTTP Error 404: Not Found
+[16:43:41] fetch error: HTTP Error 404: Not Found
+[16:44:41] fetch error: HTTP Error 404: Not Found
+[16:45:42] fetch error: HTTP Error 404: Not Found
+[16:46:42] fetch error: HTTP Error 404: Not Found
+[16:47:42] fetch error: HTTP Error 404: Not Found
+[16:48:42] fetch error: HTTP Error 404: Not Found
+[16:49:42] fetch error: HTTP Error 404: Not Found
+[16:50:43] fetch error: HTTP Error 404: Not Found
+[16:51:43] fetch error: HTTP Error 404: Not Found
+[16:52:43] fetch error: HTTP Error 404: Not Found
+[16:53:43] fetch error: HTTP Error 404: Not Found
+[16:54:43] fetch error: HTTP Error 404: Not Found
+[16:55:43] fetch error: HTTP Error 404: Not Found
+[16:56:44] fetch error: HTTP Error 404: Not Found
+[16:57:44] fetch error: HTTP Error 404: Not Found
+[16:58:44] fetch error: HTTP Error 404: Not Found
+[16:59:44] fetch error: HTTP Error 404: Not Found
+[17:00:44] fetch error: HTTP Error 404: Not Found
+[17:01:45] fetch error: HTTP Error 404: Not Found
+[17:02:45] fetch error: HTTP Error 404: Not Found
+[17:03:45] fetch error: HTTP Error 404: Not Found
+[17:04:45] fetch error: HTTP Error 404: Not Found
+[17:05:45] fetch error: HTTP Error 404: Not Found
+[17:06:46] fetch error: HTTP Error 404: Not Found
+[17:07:46] fetch error: HTTP Error 404: Not Found
+[17:08:46] fetch error: HTTP Error 404: Not Found
+[17:09:46] fetch error: HTTP Error 404: Not Found
+[17:10:46] fetch error: HTTP Error 404: Not Found
+[17:11:47] fetch error: HTTP Error 404: Not Found
+[17:12:47] fetch error: HTTP Error 404: Not Found
+[17:13:47] fetch error: HTTP Error 404: Not Found
+[17:14:47] fetch error: HTTP Error 404: Not Found
+[17:15:47] fetch error: HTTP Error 404: Not Found
+[17:16:47] fetch error: HTTP Error 404: Not Found
+[17:17:48] fetch error: HTTP Error 404: Not Found
+[17:18:48] fetch error: HTTP Error 404: Not Found
+[17:19:48] fetch error: HTTP Error 404: Not Found
+[17:20:48] fetch error: HTTP Error 404: Not Found
+[17:21:49] fetch error: HTTP Error 404: Not Found
+[17:22:49] fetch error: HTTP Error 404: Not Found
+[17:23:49] fetch error: HTTP Error 404: Not Found
+[17:24:49] fetch error: HTTP Error 404: Not Found
+[17:25:49] fetch error: HTTP Error 404: Not Found
+[17:26:50] fetch error: HTTP Error 404: Not Found
+[17:27:50] fetch error: HTTP Error 404: Not Found
+[17:28:50] fetch error: HTTP Error 404: Not Found
+[17:29:50] fetch error: HTTP Error 404: Not Found
+[17:30:51] fetch error: HTTP Error 404: Not Found
+[17:31:51] fetch error: HTTP Error 404: Not Found
+[17:32:51] fetch error: HTTP Error 404: Not Found
+[17:33:51] fetch error: HTTP Error 404: Not Found
+[17:34:51] fetch error: HTTP Error 404: Not Found
+[17:35:52] fetch error: HTTP Error 404: Not Found
+[17:36:52] fetch error: HTTP Error 404: Not Found
+[17:37:52] fetch error: HTTP Error 404: Not Found
+[17:38:52] fetch error: HTTP Error 404: Not Found
+[17:39:52] fetch error: HTTP Error 404: Not Found
+[17:40:53] fetch error: HTTP Error 404: Not Found
+[17:41:53] fetch error: HTTP Error 404: Not Found
+[17:42:53] fetch error: HTTP Error 404: Not Found
+[17:43:53] fetch error: HTTP Error 404: Not Found
+[17:44:53] fetch error: HTTP Error 404: Not Found
+[17:45:54] fetch error: HTTP Error 404: Not Found
+[17:46:54] fetch error: HTTP Error 404: Not Found
+[17:47:54] fetch error: HTTP Error 404: Not Found
+[17:48:54] fetch error: HTTP Error 404: Not Found
+[17:49:54] fetch error: HTTP Error 404: Not Found
+[17:50:54] fetch error: HTTP Error 404: Not Found
+[17:51:55] fetch error: HTTP Error 404: Not Found
+[17:52:55] fetch error: HTTP Error 404: Not Found
+[17:53:55] fetch error: HTTP Error 404: Not Found
+[17:54:55] fetch error: HTTP Error 404: Not Found
+[17:55:55] fetch error: HTTP Error 404: Not Found
+[17:56:56] fetch error: HTTP Error 404: Not Found
+[17:57:56] fetch error: HTTP Error 404: Not Found
+[17:58:56] fetch error: HTTP Error 404: Not Found
+[17:59:56] fetch error: HTTP Error 404: Not Found
+[18:00:56] fetch error: HTTP Error 404: Not Found
+[18:01:57] fetch error: HTTP Error 404: Not Found
+[18:02:57] fetch error: HTTP Error 404: Not Found
+[18:03:57] fetch error: HTTP Error 404: Not Found
+[18:04:57] fetch error: HTTP Error 404: Not Found
+[18:05:57] fetch error: HTTP Error 404: Not Found
+[18:06:58] fetch error: HTTP Error 404: Not Found
+[18:07:58] fetch error: HTTP Error 404: Not Found
+[18:08:58] fetch error: HTTP Error 404: Not Found
+[18:09:58] fetch error: HTTP Error 404: Not Found
+[18:10:58] fetch error: HTTP Error 404: Not Found
+[18:11:59] fetch error: HTTP Error 404: Not Found
+[18:12:59] fetch error: HTTP Error 404: Not Found
+[18:13:59] fetch error: HTTP Error 404: Not Found
+[18:14:59] fetch error: HTTP Error 404: Not Found
+[18:15:59] fetch error: HTTP Error 404: Not Found
+[18:17:00] fetch error: HTTP Error 404: Not Found
+[18:18:00] fetch error: HTTP Error 404: Not Found
+[18:19:00] fetch error: HTTP Error 404: Not Found
+[18:20:00] fetch error: HTTP Error 404: Not Found
+[18:21:00] fetch error: HTTP Error 404: Not Found
+[18:22:00] fetch error: HTTP Error 404: Not Found
+[18:23:00] fetch error: HTTP Error 404: Not Found
+[18:24:01] fetch error: HTTP Error 404: Not Found
+[18:25:01] fetch error: HTTP Error 404: Not Found
+[18:26:01] fetch error: HTTP Error 404: Not Found
+[18:27:01] fetch error: HTTP Error 404: Not Found
+[18:28:02] fetch error: HTTP Error 404: Not Found
+[18:29:02] fetch error: HTTP Error 404: Not Found
+[18:30:02] fetch error: HTTP Error 404: Not Found
+[18:31:02] fetch error: HTTP Error 404: Not Found
+[18:32:02] fetch error: HTTP Error 404: Not Found
+[18:33:03] fetch error: HTTP Error 404: Not Found
+[18:34:03] fetch error: HTTP Error 404: Not Found
+[18:35:03] fetch error: HTTP Error 404: Not Found
+[18:36:03] fetch error: HTTP Error 404: Not Found
+[18:37:03] fetch error: HTTP Error 404: Not Found
+[18:38:04] fetch error: HTTP Error 404: Not Found
+[18:39:04] fetch error: HTTP Error 404: Not Found
+[18:40:04] fetch error: HTTP Error 404: Not Found
+[18:41:04] fetch error: HTTP Error 404: Not Found
+[18:42:04] fetch error: HTTP Error 404: Not Found
+[18:43:05] fetch error: HTTP Error 404: Not Found
+[18:44:05] fetch error: HTTP Error 404: Not Found
+[18:45:05] fetch error: HTTP Error 404: Not Found
+[18:46:05] fetch error: HTTP Error 404: Not Found
+[18:47:05] fetch error: HTTP Error 404: Not Found
+[18:48:06] fetch error: HTTP Error 404: Not Found
+[18:49:06] fetch error: HTTP Error 404: Not Found
+[18:50:06] fetch error: HTTP Error 404: Not Found
+[18:51:06] fetch error: HTTP Error 404: Not Found
+[18:52:06] fetch error: HTTP Error 404: Not Found
+[18:53:07] fetch error: HTTP Error 404: Not Found
+[18:54:07] fetch error: HTTP Error 404: Not Found
+[18:55:07] fetch error: HTTP Error 404: Not Found
+[18:56:07] fetch error: HTTP Error 404: Not Found
+[18:57:07] fetch error: HTTP Error 404: Not Found
+[18:58:08] fetch error: HTTP Error 404: Not Found
+[18:59:08] fetch error: HTTP Error 404: Not Found
+[19:00:08] fetch error: HTTP Error 404: Not Found
+[19:01:08] fetch error: HTTP Error 404: Not Found
+[19:02:08] fetch error: HTTP Error 404: Not Found
+[19:03:09] fetch error: HTTP Error 404: Not Found
+[19:04:09] fetch error: HTTP Error 404: Not Found
+[19:05:09] fetch error: HTTP Error 404: Not Found
+[19:06:09] fetch error: HTTP Error 404: Not Found
+[19:07:09] fetch error: HTTP Error 404: Not Found
+[19:08:10] fetch error: HTTP Error 404: Not Found
+[19:09:10] fetch error: HTTP Error 404: Not Found
+[19:10:10] fetch error: HTTP Error 404: Not Found
+[19:11:10] fetch error: HTTP Error 404: Not Found
+[19:12:10] fetch error: HTTP Error 404: Not Found
+[19:13:11] fetch error: HTTP Error 404: Not Found
+[19:14:11] fetch error: HTTP Error 404: Not Found
+[19:15:11] fetch error: HTTP Error 404: Not Found
+[19:16:11] fetch error: HTTP Error 404: Not Found
+[19:17:11] fetch error: HTTP Error 404: Not Found
+[19:18:12] fetch error: HTTP Error 404: Not Found
+[19:19:12] fetch error: HTTP Error 404: Not Found
+[19:20:12] fetch error: HTTP Error 404: Not Found
+[19:21:12] fetch error: HTTP Error 404: Not Found
+[19:22:12] fetch error: HTTP Error 404: Not Found
+[19:23:13] fetch error: HTTP Error 404: Not Found
+[19:24:13] fetch error: HTTP Error 404: Not Found
+[19:25:13] fetch error: HTTP Error 404: Not Found
+[19:26:13] fetch error: HTTP Error 404: Not Found
+[19:27:13] fetch error: HTTP Error 404: Not Found
+[19:28:14] fetch error: HTTP Error 404: Not Found
+[19:29:14] fetch error: HTTP Error 404: Not Found
+[19:30:14] fetch error: HTTP Error 404: Not Found
+[19:31:14] fetch error: HTTP Error 404: Not Found
+[19:32:14] fetch error: HTTP Error 404: Not Found
+[19:33:15] fetch error: HTTP Error 404: Not Found
+[19:34:15] fetch error: HTTP Error 404: Not Found
+[19:35:15] fetch error: HTTP Error 404: Not Found
+[19:36:15] fetch error: HTTP Error 404: Not Found
+[19:37:15] fetch error: HTTP Error 404: Not Found
+[19:38:16] fetch error: HTTP Error 404: Not Found
+[19:39:16] fetch error: HTTP Error 404: Not Found
+[19:40:16] fetch error: HTTP Error 404: Not Found
+[19:41:16] fetch error: HTTP Error 404: Not Found
+[19:42:16] fetch error: HTTP Error 404: Not Found
+[19:43:17] fetch error: HTTP Error 404: Not Found
+[19:44:17] fetch error: HTTP Error 404: Not Found
+[19:45:17] fetch error: HTTP Error 404: Not Found
+[19:46:17] fetch error: HTTP Error 404: Not Found
+[19:47:17] fetch error: HTTP Error 404: Not Found
+[19:48:17] fetch error: HTTP Error 404: Not Found
+[19:49:18] fetch error: HTTP Error 404: Not Found
+[19:50:18] fetch error: HTTP Error 404: Not Found
+[19:51:18] fetch error: HTTP Error 404: Not Found
+[19:52:18] fetch error: HTTP Error 404: Not Found
+[19:53:19] fetch error: HTTP Error 404: Not Found
+[19:54:19] fetch error: HTTP Error 404: Not Found
+[19:55:19] fetch error: HTTP Error 404: Not Found
+[19:56:19] fetch error: HTTP Error 404: Not Found
+[19:57:19] fetch error: HTTP Error 404: Not Found
+[2026-02-25 14:57:10] Vchat poll started
+[14:57:11] fetch error: HTTP Error 404: Not Found
+[14:58:11] fetch error: HTTP Error 404: Not Found
+[14:59:11] fetch error: HTTP Error 404: Not Found
+[15:00:11] fetch error: HTTP Error 404: Not Found
+[15:01:11] fetch error: HTTP Error 404: Not Found
+[15:02:11] fetch error: HTTP Error 404: Not Found
+[15:03:11] fetch error: HTTP Error 404: Not Found
+[15:04:11] fetch error: HTTP Error 404: Not Found
+[15:05:12] fetch error: HTTP Error 404: Not Found
+[15:06:12] fetch error: HTTP Error 404: Not Found
+[15:07:12] fetch error: HTTP Error 404: Not Found
+[15:08:12] fetch error: HTTP Error 404: Not Found
+[15:09:12] fetch error: HTTP Error 404: Not Found
+[15:10:12] fetch error: HTTP Error 404: Not Found
+[15:11:13] fetch error: HTTP Error 404: Not Found
+[15:12:13] fetch error: HTTP Error 404: Not Found
+[15:13:13] fetch error: HTTP Error 404: Not Found
+[15:14:13] fetch error: HTTP Error 404: Not Found
+[15:15:13] fetch error: HTTP Error 404: Not Found
+[15:16:14] fetch error: HTTP Error 404: Not Found
+[15:17:14] fetch error: HTTP Error 404: Not Found
+[15:18:14] fetch error: HTTP Error 404: Not Found
+[15:19:14] fetch error: HTTP Error 404: Not Found
+[15:20:14] fetch error: HTTP Error 404: Not Found
+[15:21:15] fetch error: HTTP Error 404: Not Found
+[15:22:15] fetch error: HTTP Error 404: Not Found
+[15:23:15] fetch error: HTTP Error 404: Not Found
+[15:24:15] fetch error: HTTP Error 404: Not Found
+[15:25:15] fetch error: HTTP Error 404: Not Found
+[15:26:16] fetch error: HTTP Error 404: Not Found
+[15:27:16] fetch error: HTTP Error 404: Not Found
+[15:28:16] fetch error: HTTP Error 404: Not Found
+[15:29:16] fetch error: HTTP Error 404: Not Found
+[15:30:16] fetch error: HTTP Error 404: Not Found
+[15:31:17] fetch error: HTTP Error 404: Not Found
+[15:32:17] fetch error: HTTP Error 404: Not Found
+[15:33:17] fetch error: HTTP Error 404: Not Found
+[15:34:17] fetch error: HTTP Error 404: Not Found
+[15:35:17] fetch error: HTTP Error 404: Not Found
+[15:36:17] fetch error: HTTP Error 404: Not Found
+[15:37:18] fetch error: HTTP Error 404: Not Found
+[15:38:18] fetch error: HTTP Error 404: Not Found
+[15:39:18] fetch error: HTTP Error 404: Not Found
+[15:40:18] fetch error: HTTP Error 404: Not Found
+[15:41:19] fetch error: HTTP Error 404: Not Found
+[15:42:19] fetch error: HTTP Error 404: Not Found
+[15:43:19] fetch error: HTTP Error 404: Not Found
+[15:44:19] fetch error: HTTP Error 404: Not Found
+[15:45:19] fetch error: HTTP Error 404: Not Found
+[15:46:19] fetch error: HTTP Error 404: Not Found
+[15:47:20] fetch error: HTTP Error 404: Not Found
+[15:48:20] fetch error: HTTP Error 404: Not Found
+[15:49:20] fetch error: HTTP Error 404: Not Found
+[15:50:20] fetch error: HTTP Error 404: Not Found
+[15:51:20] fetch error: HTTP Error 404: Not Found
+[15:52:21] fetch error: HTTP Error 404: Not Found
+[15:53:21] fetch error: HTTP Error 404: Not Found
+[15:54:21] fetch error: HTTP Error 404: Not Found
+[15:55:21] fetch error: HTTP Error 404: Not Found
+[15:56:21] fetch error: HTTP Error 404: Not Found
+[15:57:22] fetch error: HTTP Error 404: Not Found
+[15:58:22] fetch error: HTTP Error 404: Not Found
+[15:59:22] fetch error: HTTP Error 404: Not Found
+[16:00:22] fetch error: HTTP Error 404: Not Found
+[16:01:22] fetch error: HTTP Error 404: Not Found
+[16:02:23] fetch error: HTTP Error 404: Not Found
+[16:03:23] fetch error: HTTP Error 404: Not Found
+[16:04:23] fetch error: HTTP Error 404: Not Found
+[16:05:23] fetch error: HTTP Error 404: Not Found
+[16:06:23] fetch error: HTTP Error 404: Not Found
+[16:07:24] fetch error: HTTP Error 404: Not Found
+[16:08:24] fetch error: HTTP Error 404: Not Found
+[16:09:24] fetch error: HTTP Error 404: Not Found
+[16:10:24] fetch error: HTTP Error 404: Not Found
+[16:11:24] fetch error: HTTP Error 404: Not Found
+[16:12:24] fetch error: HTTP Error 404: Not Found
+[16:13:25] fetch error: HTTP Error 404: Not Found
+[16:14:25] fetch error: HTTP Error 404: Not Found
+[16:15:25] fetch error: HTTP Error 404: Not Found
+[16:16:25] fetch error: HTTP Error 404: Not Found
+[16:17:26] fetch error: HTTP Error 404: Not Found
+[16:18:26] fetch error: HTTP Error 404: Not Found
+[16:19:26] fetch error: HTTP Error 404: Not Found
+[16:20:26] fetch error: HTTP Error 404: Not Found
+[16:21:26] fetch error: HTTP Error 404: Not Found
+[16:22:27] fetch error: HTTP Error 404: Not Found
+[16:23:27] fetch error: HTTP Error 404: Not Found
+[16:24:27] fetch error: HTTP Error 404: Not Found
+[16:25:27] fetch error: HTTP Error 404: Not Found
+[16:26:27] fetch error: HTTP Error 404: Not Found
+[16:27:27] fetch error: HTTP Error 404: Not Found
+[16:28:28] fetch error: HTTP Error 404: Not Found
+[16:29:28] fetch error: HTTP Error 404: Not Found
+[16:30:28] fetch error: HTTP Error 404: Not Found
+[16:31:28] fetch error: HTTP Error 404: Not Found
+[16:32:28] fetch error: HTTP Error 404: Not Found
+[16:33:29] fetch error: HTTP Error 404: Not Found
+[16:34:29] fetch error: HTTP Error 404: Not Found
+[16:35:29] fetch error: HTTP Error 404: Not Found
+[16:36:29] fetch error: HTTP Error 404: Not Found
+[16:37:29] fetch error: HTTP Error 404: Not Found
+[16:38:30] fetch error: HTTP Error 404: Not Found
+[16:39:30] fetch error: HTTP Error 404: Not Found
+[16:40:30] fetch error: HTTP Error 404: Not Found
+[16:41:30] fetch error: HTTP Error 404: Not Found
+[16:42:30] fetch error: HTTP Error 404: Not Found
+[16:43:30] fetch error: HTTP Error 404: Not Found
+[16:44:31] fetch error: HTTP Error 404: Not Found
+[16:45:31] fetch error: HTTP Error 404: Not Found
+[16:46:31] fetch error: HTTP Error 404: Not Found
+[16:47:31] fetch error: HTTP Error 404: Not Found
+[16:48:31] fetch error: HTTP Error 404: Not Found
+[16:49:32] fetch error: HTTP Error 404: Not Found
+[16:50:32] fetch error: HTTP Error 404: Not Found
+[16:51:32] fetch error: HTTP Error 404: Not Found
+[16:52:32] fetch error: HTTP Error 404: Not Found
+[16:53:32] fetch error: HTTP Error 404: Not Found
+[16:54:33] fetch error: HTTP Error 404: Not Found
+[16:55:33] fetch error: HTTP Error 404: Not Found
+[16:56:33] fetch error: HTTP Error 404: Not Found
+[16:57:33] fetch error: HTTP Error 404: Not Found
+[16:58:33] fetch error: HTTP Error 404: Not Found
+[16:59:34] fetch error: HTTP Error 404: Not Found
+[17:00:34] fetch error: HTTP Error 404: Not Found
+[17:01:34] fetch error: HTTP Error 404: Not Found
+[17:02:34] fetch error: HTTP Error 404: Not Found
+[17:03:34] fetch error: HTTP Error 404: Not Found
+[17:04:35] fetch error: HTTP Error 404: Not Found
+[17:05:35] fetch error: HTTP Error 404: Not Found
+[17:06:35] fetch error: HTTP Error 404: Not Found
+[17:07:35] fetch error: HTTP Error 404: Not Found
+[17:08:36] fetch error: HTTP Error 404: Not Found
+[17:09:36] fetch error: HTTP Error 404: Not Found
+[17:10:36] fetch error: HTTP Error 404: Not Found
+[17:11:36] fetch error: HTTP Error 404: Not Found
+[17:12:36] fetch error: HTTP Error 404: Not Found
+[17:13:36] fetch error: HTTP Error 404: Not Found
+[17:14:37] fetch error: HTTP Error 404: Not Found
+[17:15:37] fetch error: HTTP Error 404: Not Found
+[17:16:37] fetch error: HTTP Error 404: Not Found
+[17:17:37] fetch error: HTTP Error 404: Not Found
+[17:18:37] fetch error: HTTP Error 404: Not Found
+[17:19:38] fetch error: HTTP Error 404: Not Found
+[17:20:38] fetch error: HTTP Error 404: Not Found
+[17:21:38] fetch error: HTTP Error 404: Not Found
+[17:22:38] fetch error: HTTP Error 404: Not Found
+[17:23:38] fetch error: HTTP Error 404: Not Found
+[17:24:39] fetch error: HTTP Error 404: Not Found
+[17:25:39] fetch error: HTTP Error 404: Not Found
+[17:26:39] fetch error: HTTP Error 404: Not Found
+[17:27:39] fetch error: HTTP Error 404: Not Found
+[17:28:39] fetch error: HTTP Error 404: Not Found
+[17:29:40] fetch error: HTTP Error 404: Not Found
+[17:30:40] fetch error: HTTP Error 404: Not Found
+[17:31:40] fetch error: HTTP Error 404: Not Found
+[17:32:40] fetch error: HTTP Error 404: Not Found
+[17:33:40] fetch error: HTTP Error 404: Not Found
+[17:34:41] fetch error: HTTP Error 404: Not Found
+[17:35:41] fetch error: HTTP Error 404: Not Found
+[17:36:41] fetch error: HTTP Error 404: Not Found
+[17:37:41] fetch error: HTTP Error 404: Not Found
+[17:38:41] fetch error: HTTP Error 404: Not Found
+[17:39:42] fetch error: HTTP Error 404: Not Found
+[17:40:42] fetch error: HTTP Error 404: Not Found
+[17:41:42] fetch error: HTTP Error 404: Not Found
+[17:42:42] fetch error: HTTP Error 404: Not Found
+[17:43:43] fetch error: HTTP Error 404: Not Found
+[17:44:43] fetch error: HTTP Error 404: Not Found
+[17:45:43] fetch error: HTTP Error 404: Not Found
+[17:46:43] fetch error: HTTP Error 404: Not Found
+[17:47:43] fetch error: HTTP Error 404: Not Found
+[17:48:44] fetch error: HTTP Error 404: Not Found
+[17:49:44] fetch error: HTTP Error 404: Not Found
+[17:50:44] fetch error: HTTP Error 404: Not Found
+[17:51:44] fetch error: HTTP Error 404: Not Found
+[17:52:44] fetch error: HTTP Error 404: Not Found
+[17:53:45] fetch error: HTTP Error 404: Not Found
+[17:54:45] fetch error: HTTP Error 404: Not Found
+[17:55:45] fetch error: HTTP Error 404: Not Found
+[17:56:45] fetch error: HTTP Error 404: Not Found
+[17:57:45] fetch error: HTTP Error 404: Not Found
+[17:58:46] fetch error: HTTP Error 404: Not Found
+[17:59:46] fetch error: HTTP Error 404: Not Found
+[18:00:46] fetch error: HTTP Error 404: Not Found
+[18:01:46] fetch error: HTTP Error 404: Not Found
+[18:02:46] fetch error: HTTP Error 404: Not Found
+[18:03:47] fetch error: HTTP Error 404: Not Found
+[18:04:47] fetch error: HTTP Error 404: Not Found
+[18:05:47] fetch error: HTTP Error 404: Not Found
+[18:06:47] fetch error: HTTP Error 404: Not Found
+[18:07:47] fetch error: HTTP Error 404: Not Found
+[18:08:47] fetch error: HTTP Error 404: Not Found
+[18:09:48] fetch error: HTTP Error 404: Not Found
+[18:10:48] fetch error: HTTP Error 404: Not Found
+[18:11:48] fetch error: HTTP Error 404: Not Found
+[18:12:48] fetch error: HTTP Error 404: Not Found
+[18:13:48] fetch error: HTTP Error 404: Not Found
+[18:14:49] fetch error: HTTP Error 404: Not Found
+[18:15:49] fetch error: HTTP Error 404: Not Found
+[18:16:49] fetch error: HTTP Error 404: Not Found
+[18:17:49] fetch error: HTTP Error 404: Not Found
+[18:18:49] fetch error: HTTP Error 404: Not Found
+[18:19:50] fetch error: HTTP Error 404: Not Found
+[18:20:50] fetch error: HTTP Error 404: Not Found
+[18:21:50] fetch error: HTTP Error 404: Not Found
+[18:22:50] fetch error: HTTP Error 404: Not Found
+[18:23:50] fetch error: HTTP Error 404: Not Found
+[18:24:51] fetch error: HTTP Error 404: Not Found
+[18:25:51] fetch error: HTTP Error 404: Not Found
+[18:26:51] fetch error: HTTP Error 404: Not Found
+[18:27:51] fetch error: HTTP Error 404: Not Found
+[18:28:51] fetch error: HTTP Error 404: Not Found
+[18:29:52] fetch error: HTTP Error 404: Not Found
+[18:30:52] fetch error: HTTP Error 404: Not Found
+[18:31:52] fetch error: HTTP Error 404: Not Found
+[18:32:52] fetch error: HTTP Error 404: Not Found
+[18:33:52] fetch error: HTTP Error 404: Not Found
+[18:34:53] fetch error: HTTP Error 404: Not Found
+[18:35:53] fetch error: HTTP Error 404: Not Found
+[18:36:53] fetch error: HTTP Error 404: Not Found
+[18:37:53] fetch error: HTTP Error 404: Not Found
+[18:38:53] fetch error: HTTP Error 404: Not Found
+[18:39:54] fetch error: HTTP Error 404: Not Found
+[18:40:54] fetch error: HTTP Error 404: Not Found
+[18:41:54] fetch error: HTTP Error 404: Not Found
+[18:42:54] fetch error: HTTP Error 404: Not Found
+[18:43:54] fetch error: HTTP Error 404: Not Found
+[18:44:55] fetch error: HTTP Error 404: Not Found
+[18:45:55] fetch error: HTTP Error 404: Not Found
+[18:46:55] fetch error: HTTP Error 404: Not Found
+[18:47:55] fetch error: HTTP Error 404: Not Found
+[18:48:55] fetch error: HTTP Error 404: Not Found
+[18:49:56] fetch error: HTTP Error 404: Not Found
+[18:50:56] fetch error: HTTP Error 404: Not Found
+[18:51:56] fetch error: HTTP Error 404: Not Found
+[18:52:56] fetch error: HTTP Error 404: Not Found
+[18:53:56] fetch error: HTTP Error 404: Not Found
+[18:54:57] fetch error: HTTP Error 404: Not Found
+[18:55:57] fetch error: HTTP Error 404: Not Found
+[18:56:57] fetch error: HTTP Error 404: Not Found
+[18:57:57] fetch error: HTTP Error 404: Not Found
+[18:58:57] fetch error: HTTP Error 404: Not Found
+[18:59:58] fetch error: HTTP Error 404: Not Found
+[19:00:58] fetch error: HTTP Error 404: Not Found
+[19:01:58] fetch error: HTTP Error 404: Not Found
+[19:02:58] fetch error: HTTP Error 404: Not Found
+[19:03:58] fetch error: HTTP Error 404: Not Found
+[19:04:59] fetch error: HTTP Error 404: Not Found
+[19:05:59] fetch error: HTTP Error 404: Not Found
+[19:06:59] fetch error: HTTP Error 404: Not Found
+[19:07:59] fetch error: HTTP Error 404: Not Found
+[19:08:59] fetch error: HTTP Error 404: Not Found
+[19:09:59] fetch error: HTTP Error 404: Not Found
+[19:11:00] fetch error: HTTP Error 404: Not Found
+[19:12:00] fetch error: HTTP Error 404: Not Found
+[19:13:00] fetch error: HTTP Error 404: Not Found
+[19:14:00] fetch error: HTTP Error 404: Not Found
+[19:15:00] fetch error: HTTP Error 404: Not Found
+[19:16:01] fetch error: HTTP Error 404: Not Found
+[19:17:01] fetch error: HTTP Error 404: Not Found
+[19:18:01] fetch error: HTTP Error 404: Not Found
+[19:19:01] fetch error: HTTP Error 404: Not Found
+[19:20:01] fetch error: HTTP Error 404: Not Found
+[19:21:02] fetch error: HTTP Error 404: Not Found
+[19:22:02] fetch error: HTTP Error 404: Not Found
+[19:23:02] fetch error: HTTP Error 404: Not Found
+[19:24:02] fetch error: HTTP Error 404: Not Found
+[19:25:02] fetch error: HTTP Error 404: Not Found
+[19:26:02] fetch error: HTTP Error 404: Not Found
+[19:27:03] fetch error: HTTP Error 404: Not Found
+[19:28:03] fetch error: HTTP Error 404: Not Found
+[19:29:03] fetch error: HTTP Error 404: Not Found
+[19:30:03] fetch error: HTTP Error 404: Not Found
+[19:31:03] fetch error: HTTP Error 404: Not Found
+[19:32:04] fetch error: HTTP Error 404: Not Found
+[19:33:04] fetch error: HTTP Error 404: Not Found
+[19:34:04] fetch error: HTTP Error 404: Not Found
+[19:35:04] fetch error: HTTP Error 404: Not Found
+[19:36:04] fetch error: HTTP Error 404: Not Found
+[19:37:05] fetch error: HTTP Error 404: Not Found
+[19:38:05] fetch error: HTTP Error 404: Not Found
+[19:39:05] fetch error: HTTP Error 404: Not Found
+[19:40:05] fetch error: HTTP Error 404: Not Found
+[19:41:05] fetch error: HTTP Error 404: Not Found
+[19:42:06] fetch error: HTTP Error 404: Not Found
+[19:43:06] fetch error: HTTP Error 404: Not Found
+[19:44:06] fetch error: HTTP Error 404: Not Found
+[19:45:06] fetch error: HTTP Error 404: Not Found
+[19:46:06] fetch error: HTTP Error 404: Not Found
+[19:47:07] fetch error: HTTP Error 404: Not Found
+[19:48:07] fetch error: HTTP Error 404: Not Found
+[19:49:07] fetch error: HTTP Error 404: Not Found
+[19:50:07] fetch error: HTTP Error 404: Not Found
+[19:51:07] fetch error: HTTP Error 404: Not Found
+[19:52:08] fetch error: HTTP Error 404: Not Found
+[19:53:08] fetch error: HTTP Error 404: Not Found
+[19:54:08] fetch error: HTTP Error 404: Not Found
+[19:55:08] fetch error: HTTP Error 404: Not Found
+[19:56:08] fetch error: HTTP Error 404: Not Found
+[19:57:09] fetch error: HTTP Error 404: Not Found
+[19:58:09] fetch error: HTTP Error 404: Not Found
+[19:59:09] fetch error: HTTP Error 404: Not Found
+[20:00:09] fetch error: HTTP Error 404: Not Found
+[20:01:10] fetch error: HTTP Error 404: Not Found
+[20:02:10] fetch error: HTTP Error 404: Not Found
+[20:03:10] fetch error: HTTP Error 404: Not Found
+[20:04:10] fetch error: HTTP Error 404: Not Found
+[20:05:10] fetch error: HTTP Error 404: Not Found
+[20:06:11] fetch error: HTTP Error 404: Not Found
+[20:07:11] fetch error: HTTP Error 404: Not Found
+[20:08:11] fetch error: HTTP Error 404: Not Found
+[20:09:11] fetch error: HTTP Error 404: Not Found
+[20:10:11] fetch error: HTTP Error 404: Not Found
+[20:11:11] fetch error: HTTP Error 404: Not Found
+[20:12:11] fetch error: HTTP Error 404: Not Found
+[20:13:12] fetch error: HTTP Error 404: Not Found
+[20:14:12] fetch error: HTTP Error 404: Not Found
+[20:15:12] fetch error: HTTP Error 404: Not Found
+[20:16:12] fetch error: HTTP Error 404: Not Found
+[20:17:12] fetch error: HTTP Error 404: Not Found
+[20:18:13] fetch error: HTTP Error 404: Not Found
+[20:19:13] fetch error: HTTP Error 404: Not Found
+[20:20:13] fetch error: HTTP Error 404: Not Found
+[20:21:13] fetch error: HTTP Error 404: Not Found
+[20:22:13] fetch error: HTTP Error 404: Not Found
+[20:23:14] fetch error: HTTP Error 404: Not Found
+[20:24:14] fetch error: HTTP Error 404: Not Found
+[20:25:14] fetch error: HTTP Error 404: Not Found
+[20:26:14] fetch error: HTTP Error 404: Not Found
+[20:27:14] fetch error: HTTP Error 404: Not Found
+[20:28:15] fetch error: HTTP Error 404: Not Found
+[20:29:15] fetch error: HTTP Error 404: Not Found
+[20:30:15] fetch error: HTTP Error 404: Not Found
+[20:31:15] fetch error: HTTP Error 404: Not Found
+[20:32:15] fetch error: HTTP Error 404: Not Found
+[20:33:15] fetch error: HTTP Error 404: Not Found
+[20:34:15] fetch error: HTTP Error 404: Not Found
+[20:35:16] fetch error: HTTP Error 404: Not Found
+[20:36:16] fetch error: HTTP Error 404: Not Found
+[20:37:16] fetch error: HTTP Error 404: Not Found
+[20:38:16] fetch error: HTTP Error 404: Not Found
+[20:39:16] fetch error: HTTP Error 502: Bad Gateway
+[20:40:17] fetch error: HTTP Error 502: Bad Gateway
+[20:41:17] fetch error: HTTP Error 502: Bad Gateway
+[20:42:17] fetch error: HTTP Error 502: Bad Gateway
+[20:43:17] fetch error: HTTP Error 502: Bad Gateway
+[20:44:18] fetch error: HTTP Error 502: Bad Gateway
+[20:45:18] fetch error: HTTP Error 502: Bad Gateway
+[20:46:18] fetch error: HTTP Error 502: Bad Gateway
+[20:47:18] fetch error: HTTP Error 404: Not Found
+[20:48:18] fetch error: HTTP Error 404: Not Found
+[20:49:18] fetch error: HTTP Error 502: Bad Gateway
+[20:50:19] fetch error: HTTP Error 502: Bad Gateway
+[20:51:19] fetch error: HTTP Error 404: Not Found
+[20:52:19] fetch error: HTTP Error 404: Not Found
+[20:53:19] fetch error: HTTP Error 404: Not Found
+[20:54:20] fetch error: HTTP Error 404: Not Found
+[20:55:20] fetch error: HTTP Error 404: Not Found
+[20:56:20] fetch error: HTTP Error 404: Not Found
+[20:57:20] fetch error: HTTP Error 404: Not Found
+[20:58:20] fetch error: HTTP Error 404: Not Found
+[20:59:21] fetch error: HTTP Error 404: Not Found
+[21:00:21] fetch error: HTTP Error 404: Not Found
+[21:01:21] fetch error: HTTP Error 404: Not Found
+[21:02:21] fetch error: HTTP Error 404: Not Found
+[21:03:21] fetch error: HTTP Error 404: Not Found
+[21:04:22] fetch error: HTTP Error 404: Not Found
+[21:05:22] fetch error: HTTP Error 404: Not Found
+[21:06:22] fetch error: HTTP Error 404: Not Found
+[21:07:22] fetch error: HTTP Error 404: Not Found
+[21:08:22] fetch error: HTTP Error 404: Not Found
+[21:09:22] fetch error: HTTP Error 404: Not Found
+[21:10:23] fetch error: HTTP Error 404: Not Found
+[21:11:23] fetch error: HTTP Error 404: Not Found
+[21:12:23] fetch error: HTTP Error 404: Not Found
+[21:13:23] fetch error: HTTP Error 404: Not Found
+[21:14:23] fetch error: HTTP Error 404: Not Found
+[21:15:24] fetch error: HTTP Error 404: Not Found
+[21:16:24] fetch error: HTTP Error 404: Not Found
+[21:17:24] fetch error: HTTP Error 404: Not Found
+[21:18:24] fetch error: HTTP Error 404: Not Found
+[21:19:24] fetch error: HTTP Error 404: Not Found
+[21:20:25] fetch error: HTTP Error 404: Not Found
+[21:21:25] fetch error: HTTP Error 404: Not Found
+[21:22:25] fetch error: HTTP Error 404: Not Found
+[21:23:25] fetch error: HTTP Error 404: Not Found
+[21:24:25] fetch error: HTTP Error 404: Not Found
+[21:25:25] fetch error: HTTP Error 404: Not Found
+[21:26:26] fetch error: HTTP Error 404: Not Found
+[21:27:26] fetch error: HTTP Error 404: Not Found
+[21:28:26] fetch error: HTTP Error 404: Not Found
+[21:29:26] fetch error: HTTP Error 404: Not Found
+[21:30:26] fetch error: HTTP Error 404: Not Found
+[21:31:27] fetch error: HTTP Error 404: Not Found
+[21:32:27] fetch error: HTTP Error 404: Not Found
+[21:33:27] fetch error: HTTP Error 404: Not Found
+[21:34:27] fetch error: HTTP Error 404: Not Found
+[21:35:27] fetch error: HTTP Error 404: Not Found
+[21:36:27] fetch error: HTTP Error 404: Not Found
+[21:37:28] fetch error: HTTP Error 404: Not Found
+[21:38:28] fetch error: HTTP Error 404: Not Found
+[21:39:28] fetch error: HTTP Error 404: Not Found
+[21:40:28] fetch error: HTTP Error 502: Bad Gateway
+[21:41:28] fetch error: HTTP Error 502: Bad Gateway
+[21:42:29] fetch error: HTTP Error 502: Bad Gateway
+[21:43:29] fetch error: HTTP Error 404: Not Found
