@@ -87,7 +87,7 @@ export default function DrivePage() {
 
   const handleDownload = async (file: DriveFile) => {
     try {
-      const res = await fetch(`/api/v1/drive/files/${file.id}/download`);
+      const res = await fetch(`/api/v1/drive/download/${file.id}`);
       if (!res.ok) throw new Error("Failed to download file");
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
@@ -114,7 +114,7 @@ export default function DrivePage() {
       formData.append("file", file);
       formData.append("path", currentPath);
 
-      const res = await fetch("/api/v1/drive/files/upload", {
+      const res = await fetch("/api/v1/drive/upload", {
         method: "POST",
         body: formData,
       });
