@@ -1212,3 +1212,11 @@ Parfait, je retiens le principe :
 [00:13:59] fetch error: HTTP Error 404: Not Found
 [00:14:59] fetch error: HTTP Error 404: Not Found
 [00:15:59] fetch error: HTTP Error 404: Not Found
+[00:16:59] fetch error: HTTP Error 404: Not Found
+[00:17:59] fetch error: HTTP Error 404: Not Found
+[00:19:00] fetch error: HTTP Error 404: Not Found
+[00:20:00] fetch error: HTTP Error 404: Not Found
+[00:21:00] fetch error: HTTP Error 404: Not Found
+[00:22:00] fetch error: HTTP Error 502: Bad Gateway
+[00:23:00] fetch error: HTTP Error 502: Bad Gateway
+[00:24:00] fetch error: HTTP Error 404: Not Found
