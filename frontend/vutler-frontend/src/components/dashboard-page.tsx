@@ -1,100 +1,57 @@
 "use client";
 
-import React from 'react';
-import AppShell from './app-shell';
+import React, { useState, useEffect } from 'react';
 import StatCard, { StatIcons } from './stat-card';
 import AgentsTable, { Agent } from './agents-table';
 import { TopbarButton, TopbarIconButton } from './topbar';
 
-// Mock data - replace with real data from API
-const mockAgents: Agent[] = [
-  {
-    id: '1',
-    name: 'Customer Support Bot',
-    type: 'Support',
-    model: 'gpt-4-turbo',
-    status: 'active',
-    lastActive: '2 minutes ago',
-  },
-  {
-    id: '2',
-    name: 'Sales Assistant',
-    type: 'Sales',
-    model: 'claude-3-opus',
-    status: 'idle',
-    lastActive: '15 minutes ago',
-  },
-  {
-    id: '3',
-    name: 'Data Analyzer',
-    type: 'Analytics',
-    model: 'gpt-4-turbo',
-    status: 'active',
-    lastActive: 'Just now',
-  },
-  {
-    id: '4',
-    name: 'Content Generator',
-    type: 'Content',
-    model: 'claude-3-sonnet',
-    status: 'error',
-    lastActive: '1 hour ago',
-  },
-];
-
-const mockStats = [
-  {
-    label: 'Active Agents',
-    value: '12',
-    change: { value: 8.5, trend: 'up' as const },
-    icon: StatIcons.Agents,
-    color: 'blue' as const,
-  },
-  {
-    label: 'Tasks Completed',
-    value: '2,847',
-    change: { value: 12.3, trend: 'up' as const },
-    icon: StatIcons.Tasks,
-    color: 'green' as const,
-  },
-  {
-    label: 'Messages Processed',
-    value: '8,921',
-    change: { value: 3.2, trend: 'down' as const },
-    icon: StatIcons.Messages,
-    color: 'purple' as const,
-  },
-  {
-    label: 'API Calls',
-    value: '145K',
-    change: { value: 18.7, trend: 'up' as const },
-    icon: StatIcons.ApiCalls,
-    color: 'orange' as const,
-  },
-];
-
-interface ActivityItem {
-  action: string;
-  time: string;
-  type: 'success' | 'error' | 'info';
+interface DashboardData {
+  success: boolean;
+  agents: Agent[];
+  stats: {
+    totalAgents: number;
+    activeAgents: number;
+    messagesToday: number;
+    totalTokens: number;
+    uptimeHours: number;
+    uptimeSeconds: number;
+  };
 }
 
-const mockActivity: ActivityItem[] = [
-  { action: 'Agent "Customer Support Bot" completed 45 tasks', time: '5 minutes ago', type: 'success' },
-  { action: 'New agent "Marketing Assistant" created', time: '12 minutes ago', type: 'info' },
-  { action: 'Agent "Data Analyzer" encountered an error', time: '1 hour ago', type: 'error' },
-  { action: 'System update completed successfully', time: '2 hours ago', type: 'success' },
-];
-
 export default function DashboardPage() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/v1/dashboard')
+      .then(r => r.json())
+      .then(result => {
+        setData(result);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to fetch dashboard data:', err);
+        setLoading(false);
+      });
+  }, []);
+
   const handleCreateAgent = () => {
-    console.log('Create new agent');
-    // Navigate to agent creation page or open modal
+    window.location.href = '/admin/agent-builder';
   };
 
   const handleRefresh = () => {
     console.log('Refresh dashboard');
-    // Refresh data
+    setLoading(true);
+    fetch('/api/v1/dashboard')
+      .then(r => r.json())
+      .then(result => {
+        setData(result);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to fetch dashboard data:', err);
+        setLoading(false);
+      });
   };
 
   const handleAgentClick = (agent: Agent) => {
@@ -107,12 +64,42 @@ export default function DashboardPage() {
     // Navigate to relevant details page
   };
 
+  const stats = data ? [
+    {
+      label: 'Total Agents',
+      value: data.stats.totalAgents.toString(),
+      icon: StatIcons.Agents,
+      color: 'blue' as const,
+    },
+    {
+      label: 'Active Agents',
+      value: data.stats.activeAgents.toString(),
+      icon: StatIcons.Agents,
+      color: 'green' as const,
+    },
+    {
+      label: 'Messages Today',
+      value: data.stats.messagesToday.toLocaleString(),
+      icon: StatIcons.Messages,
+      color: 'purple' as const,
+    },
+    {
+      label: 'Total Tokens',
+      value: data.stats.totalTokens.toLocaleString(),
+      icon: StatIcons.ApiCalls,
+      color: 'orange' as const,
+    },
+  ] : [];
+
   return (
-    <AppShell
-      pageTitle="Dashboard"
-      pageSubtitle="Monitor your agents and system performance"
-      topbarActions={
-        <>
+    <>
+      {/* Dashboard Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-sm text-[#9ca3af]">Monitor your agents and system performance</p>
+        </div>
+        <div className="flex items-center space-x-2">
           <TopbarIconButton
             onClick={handleRefresh}
             label="Refresh dashboard"
@@ -143,30 +130,37 @@ export default function DashboardPage() {
           >
             New Agent
           </TopbarButton>
-        </>
-      }
-      user={{
-        name: 'John Doe',
-        email: 'john@vutler.com',
-        initials: 'JD',
-      }}
-    >
+        </div>
+      </div>
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {mockStats.map((stat, index) => (
-          <StatCard 
-            key={index} 
-            {...stat} 
-            onClick={() => handleStatClick(stat.label)}
-          />
-        ))}
+        {loading ? (
+          // Loading skeletons
+          <>
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 animate-pulse">
+                <div className="h-4 bg-[#1a1b2e] rounded w-24 mb-4"></div>
+                <div className="h-8 bg-[#1a1b2e] rounded w-16 mb-4"></div>
+                <div className="h-3 bg-[#1a1b2e] rounded w-32"></div>
+              </div>
+            ))}
+          </>
+        ) : (
+          stats.map((stat, index) => (
+            <StatCard 
+              key={index} 
+              {...stat} 
+              onClick={() => handleStatClick(stat.label)}
+            />
+          ))
+        )}
       </div>
 
       {/* Quick Actions */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 mb-8" aria-labelledby="quick-actions-title">
         <h2 id="quick-actions-title" className="text-lg font-semibold text-white mb-4">Quick Actions</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <button className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
+          <button onClick={() => window.location.href = "/admin/agent-builder"} className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
             <div className="min-w-[40px] min-h-[40px] w-10 h-10 rounded-lg bg-gradient-to-br from-[#3b82f6] to-[#2563eb] flex items-center justify-center text-white" aria-hidden="true">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -177,7 +171,7 @@ export default function DashboardPage() {
             </span>
           </button>
 
-          <button className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
+          <button onClick={() => window.location.href = "/channel/general"} className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
             <div className="min-w-[40px] min-h-[40px] w-10 h-10 rounded-lg bg-gradient-to-br from-[#a855f7] to-[#9333ea] flex items-center justify-center text-white" aria-hidden="true">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -188,7 +182,7 @@ export default function DashboardPage() {
             </span>
           </button>
 
-          <button className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
+          <button onClick={() => window.location.href = "/admin/usage"} className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
             <div className="min-w-[40px] min-h-[40px] w-10 h-10 rounded-lg bg-gradient-to-br from-[#22c55e] to-[#16a34a] flex items-center justify-center text-white" aria-hidden="true">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -199,7 +193,7 @@ export default function DashboardPage() {
             </span>
           </button>
 
-          <button className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
+          <button onClick={() => window.location.href = "/admin/templates"} className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200 group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]">
             <div className="min-w-[40px] min-h-[40px] w-10 h-10 rounded-lg bg-gradient-to-br from-[#f59e0b] to-[#d97706] flex items-center justify-center text-white" aria-hidden="true">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1h-4a1 1 0 01-1-1v-3z" />
@@ -223,33 +217,40 @@ export default function DashboardPage() {
             View all →
           </a>
         </div>
-        <AgentsTable agents={mockAgents} onAgentClick={handleAgentClick} />
+        {loading ? (
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-12 text-center animate-pulse">
+            <div className="h-4 bg-[#1a1b2e] rounded w-48 mx-auto mb-4"></div>
+            <div className="h-4 bg-[#1a1b2e] rounded w-32 mx-auto"></div>
+          </div>
+        ) : (
+          <AgentsTable agents={data?.agents || []} onAgentClick={handleAgentClick} />
+        )}
       </section>
 
       {/* Recent Activity */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6" aria-labelledby="activity-title">
         <h2 id="activity-title" className="text-lg font-semibold text-white mb-4">Recent Activity</h2>
-        <ul className="space-y-4" role="list">
-          {mockActivity.map((activity, index) => (
-            <li key={index} className="flex items-start space-x-3 pb-4 border-b border-[rgba(255,255,255,0.07)] last:border-0 last:pb-0">
-              <div 
-                className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
-                  activity.type === 'success' ? 'bg-[#22c55e]' :
-                  activity.type === 'error' ? 'bg-red-500' :
-                  'bg-[#3b82f6]'
-                }`} 
-                aria-hidden="true"
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-white">{activity.action}</p>
-                <p className="text-xs text-[#6b7280] mt-1">
-                  <time>{activity.time}</time>
-                </p>
+        {loading ? (
+          <div className="space-y-4 animate-pulse">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="flex items-start space-x-3 pb-4 border-b border-[rgba(255,255,255,0.07)]">
+                <div className="w-2 h-2 rounded-full bg-[#1a1b2e] mt-2"></div>
+                <div className="flex-1">
+                  <div className="h-4 bg-[#1a1b2e] rounded w-3/4 mb-2"></div>
+                  <div className="h-3 bg-[#1a1b2e] rounded w-24"></div>
+                </div>
               </div>
-            </li>
-          ))}
-        </ul>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <svg className="w-12 h-12 mx-auto text-[#6b7280] mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-sm text-[#9ca3af]">No recent activity</p>
+          </div>
+        )}
       </section>
-    </AppShell>
+    </>
   );
 }

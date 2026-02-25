@@ -28,7 +28,7 @@ export default function StatCard({ label, value, change, icon, color = 'blue', o
     <Component
       onClick={onClick}
       className={`
-        bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 
+        bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 overflow-hidden
         hover:border-[rgba(255,255,255,0.15)] motion-safe:transition-all motion-safe:duration-200
         ${onClick ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#08090f]' : ''}
       `}
@@ -58,7 +58,7 @@ export default function StatCard({ label, value, change, icon, color = 'blue', o
         </div>
 
         {icon && (
-          <div className={`w-12 h-12 rounded-lg bg-gradient-to-br ${colorClasses[color]} flex items-center justify-center text-white flex-shrink-0`} aria-hidden="true">
+          <div className={`w-12 h-12 rounded-lg bg-gradient-to-br ${colorClasses[color]} flex items-center justify-center text-white flex-shrink-0 ml-4`} aria-hidden="true">
             <span className="w-6 h-6 block">{icon}</span>
           </div>
         )}

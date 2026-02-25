@@ -1,0 +1,165 @@
+# Vutler Local Development Stack (Mac/Colima)
+# Usage: docker compose -f docker-compose.local.yml up -d
+
+version: '3.8'
+
+services:
+  rocketchat:
+    image: registry.rocket.chat/rocketchat/rocket.chat:latest
+    container_name: vutler-local-rocketchat
+    restart: unless-stopped
+    volumes:
+      - rc-uploads:/app/uploads
+    environment:
+      - PORT=3000
+      - ROOT_URL=http://localhost:3000
+      - MONGO_URL=mongodb://mongo:27017/vutler?replicaSet=rs0
+      - MONGO_OPLOG_URL=mongodb://mongo:27017/local?replicaSet=rs0
+      - DEPLOY_METHOD=docker
+      - REDIS_URL=redis://redis:6379
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@vutler.local
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      - vutler-local
+
+  vutler-api:
+    build:
+      context: ./app/custom
+      dockerfile: Dockerfile
+    container_name: vutler-local-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - MONGO_URL=mongodb://mongo:27017/vutler?replicaSet=rs0
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_URL=postgresql://vutler:vutler@postgres:5432/vutler
+      - LLM_ENCRYPTION_KEY=localdev-32char-secret-key-here
+      - CORS_ORIGIN=http://localhost:3000,http://localhost:3001
+      - SMTP_HOST=mailhog
+      - SMTP_PORT=1025
+      - SMTP_FROM=noreply@vutler.local
+      - ROCKETCHAT_URL=http://rocketchat:3000
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - vutler-local
+
+  mongo:
+    image: mongo:7.0
+    container_name: vutler-local-mongo
+    restart: unless-stopped
+    command: mongod --oplogSize 128 --replSet rs0 --bind_ip_all
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - vutler-local
+
+  mongo-init-replica:
+    image: mongo:7.0
+    container_name: vutler-local-mongo-init
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: >
+      bash -c
+        "for i in `seq 1 30`; do
+          mongosh mongo/vutler --eval \"
+            rs.initiate({
+              _id: 'rs0',
+              members: [ { _id: 0, host: 'mongo:27017' } ]
+            })\" &&
+          s=$$? && break || s=$$?;
+          echo \"Tried $$i times. Waiting 5 secs...\";
+          sleep 5;
+        done; (exit $$s)"
+    networks:
+      - vutler-local
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vutler-local-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=vutler
+      - POSTGRES_USER=vutler
+      - POSTGRES_PASSWORD=vutler
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vutler"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vutler-local
+
+  redis:
+    image: redis:7-alpine
+    container_name: vutler-local-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - vutler-local
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: vutler-local-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - vutler-local
+
+networks:
+  vutler-local:
+    driver: bridge
+
+volumes:
+  rc-uploads:
+  mongo-data:
+  pg-data:
+  redis-data:

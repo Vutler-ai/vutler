@@ -151,7 +151,7 @@ export default function AgentsTable({ agents, onAgentClick }: AgentsTableProps) 
                   <span className="text-sm text-[#9ca3af] font-mono">{agent.model}</span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center space-x-2">
+                  <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-[rgba(255,255,255,0.05)] whitespace-nowrap">
                     <span className={`w-2 h-2 rounded-full ${statusConfig[agent.status].color}`} aria-hidden="true" />
                     <span className={`text-sm font-medium ${statusConfig[agent.status].text}`}>
                       {statusConfig[agent.status].label}
@@ -195,7 +195,7 @@ export default function AgentsTable({ agents, onAgentClick }: AgentsTableProps) 
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="text-sm font-medium text-white truncate">{agent.name}</h3>
-                  <div className="flex items-center space-x-1 ml-2">
+                  <div className="inline-flex items-center space-x-1 ml-2 px-2 py-0.5 rounded-full bg-[rgba(255,255,255,0.05)] whitespace-nowrap">
                     <span className={`w-2 h-2 rounded-full ${statusConfig[agent.status].color}`} aria-hidden="true" />
                     <span className={`text-xs font-medium ${statusConfig[agent.status].text}`}>
                       {statusConfig[agent.status].label}
