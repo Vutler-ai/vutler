@@ -171,6 +171,11 @@ Common documents/
 - Toutes les redirections partagées starbox-group.com → copient vers alex@vutler.com
 - Agent mailboxes K-Suite: IMAP inaccessible (SSO blocks direct login)
 
+## Key Decision: Vutler Cloud Agents (2026-02-25)
+- **Dès que le runtime Vutler est opérationnel**, basculer les tâches dev/design/product vers les agents Vutler cloud (VPS) au lieu des sous-agents OpenClaw locaux
+- Objectif : dogfooding — utiliser notre propre produit
+- Prérequis : auth flow, LLM Router, Agent Builder, chat integration
+
 ## Known Issues
 - kChat WebSocket incompatible (Infomaniak uWebSockets) → polling bridge
 - K-Suite mail: IMAP blocked by SSO, API password change doesn't work
