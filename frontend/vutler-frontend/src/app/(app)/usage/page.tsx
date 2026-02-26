@@ -1,21 +1,98 @@
 "use client";
+import { useState, useEffect } from "react";
 
-export default function Usage_Page() {
+interface UsageRow {
+  agent?: string;
+  date?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  total_tokens?: number;
+  cost?: number;
+}
+
+export default function UsagePage() {
+  const [rows, setRows] = useState<UsageRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [empty, setEmpty] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/v1/usage")
+      .then((r) => {
+        if (r.status === 404) {
+          setEmpty(true);
+          return [];
+        }
+        return r.json();
+      })
+      .then((d) => {
+        if (d) {
+          const list = Array.isArray(d) ? d : d.usage || d.items || d.data || [];
+          if (list.length === 0) setEmpty(true);
+          setRows(list);
+        }
+      })
+      .catch(() => setEmpty(true))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const totalTokens = rows.reduce((s, r) => s + (r.total_tokens || (r.tokens_in || 0) + (r.tokens_out || 0)), 0);
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Usage</h1>
-          <p className="text-sm text-[#9ca3af]">Coming soon</p>
+    <div className="min-h-screen bg-[#08090f] text-white p-8">
+      <h1 className="text-3xl font-bold mb-2">Usage & Analytics</h1>
+      <p className="text-gray-400 mb-8">Token usage by agent and day</p>
+
+      {loading ? (
+        <p className="text-gray-500">Loading…</p>
+      ) : empty ? (
+        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-12 text-center">
+          <p className="text-4xl mb-4">📊</p>
+          <p className="text-gray-400 text-lg">No usage data yet</p>
+          <p className="text-gray-500 text-sm mt-2">Start using agents to see analytics here</p>
         </div>
-      </div>
-      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-12 text-center">
-        <svg className="w-16 h-16 mx-auto text-[#6b7280] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-        </svg>
-        <h2 className="text-lg font-semibold text-white mb-2">Under Construction</h2>
-        <p className="text-[#9ca3af] max-w-md mx-auto">This feature is being built. Check back soon.</p>
-      </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+            <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+              <p className="text-gray-500 text-sm">Total Tokens</p>
+              <p className="text-2xl font-bold mt-1">{totalTokens.toLocaleString()}</p>
+            </div>
+            <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+              <p className="text-gray-500 text-sm">Requests</p>
+              <p className="text-2xl font-bold mt-1">{rows.length}</p>
+            </div>
+            <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+              <p className="text-gray-500 text-sm">Est. Cost</p>
+              <p className="text-2xl font-bold mt-1">${rows.reduce((s, r) => s + (r.cost || 0), 0).toFixed(4)}</p>
+            </div>
+          </div>
+
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[rgba(255,255,255,0.07)] text-gray-400">
+                  <th className="text-left px-6 py-4">Agent</th>
+                  <th className="text-left px-6 py-4">Date</th>
+                  <th className="text-right px-6 py-4">Tokens In</th>
+                  <th className="text-right px-6 py-4">Tokens Out</th>
+                  <th className="text-right px-6 py-4">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-b border-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.02)]">
+                    <td className="px-6 py-3">{r.agent || "—"}</td>
+                    <td className="px-6 py-3 text-gray-400">{r.date || "—"}</td>
+                    <td className="px-6 py-3 text-right">{(r.tokens_in || 0).toLocaleString()}</td>
+                    <td className="px-6 py-3 text-right">{(r.tokens_out || 0).toLocaleString()}</td>
+                    <td className="px-6 py-3 text-right font-medium">{(r.total_tokens || (r.tokens_in || 0) + (r.tokens_out || 0)).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

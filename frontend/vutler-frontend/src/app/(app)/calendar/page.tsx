@@ -41,7 +41,7 @@ export default function CalendarPage() {
       );
       if (!res.ok) throw new Error("Failed to fetch events");
       const data = await res.json();
-      setEvents(data);
+      setEvents(Array.isArray(data) ? data : data.events || []);
     } catch (err: any) {
       setError(err.message);
     } finally {

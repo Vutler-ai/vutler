@@ -26,7 +26,20 @@ export default function DashboardPage() {
     fetch('/api/v1/dashboard')
       .then(r => r.json())
       .then(result => {
-        setData(result);
+        // Normalize API response to expected format
+        const normalized: DashboardData = result.stats ? result : {
+          success: true,
+          agents: result.agentsList || [],
+          stats: {
+            totalAgents: result.agents || 0,
+            activeAgents: result.agents || 0,
+            messagesToday: result.messages || 0,
+            totalTokens: 0,
+            uptimeHours: Math.round((result.uptime || 0) / 3600),
+            uptimeSeconds: result.uptime || 0,
+          },
+        };
+        setData(normalized);
         setLoading(false);
       })
       .catch(err => {
@@ -45,7 +58,19 @@ export default function DashboardPage() {
     fetch('/api/v1/dashboard')
       .then(r => r.json())
       .then(result => {
-        setData(result);
+        const normalized: DashboardData = result.stats ? result : {
+          success: true,
+          agents: result.agentsList || [],
+          stats: {
+            totalAgents: result.agents || 0,
+            activeAgents: result.agents || 0,
+            messagesToday: result.messages || 0,
+            totalTokens: 0,
+            uptimeHours: Math.round((result.uptime || 0) / 3600),
+            uptimeSeconds: result.uptime || 0,
+          },
+        };
+        setData(normalized);
         setLoading(false);
       })
       .catch(err => {

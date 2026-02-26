@@ -31,7 +31,7 @@ export default function EmailPage() {
       const res = await fetch("/api/v1/email/inbox");
       if (!res.ok) throw new Error("Failed to fetch emails");
       const data = await res.json();
-      setEmails(data);
+      setEmails(Array.isArray(data) ? data : data.emails || data.inbox || []);
     } catch (err: any) {
       setError(err.message);
     } finally {

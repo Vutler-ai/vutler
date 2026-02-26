@@ -1,21 +1,120 @@
 "use client";
+import { useState, useEffect } from "react";
 
-export default function Builder_Page() {
+const AGENT_TYPES = ["conversational", "task", "retrieval", "coding", "custom"];
+
+export default function BuilderPage() {
+  const [name, setName] = useState("");
+  const [type, setType] = useState("conversational");
+  const [model, setModel] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [tools, setTools] = useState("");
+  const [models, setModels] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/v1/models")
+      .then((r) => r.json())
+      .then((d) => {
+        const list = Array.isArray(d) ? d : d.models || d.items || [];
+        setModels(list.map((m: any) => (typeof m === "string" ? m : m.id || m.name)));
+      })
+      .catch(() => setModels(["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-20250514", "claude-opus-4-20250514"]));
+  }, []);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/v1/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          type,
+          model,
+          system_prompt: systemPrompt,
+          tools: tools
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        }),
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      setMsg({ ok: true, text: "Agent created!" });
+      setName("");
+      setSystemPrompt("");
+      setTools("");
+    } catch (err: any) {
+      setMsg({ ok: false, text: err.message || "Failed to create agent" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const input =
+    "w-full bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition";
+
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Agent Builder</h1>
-          <p className="text-sm text-[#9ca3af]">Coming soon</p>
+    <div className="min-h-screen bg-[#08090f] text-white p-8">
+      <h1 className="text-3xl font-bold mb-2">Agent Builder</h1>
+      <p className="text-gray-400 mb-8">Create a new AI agent</p>
+
+      {msg && (
+        <div className={`mb-6 px-4 py-3 rounded-lg text-sm ${msg.ok ? "bg-green-900/40 text-green-300" : "bg-red-900/40 text-red-300"}`}>
+          {msg.text}
         </div>
-      </div>
-      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-12 text-center">
-        <svg className="w-16 h-16 mx-auto text-[#6b7280] mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-        </svg>
-        <h2 className="text-lg font-semibold text-white mb-2">Under Construction</h2>
-        <p className="text-[#9ca3af] max-w-md mx-auto">This feature is being built. Check back soon.</p>
-      </div>
+      )}
+
+      <form onSubmit={submit} className="max-w-2xl space-y-6">
+        <div>
+          <label className="block text-sm text-gray-400 mb-2">Agent Name</label>
+          <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="My Agent" required />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-2">Type</label>
+          <select className={input} value={type} onChange={(e) => setType(e.target.value)}>
+            {AGENT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-2">Model</label>
+          <select className={input} value={model} onChange={(e) => setModel(e.target.value)} required>
+            <option value="">Select a model…</option>
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-2">System Prompt</label>
+          <textarea className={input + " h-32 resize-y"} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="You are a helpful assistant..." />
+        </div>
+
+        <div>
+          <label className="block text-sm text-gray-400 mb-2">Tools (comma-separated)</label>
+          <input className={input} value={tools} onChange={(e) => setTools(e.target.value)} placeholder="web_search, code_interpreter" />
+        </div>
+
+        <button
+          type="submit"
+          disabled={saving}
+          className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-medium px-6 py-3 rounded-lg transition"
+        >
+          {saving ? "Creating…" : "Create Agent"}
+        </button>
+      </form>
     </div>
   );
 }

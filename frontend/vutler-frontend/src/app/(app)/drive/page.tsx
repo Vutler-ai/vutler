@@ -64,7 +64,7 @@ export default function DrivePage() {
       const res = await fetch(`/api/v1/drive/files?path=${encodeURIComponent(path)}`);
       if (!res.ok) throw new Error("Failed to fetch files");
       const data = await res.json();
-      setFiles(data);
+      setFiles(Array.isArray(data) ? data : data.files || []);
       setCurrentPath(path);
     } catch (err: any) {
       setError(err.message);

@@ -92,7 +92,37 @@ config:
 - Review/approve workflow
 - "Community" vs "Official" badges
 
+## Wave 3 — BMAD-METHOD Templates (21 agents)
+
+**Source:** github.com/bmad-code-org/BMAD-METHOD (v6)
+**Analysis:** projects/vutler/docs/bmad-analysis.md (2026-02-14)
+**Existing skills:** agile-story-master, dev-story-executor, product-vision-builder, system-architect
+
+| # | Template | BMAD Agent | Category |
+|---|----------|-----------|----------|
+| 21 | **Product Manager** | John 📋 | Product |
+| 22 | **System Architect** | Winston 🏗️ | Engineering |
+| 23 | **Developer (TDD)** | Amelia 💻 | Engineering |
+| 24 | **UX Designer** | Sally 🎨 | Design |
+| 25 | **Scrum Master** | (workflow) | Agile |
+| 26 | **QA Engineer** | (workflow) | Quality |
+| 27 | **Tech Writer** | (workflow) | Documentation |
+| 28 | **Security Reviewer** | (workflow) | Security |
+| 29 | **Performance Engineer** | (workflow) | Engineering |
+| 30 | **DevOps Engineer** | (workflow) | Infrastructure |
+| 31-41 | **Remaining BMAD agents** | Various | Mixed |
+
+### Story 9.6: Port BMAD Templates (5 pts)
+- Extract 21 BMAD agent personas + system prompts from YAML
+- Convert to template.vutler.yaml format
+- Map BMAD workflows → Vutler tool integrations
+- Leverage existing skills as starting point
+- Tag as "Official - BMAD Method" in marketplace
+
+**Total at launch: 41 templates** (20 métier + 21 BMAD)
+
 ## Competitive Advantage
 - **GPTs Store** (OpenAI) → locked to OpenAI models
 - **Vutler Marketplace** → any LLM, self-hosted, open source templates
 - Fork advantage: users can modify templates, not just use them
+- **BMAD integration** → full agile dev methodology out of the box (unique differentiator)
