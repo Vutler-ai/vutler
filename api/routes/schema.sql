@@ -39,6 +39,36 @@ VALUES
   ('timezone', 'UTC', 'string', 'Default timezone', NOW(), NOW())
 ON CONFLICT (key) DO NOTHING;
 
+-- ─── Sprint 7.4: Vutler Connect ─────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS connect_partners (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  phone VARCHAR(50) NOT NULL,
+  channel VARCHAR(50) NOT NULL DEFAULT 'whatsapp',
+  webhook_url TEXT,
+  config JSONB DEFAULT '{}',
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS connect_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  partner_id UUID REFERENCES connect_partners(id) ON DELETE CASCADE,
+  agent_id VARCHAR(255),
+  direction VARCHAR(10) NOT NULL CHECK (direction IN ('in', 'out')),
+  channel VARCHAR(50) NOT NULL DEFAULT 'whatsapp',
+  content TEXT NOT NULL,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_connect_partners_phone ON connect_partners(phone);
+CREATE INDEX IF NOT EXISTS idx_connect_partners_active ON connect_partners(is_active);
+CREATE INDEX IF NOT EXISTS idx_connect_messages_partner ON connect_messages(partner_id);
+CREATE INDEX IF NOT EXISTS idx_connect_messages_created ON connect_messages(created_at);
+
 -- Example provider data (optional)
 -- INSERT INTO workspace_llm_providers (name, provider_type, api_url, model, is_active)
 -- VALUES 

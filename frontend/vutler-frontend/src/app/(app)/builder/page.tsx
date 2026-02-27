@@ -1,120 +1,288 @@
 "use client";
-import { useState, useEffect } from "react";
 
-const AGENT_TYPES = ["conversational", "task", "retrieval", "coding", "custom"];
+import React, { useState } from "react";
+import {
+  Upload, Save, X, Globe, Code, Brain, Mail, FolderOpen, CalendarDays,
+  Hash, Plus, Sparkles, Activity
+} from "lucide-react";
+
+const MBTI_TYPES = ["INTJ", "ENFP", "ISTJ", "ENTP", "INFJ"] as const;
+
+const ROLES = [
+  "Coordinator", "Engineer", "Designer", "PM", "Office Manager",
+  "Marketing", "Sales", "Content", "Community", "Research", "Intel", "Portfolio", "Security",
+];
+
+const PROVIDERS = ["OpenAI", "Anthropic", "Google", "Mistral", "Meta"];
+const MODELS: Record<string, string[]> = {
+  OpenAI: ["GPT-4o", "GPT-4o-mini", "o1-preview", "o1-mini"],
+  Anthropic: ["Claude Opus 4", "Claude Sonnet 4", "Claude Haiku 3.5"],
+  Google: ["Gemini 2.0 Flash", "Gemini 2.0 Pro"],
+  Mistral: ["Mistral Large", "Codestral"],
+  Meta: ["Llama 3.1 405B", "Llama 3.1 70B"],
+};
+
+const CAPABILITIES = [
+  { id: "web", label: "Web Search", icon: Globe, description: "Search the internet for real-time information" },
+  { id: "code", label: "Code Exec", icon: Code, description: "Execute code in a sandboxed environment" },
+  { id: "memory", label: "Memory", icon: Brain, description: "Long-term memory and recall across sessions" },
+  { id: "email", label: "Email", icon: Mail, description: "Send and manage email communications" },
+  { id: "files", label: "Files", icon: FolderOpen, description: "Read, write, and organize files" },
+  { id: "calendar", label: "Calendar", icon: CalendarDays, description: "Schedule and manage calendar events" },
+];
+
+const DEFAULT_CHANNELS = ["#general", "#engineering", "#design", "#marketing"];
 
 export default function BuilderPage() {
-  const [name, setName] = useState("");
-  const [type, setType] = useState("conversational");
-  const [model, setModel] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [tools, setTools] = useState("");
-  const [models, setModels] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [name, setName] = useState("Jarvis");
+  const [role, setRole] = useState("Coordinator");
+  const [mbti, setMbti] = useState<string>("INTJ");
+  const [provider, setProvider] = useState("Anthropic");
+  const [model, setModel] = useState("Claude Opus 4");
+  const [soul, setSoul] = useState(
+    "You are Jarvis, the central coordinator of Starbox Group's AI agent fleet. You orchestrate tasks, manage inter-agent communication, and ensure all operations run efficiently.\n\nCORE DIRECTIVES:\n- Prioritize team coordination and task delegation\n- Maintain situational awareness across all agents\n- Escalate critical decisions to human oversight\n- Optimize resource allocation across the fleet"
+  );
+  const [enabledCaps, setEnabledCaps] = useState<Set<string>>(new Set(["web", "memory", "email", "calendar"]));
+  const [channels, setChannels] = useState(DEFAULT_CHANNELS);
+  const [newChannel, setNewChannel] = useState("");
 
-  useEffect(() => {
-    fetch("/api/v1/models")
-      .then((r) => r.json())
-      .then((d) => {
-        const list = Array.isArray(d) ? d : d.models || d.items || [];
-        setModels(list.map((m: any) => (typeof m === "string" ? m : m.id || m.name)));
-      })
-      .catch(() => setModels(["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-20250514", "claude-opus-4-20250514"]));
-  }, []);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    setMsg(null);
-    try {
-      const res = await fetch("/api/v1/agents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          type,
-          model,
-          system_prompt: systemPrompt,
-          tools: tools
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean),
-        }),
-      });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
-      setMsg({ ok: true, text: "Agent created!" });
-      setName("");
-      setSystemPrompt("");
-      setTools("");
-    } catch (err: any) {
-      setMsg({ ok: false, text: err.message || "Failed to create agent" });
-    } finally {
-      setSaving(false);
-    }
+  const toggleCap = (id: string) => {
+    const next = new Set(enabledCaps);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setEnabledCaps(next);
   };
 
-  const input =
-    "w-full bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition";
+  const addChannel = () => {
+    const ch = newChannel.trim().startsWith("#") ? newChannel.trim() : `#${newChannel.trim()}`;
+    if (ch.length > 1 && !channels.includes(ch)) {
+      setChannels([...channels, ch]);
+    }
+    setNewChannel("");
+  };
 
   return (
-    <div className="min-h-screen bg-[#08090f] text-white p-8">
-      <h1 className="text-3xl font-bold mb-2">Agent Builder</h1>
-      <p className="text-gray-400 mb-8">Create a new AI agent</p>
-
-      {msg && (
-        <div className={`mb-6 px-4 py-3 rounded-lg text-sm ${msg.ok ? "bg-green-900/40 text-green-300" : "bg-red-900/40 text-red-300"}`}>
-          {msg.text}
-        </div>
-      )}
-
-      <form onSubmit={submit} className="max-w-2xl space-y-6">
-        <div>
-          <label className="block text-sm text-gray-400 mb-2">Agent Name</label>
-          <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="My Agent" required />
-        </div>
-
-        <div>
-          <label className="block text-sm text-gray-400 mb-2">Type</label>
-          <select className={input} value={type} onChange={(e) => setType(e.target.value)}>
-            {AGENT_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </option>
-            ))}
-          </select>
+    <div className="min-h-screen bg-[#080912] p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Build Your AI Agent</h1>
+            <p className="text-sm text-slate-400">Configure identity, personality, and capabilities</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-slate-600">Autosaved 2 min ago</span>
+            <button className="text-sm text-slate-400 hover:text-white px-4 py-2 cursor-pointer transition-colors">Cancel</button>
+            <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-5 py-2 rounded-lg cursor-pointer transition-colors">
+              <Save className="w-4 h-4" /> Save Agent
+            </button>
+          </div>
         </div>
 
-        <div>
-          <label className="block text-sm text-gray-400 mb-2">Model</label>
-          <select className={input} value={model} onChange={(e) => setModel(e.target.value)} required>
-            <option value="">Select a model…</option>
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left: Config */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* Agent Identity */}
+            <section className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+              <h2 className="text-sm font-semibold text-white mb-4">Agent Identity</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5 block">Name</label>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5 block">Role Profile</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 cursor-pointer appearance-none"
+                  >
+                    {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="mt-4">
+                <label className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5 block">Avatar</label>
+                <div className="w-full h-24 border-2 border-dashed border-slate-800/60 rounded-xl flex items-center justify-center hover:border-slate-700 cursor-pointer transition-colors">
+                  <div className="text-center">
+                    <Upload className="w-5 h-5 text-slate-600 mx-auto mb-1" />
+                    <span className="text-[10px] text-slate-500">Click or drag to upload</span>
+                  </div>
+                </div>
+              </div>
+            </section>
 
-        <div>
-          <label className="block text-sm text-gray-400 mb-2">System Prompt</label>
-          <textarea className={input + " h-32 resize-y"} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} placeholder="You are a helpful assistant..." />
-        </div>
+            {/* MBTI */}
+            <section className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+              <h2 className="text-sm font-semibold text-white mb-4">MBTI Personality</h2>
+              <div className="flex gap-2 flex-wrap">
+                {MBTI_TYPES.map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setMbti(type)}
+                    className={`px-4 py-2 rounded-lg text-sm font-mono font-semibold cursor-pointer transition-all ${
+                      mbti === type
+                        ? "bg-blue-500/20 text-blue-400 border border-blue-500/30 ring-1 ring-blue-500/20"
+                        : "bg-[#0f1117] text-slate-500 border border-slate-800/60 hover:border-slate-700 hover:text-slate-300"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </section>
 
-        <div>
-          <label className="block text-sm text-gray-400 mb-2">Tools (comma-separated)</label>
-          <input className={input} value={tools} onChange={(e) => setTools(e.target.value)} placeholder="web_search, code_interpreter" />
-        </div>
+            {/* SOUL */}
+            <section className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-white">Personality — SOUL (System Instruction)</h2>
+                <button className="text-[10px] text-blue-400 hover:text-blue-300 cursor-pointer uppercase tracking-wider font-semibold">
+                  Core Directives ↗
+                </button>
+              </div>
+              <textarea
+                value={soul}
+                onChange={(e) => setSoul(e.target.value)}
+                rows={8}
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-4 py-3 text-sm text-slate-300 font-mono leading-relaxed focus:outline-none focus:border-blue-500 resize-none transition-colors"
+              />
+            </section>
 
-        <button
-          type="submit"
-          disabled={saving}
-          className="bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-medium px-6 py-3 rounded-lg transition"
-        >
-          {saving ? "Creating…" : "Create Agent"}
-        </button>
-      </form>
+            {/* LLM Config */}
+            <section className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+              <h2 className="text-sm font-semibold text-white mb-4">LLM Configuration</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5 block">Provider</label>
+                  <select
+                    value={provider}
+                    onChange={(e) => { setProvider(e.target.value); setModel(MODELS[e.target.value][0]); }}
+                    className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 cursor-pointer appearance-none"
+                  >
+                    {PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5 block">Model</label>
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 cursor-pointer appearance-none"
+                  >
+                    {(MODELS[provider] || []).map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            {/* Capabilities */}
+            <section className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+              <h2 className="text-sm font-semibold text-white mb-4">Capabilities & Tools</h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {CAPABILITIES.map((cap) => {
+                  const enabled = enabledCaps.has(cap.id);
+                  return (
+                    <button
+                      key={cap.id}
+                      onClick={() => toggleCap(cap.id)}
+                      className={`p-4 rounded-xl border text-left cursor-pointer transition-all ${
+                        enabled
+                          ? "bg-blue-500/10 border-blue-500/30 hover:border-blue-500/50"
+                          : "bg-[#0f1117] border-slate-800/60 hover:border-slate-700"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <cap.icon className={`w-5 h-5 ${enabled ? "text-blue-400" : "text-slate-600"}`} />
+                        <div className={`w-8 h-4 rounded-full transition-colors ${enabled ? "bg-blue-500" : "bg-slate-700"} relative`}>
+                          <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${enabled ? "right-0.5" : "left-0.5"}`} />
+                        </div>
+                      </div>
+                      <p className={`text-xs font-semibold ${enabled ? "text-white" : "text-slate-400"}`}>{cap.label}</p>
+                      <p className="text-[10px] text-slate-600 mt-0.5">{cap.description}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Channels */}
+            <section className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+              <h2 className="text-sm font-semibold text-white mb-4">Workspace Channels</h2>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {channels.map((ch) => (
+                  <span key={ch} className="flex items-center gap-1.5 bg-[#0f1117] border border-slate-800/60 text-sm text-slate-300 px-3 py-1.5 rounded-full">
+                    <Hash className="w-3 h-3 text-slate-500" />
+                    {ch.replace("#", "")}
+                    <button onClick={() => setChannels(channels.filter((c) => c !== ch))} className="text-slate-600 hover:text-red-400 cursor-pointer ml-0.5">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={newChannel}
+                  onChange={(e) => setNewChannel(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addChannel()}
+                  placeholder="Add channel..."
+                  className="flex-1 bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                />
+                <button onClick={addChannel} className="bg-slate-800 hover:bg-slate-700 text-slate-300 p-2 rounded-lg cursor-pointer transition-colors">
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
+            </section>
+          </div>
+
+          {/* Right: Preview */}
+          <div className="lg:col-span-1">
+            <div className="sticky top-6">
+              <div className="bg-[#0b0c16] rounded-xl border border-slate-800/60 p-6">
+                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-4">Agent Preview</h3>
+                {/* Avatar */}
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-slate-800/60 flex items-center justify-center text-4xl mx-auto mb-4">
+                  🤖
+                </div>
+                <div className="text-center mb-4">
+                  <h4 className="text-lg font-bold text-white">{name || "Unnamed Agent"}</h4>
+                  <span className="inline-block text-[10px] font-mono font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full mt-1">{mbti}</span>
+                  <p className="text-xs text-slate-400 mt-1">{role}</p>
+                </div>
+                {/* Traits */}
+                <div className="flex flex-wrap justify-center gap-1.5 mb-4">
+                  {["Strategic", "Analytical", "Decisive", "Independent"].map((t) => (
+                    <span key={t} className="text-[10px] bg-[#0f1117] text-slate-400 px-2 py-0.5 rounded-full border border-slate-800/60">{t}</span>
+                  ))}
+                </div>
+                {/* Quote */}
+                <p className="text-xs text-slate-500 italic text-center mb-4">&ldquo;Efficiency is intelligent laziness.&rdquo;</p>
+                {/* Status */}
+                <div className="flex items-center justify-between text-xs border-t border-slate-800/60 pt-4">
+                  <div className="flex items-center gap-1.5">
+                    <Activity className="w-3 h-3 text-green-400" />
+                    <span className="text-green-400 font-medium">Active</span>
+                  </div>
+                  <span className="text-slate-500">{channels.length} channels</span>
+                </div>
+                {/* Capabilities */}
+                <div className="mt-4 pt-4 border-t border-slate-800/60">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-2 block">Active Capabilities</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CAPABILITIES.filter((c) => enabledCaps.has(c.id)).map((c) => (
+                      <span key={c.id} className="flex items-center gap-1 text-[10px] bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full">
+                        <c.icon className="w-2.5 h-2.5" />{c.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

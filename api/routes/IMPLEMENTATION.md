@@ -198,6 +198,46 @@ CREATE TABLE IF NOT EXISTS events (
 );
 ```
 
+### 5. Connect Module — WhatsApp Bridge (`connect.js`) ⚡ Sprint 7.4
+- ✅ POST `/api/connect/partners` — Register WhatsApp partner (phone, name, webhook_url)
+- ✅ GET `/api/connect/partners` — List partners (filter: active, channel)
+- ✅ PUT `/api/connect/partners/:id` — Update partner config
+- ✅ GET `/api/connect/messages/:partner_id` — Message history (pagination)
+- ✅ GET `/api/connect/webhook/whatsapp` — Meta Cloud API verification challenge
+- ✅ POST `/api/connect/webhook/whatsapp` — Inbound WhatsApp messages (Meta format)
+- ✅ POST `/api/connect/send` — Outbound send (stub — logs + stores, real provider TBD)
+- ✅ Auto partner creation on inbound messages
+- ✅ Full message sync in `connect_messages` (direction in/out, metadata JSONB)
+
+**Tables:** `connect_partners`, `connect_messages` (auto-created + in schema.sql)
+**Tests:** `api/tests/connect.test.js` (11 tests, mocked PG)
+**Status:** Stub mode — send logs but doesn't deliver. Wire Meta Cloud API / Twilio after.
+
+**Integration:**
+```javascript
+const connectRoutes = require('./routes/connect');
+app.use('/api/connect', connectRoutes);
+```
+
+**Testing:**
+```bash
+# Register partner
+curl -X POST http://localhost:3001/api/connect/partners \
+  -H "Content-Type: application/json" \
+  -d '{"name":"John","phone":"+41791234567"}'
+
+# Send message (stub)
+curl -X POST http://localhost:3001/api/connect/send \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"agent-1","to_phone":"+41791234567","message":"Hello!"}'
+
+# List partners
+curl http://localhost:3001/api/connect/partners
+
+# Message history
+curl http://localhost:3001/api/connect/messages/<partner_id>
+```
+
 ## 🎯 Next Steps
 
 1. **Deploy to VPS** — Run deploy.sh or manual steps above

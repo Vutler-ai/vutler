@@ -1,397 +1,178 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useState } from "react";
+import { Plus, ChevronLeft, ChevronRight, X, Clock, MapPin, Edit, Trash2 } from "lucide-react";
+
+const AGENTS: Record<string, { name: string; emoji: string; color: string }> = {
+  jarvis: { name: "Jarvis", emoji: "🤖", color: "bg-blue-500" },
+  mike: { name: "Mike", emoji: "⚙️", color: "bg-cyan-500" },
+  philip: { name: "Philip", emoji: "🎨", color: "bg-purple-500" },
+  luna: { name: "Luna", emoji: "🧪", color: "bg-pink-500" },
+  rex: { name: "Rex", emoji: "🛡️", color: "bg-red-500" },
+  max: { name: "Max", emoji: "📈", color: "bg-green-500" },
+  victor: { name: "Victor", emoji: "💰", color: "bg-emerald-500" },
+  nora: { name: "Nora", emoji: "🎮", color: "bg-rose-500" },
+};
+
+type EventType = "MEETING" | "AGENT TASK" | "DEPLOY";
 
 interface CalendarEvent {
   id: string;
   title: string;
-  start: string;
-  end: string;
-  description?: string;
-  color: string;
+  date: number; // day of month (Feb 2026)
+  time: string;
+  endTime: string;
+  type: EventType;
+  agentId: string;
+  description: string;
 }
 
-const COLORS = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
+const EVENT_TYPE_STYLES: Record<EventType, string> = {
+  MEETING: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  "AGENT TASK": "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  DEPLOY: "bg-green-500/20 text-green-400 border-green-500/30",
+};
+
+const MOCK_EVENTS: CalendarEvent[] = [
+  { id: "E1", title: "Daily Standup", date: 23, time: "09:00", endTime: "09:15", type: "MEETING", agentId: "jarvis", description: "Daily sync with all agents. Review blockers, priorities, and sprint progress." },
+  { id: "E2", title: "LLM Pipeline Deploy v2.4", date: 24, time: "14:00", endTime: "15:00", type: "DEPLOY", agentId: "mike", description: "Production deployment of optimized LLM inference pipeline. Includes KV-cache and batch scheduler improvements." },
+  { id: "E3", title: "Sprint 12 Review", date: 25, time: "15:00", endTime: "16:00", type: "MEETING", agentId: "luna", description: "End-of-sprint review with stakeholders. Demo new features, review velocity, plan Sprint 13." },
+  { id: "E4", title: "Security Scan Window", date: 26, time: "02:00", endTime: "06:00", type: "AGENT TASK", agentId: "rex", description: "Automated security scanning of all API endpoints. Includes penetration testing and vulnerability assessment." },
+  { id: "E5", title: "Design Review — Agent Builder", date: 27, time: "11:00", endTime: "12:00", type: "MEETING", agentId: "philip", description: "Review redesigned agent builder UI. Gather feedback on MBTI system and capability toggles." },
+  { id: "E6", title: "Marketing Campaign Launch", date: 27, time: "10:00", endTime: "10:30", type: "AGENT TASK", agentId: "max", description: "Q1 Vutler Pro campaign goes live. Multi-channel: email, social, landing pages." },
+  { id: "E7", title: "Community AMA Session", date: 28, time: "18:00", endTime: "19:00", type: "MEETING", agentId: "nora", description: "Monthly Ask-Me-Anything with the Vutler community on Discord. Topic: Agent orchestration best practices." },
+  { id: "E8", title: "Sales Pipeline Review", date: 24, time: "16:00", endTime: "16:45", type: "MEETING", agentId: "victor", description: "Review enterprise pipeline, conversion rates, and Q1 targets with Victor." },
+];
+
+const DAYS_OF_WEEK = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
 export default function CalendarPage() {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [formData, setFormData] = useState({
-    title: "",
-    start: "",
-    end: "",
-    description: "",
-    color: COLORS[0],
-  });
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
 
-  const fetchEvents = async () => {
-    const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-    
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/v1/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`
-      );
-      if (!res.ok) throw new Error("Failed to fetch events");
-      const data = await res.json();
-      setEvents(Array.isArray(data) ? data : data.events || []);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Feb 2026 starts on Sunday (day 0), so offset = 6 (for Mon-start grid)
+  // Feb 2026: 28 days, starts on Sunday
+  const daysInMonth = 28;
+  const startOffset = 6; // Sunday = 6 in Mon-start
+  const today = 27; // Feb 27, 2026
 
-  useEffect(() => {
-    fetchEvents();
-  }, [currentDate]);
-
-  const handleCreateEvent = async () => {
-    if (!formData.title || !formData.start || !formData.end) return;
-    try {
-      const res = await fetch("/api/v1/calendar/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
-      if (!res.ok) throw new Error("Failed to create event");
-      await fetchEvents();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const handleUpdateEvent = async () => {
-    if (!editingEvent || !formData.title || !formData.start || !formData.end) return;
-    try {
-      const res = await fetch(`/api/v1/calendar/events/${editingEvent.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
-      if (!res.ok) throw new Error("Failed to update event");
-      await fetchEvents();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const handleDeleteEvent = async (id: string) => {
-    if (!confirm("Delete this event?")) return;
-    try {
-      const res = await fetch(`/api/v1/calendar/events/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete event");
-      await fetchEvents();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const resetForm = () => {
-    setShowModal(false);
-    setEditingEvent(null);
-    setSelectedDate(null);
-    setFormData({
-      title: "",
-      start: "",
-      end: "",
-      description: "",
-      color: COLORS[0],
-    });
-  };
-
-  const openNewEventModal = (date: Date) => {
-    const dateStr = date.toISOString().split("T")[0];
-    setSelectedDate(date);
-    setFormData({
-      title: "",
-      start: `${dateStr}T09:00`,
-      end: `${dateStr}T10:00`,
-      description: "",
-      color: COLORS[0],
-    });
-    setShowModal(true);
-  };
-
-  const openEditEventModal = (event: CalendarEvent) => {
-    setEditingEvent(event);
-    setFormData({
-      title: event.title,
-      start: event.start,
-      end: event.end,
-      description: event.description || "",
-      color: event.color,
-    });
-    setShowModal(true);
-  };
-
-  const getDaysInMonth = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDayOfWeek = firstDay.getDay();
-
-    const days: (Date | null)[] = [];
-    for (let i = 0; i < startingDayOfWeek; i++) {
-      days.push(null);
-    }
-    for (let i = 1; i <= daysInMonth; i++) {
-      days.push(new Date(year, month, i));
-    }
-    return days;
-  };
-
-  const getEventsForDay = (date: Date | null) => {
-    if (!date) return [];
-    const dateStr = date.toISOString().split("T")[0];
-    return events.filter((e) => e.start.startsWith(dateStr));
-  };
-
-  const getUpcomingEvents = () => {
-    const now = new Date();
-    return events
-      .filter((e) => new Date(e.start) >= now)
-      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
-      .slice(0, 5);
-  };
-
-  const previousMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
-  };
-
-  const days = getDaysInMonth();
-  const upcomingEvents = getUpcomingEvents();
+  const calendarCells: (number | null)[] = [];
+  for (let i = 0; i < startOffset; i++) calendarCells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) calendarCells.push(d);
+  while (calendarCells.length % 7 !== 0) calendarCells.push(null);
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Calendar</h1>
-          <p className="text-sm text-[#9ca3af]">Manage your schedule</p>
-        </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={previousMonth}
-            className="px-3 py-2 bg-[#14151f] border border-[rgba(255,255,255,0.07)] text-white rounded-lg hover:bg-[#1a1b26] transition"
-          >
-            ←
-          </button>
-          <span className="text-white font-semibold min-w-[150px] text-center">
-            {currentDate.toLocaleString("default", { month: "long", year: "numeric" })}
-          </span>
-          <button
-            onClick={nextMonth}
-            className="px-3 py-2 bg-[#14151f] border border-[rgba(255,255,255,0.07)] text-white rounded-lg hover:bg-[#1a1b26] transition"
-          >
-            →
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="mb-4 p-4 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400">
-          {error}
-        </div>
-      )}
-
-      <div className="flex-1 flex gap-4 overflow-hidden">
-        {/* Calendar Grid */}
-        <div className="flex-1 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
-          {loading ? (
-            <div className="flex items-center justify-center h-full text-[#9ca3af]">
-              Loading calendar...
+    <div className="min-h-screen bg-[#080912] p-6 flex gap-6">
+      <div className="flex-1">
+        {/* Header */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Calendar</h1>
+            <p className="text-sm text-slate-400">Schedule and track agent activities</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 bg-[#0b0c16] rounded-lg border border-slate-800/60 p-0.5">
+              <button className="p-1.5 text-slate-400 hover:text-white cursor-pointer"><ChevronLeft className="w-4 h-4" /></button>
+              <button className="px-3 py-1.5 text-xs font-medium text-blue-400 cursor-pointer">Today</button>
+              <button className="p-1.5 text-slate-400 hover:text-white cursor-pointer"><ChevronRight className="w-4 h-4" /></button>
             </div>
-          ) : (
-            <div className="h-full flex flex-col">
-              {/* Day Headers */}
-              <div className="grid grid-cols-7 gap-2 mb-2">
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                  <div key={day} className="text-center text-sm font-semibold text-[#9ca3af] py-2">
-                    {day}
-                  </div>
-                ))}
-              </div>
-              {/* Days Grid */}
-              <div className="grid grid-cols-7 gap-2 flex-1">
-                {days.map((date, idx) => {
-                  const dayEvents = getEventsForDay(date);
-                  const isToday =
-                    date &&
-                    date.toDateString() === new Date().toDateString();
-                  return (
-                    <div
-                      key={idx}
-                      onClick={() => date && openNewEventModal(date)}
-                      className={`border border-[rgba(255,255,255,0.07)] rounded-lg p-2 cursor-pointer hover:bg-[#1a1b26] transition ${
-                        !date ? "bg-transparent cursor-default" : ""
-                      } ${isToday ? "border-[#3b82f6]" : ""}`}
-                    >
-                      {date && (
-                        <>
-                          <div
-                            className={`text-sm font-semibold mb-1 ${
-                              isToday ? "text-[#3b82f6]" : "text-white"
-                            }`}
-                          >
-                            {date.getDate()}
-                          </div>
-                          <div className="space-y-1">
-                            {dayEvents.slice(0, 3).map((event) => (
-                              <div
-                                key={event.id}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditEventModal(event);
-                                }}
-                                style={{ backgroundColor: event.color }}
-                                className="text-xs text-white px-2 py-1 rounded truncate"
-                              >
-                                {event.title}
-                              </div>
-                            ))}
-                            {dayEvents.length > 3 && (
-                              <div className="text-xs text-[#6b7280]">
-                                +{dayEvents.length - 3} more
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Upcoming Events */}
-        <div className="w-80 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Upcoming</h2>
-          {upcomingEvents.length === 0 ? (
-            <div className="text-center text-[#6b7280] py-8 text-sm">
-              No upcoming events
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {upcomingEvents.map((event) => (
-                <div
-                  key={event.id}
-                  onClick={() => openEditEventModal(event)}
-                  className="bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg p-3 cursor-pointer hover:border-[#3b82f6] transition"
-                >
-                  <div
-                    className="w-3 h-3 rounded-full mb-2"
-                    style={{ backgroundColor: event.color }}
-                  ></div>
-                  <h3 className="text-white font-semibold mb-1">{event.title}</h3>
-                  <p className="text-xs text-[#9ca3af]">
-                    {new Date(event.start).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </div>
+            <h2 className="text-lg font-semibold text-white">February 2026</h2>
+            <div className="flex bg-[#0b0c16] rounded-lg border border-slate-800/60 p-0.5">
+              {(["month", "week", "day"] as const).map((m) => (
+                <button key={m} onClick={() => setViewMode(m)} className={`px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors ${viewMode === m ? "bg-blue-500/20 text-blue-400" : "text-slate-500 hover:text-slate-300"}`}>
+                  {m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
               ))}
             </div>
-          )}
+            <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+              <Plus className="w-4 h-4" /> New Event
+            </button>
+          </div>
+        </div>
+
+        {/* Calendar Grid */}
+        <div className="bg-[#0b0c16] rounded-xl border border-slate-800/60 overflow-hidden">
+          {/* Day headers */}
+          <div className="grid grid-cols-7 border-b border-slate-800/60">
+            {DAYS_OF_WEEK.map((d) => (
+              <div key={d} className="text-center text-[10px] font-semibold text-slate-500 uppercase tracking-wider py-3">{d}</div>
+            ))}
+          </div>
+          {/* Grid cells */}
+          <div className="grid grid-cols-7">
+            {calendarCells.map((day, i) => {
+              const dayEvents = day ? MOCK_EVENTS.filter((e) => e.date === day) : [];
+              const isToday = day === today;
+              return (
+                <div key={i} className={`min-h-[100px] border-b border-r border-slate-800/30 p-2 ${day ? "bg-[#0b0c16]" : "bg-[#080912]"}`}>
+                  {day && (
+                    <>
+                      <span className={`text-xs font-medium inline-flex items-center justify-center w-6 h-6 rounded-full ${isToday ? "bg-blue-500 text-white" : "text-slate-400"}`}>
+                        {day}
+                      </span>
+                      <div className="mt-1 space-y-1">
+                        {dayEvents.map((ev) => {
+                          const agent = AGENTS[ev.agentId];
+                          return (
+                            <button
+                              key={ev.id}
+                              onClick={() => setSelectedEvent(ev)}
+                              className={`w-full text-left text-[10px] px-1.5 py-0.5 rounded ${agent.color}/20 text-slate-300 hover:text-white truncate cursor-pointer transition-colors`}
+                            >
+                              <span className={`inline-block w-1.5 h-1.5 rounded-full ${agent.color} mr-1`} />
+                              {ev.title}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Event Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 w-full max-w-lg">
-            <h2 className="text-xl font-bold text-white mb-4">
-              {editingEvent ? "Edit Event" : "New Event"}
-            </h2>
-            <div className="space-y-4">
-              <input
-                type="text"
-                placeholder="Event title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] focus:outline-none focus:border-[#3b82f6]"
-              />
-              <input
-                type="datetime-local"
-                value={formData.start}
-                onChange={(e) => setFormData({ ...formData, start: e.target.value })}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:border-[#3b82f6]"
-              />
-              <input
-                type="datetime-local"
-                value={formData.end}
-                onChange={(e) => setFormData({ ...formData, end: e.target.value })}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:border-[#3b82f6]"
-              />
-              <textarea
-                placeholder="Description (optional)"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                rows={3}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] focus:outline-none focus:border-[#3b82f6] resize-none"
-              />
+      {/* Right Sidebar - Event Detail */}
+      {selectedEvent && (
+        <div className="w-80 bg-[#0b0c16] border border-slate-800/60 rounded-xl p-5 h-fit sticky top-6">
+          <div className="flex items-start justify-between mb-4">
+            <span className={`uppercase text-[10px] tracking-wider font-semibold rounded-full px-2 py-0.5 border ${EVENT_TYPE_STYLES[selectedEvent.type]}`}>
+              {selectedEvent.type}
+            </span>
+            <button onClick={() => setSelectedEvent(null)} className="text-slate-500 hover:text-white cursor-pointer"><X className="w-4 h-4" /></button>
+          </div>
+          <h3 className="text-lg font-bold text-white mb-3">{selectedEvent.title}</h3>
+          <div className="space-y-3 mb-4">
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <Clock className="w-4 h-4" />
+              <span>{selectedEvent.time} — {selectedEvent.endTime}</span>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-slate-400">
+              <MapPin className="w-4 h-4" />
+              <span>February {selectedEvent.date}, 2026</span>
+            </div>
+          </div>
+          {/* Agent */}
+          <div className="bg-[#0f1117] rounded-lg p-3 border border-slate-800/60 mb-4">
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Assigned Agent</span>
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-2xl">{AGENTS[selectedEvent.agentId].emoji}</span>
               <div>
-                <label className="text-sm text-[#9ca3af] mb-2 block">Color</label>
-                <div className="flex gap-2">
-                  {COLORS.map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => setFormData({ ...formData, color })}
-                      style={{ backgroundColor: color }}
-                      className={`w-8 h-8 rounded-full transition ${
-                        formData.color === color ? "ring-2 ring-white ring-offset-2 ring-offset-[#14151f]" : ""
-                      }`}
-                    />
-                  ))}
-                </div>
+                <p className="text-sm font-medium text-white">{AGENTS[selectedEvent.agentId].name}</p>
+                <p className="text-[10px] text-slate-500">{selectedEvent.agentId}@starbox-group.com</p>
               </div>
             </div>
-            <div className="flex justify-between mt-6">
-              {editingEvent && (
-                <button
-                  onClick={() => handleDeleteEvent(editingEvent.id)}
-                  className="px-4 py-2 bg-red-900/20 border border-red-500/50 text-red-400 rounded-lg hover:bg-red-900/30 transition"
-                >
-                  Delete
-                </button>
-              )}
-              <div className="flex gap-3 ml-auto">
-                <button
-                  onClick={resetForm}
-                  className="px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] text-white rounded-lg hover:bg-[#14151f] transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={editingEvent ? handleUpdateEvent : handleCreateEvent}
-                  disabled={!formData.title || !formData.start || !formData.end}
-                  className="px-4 py-2 bg-[#3b82f6] text-white rounded-lg hover:bg-[#2563eb] transition disabled:opacity-50"
-                >
-                  {editingEvent ? "Update" : "Create"}
-                </button>
-              </div>
-            </div>
+          </div>
+          <p className="text-sm text-slate-400 mb-5">{selectedEvent.description}</p>
+          <div className="flex gap-2">
+            <button className="flex-1 flex items-center justify-center gap-2 bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 text-sm font-medium py-2 rounded-lg cursor-pointer transition-colors">
+              <Edit className="w-3.5 h-3.5" /> Edit
+            </button>
+            <button className="flex-1 flex items-center justify-center gap-2 bg-red-600/20 text-red-400 hover:bg-red-600/30 text-sm font-medium py-2 rounded-lg cursor-pointer transition-colors">
+              <Trash2 className="w-3.5 h-3.5" /> Delete
+            </button>
           </div>
         </div>
       )}

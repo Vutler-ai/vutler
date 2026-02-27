@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for Docker
-  output: 'standalone',
+  // Static export for deployment via Express
+  output: 'export',
   
   // Disable telemetry
   productionBrowserSourceMaps: false,

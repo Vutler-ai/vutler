@@ -155,7 +155,7 @@ async function getTotalTokens() {
   try {
     const pg = await getPgClient();
     const result = await pg.query(
-      'SELECT COALESCE(SUM(tokens), 0)::bigint as total FROM token_usage'
+      'SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::bigint as total FROM token_usage'
     );
     return parseInt(result.rows[0].total) || 0;
   } catch (error) {

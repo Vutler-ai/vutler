@@ -20,12 +20,14 @@ export default function AgentsTable({ agents, onAgentClick }: AgentsTableProps) 
   const [sortField, setSortField] = useState<keyof Agent>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
-  const statusConfig = {
+  const statusConfig: Record<string, { color: string; text: string; label: string }> = {
     active: { color: 'bg-[#22c55e]', text: 'text-[#22c55e]', label: 'Active' },
+    online: { color: 'bg-[#22c55e]', text: 'text-[#22c55e]', label: 'Online' },
     idle: { color: 'bg-[#f59e0b]', text: 'text-[#f59e0b]', label: 'Idle' },
     error: { color: 'bg-red-500', text: 'text-red-500', label: 'Error' },
     offline: { color: 'bg-[#6b7280]', text: 'text-[#6b7280]', label: 'Offline' },
   };
+  const getStatus = (s: string) => statusConfig[s] || statusConfig['offline'];
 
   const handleSort = (field: keyof Agent) => {
     if (sortField === field) {
@@ -152,9 +154,9 @@ export default function AgentsTable({ agents, onAgentClick }: AgentsTableProps) 
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="inline-flex items-center space-x-2 px-2.5 py-1 rounded-full bg-[rgba(255,255,255,0.05)] whitespace-nowrap">
-                    <span className={`w-2 h-2 rounded-full ${statusConfig[agent.status].color}`} aria-hidden="true" />
-                    <span className={`text-sm font-medium ${statusConfig[agent.status].text}`}>
-                      {statusConfig[agent.status].label}
+                    <span className={`w-2 h-2 rounded-full ${getStatus(agent.status).color}`} aria-hidden="true" />
+                    <span className={`text-sm font-medium ${getStatus(agent.status).text}`}>
+                      {getStatus(agent.status).label}
                     </span>
                   </div>
                 </td>
@@ -196,9 +198,9 @@ export default function AgentsTable({ agents, onAgentClick }: AgentsTableProps) 
                 <div className="flex items-start justify-between mb-2">
                   <h3 className="text-sm font-medium text-white truncate">{agent.name}</h3>
                   <div className="inline-flex items-center space-x-1 ml-2 px-2 py-0.5 rounded-full bg-[rgba(255,255,255,0.05)] whitespace-nowrap">
-                    <span className={`w-2 h-2 rounded-full ${statusConfig[agent.status].color}`} aria-hidden="true" />
-                    <span className={`text-xs font-medium ${statusConfig[agent.status].text}`}>
-                      {statusConfig[agent.status].label}
+                    <span className={`w-2 h-2 rounded-full ${getStatus(agent.status).color}`} aria-hidden="true" />
+                    <span className={`text-xs font-medium ${getStatus(agent.status).text}`}>
+                      {getStatus(agent.status).label}
                     </span>
                   </div>
                 </div>

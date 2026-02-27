@@ -36,12 +36,16 @@ const emailRoutes = require('./routes/email');
 const tasksRoutes = require('./routes/tasks');
 const calendarRoutes = require('./routes/calendar');
 const driveRoutes = require('./routes/drive');
+const memoryRoutes = require('./routes/memory');
+const toolsRoutes = require('./routes/tools');
 
 // Mount API routes
 app.use('/api/v1/email', emailRoutes);
 app.use('/api/v1/tasks', tasksRoutes);
 app.use('/api/v1/calendar', calendarRoutes);
 app.use('/api/v1/drive', driveRoutes);
+app.use('/api/memory', memoryRoutes);
+app.use('/api/tools', toolsRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
