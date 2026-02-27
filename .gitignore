@@ -1,1 +1,29 @@
+# Deployments
 deploy-dashboard.sh
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+.secrets/
+*.pem
+*.key
+
+# Dependencies
+node_modules/
+
+# Build
+.next/
+out/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

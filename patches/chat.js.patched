@@ -1,0 +1,550 @@
+/**
+ * Vutler Chat Pro API — Sprint 15
+ * Professional chat (replaces Rocket.Chat) backed by Vaultbrix PostgreSQL
+ * 
+ * Routes mounted at /api/v1/chat
+ */
+
+const express = require('express');
+const router = express.Router();
+const https = require('https');
+const http = require('http');
+const { URL } = require('url');
+const FormData = require('form-data');
+const crypto = require('crypto');
+
+// ─── Agent mention handler for Chat Pro ─────────────────────────────────────
+async function handleAgentMentions(req, channelId, content, senderName) {
+  if (!content) return;
+  
+  const mentionRegex = /@([a-zA-Z_][a-zA-Z0-9_]*)/g;
+  const mentions = [];
+  let match;
+  while ((match = mentionRegex.exec(content)) !== null) {
+    mentions.push(match[1].toLowerCase());
+  }
+  if (mentions.length === 0) return;
+  
+  const pool = pg(req);
+  
+  for (const mentionName of mentions) {
+    try {
+      const { rows } = await pool.query(
+        'SELECT agent_id, model FROM tenant_vutler.agent_llm_configs WHERE LOWER(agent_id) = $1',
+        [mentionName]
+      );
+      if (rows.length === 0) continue;
+      
+      const agentId = rows[0].agent_id;
+      const userMessage = content.replace(new RegExp('@' + mentionName + '\\b', 'gi'), '').trim();
+      if (!userMessage) continue;
+      
+      console.log('[Chat Pro] Agent mention: @' + agentId + ' in channel ' + channelId);
+      
+      // Get Anthropic API key from workspace_llm_providers (real key, not proxy)
+      let apiKey = null;
+      try {
+        const { rows: providers } = await pool.query(
+          "SELECT api_key_encrypted FROM tenant_vutler.workspace_llm_providers WHERE provider = 'anthropic' LIMIT 1"
+        );
+        if (providers.length > 0) apiKey = providers[0].api_key_encrypted;
+      } catch (_) {}
+      if (!apiKey) apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) { console.error('[Chat Pro] No Anthropic API key found'); continue; }
+      
+      const AgentLoop = require('../runtime/agent-loop');
+      const agentLoop = new AgentLoop(pool, apiKey);
+      // Use real Anthropic endpoint (not proxy which may not support tools)
+      agentLoop.anthropicEndpoint = 'https://api.anthropic.com/v1/messages';
+      
+      const result = await agentLoop.run(agentId, userMessage);
+      
+      if (result && result.response) {
+        const { rows: [agentMsg] } = await pool.query(
+          'INSERT INTO chat_messages (channel_id, sender_id, sender_name, content, message_type) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+          [channelId, 'agent:' + agentId, agentId, result.response, 'text']
+        );
+        broadcastToChannel(req, channelId, 'message_new', { message: agentMsg });
+        console.log('[Chat Pro] Agent ' + agentId + ' responded (' + result.iterations + ' iters)');
+      }
+    } catch (err) {
+      console.error('[Chat Pro] Agent ' + mentionName + ' error:', err.message);
+    }
+  }
+}
+
+// ─── Helper: get pg pool ────────────────────────────────────────────────────
+function pg(req) {
+  return req.app.locals.pg;
+}
+
+// ─── Helper: extract user from auth header or query ─────────────────────────
+function getUser(req) {
+  // Support JWT decoded user, or fallback to query/header
+  if (req.user) return req.user;
+  return {
+    id: req.headers['x-user-id'] || req.query.userId || 'anonymous',
+    name: req.headers['x-user-name'] || req.query.userName || 'Anonymous',
+    workspaceId: req.headers['x-workspace-id'] || req.query.workspaceId || '00000000-0000-0000-0000-000000000001'
+  };
+}
+
+// ─── Helper: broadcast to channel members via WS ────────────────────────────
+async function broadcastToChannel(req, channelId, event, data) {
+  const pool = pg(req);
+  const { rows: members } = await pool.query(
+    'SELECT user_id FROM chat_channel_members WHERE channel_id = $1',
+    [channelId]
+  );
+  const memberIds = new Set(members.map(m => m.user_id));
+  
+  const connections = req.app.locals.wsChatConnections;
+  if (!connections) return;
+  
+  for (const [, conn] of connections) {
+    if (memberIds.has(conn.userId)) {
+      try {
+        conn.ws.send(JSON.stringify({ type: event, data }));
+      } catch (_) {}
+    }
+  }
+}
+
+// ─── Synology NAS file upload ───────────────────────────────────────────────
+const NAS_URL = 'https://c453.synology.infomaniak.ch:5001';
+const NAS_USER = (process.env.NAS_USER || 'administrateur');
+const NAS_PASS = (process.env.NAS_PASSWORD);
+
+async function nasLogin() {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({
+      api: 'SYNO.API.Auth',
+      version: '3',
+      method: 'login',
+      account: NAS_USER,
+      passwd: NAS_PASS,
+      session: 'FileStation',
+      format: 'sid'
+    });
+    const url = `${NAS_URL}/webapi/auth.cgi?${params}`;
+    
+    https.get(url, { rejectUnauthorized: false }, (res) => {
+      let body = '';
+      res.on('data', d => body += d);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(body);
+          if (json.success) resolve(json.data.sid);
+          else reject(new Error('NAS login failed: ' + JSON.stringify(json)));
+        } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function nasUpload(sid, channelId, fileName, fileBuffer) {
+  return new Promise((resolve, reject) => {
+    const destPath = `/starbox_drive/shared/chat-files/${channelId}`;
+    
+    // First create folder (ignore errors if exists)
+    const mkdirParams = new URLSearchParams({
+      api: 'SYNO.FileStation.CreateFolder',
+      version: '2',
+      method: 'create',
+      folder_path: '/starbox_drive/shared/chat-files',
+      name: channelId,
+      _sid: sid
+    });
+    
+    https.get(`${NAS_URL}/webapi/entry.cgi?${mkdirParams}`, { rejectUnauthorized: false }, () => {
+      // Now upload file
+      const form = new FormData();
+      form.append('api', 'SYNO.FileStation.Upload');
+      form.append('version', '2');
+      form.append('method', 'upload');
+      form.append('path', destPath);
+      form.append('create_parents', 'true');
+      form.append('overwrite', 'true');
+      form.append('_sid', sid);
+      form.append('file', fileBuffer, { filename: fileName });
+      
+      const urlObj = new URL(`${NAS_URL}/webapi/entry.cgi`);
+      const options = {
+        hostname: urlObj.hostname,
+        port: urlObj.port,
+        path: urlObj.pathname,
+        method: 'POST',
+        headers: form.getHeaders(),
+        rejectUnauthorized: false
+      };
+      
+      const req = https.request(options, (res) => {
+        let body = '';
+        res.on('data', d => body += d);
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(body);
+            if (json.success) {
+              resolve(`${NAS_URL}/webapi/entry.cgi?api=SYNO.FileStation.Download&version=2&method=download&path=${encodeURIComponent(destPath + '/' + fileName)}&_sid=${sid}`);
+            } else {
+              reject(new Error('NAS upload failed: ' + JSON.stringify(json)));
+            }
+          } catch (e) { reject(e); }
+        });
+      });
+      req.on('error', reject);
+      form.pipe(req);
+    }).on('error', reject);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHANNELS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /channels — List channels for user
+ */
+router.get('/channels', async (req, res) => {
+  try {
+    const user = getUser(req);
+    const pool = pg(req);
+    const { rows } = await pool.query(`
+      SELECT c.*, 
+        (SELECT COUNT(*) FROM chat_channel_members WHERE channel_id = c.id) as member_count,
+        (SELECT COUNT(*) FROM chat_messages WHERE channel_id = c.id) as message_count,
+        (SELECT MAX(created_at) FROM chat_messages WHERE channel_id = c.id) as last_message_at
+      FROM chat_channels c
+      INNER JOIN chat_channel_members m ON m.channel_id = c.id
+      WHERE m.user_id = $1
+      ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+    `, [user.id]);
+    
+    res.json({ success: true, channels: rows });
+  } catch (err) {
+    console.error('[Chat] List channels error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /channels — Create channel
+ * Body: { name, type, description, members[], workspaceId }
+ */
+router.post('/channels', async (req, res) => {
+  try {
+    const user = getUser(req);
+    const { name, type = 'channel', description, members = [], workspaceId } = req.body;
+    const pool = pg(req);
+    const wsId = workspaceId || user.workspaceId;
+    
+    // Create channel
+    const { rows: [channel] } = await pool.query(`
+      INSERT INTO chat_channels (name, type, description, workspace_id, created_by)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [name, type, description, wsId, user.id]);
+    
+    // Add creator as admin
+    await pool.query(`
+      INSERT INTO chat_channel_members (channel_id, user_id, role)
+      VALUES ($1, $2, 'admin')
+    `, [channel.id, user.id]);
+    
+    // Add other members
+    for (const memberId of members) {
+      if (memberId !== user.id) {
+        await pool.query(`
+          INSERT INTO chat_channel_members (channel_id, user_id, role)
+          VALUES ($1, $2, 'member')
+          ON CONFLICT DO NOTHING
+        `, [channel.id, memberId]);
+      }
+    }
+    
+    // Broadcast channel creation
+    broadcastToChannel(req, channel.id, 'channel_update', { action: 'created', channel });
+    
+    res.status(201).json({ success: true, channel });
+  } catch (err) {
+    console.error('[Chat] Create channel error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /channels/:id/messages — List messages with pagination
+ */
+router.get('/channels/:id/messages', async (req, res) => {
+  try {
+    const pool = pg(req);
+    const channelId = req.params.id;
+    const limit = Math.min(parseInt(req.query.limit || '50'), 200);
+    const before = req.query.before; // cursor: created_at ISO
+    const parentId = req.query.parentId; // for threads
+    
+    let query = `
+      SELECT * FROM chat_messages
+      WHERE channel_id = $1
+    `;
+    const params = [channelId];
+    let paramIdx = 2;
+    
+    if (parentId) {
+      query += ` AND parent_id = $${paramIdx}`;
+      params.push(parentId);
+      paramIdx++;
+    } else {
+      query += ` AND parent_id IS NULL`;
+    }
+    
+    if (before) {
+      query += ` AND created_at < $${paramIdx}`;
+      params.push(before);
+      paramIdx++;
+    }
+    
+    query += ` ORDER BY created_at DESC LIMIT $${paramIdx}`;
+    params.push(limit);
+    
+    const { rows } = await pool.query(query, params);
+    
+    // Add thread reply counts
+    if (!parentId && rows.length > 0) {
+      const ids = rows.map(r => r.id);
+      const { rows: threads } = await pool.query(`
+        SELECT parent_id, COUNT(*) as reply_count, MAX(created_at) as last_reply_at
+        FROM chat_messages
+        WHERE parent_id = ANY($1)
+        GROUP BY parent_id
+      `, [ids]);
+      const threadMap = {};
+      threads.forEach(t => { threadMap[t.parent_id] = t; });
+      rows.forEach(r => {
+        if (threadMap[r.id]) {
+          r.reply_count = parseInt(threadMap[r.id].reply_count);
+          r.last_reply_at = threadMap[r.id].last_reply_at;
+        }
+      });
+    }
+    
+    res.json({ success: true, messages: rows.reverse(), hasMore: rows.length === limit });
+  } catch (err) {
+    console.error('[Chat] List messages error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /channels/:id/messages — Send message
+ * Body: { content, parentId, messageType }
+ * Also supports multipart file upload
+ */
+router.post('/channels/:id/messages', express.raw({ type: 'multipart/form-data', limit: '50mb' }), async (req, res) => {
+  try {
+    const pool = pg(req);
+    const user = getUser(req);
+    const channelId = req.params.id;
+    const { content, parentId, messageType = 'text', senderName } = req.body;
+    
+    let fileUrl = null, fileName = null, fileSize = null;
+    let msgType = messageType;
+    
+    // Handle file from body (base64)
+    if (req.body.file && req.body.fileName) {
+      try {
+        const sid = await nasLogin();
+        const buffer = Buffer.from(req.body.file, 'base64');
+        fileName = req.body.fileName;
+        fileSize = buffer.length;
+        fileUrl = await nasUpload(sid, channelId, fileName, buffer);
+        if (!content) msgType = 'file';
+      } catch (uploadErr) {
+        console.error('[Chat] File upload error:', uploadErr.message);
+        // Continue without file
+      }
+    }
+    
+    const { rows: [message] } = await pool.query(`
+      INSERT INTO chat_messages (channel_id, sender_id, sender_name, content, message_type, file_url, file_name, file_size, parent_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *
+    `, [channelId, user.id, senderName || user.name, content, msgType, fileUrl, fileName, fileSize, parentId || null]);
+    
+    // Broadcast to channel members
+    broadcastToChannel(req, channelId, 'message_new', { message });
+    
+    // Fire-and-forget: detect @agent mentions and trigger agent responses
+    if (content && content.includes('@')) {
+      handleAgentMentions(req, channelId, content, senderName || user.name).catch(err => {
+        console.error('[Chat Pro] Agent mention handler error:', err.message);
+      });
+    }
+    
+    res.status(201).json({ success: true, message });
+  } catch (err) {
+    console.error('[Chat] Send message error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEMBERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /channels/:id/members — List members
+ */
+router.get('/channels/:id/members', async (req, res) => {
+  try {
+    const pool = pg(req);
+    const { rows } = await pool.query(
+      'SELECT * FROM chat_channel_members WHERE channel_id = $1 ORDER BY joined_at',
+      [req.params.id]
+    );
+    res.json({ success: true, members: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /channels/:id/members — Add member
+ * Body: { userId, role }
+ */
+router.post('/channels/:id/members', async (req, res) => {
+  try {
+    const pool = pg(req);
+    const { userId, role = 'member' } = req.body;
+    const { rows: [member] } = await pool.query(`
+      INSERT INTO chat_channel_members (channel_id, user_id, role)
+      VALUES ($1, $2, $3)
+      ON CONFLICT DO NOTHING
+      RETURNING *
+    `, [req.params.id, userId, role]);
+    
+    broadcastToChannel(req, req.params.id, 'channel_update', { action: 'member_added', userId });
+    res.status(201).json({ success: true, member });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /channels/:id/members/:userId — Remove member
+ */
+router.delete('/channels/:id/members/:userId', async (req, res) => {
+  try {
+    const pool = pg(req);
+    await pool.query(
+      'DELETE FROM chat_channel_members WHERE channel_id = $1 AND user_id = $2',
+      [req.params.id, req.params.userId]
+    );
+    
+    broadcastToChannel(req, req.params.id, 'channel_update', { action: 'member_removed', userId: req.params.userId });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIRECT MESSAGES
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /dm/:userId — Get or create DM channel with user
+ */
+router.get('/dm/:userId', async (req, res) => {
+  try {
+    const pool = pg(req);
+    const user = getUser(req);
+    const targetUserId = req.params.userId;
+    
+    // Find existing DM between these two users
+    const { rows: existing } = await pool.query(`
+      SELECT c.* FROM chat_channels c
+      WHERE c.type = 'direct'
+        AND EXISTS (SELECT 1 FROM chat_channel_members WHERE channel_id = c.id AND user_id = $1)
+        AND EXISTS (SELECT 1 FROM chat_channel_members WHERE channel_id = c.id AND user_id = $2)
+        AND (SELECT COUNT(*) FROM chat_channel_members WHERE channel_id = c.id) = 2
+    `, [user.id, targetUserId]);
+    
+    if (existing.length > 0) {
+      return res.json({ success: true, channel: existing[0], created: false });
+    }
+    
+    // Create new DM channel
+    const dmName = [user.id, targetUserId].sort().join('-');
+    const { rows: [channel] } = await pool.query(`
+      INSERT INTO chat_channels (name, type, workspace_id, created_by)
+      VALUES ($1, 'direct', $2, $3)
+      RETURNING *
+    `, [dmName, user.workspaceId, user.id]);
+    
+    // Add both users
+    await pool.query(`
+      INSERT INTO chat_channel_members (channel_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')
+    `, [channel.id, user.id, targetUserId]);
+    
+    res.status(201).json({ success: true, channel, created: true });
+  } catch (err) {
+    console.error('[Chat] DM error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEGACY COMPAT (keep old endpoints working)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /send — Legacy send message (for agents)
+ */
+router.post('/send', async (req, res) => {
+  try {
+    const pool = pg(req);
+    const { channelId, content, senderId, senderName } = req.body;
+    
+    if (!channelId || !content) {
+      return res.status(400).json({ success: false, error: 'channelId and content required' });
+    }
+    
+    const { rows: [message] } = await pool.query(`
+      INSERT INTO chat_messages (channel_id, sender_id, sender_name, content)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `, [channelId, senderId || 'system', senderName || 'System', content]);
+    
+    broadcastToChannel(req, channelId, 'message_new', { message });
+    res.json({ success: true, message });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /messages — Legacy list messages (for agents)
+ */
+router.get('/messages', async (req, res) => {
+  try {
+    const pool = pg(req);
+    const channelId = req.query.channelId;
+    if (!channelId) return res.status(400).json({ success: false, error: 'channelId required' });
+    
+    const limit = Math.min(parseInt(req.query.limit || '50'), 200);
+    const { rows } = await pool.query(
+      'SELECT * FROM chat_messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT $2',
+      [channelId, limit]
+    );
+    res.json({ success: true, messages: rows.reverse() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+module.exports = router;
