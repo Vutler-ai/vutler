@@ -39,7 +39,10 @@ export default function AgentsPage() {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search agents..." className="bg-[#0b0c16] border border-slate-800/60 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-slate-700 w-56" />
           </div>
-          <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer">
+          <button 
+            onClick={() => window.location.href = '/builder'}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+          >
             <Plus className="w-4 h-4" /> Deploy New Agent
           </button>
         </div>

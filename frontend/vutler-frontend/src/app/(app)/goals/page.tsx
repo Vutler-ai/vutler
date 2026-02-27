@@ -32,6 +32,9 @@ function StatCard({ label, value, trend, trendUp, icon: Icon }: { label: string;
 
 export default function GoalsPage() {
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newGoal, setNewGoal] = useState<{ title: string; agentId: string; priority: "High" | "Medium" | "Low"; deadline: string }>({ title: "", agentId: "", priority: "Medium", deadline: "" });
+  const [creating, setCreating] = useState(false);
 
   const fetcher = useCallback(() => api.getGoals(), []);
   const { data: goals, loading, error } = useApi<Goal[]>(fetcher);
@@ -41,6 +44,21 @@ export default function GoalsPage() {
   const atRisk = allGoals.filter((g) => g.status === "AT-RISK" || g.status === "BEHIND");
   const completedCount = allGoals.filter((g) => g.progress >= 100).length;
 
+  const createGoal = async () => {
+    if (!newGoal.title.trim()) return;
+    setCreating(true);
+    try {
+      await api.createGoal(newGoal);
+      setShowCreateModal(false);
+      setNewGoal({ title: "", agentId: "", priority: "Medium", deadline: "" });
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to create goal:", err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#080912] p-6">
       {/* Header */}
@@ -49,7 +67,10 @@ export default function GoalsPage() {
           <h1 className="text-2xl font-bold text-white">Agent Performance</h1>
           <p className="text-sm text-slate-400">Monitor and orchestrate your autonomous AI fleet</p>
         </div>
-        <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+        <button 
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors"
+        >
           <Plus className="w-4 h-4" /> Create Goal
         </button>
       </div>
@@ -235,6 +256,51 @@ export default function GoalsPage() {
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Goal Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-[#0b0c16] border border-slate-800/60 rounded-2xl w-full max-w-lg p-6 m-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">New Goal</h3>
+              <button onClick={() => setShowCreateModal(false)} className="text-slate-500 hover:text-white p-1 cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <input 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Goal title" 
+                value={newGoal.title} 
+                onChange={(e) => setNewGoal({...newGoal, title: e.target.value})} 
+              />
+              <input 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Agent ID" 
+                value={newGoal.agentId} 
+                onChange={(e) => setNewGoal({...newGoal, agentId: e.target.value})} 
+              />
+              <select 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 cursor-pointer" 
+                value={newGoal.priority} 
+                onChange={(e) => setNewGoal({...newGoal, priority: e.target.value as "High" | "Medium" | "Low"})}
+              >
+                <option value="Low">Low Priority</option>
+                <option value="Medium">Medium Priority</option>
+                <option value="High">High Priority</option>
+              </select>
+              <input 
+                type="date" 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                value={newGoal.deadline} 
+                onChange={(e) => setNewGoal({...newGoal, deadline: e.target.value})} 
+              />
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2 text-sm text-slate-400 hover:text-white border border-slate-800/60 rounded-lg cursor-pointer transition-colors">Cancel</button>
+              <button onClick={createGoal} disabled={creating || !newGoal.title.trim()} className="flex-1 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer transition-colors disabled:opacity-40">{creating ? "Creating..." : "Create Goal"}</button>
             </div>
           </div>
         </div>

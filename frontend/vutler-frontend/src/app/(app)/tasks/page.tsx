@@ -145,6 +145,9 @@ export default function TasksPage() {
   const [agentFilter, setAgentFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
   const [sprintFilter, setSprintFilter] = useState("");
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newTask, setNewTask] = useState<{ title: string; description: string; priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; agentId: string }>({ title: "", description: "", priority: "MEDIUM", agentId: "" });
+  const [creating, setCreating] = useState(false);
 
   const fetcher = useCallback(() => api.getTasks(), []);
   const { data: tasks, loading, error } = useApi<Task[]>(fetcher);
@@ -166,6 +169,22 @@ export default function TasksPage() {
   const agentIds = [...new Set(allTasks.map((t) => t.agentId))];
   const sprints = [...new Set(allTasks.map((t) => t.sprint).filter(Boolean))];
 
+  const createTask = async () => {
+    if (!newTask.title.trim()) return;
+    setCreating(true);
+    try {
+      await api.createTask(newTask);
+      setShowCreateModal(false);
+      setNewTask({ title: "", description: "", priority: "MEDIUM", agentId: "" });
+      // Refetch tasks
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to create task:", err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#080912] p-6">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
@@ -181,7 +200,10 @@ export default function TasksPage() {
               </button>
             ))}
           </div>
-          <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer">
+          <button 
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors cursor-pointer"
+          >
             <Plus className="w-4 h-4" /> New Task
           </button>
         </div>
@@ -334,6 +356,53 @@ export default function TasksPage() {
       )}
 
       {selectedTask && <TaskModal task={selectedTask} onClose={() => setSelectedTask(null)} />}
+
+      {/* Create Task Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-[#0b0c16] border border-slate-800/60 rounded-2xl w-full max-w-lg p-6 m-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">New Task</h3>
+              <button onClick={() => setShowCreateModal(false)} className="text-slate-500 hover:text-white p-1 cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <input 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Task title" 
+                value={newTask.title} 
+                onChange={(e) => setNewTask({...newTask, title: e.target.value})} 
+              />
+              <textarea 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Description" 
+                rows={3} 
+                value={newTask.description} 
+                onChange={(e) => setNewTask({...newTask, description: e.target.value})} 
+              />
+              <select 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 cursor-pointer" 
+                value={newTask.priority} 
+                onChange={(e) => setNewTask({...newTask, priority: e.target.value as "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"})}
+              >
+                <option value="LOW">Low Priority</option>
+                <option value="MEDIUM">Medium Priority</option>
+                <option value="HIGH">High Priority</option>
+                <option value="CRITICAL">Critical</option>
+              </select>
+              <input 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Agent ID (optional)" 
+                value={newTask.agentId} 
+                onChange={(e) => setNewTask({...newTask, agentId: e.target.value})} 
+              />
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2 text-sm text-slate-400 hover:text-white border border-slate-800/60 rounded-lg cursor-pointer transition-colors">Cancel</button>
+              <button onClick={createTask} disabled={creating || !newTask.title.trim()} className="flex-1 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer transition-colors disabled:opacity-40">{creating ? "Creating..." : "Create Task"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

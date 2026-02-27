@@ -18,6 +18,9 @@ export default function CalendarPage() {
   const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [year, setYear] = useState(2026);
   const [month, setMonth] = useState(1); // 0-indexed: 1 = February
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newEvent, setNewEvent] = useState<{ title: string; description: string; date: string; time: string; type: "MEETING" | "AGENT TASK" | "DEPLOY" }>({ title: "", description: "", date: "", time: "", type: "MEETING" });
+  const [creating, setCreating] = useState(false);
 
   const fetcher = useCallback(() => api.getEvents(), []);
   const { data: events, loading, error } = useApi<CalendarEvent[]>(fetcher);
@@ -66,6 +69,21 @@ export default function CalendarPage() {
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(year + 1); } else setMonth(month + 1); };
   const goToday = () => { setYear(today.getFullYear()); setMonth(today.getMonth()); };
 
+  const createEvent = async () => {
+    if (!newEvent.title.trim()) return;
+    setCreating(true);
+    try {
+      await api.createEvent(newEvent);
+      setShowCreateModal(false);
+      setNewEvent({ title: "", description: "", date: "", time: "", type: "MEETING" });
+      window.location.reload();
+    } catch (err) {
+      console.error("Failed to create event:", err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#080912] p-6 flex gap-6">
       <div className="flex-1">
@@ -89,7 +107,10 @@ export default function CalendarPage() {
                 </button>
               ))}
             </div>
-            <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors">
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors"
+            >
               <Plus className="w-4 h-4" /> New Event
             </button>
           </div>
@@ -177,6 +198,58 @@ export default function CalendarPage() {
           <div className="flex gap-2">
             <button className="flex-1 flex items-center justify-center gap-2 bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 text-sm font-medium py-2 rounded-lg cursor-pointer transition-colors"><Edit className="w-3.5 h-3.5" /> Edit</button>
             <button className="flex-1 flex items-center justify-center gap-2 bg-red-600/20 text-red-400 hover:bg-red-600/30 text-sm font-medium py-2 rounded-lg cursor-pointer transition-colors"><Trash2 className="w-3.5 h-3.5" /> Delete</button>
+          </div>
+        </div>
+      )}
+
+      {/* Create Event Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowCreateModal(false)}>
+          <div className="bg-[#0b0c16] border border-slate-800/60 rounded-2xl w-full max-w-lg p-6 m-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">New Event</h3>
+              <button onClick={() => setShowCreateModal(false)} className="text-slate-500 hover:text-white p-1 cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3">
+              <input 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Event title" 
+                value={newEvent.title} 
+                onChange={(e) => setNewEvent({...newEvent, title: e.target.value})} 
+              />
+              <textarea 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                placeholder="Description" 
+                rows={2} 
+                value={newEvent.description} 
+                onChange={(e) => setNewEvent({...newEvent, description: e.target.value})} 
+              />
+              <input 
+                type="date" 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                value={newEvent.date} 
+                onChange={(e) => setNewEvent({...newEvent, date: e.target.value})} 
+              />
+              <input 
+                type="time" 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" 
+                value={newEvent.time} 
+                onChange={(e) => setNewEvent({...newEvent, time: e.target.value})} 
+              />
+              <select 
+                className="w-full bg-[#0f1117] border border-slate-800/60 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 cursor-pointer" 
+                value={newEvent.type} 
+                onChange={(e) => setNewEvent({...newEvent, type: e.target.value as "MEETING" | "AGENT TASK" | "DEPLOY"})}
+              >
+                <option value="MEETING">Meeting</option>
+                <option value="AGENT TASK">Agent Task</option>
+                <option value="DEPLOY">Deploy</option>
+              </select>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2 text-sm text-slate-400 hover:text-white border border-slate-800/60 rounded-lg cursor-pointer transition-colors">Cancel</button>
+              <button onClick={createEvent} disabled={creating || !newEvent.title.trim()} className="flex-1 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg cursor-pointer transition-colors disabled:opacity-40">{creating ? "Creating..." : "Create Event"}</button>
+            </div>
           </div>
         </div>
       )}
