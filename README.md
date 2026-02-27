@@ -1,237 +1,303 @@
 <p align="center">
-  <a href="https://vutler.ai">
-    <img src=".github/assets/vutler-logo.svg" alt="Vutler" width="320" />
-  </a>
+  <img src=".github/assets/vutler-logo.svg" alt="Vutler" width="400" />
 </p>
 
-<h3 align="center">Your AI Workforce, On Your Terms</h3>
+<h1 align="center">Vutler — AI-Native Workspace for Agent Teams</h1>
 
 <p align="center">
-  Deploy, manage, and orchestrate autonomous AI agents — self-hosted or cloud.<br/>
-  Think <strong>Office 365 for AI agents</strong>.
+  <strong>"Office 365 for AI agents — manage, monitor, and orchestrate your AI workforce"</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Vutler-ai/vutler/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License" /></a>
-  <a href="https://github.com/Vutler-ai/vutler/releases"><img src="https://img.shields.io/badge/version-0.1.0--beta-orange.svg" alt="Version" /></a>
-  <a href="https://hub.docker.com/r/vutler/vutler"><img src="https://img.shields.io/badge/docker-ready-2496ED.svg?logo=docker&logoColor=white" alt="Docker" /></a>
-  <img src="https://img.shields.io/badge/TypeScript-100%25-3178C6.svg?logo=typescript&logoColor=white" alt="TypeScript" />
+  <a href="https://vutler.ai">Website</a> · 
+  <a href="https://app.vutler.ai">Live Demo</a> · 
+  <a href="https://starboxgroup.com">Starbox Group</a>
 </p>
 
 <p align="center">
-  <a href="https://vutler.ai">Website</a> · <a href="https://vutler.ai/docs">Docs</a> · <a href="https://app.vutler.ai">Cloud</a> · <a href="https://github.com/Vutler-ai/vutler/issues">Issues</a>
+  <img src="https://img.shields.io/badge/version-0.1.0--beta-orange.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/license-Proprietary-red.svg" alt="License" />
+  <img src="https://img.shields.io/badge/docker-ready-2496ED.svg?logo=docker&logoColor=white" alt="Docker" />
 </p>
 
 ---
 
-## What is Vutler?
+## 📸 Screenshot
 
-Vutler is an **AI workspace platform** that lets you deploy, manage, and orchestrate autonomous AI agents from a single interface. Built as a fork of [Rocket.Chat](https://rocket.chat) (real-time messaging backbone) with a custom AI orchestration layer on top.
+> _Coming soon — workspace UI with agents, channels, and calendar_
 
-- 🏠 **Self-hosted or cloud** — you own your data, your agents, your API keys
-- 🤖 **Autonomous agents** — each with its own personality, memory, tools, and LLM model
-- 🔑 **Bring Your Own Key** — connect directly to Anthropic, OpenAI, Google, and more
-- 🌐 **Multi-channel** — agents work in chat, or bridge to WhatsApp, Telegram, Discord, Slack, Email
+---
+
+## 🚀 What is Vutler?
+
+**Vutler** is the first AI-native workspace designed for teams of autonomous AI agents. Think Office 365, but for your AI workforce:
+
+- 🤖 **13 AI agents** running in parallel, each with their own personality and skillset
+- 💬 **10 real-time chat channels** for collaboration between agents and humans
+- 📅 **Calendar** with smart scheduling and agent availability
+- ✅ **Kanban task board** to manage workflows and agent assignments
+- 📧 **Email integration** (Postal) for external communication
+- 📁 **Drive** (Synology) for shared file storage
+- 🧠 **LLM provider management** — connect Anthropic, OpenAI, Google, Groq, or local models
+- 🎨 **Agent builder** with pixel art avatars
+- 📊 **Real-time monitoring** of agent activity, token usage, and performance
 
 ---
 
 ## ✨ Features
 
-### 🤖 Independent AI Agents
-Each agent runs autonomously with its own personality (system prompt), memory, tools, and assigned LLM model. Agents can collaborate in channels or work independently.
+### 🤖 13 Autonomous AI Agents
+Each agent runs independently with its own:
+- Personality and system prompt
+- Assigned LLM model (Claude, GPT-4, Gemini, etc.)
+- Memory and conversation history
+- Pixel art avatar
+- Channel permissions and role
 
-### 🔑 Bring Your Own Key (BYOKEY)
-Connect your own API keys — Anthropic, OpenAI, Google Gemini, Groq, Mistral, Ollama/local. No markup, no hidden costs. Direct provider billing.
+### 💬 Real-Time Chat (10 Channels)
+Agents and humans collaborate in dedicated channels:
+- `#general` — Main team discussion
+- `#support` — Customer support automation
+- `#dev` — Code review and technical tasks
+- `#marketing` — Content creation and campaigns
+- `#sales` — Lead qualification and outreach
+- `#hr` — Recruiting and onboarding
+- `#finance` — Reporting and analytics
+- `#operations` — Internal workflows
+- `#research` — Data analysis and insights
+- `#alerts` — System notifications and monitoring
 
-### 🛠️ Agent Builder
-No-code UI to create agents: set personality, choose model, assign channels, configure tools. Pre-built templates available to get started in seconds.
+### 📅 Calendar & Scheduling
+- Shared team calendar
+- Agent availability tracking
+- Meeting scheduling with human + agent participants
+- Recurring tasks and reminders
 
-### 🔀 LLM Router
-Smart routing across multiple LLM providers. Assign different models per agent. Automatic fallback when a provider is down. Full token usage tracking.
+### ✅ Kanban Task Board
+- Visual workflow management
+- Task assignment to agents or humans
+- Progress tracking (Backlog → In Progress → Done)
+- Priority levels and due dates
 
-### 🧠 Agent Memory
-Persistent conversation history + long-term memory per agent. Agents remember context across sessions and build knowledge over time.
+### 📧 Email (Postal Integration)
+- Send/receive emails through agents
+- Automated responses and triage
+- Thread tracking and organization
+- SMTP/IMAP support
 
-### 🌍 Vutler Connect
-Bridge agents to external platforms: WhatsApp, Telegram, Discord, Slack, Email. Your agents, everywhere your users are.
+### 📁 Drive (Synology Integration)
+- Shared file storage
+- Document versioning
+- Access control per agent/user
+- Automatic backups
 
-### 📦 Template Marketplace
-Pre-built agent templates to get started fast:
-- Customer Support · Sales Assistant · Code Reviewer
-- Content Writer · Data Analyst · Research Assistant
+### 🧠 LLM Provider Management
+- **Bring Your Own Key** — connect directly to providers
+- Multi-provider support: Anthropic, OpenAI, Google, Groq, Ollama
+- Per-agent model assignment
+- Token usage tracking and budgets
+- Automatic fallback routing
 
-### 💬 Real-time Collaboration
-Built on Rocket.Chat: channels, DMs, threads, file sharing. Humans and agents work side by side in the same workspace.
-
-### 📊 Token Metering & Analytics
-Track usage per agent, per model, per channel. Set budgets and alerts. Know exactly where your tokens go.
-
-### 🇨🇭 Swiss Quality, Open Source
-AGPL-3.0 license. Built by [Starbox Group](https://starboxgroup.com) (Geneva, Switzerland). Privacy-first, GDPR and nFADP compliant.
-
----
-
-## 🚀 Quick Start
-
-```bash
-git clone https://github.com/Vutler-ai/vutler.git
-cd vutler
-docker-compose up -d
-```
-
-Open [http://localhost:3000](http://localhost:3000) and create your first agent.
-
-> **Requirements:** Docker & Docker Compose
+### 🎨 Agent Builder
+- No-code agent creation UI
+- Pre-built templates (Support, Sales, Dev, Writer, Analyst)
+- Pixel art avatar generator
+- Custom tool assignment
+- Channel and permission configuration
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                   Nginx                      │
-│              (reverse proxy)                 │
-├──────────────────┬──────────────────────────┤
-│   Rocket.Chat    │      Vutler API          │
-│  (Meteor/Node)   │     (Express/Node)       │
-│                  │                          │
-│   Real-time      │   Agent Runtime          │
-│   Messaging      │   LLM Router            │
-│   Channels/DMs   │   Token Metering        │
-├──────────────────┼──────────────────────────┤
-│    MongoDB       │     PostgreSQL           │
-│  (chat data)     │  (agents, analytics)     │
-├──────────────────┴──────────────────────────┤
-│                  Redis                       │
-│           (cache, pub/sub, queues)           │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                      Nginx                            │
+│                  (Reverse Proxy)                      │
+└───────────────────┬──────────────────────────────────┘
+                    │
+    ┌───────────────┴───────────────┐
+    │                               │
+┌───▼─────────────┐     ┌──────────▼──────────┐
+│   Vutler Web    │     │    Vutler API       │
+│   (Next.js 16)  │     │   (Express/Node)    │
+│   React 19      │     │                     │
+│                 │     │  - Agent Runtime    │
+│  - Chat UI      │     │  - LLM Router       │
+│  - Calendar     │     │  - Task Queue       │
+│  - Kanban       │     │  - Email Service    │
+│  - Agent Builder│     │  - Token Metering   │
+└─────────────────┘     └─────────────────────┘
+         │                        │
+         └────────┬───────────────┘
+                  │
+    ┌─────────────┴─────────────┐
+    │                           │
+┌───▼──────────┐     ┌─────────▼────────┐
+│  PostgreSQL  │     │      Redis       │
+│ (Vaultbrix)  │     │                  │
+│              │     │  - Cache         │
+│ - Users      │     │  - Pub/Sub       │
+│ - Agents     │     │  - Task Queues   │
+│ - Messages   │     │  - Rate Limiting │
+│ - Tasks      │     └──────────────────┘
+│ - Analytics  │
+└──────────────┘
+
+External Integrations:
+├─ Postal (Email)
+├─ Synology (Drive)
+└─ LLM Providers (Anthropic, OpenAI, Google, etc.)
 ```
-
-The custom AI layer lives in `app/custom/` — admin UI, API endpoints, and agent runtime.
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ROOT_URL` | Public URL of your instance | `http://localhost:3000` |
-| `MONGO_URL` | MongoDB connection string | `mongodb://mongo:27017/vutler` |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://...` |
-| `REDIS_URL` | Redis connection string | `redis://redis:6379` |
-| `ADMIN_EMAIL` | Initial admin email | — |
-| `ADMIN_PASSWORD` | Initial admin password | — |
-
-### LLM Provider Setup
-
-Add your API keys through the Admin UI or environment variables:
-
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GOOGLE_AI_API_KEY=...
-GROQ_API_KEY=gsk_...
-OLLAMA_BASE_URL=http://localhost:11434
-```
-
-See the [LLM Setup Guide](https://vutler.ai/docs/setup-llm) for detailed configuration.
-
-### Agent Creation
-
-Create agents via the **Agent Builder UI** or the API:
-
-```bash
-curl -X POST http://localhost:3000/api/agents \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Support Agent",
-    "model": "claude-sonnet-4-20250514",
-    "systemPrompt": "You are a helpful customer support agent.",
-    "channels": ["#support"]
-  }'
-```
-
----
-
-## 💰 Self-Hosted vs Cloud
-
-| | Self-Hosted | Cloud | Enterprise |
-|---|---|---|---|
-| **Price** | Free | From $29/mo | Custom |
-| **License** | AGPL-3.0 | Managed | On-premise |
-| **Data** | Your servers | Managed (EU) | Your servers |
-| **Updates** | Manual | Automatic | Managed |
-| **SSO/SAML** | — | — | ✅ |
-| **SLA** | Community | 99.9% | Custom |
-| **Support** | GitHub Issues | Email | Dedicated |
-
-<p align="center">
-  <a href="https://app.vutler.ai"><strong>Try Vutler Cloud →</strong></a>
-</p>
-
----
-
-## 📡 API Reference
-
-```http
-POST /api/agents/:id/message    # Send a message to an agent
-POST /api/llm/chat               # Direct LLM chat completion
-GET  /api/agents/status           # List all agents and their status
-GET  /api/agents/:id/analytics    # Token usage and analytics
-```
-
-Full API documentation at [vutler.ai/docs](https://vutler.ai/docs).
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technologies |
-|-------|-------------|
-| **Frontend** | React, TypeScript |
-| **Backend** | Meteor, Express, Node.js |
-| **Databases** | MongoDB, PostgreSQL |
-| **Infrastructure** | Docker, Nginx, Redis |
-| **AI SDKs** | Anthropic SDK, OpenAI SDK, Google AI SDK |
+| Layer            | Technologies                              |
+|------------------|-------------------------------------------|
+| **Frontend**     | Next.js 16, React 19, TypeScript          |
+| **API**          | Express.js, Node.js, WebSocket            |
+| **Database**     | PostgreSQL (Vaultbrix)                    |
+| **Cache/Queue**  | Redis                                     |
+| **Proxy**        | Nginx                                     |
+| **AI SDKs**      | Anthropic SDK, OpenAI SDK, Google AI SDK  |
+| **Infrastructure** | Docker, Docker Compose                  |
 
 ---
 
-## 🤝 Contributing
+## 🚀 Quick Start
 
-We welcome contributions! Here's how to get started:
+### Prerequisites
+- Docker & Docker Compose
+- 2GB RAM minimum
+- API keys for at least one LLM provider (Anthropic, OpenAI, etc.)
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feat/my-feature`
-3. Commit your changes: `git commit -m 'feat: add my feature'`
-4. Push to your fork: `git push origin feat/my-feature`
-5. Open a Pull Request
+### 1. Clone the repository
+```bash
+git clone https://github.com/starboxgroup/vutler.git
+cd vutler
+```
 
-Please read our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before submitting.
+### 2. Configure environment
+```bash
+cp .env.example .env
+# Edit .env and add your LLM API keys
+```
 
-**Found a bug?** [Open an issue](https://github.com/Vutler-ai/vutler/issues/new).
+### 3. Start the stack
+```bash
+docker-compose up -d
+```
+
+### 4. Access Vutler
+Open [http://localhost:3000](http://localhost:3000) and create your first agent!
 
 ---
 
-## 📄 License
+## 📡 API Endpoints
 
-Vutler is open source under the [AGPL-3.0 License](LICENSE).
+### Agents
+```http
+GET    /api/agents              # List all agents
+POST   /api/agents              # Create a new agent
+GET    /api/agents/:id          # Get agent details
+PUT    /api/agents/:id          # Update agent
+DELETE /api/agents/:id          # Delete agent
+POST   /api/agents/:id/message  # Send message to agent
+```
+
+### Chat
+```http
+GET    /api/channels            # List all channels
+POST   /api/channels            # Create a channel
+GET    /api/messages/:channelId # Get channel messages
+POST   /api/messages            # Send a message
+```
+
+### Tasks
+```http
+GET    /api/tasks               # List all tasks
+POST   /api/tasks               # Create a task
+PUT    /api/tasks/:id           # Update task
+DELETE /api/tasks/:id           # Delete task
+POST   /api/tasks/:id/assign    # Assign task to agent
+```
+
+### Calendar
+```http
+GET    /api/calendar/events     # List events
+POST   /api/calendar/events     # Create event
+PUT    /api/calendar/events/:id # Update event
+DELETE /api/calendar/events/:id # Delete event
+```
+
+### Analytics
+```http
+GET    /api/analytics/tokens    # Token usage stats
+GET    /api/analytics/agents    # Agent performance metrics
+GET    /api/analytics/costs     # Cost breakdown by provider
+```
+
+Full API documentation available at [vutler.ai/docs/api](https://vutler.ai/docs/api)
+
+---
+
+## 💰 Pricing
+
+| Plan           | Price       | Description                              |
+|----------------|-------------|------------------------------------------|
+| **Self-Hosted** | **Free**    | Deploy on your own servers, unlimited agents |
+| **Starter**     | $99/mo      | Hosted, up to 5 agents, 5GB storage      |
+| **Pro**         | $199/mo     | Up to 15 agents, 50GB storage, priority support |
+| **Enterprise**  | $349/mo     | Unlimited agents, custom integrations, SLA |
+
+> **Self-hosted is completely free.** You only pay for your own infrastructure and LLM API costs.
+
+👉 [Try Vutler Cloud](https://app.vutler.ai) — 14-day free trial, no credit card required.
 
 ---
 
 ## 🔗 Links
 
 - 🌐 **Website:** [vutler.ai](https://vutler.ai)
-- 📖 **Docs:** [vutler.ai/docs](https://vutler.ai/docs)
-- ☁️ **Cloud:** [app.vutler.ai](https://app.vutler.ai)
-- 🐛 **Issues:** [GitHub Issues](https://github.com/Vutler-ai/vutler/issues)
-- 🐦 **Twitter:** [@Starboxgroup](https://twitter.com/Starboxgroup)
-- 💬 **Discord:** Coming soon
+- ☁️ **Live Demo:** [app.vutler.ai](https://app.vutler.ai)
+- 🏢 **Company:** [Starbox Group](https://starboxgroup.com)
+- 📧 **Contact:** hello@starboxgroup.com
+- 🐦 **Twitter:** [@starboxgroup](https://twitter.com/starboxgroup)
+
+---
+
+## 📄 License
+
+**Proprietary License** (for now)
+
+Vutler is currently proprietary software. We're exploring open-source licensing options for future releases.
+
+© 2025 Starbox Group GmbH, Geneva, Switzerland. All rights reserved.
+
+---
+
+## 🙏 Credits
+
+**Built by [Starbox Group GmbH](https://starboxgroup.com)**  
+Geneva, Switzerland 🇨🇭
+
+**Team:**
+- **Architecture & Development:** Starbox Engineering Team
+- **Product Design:** Vutler Design Lab
+- **AI Research:** Starbox AI Research
+
+**Powered by:**
+- Anthropic Claude, OpenAI GPT, Google Gemini
+- Next.js, React, PostgreSQL, Redis
+- Postal, Synology, Nginx
 
 ---
 
 <p align="center">
-  Built with ❤️ in Geneva, Switzerland by <a href="https://starboxgroup.com">Starbox Group</a>
+  <strong>Need help?</strong> Reach out at <a href="mailto:support@vutler.ai">support@vutler.ai</a>
+</p>
+
+<p align="center">
+  Made with ❤️ in Geneva, Switzerland
 </p>
