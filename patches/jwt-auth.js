@@ -1,6 +1,7 @@
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error('[JWT-AUTH] JWT_SECRET environment variable is required!');
-  throw new Error('JWT_SECRET not configured');
+// WARNING: Use JWT_SECRET env var in production!
+const DEFAULT_SECRET = 'vutler-jwt-secret-2026';
+const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
+if (!process.env.JWT_SECRET) {
+  console.warn('[JWT-AUTH] Using default JWT_SECRET - set JWT_SECRET env var in production!');
 }
 module.exports = { JWT_SECRET };

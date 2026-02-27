@@ -6,16 +6,15 @@
 const jwt = require('jsonwebtoken');
 
 // JWT secret
+const DEFAULT_SECRET = 'vutler-jwt-secret-2026';
 let JWT_SECRET;
 try {
   JWT_SECRET = require('/app/api/auth/jwt-auth').JWT_SECRET;
 } catch (e) {
-  JWT_SECRET = process.env.JWT_SECRET;
-  if (!JWT_SECRET) {
-    console.error('[AUTH MW] JWT_SECRET not configured! Set JWT_SECRET env variable.');
-    throw new Error('JWT_SECRET not configured');
+  JWT_SECRET = process.env.JWT_SECRET || DEFAULT_SECRET;
+  if (!process.env.JWT_SECRET) {
+    console.warn('[AUTH MW] Using default JWT_SECRET - set JWT_SECRET env var in production!');
   }
-  console.warn('[AUTH MW] Using JWT_SECRET from environment');
 }
 
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
