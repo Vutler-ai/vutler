@@ -85,7 +85,7 @@ export default function AgentsPage() {
               const agentId = agent.id || agent._id || agent.name;
               const cpu = agent.cpu ?? 0;
               return (
-                <div key={agentId} className="bg-[#0b0c16] rounded-xl border border-slate-800/60 hover:border-slate-700 p-5 transition-all group">
+                <a key={agentId} href={`/agents/${agentId}`} className="bg-[#0b0c16] rounded-xl border border-slate-800/60 hover:border-slate-700 p-5 transition-all group block cursor-pointer">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
                       <div className="relative">
@@ -138,7 +138,7 @@ export default function AgentsPage() {
                     {agent.model && <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${agent.modelBadge || "bg-slate-500/20 text-slate-400"}`}>{agent.model}</span>}
                     {agent.mbti && <span className="text-[10px] font-mono text-slate-600">{agent.mbti}</span>}
                   </div>
-                </div>
+                </a>
               );
             })}
           </div>

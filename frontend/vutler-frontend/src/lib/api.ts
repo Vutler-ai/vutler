@@ -5,7 +5,7 @@
 
 import { getAuthHeaders } from './auth';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // ========== Types ==========
 
@@ -233,6 +233,10 @@ class VutlerApiClient {
     return this.request<Task>(`/api/v1/tasks/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
   }
 
+  async deleteTask(id: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/v1/tasks/${id}`, { method: 'DELETE' });
+  }
+
   // Goals
   async getGoals(): Promise<Goal[]> {
     const res = await this.request<{ success: boolean; goals: Goal[] } | Goal[]>('/api/v1/goals');
@@ -248,6 +252,14 @@ class VutlerApiClient {
     return this.request<Goal>('/api/v1/goals', { method: 'POST', body: JSON.stringify(payload) });
   }
 
+  async updateGoal(id: string, payload: Partial<Goal>): Promise<Goal> {
+    return this.request<Goal>(`/api/v1/goals/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  }
+
+  async deleteGoal(id: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/v1/goals/${id}`, { method: 'DELETE' });
+  }
+
   // Events (calendar)
   async getEvents(): Promise<CalendarEvent[]> {
     const res = await this.request<{ success: boolean; events: CalendarEvent[] }>('/api/v1/calendar/events');
@@ -257,6 +269,15 @@ class VutlerApiClient {
   async createEvent(payload: Partial<CalendarEvent>): Promise<CalendarEvent> {
     const res = await this.request<{ success: boolean; event: CalendarEvent }>('/api/v1/calendar/events', { method: 'POST', body: JSON.stringify(payload) });
     return res.event;
+  }
+
+  async updateEvent(id: string, payload: Partial<CalendarEvent>): Promise<CalendarEvent> {
+    const res = await this.request<{ success: boolean; event: CalendarEvent }>(`/api/v1/calendar/events/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    return res.event;
+  }
+
+  async deleteEvent(id: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/api/v1/calendar/events/${id}`, { method: 'DELETE' });
   }
 
   // Emails (normalize PG shape to frontend shape)
