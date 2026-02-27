@@ -165,14 +165,15 @@ export default function ChatProPage() {
   const [sending, setSending] = useState(false);
   const [loadingChannels, setLoadingChannels] = useState(true);
   const [channelsError, setChannelsError] = useState("");
+  const [userId, setUserId] = useState<string>("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const currentUser = typeof window !== "undefined" ? getCurrentUser() : null;
-  const userId = currentUser?.userId || "";
 
   // Auth
   useEffect(() => {
     if (!isAuthenticated()) { router.push("/login?redirect=/chat"); return; }
+    const currentUser = getCurrentUser();
+    setUserId(currentUser?.userId || "");
     setAuthChecked(true);
   }, [router]);
 
@@ -182,9 +183,11 @@ export default function ChatProPage() {
     setChannelsError("");
     try {
       const data = await api("/api/v1/chat/channels");
-      setChannels(data.channels || data || []);
+      const channelsList = Array.isArray(data?.channels) ? data.channels : (Array.isArray(data) ? data : []);
+      setChannels(channelsList);
     } catch (err: any) {
       setChannelsError(err.message || "Failed to load channels");
+      setChannels([]);
     } finally {
       setLoadingChannels(false);
     }
@@ -196,8 +199,11 @@ export default function ChatProPage() {
   const fetchMessages = useCallback(async (chId: string) => {
     try {
       const data = await api(`/api/v1/chat/channels/${chId}/messages`);
-      setMessages(data.messages || data || []);
-    } catch { /* */ }
+      const messagesList = Array.isArray(data?.messages) ? data.messages : (Array.isArray(data) ? data : []);
+      setMessages(messagesList);
+    } catch {
+      setMessages([]);
+    }
   }, []);
 
   useEffect(() => {
@@ -242,9 +248,9 @@ export default function ChatProPage() {
     } catch { /* */ }
   };
 
-  const activeChannel = channels.find((c) => c.id === activeId);
-  const dmChannels = channels.filter((c) => c.type === "dm");
-  const regularChannels = channels.filter((c) => c.type !== "dm");
+  const activeChannel = Array.isArray(channels) ? channels.find((c) => c.id === activeId) : undefined;
+  const dmChannels = Array.isArray(channels) ? channels.filter((c) => c.type === "dm") : [];
+  const regularChannels = Array.isArray(channels) ? channels.filter((c) => c.type !== "dm") : [];
 
   if (!authChecked) {
     return (
@@ -358,7 +364,7 @@ export default function ChatProPage() {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
-              {messages.map((msg, i) => {
+              {Array.isArray(messages) && messages.map((msg, i) => {
                 const mine = msg.userId === userId;
                 const showAvatar = i === 0 || messages[i - 1].userId !== msg.userId;
                 return (
