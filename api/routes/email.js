@@ -8,7 +8,7 @@ const { simpleParser } = require('mailparser');
 // Email configuration
 const IMAP_CONFIG = {
   user: 'alex@vutler.com',
-  password: 'Roxanne1212**#',
+  password: process.env.IMAP_PASSWORD || 'CHANGE_ME',
   host: 'mail.infomaniak.com',
   port: 993,
   tls: true,
@@ -21,7 +21,7 @@ const SMTP_CONFIG = {
   secure: false,
   auth: {
     user: 'alex@vutler.com',
-    pass: 'Roxanne1212**#'
+    pass: process.env.IMAP_PASSWORD || 'CHANGE_ME'
   }
 };
 
