@@ -313,28 +313,34 @@ export default function Sidebar({ user = { name: 'User', email: 'user@vutler.com
           ))}
         </nav>
 
-        {/* User profile */}
+        {/* User profile + Logout */}
         <div className="p-3 border-t border-[rgba(255,255,255,0.07)]">
-          <button
-            className={`w-full flex items-center ${collapsed ? 'justify-center' : 'space-x-3'} px-2 py-2 rounded-lg hover:bg-[#14151f] transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]`}
-            aria-label="User menu"
-            title={collapsed ? `${user.name}` : undefined}
-          >
+          <div className={`flex items-center ${collapsed ? 'justify-center' : 'space-x-3'} px-2 py-2`}>
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#a855f7] to-[#3b82f6] flex items-center justify-center text-white font-semibold text-xs flex-shrink-0" aria-hidden="true">
               {initials}
             </div>
             {!collapsed && (
-              <>
-                <div className="flex-1 min-w-0 text-left">
-                  <p className="text-sm font-medium text-white truncate">{user.name}</p>
-                  <p className="text-xs text-[#6b7280] truncate">{user.email}</p>
-                </div>
-                <svg className="w-4 h-4 text-[#6b7280] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
-                </svg>
-              </>
+              <div className="flex-1 min-w-0 text-left">
+                <p className="text-sm font-medium text-white truncate">{user.name}</p>
+                <p className="text-xs text-[#6b7280] truncate">{user.email}</p>
+              </div>
             )}
-          </button>
+            <button
+              onClick={() => {
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('userId');
+                localStorage.removeItem('user');
+                window.location.href = '/login';
+              }}
+              className={`${collapsed ? 'mt-2' : ''} p-1.5 rounded-lg text-[#6b7280] hover:text-red-400 hover:bg-[#14151f] transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-400`}
+              aria-label="Logout"
+              title="Logout"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
+          </div>
         </div>
       </aside>
     </>
