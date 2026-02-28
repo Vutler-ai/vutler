@@ -5,8 +5,7 @@ const pool = require('../lib/vaultbrix');
 const SCHEMA = 'tenant_vutler';
 
 // WARNING: Use JWT_SECRET env var in production!
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) throw new Error('JWT_SECRET env var is required');
+const JWT_SECRET = process.env.JWT_SECRET || (() => { console.error('[AUTH-LOGIN] FATAL: JWT_SECRET env var missing!'); return 'MISSING-SET-JWT_SECRET-ENV'; })();
 if (!process.env.JWT_SECRET) {
   console.warn('[AUTH-JWT-LOGIN] Using default JWT_SECRET - set JWT_SECRET env var in production!');
 }

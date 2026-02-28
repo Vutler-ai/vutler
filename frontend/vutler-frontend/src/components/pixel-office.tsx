@@ -24,20 +24,20 @@ const LOCATIONS = {
   confSeat1: { x: 53, y: 14 }, confSeat2: { x: 59, y: 14 },
   confSeat3: { x: 65, y: 14 }, confSeat4: { x: 53, y: 28 },
   confSeat5: { x: 59, y: 28 }, confSeat6: { x: 65, y: 28 },
-  // Break room spots — well spread out across the whole room
-  breakSpot1: { x: 10, y: 60 },  // near vending machine
-  breakSpot2: { x: 20, y: 60 },  // near coffee
-  breakSpot3: { x: 30, y: 60 },  // middle area
-  breakSpot4: { x: 10, y: 72 },  // ping pong left
-  breakSpot5: { x: 20, y: 72 },  // ping pong right
-  breakSpot6: { x: 30, y: 72 },  // arcade area
-  breakSpot7: { x: 10, y: 84 },  // sofa left
-  breakSpot8: { x: 20, y: 84 },  // sofa center
-  breakSpot9: { x: 30, y: 84 },  // sofa right
-  breakSpot10: { x: 15, y: 66 }, // wandering
-  breakSpot11: { x: 25, y: 66 }, // wandering
-  breakSpot12: { x: 35, y: 78 }, // corner
-  breakSpot13: { x: 8, y: 78 },  // far left
+  // Break room spots — contained within lounge zone (x: 5-41%, y: 53-96%)
+  breakSpot1: { x: 10, y: 58 },  // near vending machine
+  breakSpot2: { x: 18, y: 58 },  // near coffee
+  breakSpot3: { x: 26, y: 58 },  // middle area
+  breakSpot4: { x: 12, y: 67 },  // ping pong left
+  breakSpot5: { x: 22, y: 67 },  // ping pong right
+  breakSpot6: { x: 32, y: 67 },  // arcade area
+  breakSpot7: { x: 10, y: 76 },  // sofa left
+  breakSpot8: { x: 20, y: 76 },  // sofa center
+  breakSpot9: { x: 30, y: 76 },  // sofa right
+  breakSpot10: { x: 15, y: 62 }, // wandering
+  breakSpot11: { x: 25, y: 62 }, // wandering
+  breakSpot12: { x: 34, y: 72 }, // corner
+  breakSpot13: { x: 8, y: 72 },  // far left
   // Jarvis office (1-on-1 meeting spots)
   jarvisGuest1: { x: 40, y: 18 },
   jarvisGuest2: { x: 40, y: 28 },
@@ -103,11 +103,11 @@ const BUBBLES: Record<string, string[]> = {
 
 // ===== ROOMS (for overlays + group chat) =====
 const ROOM_ZONES = [
-  { id: 'engineering',    label: 'Engineering Lab',  x: 5,  y: 4,  w: 27, h: 43 },
-  { id: 'jarvis-office',  label: 'Jarvis Office',   x: 33, y: 4,  w: 16, h: 35 },
+  { id: 'engineering',    label: 'Engineering Lab',  x: 7,  y: 4,  w: 27, h: 43 },
+  { id: 'jarvis-office',  label: 'Jarvis Office',   x: 35, y: 4,  w: 14, h: 35 },
   { id: 'conference',     label: 'Conference Room',  x: 50, y: 4,  w: 22, h: 43 },
   { id: 'ops',            label: 'Ops Center',       x: 73, y: 4,  w: 24, h: 43 },
-  { id: 'lounge',         label: 'Break Room',       x: 5,  y: 53, w: 36, h: 43 },
+  { id: 'lounge',         label: 'Break Room',       x: 7,  y: 53, w: 34, h: 43 },
   { id: 'warroom',        label: 'War Room',         x: 42, y: 53, w: 38, h: 43 },
   { id: 'server',         label: 'Server Room',      x: 81, y: 53, w: 16, h: 43 },
 ];
@@ -241,42 +241,40 @@ export default function PixelOffice({ onAgentClick, onGroupChat, selectedAgentId
       let newPos = agentPositions[agent.id] || agent.deskPos;
 
       if (cur === 'working') {
-        if (roll < 0.12) {
-          // Go on break — unique spot in break room
+        if (roll < 0.05) {
+          // Go on break — unique spot in break room (5% chance)
           newState = 'break';
           newPos = getUniqueBreakSpot();
-        } else if (roll < 0.18) {
+        } else if (roll < 0.10) {
           // Group meeting in conference
           newState = 'meeting';
           newPos = confSeats[confSeatIdx % confSeats.length];
           confSeatIdx++;
-        } else if (roll < 0.22 && agent.id !== 'jarvis') {
+        } else if (roll < 0.13 && agent.id !== 'jarvis') {
           // 1-on-1 with Jarvis in his office
           newState = 'meeting';
           newPos = LOCATIONS.jarvisGuest1;
-          // Also move Jarvis to meeting if he's working
           if (agentStates['jarvis'] === 'working') {
             setAgentStates(prev => ({ ...prev, jarvis: 'meeting' }));
-            // Jarvis stays at his desk during 1-on-1
           }
-        } else if (roll < 0.26 && agent.id === 'mike') {
+        } else if (roll < 0.15 && agent.id === 'mike') {
           // Mike goes to server room for deploy/commit
           newState = 'working';
           newPos = LOCATIONS.serverSpot1;
-        } else if (roll < 0.28) {
+        } else if (roll < 0.17) {
           // Bug/incident → war room
           newState = 'working';
           newPos = warSeats[warSeatIdx % warSeats.length];
           warSeatIdx++;
         }
       } else if (cur === 'break' || cur === 'idle') {
-        if (roll < 0.25) {
-          // Back to desk
+        if (roll < 0.40) {
+          // Back to desk faster (40% chance)
           newState = 'working';
           newPos = agent.deskPos;
         }
       } else if (cur === 'meeting') {
-        if (roll < 0.3) {
+        if (roll < 0.35) {
           // Meeting done → back to desk
           newState = 'working';
           newPos = agent.deskPos;

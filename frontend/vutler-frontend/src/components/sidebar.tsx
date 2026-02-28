@@ -231,7 +231,7 @@ export default function Sidebar({ user = { name: 'User', email: 'user@vutler.com
               )}
               <ul className="space-y-0.5" role="list">
                 {section.items.map((item) => {
-                  const isActive = pathname === item.href || (item.href !== '/' && pathname?.startsWith(item.href));
+                  const isActive = pathname === item.href || (item.href !== '/' && item.href !== '/chat' && pathname?.startsWith(item.href));
                   return (
                     <li key={item.href}>
                       <Link

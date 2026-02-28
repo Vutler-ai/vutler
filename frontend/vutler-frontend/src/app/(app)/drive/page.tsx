@@ -43,7 +43,7 @@ const formatFileSize = (bytes?: number): string => {
 // Get auth headers from localStorage (RC or JWT)
 function getAuthHeaders(): Record<string, string> {
   if (typeof window === "undefined") return {};
-  const token = localStorage.getItem("rc_token") || localStorage.getItem("auth_token") || "";
+  const token = localStorage.getItem("authToken") || localStorage.getItem("rc_token") || localStorage.getItem("auth_token") || "";
   const userId = localStorage.getItem("rc_uid") || "";
   if (token.startsWith("ey")) return { Authorization: `Bearer ${token}` };
   if (token && userId) return { "X-Auth-Token": token, "X-User-Id": userId };

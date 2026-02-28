@@ -30,7 +30,7 @@ export default function RootLayout({
       <head>
         <Script defer src="https://cloud.umami.is/script.js" data-website-id="223241c1-605f-4afe-8dc7-3a8a59c06d68" strategy="afterInteractive" />
       </head>
-      <body className={`${inter.variable} antialiased`}>
+      <body className={`${inter.variable} antialiased`} suppressHydrationWarning>
         {children}
       </body>
     </html>

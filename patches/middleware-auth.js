@@ -3,15 +3,9 @@
  * Sprint 15.2 — Fix: req.user + remove chat/dashboard/settings from public paths
  */
 
-const jwt = require('jsonwebtoken');
+// JWT verification done manually via crypto (no jsonwebtoken dependency needed)
 
-let JWT_SECRET;
-try {
-  JWT_SECRET = require('/app/api/auth/jwt-auth').JWT_SECRET;
-} catch (e) {
-  JWT_SECRET = process.env.JWT_SECRET;
-  if (!JWT_SECRET) throw new Error('JWT_SECRET env var is required');
-}
+const JWT_SECRET = process.env.JWT_SECRET || (() => { console.error('[AUTH] WARNING: JWT_SECRET env var missing'); return 'MISSING-SET-JWT_SECRET-ENV'; })();
 
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
