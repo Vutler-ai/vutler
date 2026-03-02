@@ -26,20 +26,10 @@ export default function ClientsPage() {
 
   const fetchClients = useCallback(async () => {
     try {
-      const res = await authFetch('/api/v1/deployments');
+      const res = await authFetch('/api/v1/clients');
       if (res.ok) {
         const data = await res.json();
-        const deps = data.deployments || data || [];
-        // Group by client company
-        const map = new Map<string, Client>();
-        deps.forEach((d: any) => {
-          const key = d.clientCompany || 'Unknown';
-          if (!map.has(key)) {
-            map.set(key, { id: key, name: key, contactEmail: d.clientEmail, deployments: [] });
-          }
-          map.get(key)!.deployments!.push({ id: d.id, agentName: d.agentName || d.name, status: d.status });
-        });
-        setClients(Array.from(map.values()));
+        setClients(data.clients || []);
       }
     } catch {
       setError('Failed to load clients');
@@ -53,11 +43,22 @@ export default function ClientsPage() {
   const handleAdd = async () => {
     if (!form.name.trim()) return;
     setSaving(true);
-    // Since there's no dedicated clients endpoint, we store locally
-    setClients(prev => [...prev, { id: Date.now().toString(), name: form.name, contactEmail: form.contactEmail, notes: form.notes, deployments: [] }]);
-    setForm({ name: '', contactEmail: '', notes: '' });
-    setShowForm(false);
-    setSaving(false);
+    try {
+      const res = await authFetch('/api/v1/clients', {
+        method: 'POST',
+        body: JSON.stringify({ name: form.name, contactEmail: form.contactEmail, notes: form.notes })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setClients(prev => [...prev, data.client]);
+        setForm({ name: '', contactEmail: '', notes: '' });
+        setShowForm(false);
+      }
+    } catch {
+      setError('Failed to add client');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
