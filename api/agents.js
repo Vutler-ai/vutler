@@ -201,4 +201,81 @@ router.put("/:username/status", async (req, res) => {
   }
 });
 
+// In-memory executions store
+let executions = [];
+let nextExecutionId = 1;
+
+// GET /api/v1/agents/:id/executions
+router.get("/:id/executions", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = 20 } = req.query;
+    
+    const agentExecutions = executions
+      .filter(e => e.agentId === id)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, parseInt(limit));
+    
+    res.json({ success: true, executions: agentExecutions });
+  } catch (err) {
+    console.error("[AGENTS] Executions error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v1/agents/:id/executions
+router.post("/:id/executions", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { input, context = {} } = req.body;
+    
+    const execution = {
+      id: String(nextExecutionId++),
+      agentId: id,
+      input,
+      context,
+      status: 'running',
+      output: null,
+      createdAt: new Date().toISOString(),
+      completedAt: null
+    };
+    
+    executions.push(execution);
+    
+    // Simulate execution
+    setTimeout(() => {
+      execution.status = 'completed';
+      execution.output = `Executed: ${input}`;
+      execution.completedAt = new Date().toISOString();
+    }, 1000);
+    
+    res.json({ success: true, execution });
+  } catch (err) {
+    console.error("[AGENTS] Create execution error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v1/agents/deploy
+router.post("/deploy", async (req, res) => {
+  try {
+    const { agentId, environment = 'production' } = req.body;
+    
+    // Simulate deployment
+    const deployment = {
+      id: 'deploy-' + Date.now(),
+      agentId,
+      environment,
+      status: 'deployed',
+      url: `https://${environment}.vutler.ai/agents/${agentId}`,
+      deployedAt: new Date().toISOString()
+    };
+    
+    res.json({ success: true, deployment });
+  } catch (err) {
+    console.error("[AGENTS] Deploy error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

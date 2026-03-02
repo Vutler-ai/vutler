@@ -169,6 +169,24 @@ app.use("/api/v1/tasks", tasksAPI);
     app.use('/api/v1/automations', automationLogsRoutes);
     app.use('/api/v1', runtimeAPI);
     
+    // Additional routes for frontend
+    const notificationsAPI = require('./api/notifications');
+    const deploymentsAPI = require('./api/deployments');
+    const integrationsAPI = require('./api/integrations');
+    const nexusAPI = require('./api/nexus');
+    
+    app.use('/api/v1/notifications', notificationsAPI);
+    app.use('/api/v1/deployments', deploymentsAPI);
+    app.use('/api/v1/integrations', integrationsAPI);
+    app.use('/api/v1/nexus', nexusAPI);
+    
+    console.log('✅ Additional APIs mounted:');
+    console.log('   - GET    /api/v1/notifications');
+    console.log('   - PUT    /api/v1/notifications/:id/read');
+    console.log('   - GET    /api/v1/deployments');
+    console.log('   - GET    /api/v1/integrations');
+    console.log('   - GET    /api/v1/nexus/status');
+    
     console.log('✅ Vutler APIs mounted:');
     console.log('   - POST   /api/v1/agents');
     console.log('   - GET    /api/v1/agents');
