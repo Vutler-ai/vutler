@@ -17,9 +17,9 @@ const DEFAULTS = {
   workspace: path.join(os.homedir(), '.vutler', 'workspace'),
   webPort: 3939,
   llm: {
-    provider: 'claude-code', // claude-code | anthropic | openai | ollama | kimi
+    provider: 'claude-code', // claude-code | anthropic | openai | openrouter | ollama | kimi
     model: 'claude-sonnet-4-20250514',
-    apiKey: null, // Required for anthropic, openai, kimi
+    apiKey: null, // Required for anthropic, openai, openrouter, kimi
     baseUrl: '', // Optional for openai (default: https://api.openai.com/v1)
     ollamaHost: 'localhost', // For ollama provider
     ollamaPort: 11434, // For ollama provider
@@ -188,6 +188,13 @@ function getProviderConfig(providerName) {
         baseUrl: llmConfig.baseUrl || 'https://api.openai.com/v1'
       };
       
+    case 'openrouter':
+      return {
+        ...baseConfig,
+        apiKey: llmConfig.apiKey,
+        baseUrl: 'https://openrouter.ai/api/v1'
+      };
+      
     case 'ollama':
       return {
         ...baseConfig,
@@ -228,6 +235,12 @@ function validateProviderConfig(providerName, config = null) {
     case 'openai':
       if (!llmConfig.apiKey) {
         errors.push('API key required for OpenAI provider');
+      }
+      break;
+      
+    case 'openrouter':
+      if (!llmConfig.apiKey) {
+        errors.push('API key required for OpenRouter provider');
       }
       break;
       

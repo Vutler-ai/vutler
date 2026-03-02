@@ -381,6 +381,116 @@ class OpenAIProvider {
   }
 }
 
+class OpenRouterProvider extends OpenAIProvider {
+  constructor() {
+    super();
+    this.name = 'openrouter';
+  }
+
+  async init(config) {
+    if (!config.apiKey) {
+      throw new Error('OpenRouter API key required');
+    }
+
+    // OpenRouter uses OpenAI-compatible API
+    this.config = {
+      ...config,
+      baseUrl: 'https://openrouter.ai/api/v1',
+    };
+    this.apiKey = config.apiKey;
+    this.baseUrl = 'https://openrouter.ai/api/v1';
+    this.useSDK = false; // Use fetch for OpenRouter
+
+    // Test connection
+    try {
+      const response = await fetch(`${this.baseUrl}/models`, {
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'HTTP-Referer': 'https://vutler.ai',
+          'X-Title': 'Vutler Nexus',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      console.log(`[openrouter] ✅ OpenRouter API initialized`);
+    } catch (error) {
+      console.warn(`[openrouter] ⚠️  Connection test failed: ${error.message}`);
+    }
+  }
+
+  async chatWithFetch(messages, options = {}) {
+    // Override to add OpenRouter-specific headers
+    try {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.apiKey}`,
+          'HTTP-Referer': 'https://vutler.ai',
+          'X-Title': 'Vutler Nexus',
+        },
+        body: JSON.stringify({
+          model: this.config.model || 'anthropic/claude-3.5-sonnet',
+          messages: messages,
+          max_tokens: this.config.maxTokens || 4096,
+          temperature: this.config.temperature || 0.7,
+          stream: options.stream || false,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`HTTP ${response.status}: ${errorData.error?.message || response.statusText}`);
+      }
+
+      if (options.stream) {
+        const reader = response.body.getReader();
+        let fullContent = '';
+        
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = new TextDecoder().decode(value);
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  const text = data.choices[0]?.delta?.content || '';
+                  if (text) {
+                    fullContent += text;
+                    if (options.onChunk) {
+                      options.onChunk({ type: 'text', content: text });
+                    }
+                  }
+                } catch (parseError) {
+                  // Ignore parsing errors
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        
+        return { content: fullContent, toolUses: [] };
+      } else {
+        const data = await response.json();
+        return {
+          content: data.choices[0].message.content,
+          toolUses: []
+        };
+      }
+    } catch (error) {
+      throw new Error(`OpenRouter API error: ${error.message}`);
+    }
+  }
+}
+
 class OllamaProvider {
   constructor() {
     this.name = 'ollama';
@@ -606,6 +716,7 @@ const providers = {
   'claude-code': ClaudeCodeProvider,
   'anthropic': AnthropicProvider,
   'openai': OpenAIProvider,
+  'openrouter': OpenRouterProvider,
   'ollama': OllamaProvider,
   'kimi': KimiProvider,
 };
@@ -629,6 +740,7 @@ module.exports = {
   ClaudeCodeProvider,
   AnthropicProvider,
   OpenAIProvider,
+  OpenRouterProvider,
   OllamaProvider,
   KimiProvider,
 };

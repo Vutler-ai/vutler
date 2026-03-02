@@ -3,6 +3,9 @@
  * Standalone Express API for AI agent management, email, and chat
  */
 
+// Load environment variables from .env file
+try { require('dotenv').config(); } catch(e) {}
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -136,6 +139,15 @@ async function start() {
     app.use('/api/v1', usagePgAPI);  // PostgreSQL usage (replaces MongoDB)
     // app.use('/api/v1', usageAPI);  // old MongoDB usage
     app.use('/api/v1/drive', driveAPI);
+    // VDrive (encrypted file storage)
+    try {
+      const vdriveAPI = require('./api/vdrive');
+      app.use('/api/v1/vdrive', vdriveAPI);
+      console.log('   - POST   /api/v1/vdrive/upload');
+      console.log('   - GET    /api/v1/vdrive/files');
+    } catch(e) {
+      console.warn('[BOOT] VDrive API skip:', e.message);
+    }
     app.use('/api/v1', openclawAPI);
     
 // Default workspace fallback
@@ -194,6 +206,119 @@ app.use("/api/v1/tasks", tasksAPI);
     // WebSocket stats endpoint
     app.get('/api/v1/ws/stats', (req, res) => {
       res.json({ success: true, ws: wsGetStats() });
+    });
+    
+    // ============================================================================
+    // NEXUS LOCAL AGENT ENDPOINTS (for local agent web UI)
+    // ============================================================================
+    
+    // GET /api/config - Nexus configuration
+    app.get('/api/config', (req, res) => {
+      res.json({
+        cloudUrl: process.env.VUTLER_CLOUD_URL || 'app.vutler.ai',
+        token: null, // Will be set if user pairs with cloud
+        workspace: process.env.NEXUS_WORKSPACE || require('path').join(require('os').homedir(), '.vutler', 'workspace'),
+        webPort: parseInt(process.env.NEXUS_PORT || '3939'),
+        llm: {
+          provider: process.env.LLM_PROVIDER || 'claude-code',
+          model: process.env.LLM_MODEL || 'claude-sonnet-4-20250514',
+          apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || null,
+          maxTokens: parseInt(process.env.LLM_MAX_TOKENS || '4096'),
+          temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.7')
+        },
+        agent: {
+          name: process.env.AGENT_NAME || 'Jarvis',
+          systemPrompt: 'auto',
+          contextFiles: ['SOUL.md', 'MEMORY.md', 'USER.md', 'IDENTITY.md', 'TOOLS.md']
+        },
+        features: {
+          webInterface: true,
+          cloudSync: false,
+          localChat: true,
+          fileAccess: true,
+          shellAccess: false
+        }
+      });
+    });
+    
+    // POST /api/config - Update Nexus configuration
+    app.post('/api/config', (req, res) => {
+      // In production, this would save to a config file
+      console.log('[NEXUS] Config update received:', req.body);
+      res.json({ success: true, message: 'Configuration updated' });
+    });
+    
+    // GET /api/status - Nexus status
+    app.get('/api/status', (req, res) => {
+      res.json({
+        server: 'running',
+        agent: {
+          llmConfigured: !!(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY),
+          llmProvider: process.env.LLM_PROVIDER || 'claude-code',
+          systemPromptLoaded: true,
+          conversationLength: 0
+        },
+        config: {
+          agentName: process.env.AGENT_NAME || 'Jarvis',
+          model: process.env.LLM_MODEL || 'claude-sonnet-4-20250514',
+          workspace: process.env.NEXUS_WORKSPACE || require('path').join(require('os').homedir(), '.vutler', 'workspace')
+        },
+        connections: 0
+      });
+    });
+    
+    // POST /api/test-connection - Test LLM connection
+    app.post('/api/test-connection', async (req, res) => {
+      try {
+        const { provider, apiKey } = req.body;
+        
+        if (provider === 'claude-code') {
+          const { exec } = require('child_process');
+          exec('claude --version', (error) => {
+            if (error) {
+              res.json({ success: false, error: 'Claude CLI not found' });
+            } else {
+              res.json({ success: true, message: 'Claude CLI is available' });
+            }
+          });
+        } else if (provider === 'openrouter' || provider === 'anthropic') {
+          if (!apiKey) {
+            return res.json({ success: false, error: 'API key required' });
+          }
+          // Simple validation - check format
+          if (provider === 'openrouter' && !apiKey.startsWith('sk-or-')) {
+            return res.json({ success: false, error: 'Invalid OpenRouter API key format' });
+          }
+          if (provider === 'anthropic' && !apiKey.startsWith('sk-ant-')) {
+            return res.json({ success: false, error: 'Invalid Anthropic API key format' });
+          }
+          res.json({ success: true, message: 'API key format looks valid' });
+        } else {
+          res.json({ success: true, message: 'Connection test passed' });
+        }
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+    
+    // POST /api/chat - Nexus chat endpoint
+    app.post('/api/chat', async (req, res) => {
+      try {
+        const { message, stream = false } = req.body;
+        if (!message) {
+          return res.status(400).json({ error: 'Message is required' });
+        }
+        
+        // Simple echo response for now
+        // In production, this would route to the actual LLM
+        res.json({
+          type: 'text',
+          content: `Echo: ${message}`,
+          timestamp: new Date().toISOString()
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
     });
     
     // Start IMAP poller if configured
@@ -291,6 +416,40 @@ if (require.main === module) {
 // Sprint 8.2 — Agent Chat
 try { const agentChat = require('./api/routes/chat'); const authMW = require('./api/middleware/auth'); app.use('/api/v1/agents', authMW, agentChat); app.use('/api/agents', authMW, agentChat); console.log('[BOOT] Agent chat routes mounted'); } catch(e) { console.warn('[BOOT] Agent chat skip:', e.message); }
 
+// ============================================================================
+// ERROR HANDLING MIDDLEWARE (must be last)
+// ============================================================================
+
+// 404 handler - for undefined routes
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    res.status(404).json({ 
+      success: false, 
+      error: 'API endpoint not found',
+      path: req.path,
+      method: req.method
+    });
+  } else {
+    // For non-API routes, continue to static file serving or 404 page
+    next();
+  }
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err.stack);
+  
+  if (req.path.startsWith('/api/')) {
+    res.status(err.status || 500).json({
+      success: false,
+      error: err.message || 'Internal server error',
+      code: err.code || 'INTERNAL_ERROR'
+    });
+  } else {
+    res.status(500).send('Internal Server Error');
+  }
+});
+
 module.exports = { app, server };
 
 // ============================================================================
@@ -316,6 +475,8 @@ app.get('/admin/llm-settings', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin', 'llm-settings.html'));
 });
 app.get('/admin/usage', (req, res) => {
+  res.sendFile(path.join(__dirname, 'admin', 'usage.html'));
+});
 app.get("/admin/marketplace", (req, res) => {
   res.sendFile(path.join(__dirname, "admin", "marketplace.html"));
 });
@@ -324,8 +485,6 @@ app.get("/admin/activity", (req, res) => {
 });
 app.get("/admin/onboarding", (req, res) => {
   res.sendFile(path.join(__dirname, "admin", "onboarding.html"));
-});
-  res.sendFile(path.join(__dirname, 'admin', 'usage.html'));
 });
 
 

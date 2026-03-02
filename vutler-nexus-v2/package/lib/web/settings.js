@@ -84,8 +84,8 @@ class SettingsInterface {
       // Hide API key field for Claude Code CLI
       this.apiKeyGroup.style.display = 'none';
       this.testConnectionBtn.textContent = 'Test Claude CLI';
-    } else if (provider === 'anthropic-api') {
-      // Show API key field for Anthropic API
+    } else if (provider === 'anthropic-api' || provider === 'openrouter') {
+      // Show API key field for API-based providers
       this.apiKeyGroup.style.display = 'block';
       this.testConnectionBtn.textContent = 'Test API Connection';
     }
@@ -196,8 +196,9 @@ class SettingsInterface {
       temperature: parseFloat(this.temperature.value) || 0.7
     };
 
-    // Only include API key for anthropic-api provider and if it's not masked
-    if (this.llmProvider.value === 'anthropic-api' && this.apiKey.value && !this.apiKey.value.includes('...')) {
+    // Only include API key for API-based providers and if it's not masked
+    const apiProviders = ['anthropic-api', 'openrouter', 'openai', 'kimi'];
+    if (apiProviders.includes(this.llmProvider.value) && this.apiKey.value && !this.apiKey.value.includes('...')) {
       config.llm.apiKey = this.apiKey.value;
     }
 
@@ -249,6 +250,19 @@ class SettingsInterface {
         }
 
         this.showStatus('success', 'API key format looks correct! Save settings to test fully.');
+      } else if (provider === 'openrouter') {
+        // Test OpenRouter API key format
+        const apiKey = this.apiKey.value;
+        
+        if (!apiKey || apiKey.includes('...')) {
+          throw new Error('Please enter your OpenRouter API key');
+        }
+
+        if (!apiKey.startsWith('sk-or-')) {
+          throw new Error('API key should start with sk-or-');
+        }
+
+        this.showStatus('success', 'OpenRouter API key format looks correct! Save settings to test fully.');
       }
 
     } catch (error) {
@@ -333,7 +347,14 @@ class SettingsInterface {
     let statusText = `🤖 ${status.config?.agentName || 'Agent'} | `;
     
     if (agent.llmConfigured) {
-      const provider = agent.llmProvider === 'claude-code' ? '🖥️ Claude CLI' : '🌐 API';
+      let provider;
+      if (agent.llmProvider === 'claude-code') {
+        provider = '🖥️ Claude CLI';
+      } else if (agent.llmProvider === 'openrouter') {
+        provider = '🔀 OpenRouter';
+      } else {
+        provider = '🌐 API';
+      }
       statusText += `${provider} ${status.config?.model || 'LLM'} | `;
     }
     
@@ -344,7 +365,14 @@ class SettingsInterface {
       agentEl.className = 'status success';
       agentEl.innerHTML = statusText;
     } else if (!agent.llmConfigured) {
-      const providerText = agent.llmProvider === 'claude-code' ? 'Claude CLI not available' : 'API key not set';
+      let providerText;
+      if (agent.llmProvider === 'claude-code') {
+        providerText = 'Claude CLI not available';
+      } else if (agent.llmProvider === 'openrouter') {
+        providerText = 'OpenRouter API key not set';
+      } else {
+        providerText = 'API key not set';
+      }
       agentEl.className = 'status warning';
       agentEl.innerHTML = `⚠️ LLM not configured - ${providerText}`;
     } else {

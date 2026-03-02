@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+
+# Generated
+*.temp
+*.tmp
+
+# Memory files (agent data)
+memory/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__snipara__rlm_shared_context"
+    ]
+  }
+}

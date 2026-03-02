@@ -1,212 +1,588 @@
-# AGENTS.md - Your Workspace
+# AGENTS.md - Vutler Project Guide
 
-This folder is home. Treat it that way.
+> Guide for AI coding agents working on the Vutler platform.  
+> This project uses **English** for code/comments and **French** for documentation/business docs.
 
-## First Run
+---
 
-If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out who you are, then delete it. You won't need it again.
+## Project Overview
 
-## Every Session
+**Vutler** is an AI agent management platform developed by **Starbox Group** (Geneva, Switzerland). It enables businesses to create, deploy, and orchestrate AI agents that interact through chat (Rocket.Chat integration), email, and webhooks.
 
-Before doing anything else:
+### Core Features
+- **AI Agent Runtime**: Multi-agent orchestration with LLM routing (OpenAI, Anthropic, MiniMax)
+- **Chat Integration**: Deep Rocket.Chat integration for agent-human collaboration
+- **Email Support**: Inbound/outbound email processing for agents
+- **Tool Framework**: Extensible tool system (web search, file operations, shell execution)
+- **Memory System**: Snipara integration for persistent agent memory
+- **Multi-tenant**: Workspace-based data isolation
+- **VDrive**: Encrypted file storage with chat integration
 
-1. Read `SOUL.md` — this is who you are
-2. Read `USER.md` — this is who you're helping
-3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+### Product Ecosystem
+- **vutler.ai** — Main platform (this repo)
+- **Snipara** — AI context optimization & agent memory (snipara.com)
+- **Vaultbrix** — Swiss-hosted database platform (vaultbrix.com)
 
-Don't ask permission. Just do it.
+---
 
-## Memory
+## Technology Stack
 
-You wake up fresh each session. These files are your continuity:
+| Component | Technology |
+|-----------|------------|
+| **Runtime** | Node.js 20+ |
+| **Language** | JavaScript (CommonJS) / TypeScript (select files) |
+| **API Framework** | Express.js 4.x |
+| **Databases** | PostgreSQL 15+ (primary), MongoDB (Rocket.Chat), Redis (cache/pub-sub) |
+| **Real-time** | WebSocket (DDP protocol for Rocket.Chat), Socket.io |
+| **Container** | Docker + Docker Compose |
+| **Reverse Proxy** | nginx |
+| **Process Management** | PM2 (production) |
 
-- **Daily notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — raw logs of what happened
-- **Long-term:** `MEMORY.md` — your curated memories, like a human's long-term memory
+### Key Dependencies
+```javascript
+// Core
+express, cors, helmet, rate-limit
+ws (WebSocket), mongodb, pg (PostgreSQL), redis
 
-Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
+// Security
+crypto, bcrypt, jsonwebtoken
 
-### 🧠 MEMORY.md - Your Long-Term Memory
+// HTTP/API
+axios, node-fetch
 
-- **ONLY load in main session** (direct chats with your human)
-- **DO NOT load in shared contexts** (Discord, group chats, sessions with other people)
-- This is for **security** — contains personal context that shouldn't leak to strangers
-- You can **read, edit, and update** MEMORY.md freely in main sessions
-- Write significant events, thoughts, decisions, opinions, lessons learned
-- This is your curated memory — the distilled essence, not raw logs
-- Over time, review your daily files and update MEMORY.md with what's worth keeping
+// Utilities
+uuid, dotenv, winston (logging)
 
-### 📝 Write It Down - No "Mental Notes"!
+// File handling
+multer, mime-types
+```
 
-- **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
-- "Mental notes" don't survive session restarts. Files do.
-- When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
-- When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
-- When you make a mistake → document it so future-you doesn't repeat it
-- **Text > Brain** 📝
+---
 
-## Safety
+## Project Structure
 
-- Don't exfiltrate private data. Ever.
-- Don't run destructive commands without asking.
-- `trash` > `rm` (recoverable beats gone forever)
-- When in doubt, ask.
+```
+vutler/
+├── api/                      # Express route handlers (1 file = 1 domain)
+│   ├── agents.js             # Agent CRUD operations
+│   ├── chat.js               # Rocket.Chat integration
+│   ├── email.js              # Email send/receive
+│   ├── drive-chat.js         # VDrive file sharing
+│   ├── github.js             # GitHub connector API
+│   ├── llm.js                # LLM provider management
+│   ├── memory.js             # Agent memory (Snipara)
+│   ├── onboarding.js         # User onboarding wizard
+│   ├── runtime.js            # Agent runtime control
+│   ├── tools.js              # Agent tools framework
+│   ├── webhook.js            # Webhook integrations
+│   └── workspace.js          # Multi-tenant workspace API
+│
+├── services/                 # Business logic & core services
+│   ├── agentRuntime.js       # Main agent runtime (DDP WebSocket)
+│   ├── agentManager.js       # Runtime v3: Agent Process Manager (APM)
+│   ├── agentBus.js           # Redis pub/sub for inter-agent comms
+│   ├── toolRegistry.js       # Tool registration & execution
+│   ├── skillSystem.js        # Agent skills framework
+│   ├── localAgent.js         # Local WebSocket agent connections
+│   ├── llmRouter.js          # LLM provider routing
+│   ├── crypto.js             # Encryption/decryption service
+│   ├── provisioning.js       # Workspace & agent provisioning
+│   └── swagger.js            # API documentation (Swagger)
+│
+├── lib/                      # Shared utilities & middleware
+│   ├── auth.js               # Authentication middleware
+│   ├── postgres.js           # PostgreSQL pool & helpers
+│   ├── logger.js             # Winston logger configuration
+│   └── validators.js         # Input validation helpers
+│
+├── scripts/                  # Utility scripts
+│   ├── email-poll.py         # IMAP email polling
+│   ├── kchat-poll.py         # kChat message polling
+│   └── jarvis-sync.sh        # Deployment sync script
+│
+├── skills/                   # Agent skill definitions
+│   ├── agile-story-master/
+│   ├── dev-story-executor/
+│   ├── product-vision-builder/
+│   └── system-architect/
+│
+├── memory/                   # Daily memory logs & reports
+│   ├── YYYY-MM-DD.md         # Daily context files
+│   ├── rex-health-report.md  # Monitoring reports
+│   └── vchat-inbox.jsonl     # Pending chat messages
+│
+├── social-media/             # Social media content & scheduling
+├── prompts/                  # LLM prompt templates
+├── projects/                 # Project-specific documentation
+├── reports/                  # Generated reports
+│
+├── *.sql                     # Database migrations
+├── *.js                      # Standalone service files
+├── *.md                      # Sprint docs & specifications
+│
+└── docker-compose.yml        # (in production VPS, not in repo)
+```
 
-## External vs Internal
+---
 
-**Safe to do freely:**
+## Code Organization
 
-- Read files, explore, organize, learn
-- Search the web, check calendars
-- Work within this workspace
+### Module Pattern (CommonJS)
+All JavaScript files follow this structure:
 
-**Ask first:**
+```javascript
+'use strict';
 
-- Sending emails, tweets, public posts
-- Anything that leaves the machine
-- Anything you're uncertain about
+const dependency = require('./dependency');
 
-## Group Chats
+// Constants first
+const DEFAULT_TIMEOUT = 5000;
+const MAX_RETRY_COUNT = 5;
 
-You have access to your human's stuff. That doesn't mean you _share_ their stuff. In groups, you're a participant — not their voice, not their proxy. Think before you speak.
+// Main class or functions
+class MyService {
+  constructor(db) {
+    this.db = db;
+  }
+  
+  async doSomething() {
+    // Implementation
+  }
+}
 
-### 💬 Know When to Speak!
+// Private helper (underscore prefix)
+function _privateHelper() {}
 
-In group chats where you receive every message, be **smart about when to contribute**:
+// Export at bottom
+module.exports = MyService;
+// OR
+module.exports = { function1, function2 };
+```
 
-**Respond when:**
+### Express Router Pattern
+```javascript
+// api/agents.js
+const express = require('express');
+const router = express.Router();
+const { authenticateAgent } = require('../lib/auth');
 
-- Directly mentioned or asked a question
-- You can add genuine value (info, insight, help)
-- Something witty/funny fits naturally
-- Correcting important misinformation
-- Summarizing when asked
+// Apply auth middleware to all routes
+router.use(authenticateAgent);
 
-**Stay silent (HEARTBEAT_OK) when:**
+// RESTful routes
+router.get('/', async (req, res) => {
+  try {
+    const agents = await getAgents(req.workspaceId);
+    res.json({ success: true, data: agents });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-- It's just casual banter between humans
-- Someone already answered the question
-- Your response would just be "yeah" or "nice"
-- The conversation is flowing fine without you
-- Adding a message would interrupt the vibe
+module.exports = router;
+```
 
-**The human rule:** Humans in group chats don't respond to every single message. Neither should you. Quality > quantity. If you wouldn't send it in a real group chat with friends, don't send it.
+### Response Format Standard
+```javascript
+// Success response
+res.json({
+  success: true,
+  data: { /* payload */ },
+  meta: { total: 100, page: 1 }  // optional
+});
 
-**Avoid the triple-tap:** Don't respond multiple times to the same message with different reactions. One thoughtful response beats three fragments.
+// Error response
+res.status(400).json({
+  success: false,
+  error: 'Validation failed',
+  details: { field: 'email', message: 'Invalid format' }  // optional
+});
+```
 
-Participate, don't dominate.
+---
 
-### 😊 React Like a Human!
+## Naming Conventions
 
-On platforms that support reactions (Discord, Slack), use emoji reactions naturally:
+### Files
+- **kebab-case** for new files: `agent-runtime.js`, `llm-router.js`
+- **camelCase** accepted for legacy: `agentRuntime.js`
+- Suffixes: `*.test.js`, `*.spec.js`, `*.config.js`
 
-**React when:**
+### Variables & Functions
+```javascript
+// camelCase for variables
+const agentConfig = {};
+const isActive = true;
 
-- You appreciate something but don't need to reply (👍, ❤️, 🙌)
-- Something made you laugh (😂, 💀)
-- You find it interesting or thought-provoking (🤔, 💡)
-- You want to acknowledge without interrupting the flow
-- It's a simple yes/no or approval situation (✅, 👀)
+// SCREAMING_SNAKE_CASE for constants
+const RC_WS_URL = process.env.RC_WS_URL || 'ws://localhost:3000';
+const MAX_RETRY_COUNT = 5;
 
-**Why it matters:**
-Reactions are lightweight social signals. Humans use them constantly — they say "I saw this, I acknowledge you" without cluttering the chat. You should too.
+// camelCase, verb-first for functions
+function getAgentById(id) {}
+function createWorkspace(data) {}
+async function fetchMessages() {}
 
-**Don't overdo it:** One reaction per message max. Pick the one that fits best.
+// underscore prefix for "private" functions
+async function _loadFromPG() {}
+function _handleError(err) {}
+```
 
-## Tools
+### Classes
+```javascript
+// PascalCase for classes
+class AgentRuntime {
+  constructor(db, app) {
+    this.db = db;
+    this.app = app;
+  }
+}
 
-Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
+class LLMRouter {}
+class AgentProcessManager {}
+```
 
-**🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
+### API Routes
+```javascript
+// RESTful naming, plural for collections
+router.get('/agents', listAgents);
+router.get('/agents/:id', getAgent);
+router.post('/agents', createAgent);
+router.put('/agents/:id', updateAgent);
+router.delete('/agents/:id', deleteAgent);
 
-**📝 Platform Formatting:**
+// Special actions: verb after ID
+router.post('/agents/:id/start', startAgent);
+router.post('/agents/:id/stop', stopAgent);
+```
 
-- **Discord/WhatsApp:** No markdown tables! Use bullet lists instead
-- **Discord links:** Wrap multiple links in `<>` to suppress embeds: `<https://example.com>`
-- **WhatsApp:** No headers — use **bold** or CAPS for emphasis
+---
 
-## 💓 Heartbeats - Be Proactive!
+## Database Patterns
 
-When you receive a heartbeat poll (message matches the configured heartbeat prompt), don't just reply `HEARTBEAT_OK` every time. Use heartbeats productively!
+### PostgreSQL Queries (Always Parameterized)
+```javascript
+// ALWAYS use parameterized queries (anti-SQL injection)
+const result = await pool.query(
+  'SELECT * FROM agents WHERE workspace_id = $1 AND status = $2',
+  [workspaceId, 'active']
+);
 
-Default heartbeat prompt:
-`Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.`
+// NEVER use string interpolation
+// ❌ `SELECT * FROM agents WHERE id = '${id}'`
+```
 
-You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it small to limit token burn.
+### Transactions
+```javascript
+const client = await pool.connect();
+try {
+  await client.query('BEGIN');
+  await client.query('INSERT INTO agents ...', [...]);
+  await client.query('INSERT INTO agent_channels ...', [...]);
+  await client.query('COMMIT');
+} catch (err) {
+  await client.query('ROLLBACK');
+  throw err;
+} finally {
+  client.release();
+}
+```
 
-### Heartbeat vs Cron: When to Use Each
+### Multi-tenant Isolation
+All tables have `workspace_id` with Row Level Security (RLS) policies:
+```sql
+CREATE POLICY ws_isolation_agents ON agents
+  USING (workspace_id = current_setting('app.workspace_id', true));
+```
 
-**Use heartbeat when:**
+---
 
-- Multiple checks can batch together (inbox + calendar + notifications in one turn)
-- You need conversational context from recent messages
-- Timing can drift slightly (every ~30 min is fine, not exact)
-- You want to reduce API calls by combining periodic checks
+## Environment Variables
 
-**Use cron when:**
+Critical env vars used across the codebase:
+```bash
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/vutler
+MONGODB_URI=mongodb://localhost:27017/rocketchat
+REDIS_URL=redis://localhost:6379
 
-- Exact timing matters ("9:00 AM sharp every Monday")
-- Task needs isolation from main session history
-- You want a different model or thinking level for the task
-- One-shot reminders ("remind me in 20 minutes")
-- Output should deliver directly to a channel without main session involvement
+# Rocket.Chat
+RC_WS_URL=ws://localhost:3000/websocket
+RC_API_URL=http://localhost:3000
+RC_ADMIN_TOKEN=xxx
+RC_ADMIN_USER_ID=xxx
 
-**Tip:** Batch similar periodic checks into `HEARTBEAT.md` instead of creating multiple cron jobs. Use cron for precise schedules and standalone tasks.
+# LLM Providers
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+MINIMAX_API_KEY=...
 
-**Things to check (rotate through these, 2-4 times per day):**
+# External Services
+SNIPARA_API_URL=https://api.snipara.com/mcp/vutler
+SNIPARA_API_KEY=rlm_...
 
-- **Emails** - Any urgent unread messages?
-- **Calendar** - Upcoming events in next 24-48h?
-- **Mentions** - Twitter/social notifications?
-- **Weather** - Relevant if your human might go out?
+# Security
+JWT_SECRET=...
+ENCRYPTION_KEY=...
 
-**Track your checks** in `memory/heartbeat-state.json`:
+# Server
+PORT=3001
+NODE_ENV=production
+```
 
-```json
-{
-  "lastChecks": {
-    "email": 1703275200,
-    "calendar": 1703260800,
-    "weather": null
+---
+
+## Testing
+
+### Test Files
+```javascript
+// test-{feature}.js OR {feature}.test.js
+describe('AgentRuntime', () => {
+  describe('start()', () => {
+    it('should load agents from PostgreSQL', async () => {
+      // Test implementation
+    });
+
+    it('should handle connection errors gracefully', async () => {
+      // Test implementation
+    });
+  });
+});
+```
+
+### Running Tests
+```bash
+npm test              # All tests
+npm run test:unit     # Unit tests only
+npm run test:e2e      # End-to-end tests
+npm run test:coverage # With coverage report
+```
+
+### E2E Test Coverage
+Key E2E flows (from `e2e-test-s8.5.js`):
+- User signup → onboarding → LLM setup → agent creation → channel assignment
+- Agent receives message → processes via LLM → posts response
+- Multi-tenant isolation verification
+
+---
+
+## Security Guidelines
+
+### Authentication Headers
+```javascript
+// Required headers for authenticated requests
+const authToken = req.headers['x-auth-token'];
+const userId = req.headers['x-user-id'];
+const workspaceId = req.headers['x-workspace-id'];
+```
+
+### Input Validation
+```javascript
+// Always validate before processing
+const { name, email } = req.body;
+if (!name || typeof name !== 'string' || name.length > 100) {
+  return res.status(400).json({ success: false, error: 'Invalid name' });
+}
+```
+
+### Secret Management
+- NEVER commit secrets to git
+- Use environment variables
+- Encrypt sensitive data at rest (CryptoService)
+- Validate all external inputs
+
+---
+
+## Deployment
+
+### VPS Context (Production)
+- **IP**: 83.228.222.180
+- **SSH Key**: `.secrets/vps-ssh-key.pem`
+- **Source**: `/home/ubuntu/vutler/app/custom/`
+- **Rebuild**: `cd /home/ubuntu/vutler && docker compose up -d --build vutler-api`
+
+### Docker Services
+```yaml
+# docker-compose.yml structure
+services:
+  vutler-api:       # Main API server (port 3001)
+  vutler-rocketchat:# Rocket.Chat (port 3000)
+  vutler-postgres:  # PostgreSQL
+  vutler-mongo:     # MongoDB
+  vutler-redis:     # Redis cache
+  vutler-nginx:     # Reverse proxy
+```
+
+### Git Conventions
+```
+main              # Production
+develop           # Integration
+feature/S12-xxx   # Features (Sprint-Story format)
+fix/S12-xxx       # Bug fixes
+hotfix/xxx        # Production hotfixes
+```
+
+### Commit Format
+```
+type(scope): description
+
+Types:
+- feat: New feature
+- fix: Bug fix
+- refactor: Code refactoring
+- docs: Documentation
+- test: Tests
+- chore: Maintenance
+
+Examples:
+feat(agents): add agent memory persistence
+fix(chat): resolve message deduplication issue
+```
+
+---
+
+## Development Workflow
+
+### Before Coding
+1. Read `SOUL.md` — understand the agent persona
+2. Read `USER.md` — understand Alex's preferences
+3. Read `MEMORY.md` — check recent context
+4. Check `TODO.md` for active tasks
+5. Read relevant sprint file (e.g., `sprint-11.md`)
+
+### Logging Pattern
+```javascript
+// Prefix with [Module/Function]
+console.log('[Runtime] Starting agent runtime…');
+console.warn('[Runtime] Agent bus init skipped:', err.message);
+console.error('[AgentRuntime._connect] WebSocket error:', err);
+
+// For production: use structured logger
+const { logger } = require('./lib/logger');
+logger.info({ agentId, action: 'start' }, 'Agent started');
+logger.error({ err, agentId }, 'Agent failed to start');
+```
+
+### Error Handling
+```javascript
+// Custom error classes
+class AppError extends Error {
+  constructor(message, statusCode = 500, code = 'INTERNAL_ERROR') {
+    super(message);
+    this.statusCode = statusCode;
+    this.code = code;
+    this.isOperational = true;
+  }
+}
+
+// Always use try/catch with async
+async function processMessage(messageId) {
+  try {
+    const message = await db.query('SELECT * FROM messages WHERE id = $1', [messageId]);
+    if (!message) {
+      throw new Error('Message not found');
+    }
+    return message;
+  } catch (err) {
+    console.error('[processMessage] Error:', err.message);
+    throw err;  // Re-throw for parent handler
   }
 }
 ```
 
-**When to reach out:**
+---
 
-- Important email arrived
-- Calendar event coming up (&lt;2h)
-- Something interesting you found
-- It's been >8h since you said anything
+## Key Architecture Components
 
-**When to stay quiet (HEARTBEAT_OK):**
+### Agent Runtime (v2)
+Located in `services/agentRuntime.js`:
+- DDP WebSocket connection to Rocket.Chat
+- Message subscription per channel
+- Round-robin routing for unmentioned messages
+- @mention routing to specific agents
+- Each agent posts with own credentials (PAT)
 
-- Late night (23:00-08:00) unless urgent
-- Human is clearly busy
-- Nothing new since last check
-- You just checked &lt;30 minutes ago
+### Agent Process Manager (v3 - Runtime v3)
+Located in `services/agentManager.js`:
+- Worker thread management for agents
+- Health monitoring & auto-restart
+- Scalable agent orchestration
+- Tool execution isolation
 
-**Proactive work you can do without asking:**
+### LLM Router
+Located in `services/llmRouter.js`:
+- Multi-provider support (OpenAI, Anthropic, MiniMax)
+- Model selection per agent/task
+- Token usage tracking
+- Rate limiting integration
 
-- Read and organize memory files
-- Check on projects (git status, etc.)
-- Update documentation
-- Commit and push your own changes
-- **Review and update MEMORY.md** (see below)
+### Tool Registry
+Located in `services/toolRegistry.js`:
+- 7 built-in tools: knowledge, memory, email, shell, drive, webhook, web_search
+- Dynamic tool loading
+- Per-agent tool assignment
+- Security sandboxing
 
-### 🔄 Memory Maintenance (During Heartbeats)
+---
 
-Periodically (every few days), use a heartbeat to:
+## Sprint Documentation
 
-1. Read through recent `memory/YYYY-MM-DD.md` files
-2. Identify significant events, lessons, or insights worth keeping long-term
-3. Update `MEMORY.md` with distilled learnings
-4. Remove outdated info from MEMORY.md that's no longer relevant
+Active sprint files track development progress:
+- `sprint-7.md` — Launch prep, E2E testing
+- `sprint-8.md` — Multi-tenant, Snipara integration
+- `sprint-9.md` — Onboarding wizard, auto-provisioning
+- `sprint-10.md` — Chat polish, branding
+- `sprint-11.md` — Agent autonomy: email, tools, multi-agent
+- `SPRINT-11.5-FINAL-REPORT.md` — Runtime v3 activation status
 
-Think of it like a human reviewing their journal and updating their mental model. Daily files are raw notes; MEMORY.md is curated wisdom.
+---
 
-The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
+## Files to Know
 
-## Make It Yours
+### Critical Service Files
+| File | Purpose |
+|------|---------|
+| `agentRuntime.js` | Main agent runtime service (DDP WebSocket) |
+| `index-s11.5-integrated.js` | Express server with all routes (main entry) |
+| `pg-updated.js` | PostgreSQL connection & helpers |
+| `provisioning.js` | Workspace & agent provisioning logic |
+| `crypto-service.js` | Encryption/decryption utilities |
+| `quotaMiddleware.js` | Rate limiting & quota enforcement |
 
-This is a starting point. Add your own conventions, style, and rules as you figure out what works.
+### Configuration Files
+| File | Purpose |
+|------|---------|
+| `.eslintrc.json` | ESLint rules (semicolons required, single quotes) |
+| `.mcp.json` | MCP server configurations (Snipara) |
+| `.prettierrc` | Code formatting rules |
+| `.editorconfig` | Editor consistency settings |
+
+### Documentation Files
+| File | Purpose |
+|------|---------|
+| `CODING_STANDARDS.md` | Detailed coding conventions (French) |
+| `SECURITY.md` | Trust model & security rules |
+| `TODO.md` | Active task board |
+| `HEARTBEAT.md` | Automated check procedures |
+| `TOOLS.md` | MCP tools & integrations reference |
+
+---
+
+## PR Checklist
+
+Before submitting changes:
+- [ ] Code follows conventions above
+- [ ] No debug `console.log` (use logger)
+- [ ] Environment variables documented
+- [ ] Tests added/updated
+- [ ] No secrets in code
+- [ ] SQL uses parameters (`$1`, `$2`)
+- [ ] Errors are caught and logged
+- [ ] API responses follow standard format
+- [ ] RLS policies updated if new tables
+
+---
+
+*Last updated: 2026-03-02*  
+*Project: Vutler by Starbox Group*  
+*Primary Language: English (code), French (docs)*

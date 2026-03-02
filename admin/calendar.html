@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calendar — Vutler Admin</title>
+  <link rel="icon" href="/landing/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    .calendar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .calendar-nav {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .calendar-nav button {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      color: var(--text-2);
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .calendar-nav button:hover {
+      background: var(--bg-3);
+      border-color: var(--border-h);
+    }
+    .calendar-nav .month-year {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-1);
+      min-width: 200px;
+      text-align: center;
+    }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .calendar-header-cell {
+      background: var(--bg-2);
+      padding: 12px;
+      text-align: center;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text-2);
+      text-transform: uppercase;
+    }
+    .calendar-day {
+      background: var(--bg-1);
+      min-height: 120px;
+      padding: 8px;
+      position: relative;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .calendar-day:hover {
+      background: var(--bg-2);
+    }
+    .calendar-day.other-month {
+      background: var(--bg-0);
+      opacity: 0.6;
+    }
+    .calendar-day.today {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid var(--green);
+    }
+    .calendar-day-number {
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-1);
+      margin-bottom: 6px;
+    }
+    .calendar-event {
+      background: var(--blue);
+      color: white;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-bottom: 2px;
+      truncate: ellipsis;
+      white-space: nowrap;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .calendar-event.red {
+      background: var(--red);
+    }
+    .calendar-event.green {
+      background: var(--green);
+    }
+    .calendar-event.purple {
+      background: var(--purple);
+    }
+    .btn-new-event {
+      background: var(--green);
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: var(--radius);
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all .2s;
+    }
+    .btn-new-event:hover {
+      background: var(--green-h);
+      transform: translateY(-1px);
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+    }
+    .modal.show {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-content {
+      background: var(--bg-1);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      width: 90%;
+      max-width: 500px;
+      border: 1px solid var(--border);
+    }
+    .modal-header {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: var(--text-1);
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 6px;
+      color: var(--text-1);
+    }
+    .form-group input, .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-2);
+      color: var(--text-1);
+      font-family: inherit;
+    }
+    .form-group textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+    .btn-cancel {
+      background: var(--bg-2);
+      color: var(--text-2);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    .btn-save {
+      background: var(--green);
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      font-weight: 500;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/landing/vutler-logo-full-white.png" alt="Vutler">
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Main</div>
+          <a href="/admin/" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            Dashboard
+          </a>
+          <a href="/admin/agents" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3m6-3v3M9 20v3m6-3v3M20 9h3m-3 6h3M1 9h3m-3 6h3"/></svg>
+            Agents
+          </a>
+          <a href="/admin/agent-builder" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Builder
+          </a>
+          <a href="/admin/calendar" class="nav-item active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Calendar
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Config</div>
+          <a href="/admin/providers" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+            Providers
+          </a>
+          <a href="/admin/llm-settings" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+            LLM Settings
+          </a>
+          <a href="/admin/templates" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+            Templates
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Analytics</div>
+          <a href="/admin/usage" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            Usage
+          </a>
+          <a href="/admin/activity" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Activity
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">Calendar</h1>
+          <div class="breadcrumb">Manage your team's schedule and events</div>
+        </div>
+        <div class="topbar-right">
+          <button class="btn-new-event" onclick="openNewEventModal()">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Event
+          </button>
+        </div>
+      </header>
+
+      <div class="page-content">
+        <div class="calendar-header">
+          <div class="calendar-nav">
+            <button onclick="changeMonth(-1)">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                <polyline points="15,18 9,12 15,6"/>
+              </svg>
+            </button>
+            <div class="month-year" id="monthYear"></div>
+            <button onclick="changeMonth(1)">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                <polyline points="9,18 15,12 9,6"/>
+              </svg>
+            </button>
+          </div>
+          <button onclick="goToToday()">Today</button>
+        </div>
+
+        <div class="calendar-grid" id="calendarGrid">
+          <!-- Calendar will be rendered here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Event Modal -->
+  <div class="modal" id="eventModal">
+    <div class="modal-content">
+      <div class="modal-header">New Event</div>
+      <form id="eventForm">
+        <div class="form-group">
+          <label for="eventTitle">Title *</label>
+          <input type="text" id="eventTitle" required>
+        </div>
+        <div class="form-group">
+          <label for="eventDescription">Description</label>
+          <textarea id="eventDescription" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="eventStart">Start Date/Time *</label>
+            <input type="datetime-local" id="eventStart" required>
+          </div>
+          <div class="form-group">
+            <label for="eventEnd">End Date/Time *</label>
+            <input type="datetime-local" id="eventEnd" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="eventLocation">Location</label>
+          <input type="text" id="eventLocation">
+        </div>
+        <div class="form-group">
+          <label for="eventColor">Color</label>
+          <select id="eventColor">
+            <option value="#3b82f6">Blue</option>
+            <option value="#10b981">Green</option>
+            <option value="#ef4444">Red</option>
+            <option value="#a855f7">Purple</option>
+            <option value="#f59e0b">Orange</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" onclick="closeEventModal()">Cancel</button>
+          <button type="submit" class="btn-save">Save Event</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let currentDate = new Date();
+    let events = [];
+
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    async function fetchEvents() {
+      try {
+        const response = await fetch('/api/v1/calendar/events');
+        const data = await response.json();
+        if (data.success) {
+          events = data.events;
+          renderCalendar();
+        }
+      } catch (error) {
+        console.error('Failed to fetch events:', error);
+      }
+    }
+
+    function renderCalendar() {
+      const monthYear = document.getElementById('monthYear');
+      monthYear.textContent = `${monthNames[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
+
+      const grid = document.getElementById('calendarGrid');
+      grid.innerHTML = '';
+
+      // Header row
+      dayNames.forEach(day => {
+        const cell = document.createElement('div');
+        cell.className = 'calendar-header-cell';
+        cell.textContent = day;
+        grid.appendChild(cell);
+      });
+
+      // Calendar days
+      const firstDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const lastDay = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      const startDate = new Date(firstDay);
+      startDate.setDate(startDate.getDate() - firstDay.getDay());
+
+      for (let i = 0; i < 42; i++) {
+        const cellDate = new Date(startDate);
+        cellDate.setDate(startDate.getDate() + i);
+        
+        const cell = document.createElement('div');
+        cell.className = 'calendar-day';
+        
+        if (cellDate.getMonth() !== currentDate.getMonth()) {
+          cell.classList.add('other-month');
+        }
+        
+        if (isToday(cellDate)) {
+          cell.classList.add('today');
+        }
+        
+        const dayNumber = document.createElement('div');
+        dayNumber.className = 'calendar-day-number';
+        dayNumber.textContent = cellDate.getDate();
+        cell.appendChild(dayNumber);
+
+        // Add events for this day
+        const dayEvents = events.filter(event => {
+          const eventDate = new Date(event.start_time);
+          return eventDate.getDate() === cellDate.getDate() &&
+                 eventDate.getMonth() === cellDate.getMonth() &&
+                 eventDate.getFullYear() === cellDate.getFullYear();
+        });
+
+        dayEvents.forEach(event => {
+          const eventEl = document.createElement('div');
+          eventEl.className = 'calendar-event';
+          eventEl.textContent = event.title;
+          
+          // Set color based on event color
+          if (event.color) {
+            eventEl.style.background = event.color;
+          }
+          
+          cell.appendChild(eventEl);
+        });
+
+        cell.onclick = () => openNewEventModal(cellDate);
+        grid.appendChild(cell);
+      }
+    }
+
+    function isToday(date) {
+      const today = new Date();
+      return date.getDate() === today.getDate() &&
+             date.getMonth() === today.getMonth() &&
+             date.getFullYear() === today.getFullYear();
+    }
+
+    function changeMonth(direction) {
+      currentDate.setMonth(currentDate.getMonth() + direction);
+      renderCalendar();
+    }
+
+    function goToToday() {
+      currentDate = new Date();
+      renderCalendar();
+    }
+
+    function openNewEventModal(date) {
+      const modal = document.getElementById('eventModal');
+      modal.classList.add('show');
+      
+      if (date) {
+        const startInput = document.getElementById('eventStart');
+        const endInput = document.getElementById('eventEnd');
+        
+        // Set default start time to selected date at 9:00 AM
+        const startDateTime = new Date(date);
+        startDateTime.setHours(9, 0, 0, 0);
+        startInput.value = formatDateTimeLocal(startDateTime);
+        
+        // Set default end time to 1 hour later
+        const endDateTime = new Date(startDateTime);
+        endDateTime.setHours(10, 0, 0, 0);
+        endInput.value = formatDateTimeLocal(endDateTime);
+      }
+    }
+
+    function closeEventModal() {
+      const modal = document.getElementById('eventModal');
+      modal.classList.remove('show');
+      document.getElementById('eventForm').reset();
+    }
+
+    function formatDateTimeLocal(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      return `${year}-${month}-${day}T${hours}:${minutes}`;
+    }
+
+    document.getElementById('eventForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const formData = new FormData(e.target);
+      const eventData = {
+        title: document.getElementById('eventTitle').value,
+        description: document.getElementById('eventDescription').value || null,
+        start_time: new Date(document.getElementById('eventStart').value).toISOString(),
+        end_time: new Date(document.getElementById('eventEnd').value).toISOString(),
+        location: document.getElementById('eventLocation').value || null,
+        color: document.getElementById('eventColor').value,
+        all_day: false
+      };
+
+      try {
+        const response = await fetch('/api/v1/calendar/events', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(eventData)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          closeEventModal();
+          fetchEvents(); // Refresh calendar
+        } else {
+          alert('Failed to create event: ' + (result.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Failed to create event:', error);
+        alert('Failed to create event. Please try again.');
+      }
+    });
+
+    // Close modal when clicking outside
+    document.getElementById('eventModal').addEventListener('click', (e) => {
+      if (e.target.id === 'eventModal') {
+        closeEventModal();
+      }
+    });
+
+    // Initialize calendar
+    fetchEvents();
+  </script>
+</body>
+</html>
