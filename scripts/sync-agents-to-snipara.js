@@ -129,6 +129,16 @@ const VUTLER_AGENTS = [
     skills: ['system-architect'],
     files: ['SOUL.md', 'TOOLS.md', 'AGENTS.md'],
     memoryFiles: []
+  },
+  {
+    id: 'sentinel',
+    name: 'Sentinel',
+    role: 'Security & Threat Intelligence',
+    description: 'Security Analyst — threat detection, vulnerability scanning, security audits, and incident response. Monitors all Starbox Group infrastructure.',
+    model: 'claude-sonnet-4',
+    skills: ['system-architect'],
+    files: ['SOUL.md', 'TOOLS.md', 'AGENTS.md'],
+    memoryFiles: ['sentinel-*.md', 'rex-pentest-*.md', 'rex-secret-*.md', 'audit-*.md']
   }
 ];
 
