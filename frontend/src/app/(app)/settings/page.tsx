@@ -2,11 +2,15 @@
 
 import { authFetch } from '@/lib/authFetch';
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   UserCircleIcon,
   BuildingOfficeIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,
+  ShieldCheckIcon,
+  SparklesIcon,
+  CreditCardIcon,
 } from "@heroicons/react/24/outline";
 
 interface UserProfile {
@@ -24,7 +28,11 @@ interface Provider {
   is_active: boolean;
 }
 
-type Tab = "profile" | "workspace";
+interface BetaFeatures {
+  pixel_office_enabled: boolean;
+}
+
+type Tab = "profile" | "account" | "workspace" | "billing" | "beta";
 
 function Toast({ message, type, onClose }: { message: string; type: "success" | "error"; onClose: () => void }) {
   useEffect(() => {
@@ -43,6 +51,7 @@ function Toast({ message, type, onClose }: { message: string; type: "success" | 
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("profile");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -64,6 +73,15 @@ export default function SettingsPage() {
   const [wsTimezone, setWsTimezone] = useState("UTC");
   const [wsDefaultProvider, setWsDefaultProvider] = useState("");
   const [providers, setProviders] = useState<Provider[]>([]);
+
+  // Beta features state
+  const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>({
+    pixel_office_enabled: false,
+  });
+
+  // Delete account state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
   const showToast = (message: string, type: "success" | "error" = "success") => setToast({ message, type });
 
@@ -95,6 +113,10 @@ export default function SettingsPage() {
         setWsDesc(s.workspace_description?.value || s.workspace_description || "");
         setWsTimezone(s.timezone?.value || s.timezone || "UTC");
         setWsDefaultProvider(s.default_provider?.value || s.default_provider || "");
+        // Load beta features if present
+        if (s.beta_features) {
+          setBetaFeatures(s.beta_features);
+        }
       }
 
       if (providersRes.ok) {
@@ -166,6 +188,55 @@ export default function SettingsPage() {
     }
   };
 
+  const saveBetaFeatures = async () => {
+    setSaving(true);
+    try {
+      const res = await authFetch("/api/v1/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          settings: {
+            beta_features: { value: JSON.stringify(betaFeatures), type: "json" }
+          }
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save beta features");
+      showToast("Beta features updated");
+    } catch (err: any) {
+      showToast(err.message || "Error saving", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await authFetch("/api/v1/auth/logout", { method: "POST" });
+    } catch (e) {
+      // Ignore error, clear locally anyway
+    }
+    localStorage.removeItem("auth_token");
+    router.push("/login");
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== "DELETE") {
+      showToast("Please type DELETE to confirm", "error");
+      return;
+    }
+    setSaving(true);
+    try {
+      // This endpoint needs to be implemented
+      const res = await authFetch("/api/v1/auth/me", { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete account");
+      localStorage.removeItem("auth_token");
+      router.push("/login");
+    } catch (err: any) {
+      showToast(err.message || "Error deleting account", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const timezones = [
     "UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
     "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Zurich",
@@ -190,11 +261,11 @@ export default function SettingsPage() {
 
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-sm text-[#9ca3af] mt-1">Manage your profile and workspace preferences</p>
+        <p className="text-sm text-[#9ca3af] mt-1">Manage your profile, workspace, and preferences</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-lg p-1 w-fit">
+      <div className="flex flex-wrap gap-1 mb-6 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-lg p-1 w-fit">
         <button
           onClick={() => setTab("profile")}
           className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
@@ -205,6 +276,15 @@ export default function SettingsPage() {
           Profile
         </button>
         <button
+          onClick={() => setTab("account")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+            tab === "account" ? "bg-blue-600 text-white" : "text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
+          }`}
+        >
+          <ShieldCheckIcon className="w-4 h-4" />
+          Account
+        </button>
+        <button
           onClick={() => setTab("workspace")}
           className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
             tab === "workspace" ? "bg-blue-600 text-white" : "text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
@@ -212,6 +292,24 @@ export default function SettingsPage() {
         >
           <BuildingOfficeIcon className="w-4 h-4" />
           Workspace
+        </button>
+        <button
+          onClick={() => setTab("billing")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+            tab === "billing" ? "bg-blue-600 text-white" : "text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
+          }`}
+        >
+          <CreditCardIcon className="w-4 h-4" />
+          Billing
+        </button>
+        <button
+          onClick={() => setTab("beta")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+            tab === "beta" ? "bg-amber-600 text-white" : "text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
+          }`}
+        >
+          <SparklesIcon className="w-4 h-4" />
+          Beta
         </button>
       </div>
 
@@ -274,6 +372,70 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Account Tab */}
+      {tab === "account" && (
+        <div className="space-y-6">
+          {/* Logout Card */}
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-2">Sign Out</h2>
+            <p className="text-sm text-[#9ca3af] mb-6">Sign out from your account on this device.</p>
+            <button 
+              onClick={handleLogout}
+              className="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+            >
+              Sign Out
+            </button>
+          </div>
+
+          {/* Delete Account Card */}
+          <div className="bg-[#14151f] border border-red-500/30 rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-red-400 mb-2">Danger Zone</h2>
+            <p className="text-sm text-[#9ca3af] mb-6">
+              Once you delete your account, there is no going back. All your data, agents, and configurations will be permanently removed.
+            </p>
+            
+            {!showDeleteConfirm ? (
+              <button 
+                onClick={() => setShowDeleteConfirm(true)}
+                className="px-5 py-2.5 bg-red-600/80 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+              >
+                Delete Account
+              </button>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
+                  <p className="text-sm text-red-300 mb-2">
+                    ⚠️ This action cannot be undone. Type <strong>DELETE</strong> to confirm.
+                  </p>
+                  <input 
+                    type="text" 
+                    value={deleteConfirmText}
+                    onChange={e => setDeleteConfirmText(e.target.value)}
+                    className="w-full px-3 py-2 bg-[#0a0b14] border border-red-500/50 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                    placeholder="Type DELETE"
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => { setShowDeleteConfirm(false); setDeleteConfirmText(""); }}
+                    className="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleDeleteAccount}
+                    disabled={saving || deleteConfirmText !== "DELETE"}
+                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  >
+                    {saving ? "Deleting…" : "Permanently Delete Account"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Workspace Tab */}
       {tab === "workspace" && (
         <div className="space-y-6">
@@ -312,6 +474,136 @@ export default function SettingsPage() {
                 {saving ? "Saving…" : "Save Workspace Settings"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Billing Tab */}
+      {tab === "billing" && (
+        <div className="space-y-6">
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-2">Billing & Subscription</h2>
+            <p className="text-sm text-[#9ca3af] mb-6">
+              Manage your subscription, payment methods, and billing history.
+            </p>
+            
+            <div className="bg-[#1f2028] rounded-lg p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-white font-medium">Current Plan</h3>
+                  <p className="text-sm text-[#9ca3af]">Free</p>
+                </div>
+                <span className="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-medium">Active</span>
+              </div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between text-[#9ca3af]">
+                  <span>Agents</span>
+                  <span>1 / 1</span>
+                </div>
+                <div className="flex justify-between text-[#9ca3af]">
+                  <span>Storage</span>
+                  <span>0.1 GB / 1 GB</span>
+                </div>
+                <div className="flex justify-between text-[#9ca3af]">
+                  <span>API Calls</span>
+                  <span>Unlimited</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button 
+                onClick={() => showToast("Upgrade coming soon!", "success")}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+              >
+                Upgrade Plan
+              </button>
+              <button 
+                onClick={() => showToast("Billing portal coming soon!", "success")}
+                className="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+              >
+                View Billing History
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Beta Tab */}
+      {tab === "beta" && (
+        <div className="space-y-6">
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+            <div className="flex items-center gap-2 mb-2">
+              <SparklesIcon className="w-5 h-5 text-amber-400" />
+              <h2 className="text-lg font-semibold text-white">Beta Features</h2>
+            </div>
+            <p className="text-sm text-[#9ca3af] mb-6">
+              Try out experimental features before they're released. These features may be unstable and change without notice.
+            </p>
+
+            {/* Pixel Office Feature */}
+            <div className="bg-[#1f2028] rounded-lg p-5 border border-amber-500/20">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-white font-medium">🎮 Pixel Office</h3>
+                    <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded text-xs font-medium">BETA</span>
+                  </div>
+                  <p className="text-sm text-[#9ca3af] mb-3">
+                    Enable the virtual pixel office where your agents appear in a live simulation. 
+                    Agents move between rooms, attend meetings, and work on tasks in real-time.
+                  </p>
+                  <ul className="text-xs text-[#6b7280] space-y-1 mb-4">
+                    <li>• Visual representation of your AI team</li>
+                    <li>• Real-time agent movements and activities</li>
+                    <li>• Meeting rooms and collaboration spaces</li>
+                    <li>• ⚠️ May impact browser performance</li>
+                  </ul>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer ml-4">
+                  <input 
+                    type="checkbox" 
+                    className="sr-only peer"
+                    checked={betaFeatures.pixel_office_enabled}
+                    onChange={e => setBetaFeatures(prev => ({ ...prev, pixel_office_enabled: e.target.checked }))}
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                </label>
+              </div>
+              
+              {betaFeatures.pixel_office_enabled && (
+                <div className="mt-4 pt-4 border-t border-amber-500/20">
+                  <div className="flex items-center gap-2 text-sm text-amber-400">
+                    <CheckCircleIcon className="w-4 h-4" />
+                    <span>Pixel Office enabled! Access it from the sidebar.</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={saveBetaFeatures} 
+                disabled={saving} 
+                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+              >
+                {saving ? "Saving…" : "Save Beta Preferences"}
+              </button>
+            </div>
+          </div>
+
+          {/* Feedback Card */}
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+            <h3 className="text-white font-medium mb-2">Feedback</h3>
+            <p className="text-sm text-[#9ca3af] mb-4">
+              Have feedback on beta features? We'd love to hear from you.
+            </p>
+            <a 
+              href="mailto:feedback@starbox-group.com" 
+              className="inline-flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Send Feedback
+            </a>
           </div>
         </div>
       )}
