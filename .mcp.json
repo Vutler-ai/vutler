@@ -1,24 +1,12 @@
 {
   "mcpServers": {
-    "snipara": {
-      "type": "http",
-      "url": "https://api.snipara.com/mcp/moltbot",
-      "headers": {
-        "X-API-Key": "rlm_a6799498a35026d31291f327546d9b8f01ef3db3d2749021ba08d166536584f7"
-      }
-    },
-    "snipara-team": {
-      "type": "http",
-      "url": "https://api.snipara.com/mcp/team/alopez-nevicom-1769121450132",
-      "headers": {
-        "X-API-Key": "rlm_48d94a65830883b21be2fece2669d7ab6c5b08a5bb729c84b33445d8f0dd55c4"
-      }
-    },
-    "vutler-platform": {
-      "type": "http",
-      "url": "https://api.snipara.com/mcp/vutler-platform",
-      "headers": {
-        "X-API-Key": "rlm_1e3c2b706342ce9f49613ea56891d0b39a25c368144841a08855f0043dd9133b"
+    "snipara-vutler": {
+      "command": "npx",
+      "args": ["-y", "@snipara/mcp@latest"],
+      "env": {
+        "SNIPARA_API_KEY": "rlm_52ab2c077702ef86109f6f5b4e6bd32e1696c73e85ebbca09e7e2b48a95e1d2b",
+        "SNIPARA_PROJECT_ID": "cmlunio5v00016imvktf58v0b",
+        "SNIPARA_PROJECT_SLUG": "vutler"
       }
     }
   }
