@@ -2,7 +2,7 @@
 /**
  * Script de synchronisation des agents Vutler vers Snipara
  * 
- * Usage: node scripts/sync-agents-to-snipara.js
+ * Usage: node scripts/sync-agents-to-snipara.js [--dry-run] [--agent=jarvis]
  * 
  * Ce script:
  * 1. Crée/recrée les agents Vutler dans le projet Snipara
@@ -22,6 +22,11 @@ const SNIPARA_CONFIG = {
   projectSlug: 'vutler',
   teamId: 'alopez-nevicom-1769121450132'
 };
+
+// Parse args
+const args = process.argv.slice(2);
+const dryRun = args.includes('--dry-run');
+const specificAgent = args.find(a => a.startsWith('--agent='))?.split('=')[1];
 
 // Liste des agents Vutler à synchroniser
 const VUTLER_AGENTS = [
@@ -82,7 +87,7 @@ const VUTLER_AGENTS = [
     description: 'DevOps Engineer — monitoring, infrastructure, alerting, et santé des systèmes.',
     model: 'claude-haiku',
     skills: ['system-architect'],
-    files: ['SOUL.md', 'TOOLS.md', 'AGENTS.md', 'rex-*.md'],
+    files: ['SOUL.md', 'TOOLS.md', 'AGENTS.md'],
     memoryFiles: ['rex-*.md']
   },
   {
@@ -138,9 +143,14 @@ const GLOBAL_FILES = [
 ];
 
 /**
- * Appelle l'API Snipara
+ * Appelle l'API Snipara avec fetch
  */
-async function callSnipara(method, params) {
+async function callSnipara(tool, args) {
+  if (dryRun) {
+    console.log(`    [DRY RUN] ${tool}`, JSON.stringify(args).slice(0, 100) + '...');
+    return { success: true, dryRun: true };
+  }
+
   const response = await fetch(`${SNIPARA_CONFIG.apiUrl}/mcp/vutler`, {
     method: 'POST',
     headers: {
@@ -150,66 +160,44 @@ async function callSnipara(method, params) {
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: Date.now(),
-      method,
-      params
+      method: 'tools/call',
+      params: {
+        name: tool,
+        arguments: args
+      }
     })
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    const text = await response.text();
+    throw new Error(`HTTP ${response.status}: ${text}`);
   }
 
   const data = await response.json();
   if (data.error) {
-    throw new Error(`API Error: ${data.error.message}`);
+    throw new Error(`API Error: ${data.error.message || JSON.stringify(data.error)}`);
   }
 
   return data.result;
 }
 
 /**
- * Crée ou met à jour un agent sur Snipara
+ * Test la connexion à Snipara
  */
-async function createOrUpdateAgent(agent) {
-  console.log(`\n📌 Processing agent: ${agent.name} (${agent.id})`);
-
+async function testConnection() {
+  console.log('🔌 Testing Snipara connection...');
   try {
-    // 1. Créer l'agent via l'API
-    // Note: L'API exacte dépend de Snipara, ceci est une simulation
-    // En pratique, on utiliserait rlm_upload_document pour les fichiers
-    
-    // Upload du SOUL.md spécifique à l'agent
-    const soulContent = generateAgentSoul(agent);
-    await uploadDocument(`agents/${agent.id}/SOUL.md`, soulContent);
-    console.log(`  ✅ SOUL.md uploaded`);
-
-    // Upload des fichiers de base
-    for (const file of agent.files) {
-      if (fs.existsSync(file)) {
-        const content = fs.readFileSync(file, 'utf-8');
-        await uploadDocument(`agents/${agent.id}/${file}`, content);
-        console.log(`  ✅ ${file} uploaded`);
-      }
+    // Essayer de charger le projet
+    const result = await callSnipara('rlm_load_project', {
+      project: SNIPARA_CONFIG.projectSlug
+    });
+    console.log('✅ Connection successful!');
+    if (result && result.sections) {
+      console.log(`   Found ${result.sections.length} sections in project`);
     }
-
-    // Upload des fichiers globaux
-    for (const file of GLOBAL_FILES) {
-      if (fs.existsSync(file)) {
-        const content = fs.readFileSync(file, 'utf-8');
-        await uploadDocument(`agents/${agent.id}/shared/${file}`, content);
-      }
-    }
-
-    // Upload de la mémoire
-    await syncAgentMemory(agent);
-
-    // Créer le swarm pour l'agent
-    await ensureSwarmConfigured(agent);
-
-    console.log(`  ✅ Agent ${agent.name} synchronized`);
     return true;
   } catch (err) {
-    console.error(`  ❌ Error syncing ${agent.name}:`, err.message);
+    console.error('❌ Connection failed:', err.message);
     return false;
   }
 }
@@ -217,28 +205,30 @@ async function createOrUpdateAgent(agent) {
 /**
  * Upload un document vers Snipara
  */
-async function uploadDocument(path, content) {
-  // Simuler l'appel API
-  // En réalité: callSnipara('tools/call', { name: 'rlm_upload_document', arguments: { path, content } })
-  console.log(`     Uploading: ${path} (${content.length} chars)`);
-  
-  // TODO: Implémenter l'appel réel quand l'API est disponible
-  // return callSnipara('tools/call', {
-  //   name: 'rlm_upload_document',
-  //   arguments: {
-  //     project: SNIPARA_CONFIG.projectSlug,
-  //     path,
-  //     content,
-  //     metadata: { source: 'vutler-sync', timestamp: new Date().toISOString() }
-  //   }
-  // });
+async function uploadDocument(docPath, content, metadata = {}) {
+  try {
+    await callSnipara('rlm_upload_document', {
+      project: SNIPARA_CONFIG.projectSlug,
+      path: docPath,
+      content: content,
+      metadata: {
+        source: 'vutler-sync',
+        timestamp: new Date().toISOString(),
+        ...metadata
+      }
+    });
+    return true;
+  } catch (err) {
+    console.error(`     ❌ Failed to upload ${docPath}:`, err.message);
+    return false;
+  }
 }
 
 /**
  * Génère un SOUL.md spécifique pour chaque agent
  */
 function generateAgentSoul(agent) {
-  const baseSoul = fs.readFileSync('SOUL.md', 'utf-8');
+  const baseSoul = fs.existsSync('SOUL.md') ? fs.readFileSync('SOUL.md', 'utf-8') : '# Agent Configuration\n\nNo base SOUL.md found.';
   
   return `# SOUL.md - ${agent.name}
 
@@ -265,6 +255,7 @@ ${agent.memoryFiles.map(f => `- ${f}`).join('\n') || '- None specific'}
 
 ---
 *Generated: ${new Date().toISOString()}*
+*Source: Vutler Agent Sync*
 `;
 }
 
@@ -276,7 +267,7 @@ async function syncAgentMemory(agent) {
   
   if (!fs.existsSync(memoryDir)) {
     console.log(`  ⚠️  No memory directory found`);
-    return;
+    return 0;
   }
 
   const files = fs.readdirSync(memoryDir);
@@ -292,20 +283,116 @@ async function syncAgentMemory(agent) {
     if (shouldSync || file.includes(agent.id.toLowerCase())) {
       const filePath = path.join(memoryDir, file);
       const content = fs.readFileSync(filePath, 'utf-8');
-      await uploadDocument(`agents/${agent.id}/memory/${file}`, content);
-      syncedCount++;
+      const success = await uploadDocument(`agents/${agent.id}/memory/${file}`, content, { agent: agent.id });
+      if (success) {
+        syncedCount++;
+        console.log(`     ✅ memory/${file}`);
+      }
     }
   }
 
-  console.log(`  ✅ Memory: ${syncedCount} files synced`);
+  return syncedCount;
 }
 
 /**
- * Configure le swarm pour la coordination
+ * Stocke une mémoire structurée pour l'agent
  */
-async function ensureSwarmConfigured(agent) {
-  // TODO: Utiliser rlm_swarm_create ou rlm_swarm_join
-  console.log(`  🔗 Swarm configured for ${agent.id}`);
+async function storeAgentMemory(agent, type, content, metadata = {}) {
+  try {
+    await callSnipara('rlm_remember', {
+      project: SNIPARA_CONFIG.projectSlug,
+      agent: agent.id,
+      type: type, // 'fact', 'decision', 'learning', 'preference', 'todo'
+      content: content,
+      metadata: {
+        agent_name: agent.name,
+        agent_role: agent.role,
+        ...metadata
+      }
+    });
+    return true;
+  } catch (err) {
+    console.error(`     ❌ Failed to store memory:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Crée ou met à jour un agent sur Snipara
+ */
+async function createOrUpdateAgent(agent) {
+  console.log(`\n📌 Processing agent: ${agent.name} (${agent.id})`);
+
+  try {
+    // 1. Upload du SOUL.md spécifique à l'agent
+    const soulContent = generateAgentSoul(agent);
+    let success = await uploadDocument(`agents/${agent.id}/SOUL.md`, soulContent, { agent: agent.id, type: 'soul' });
+    if (success) console.log(`  ✅ SOUL.md uploaded`);
+
+    // 2. Upload des fichiers de base de l'agent
+    for (const file of agent.files) {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf-8');
+        success = await uploadDocument(`agents/${agent.id}/${file}`, content, { agent: agent.id, type: 'config' });
+        if (success) console.log(`  ✅ ${file} uploaded`);
+      } else {
+        console.log(`  ⚠️  ${file} not found locally`);
+      }
+    }
+
+    // 3. Upload des fichiers globaux
+    console.log(`  📁 Uploading shared files...`);
+    for (const file of GLOBAL_FILES) {
+      if (fs.existsSync(file)) {
+        const content = fs.readFileSync(file, 'utf-8');
+        success = await uploadDocument(`agents/${agent.id}/shared/${file}`, content, { agent: agent.id, type: 'shared' });
+        if (success) console.log(`     ✅ shared/${file}`);
+      }
+    }
+
+    // 4. Upload de la mémoire
+    console.log(`  🧠 Syncing memory...`);
+    const memoryCount = await syncAgentMemory(agent);
+    console.log(`  ✅ Memory: ${memoryCount} files synced`);
+
+    // 5. Stocker des méta-informations comme mémoire structurée
+    console.log(`  💾 Storing agent metadata...`);
+    await storeAgentMemory(agent, 'fact', `I am ${agent.name}, a ${agent.role} at Vutler. My model is ${agent.model}.`, { key: 'agent_identity' });
+    await storeAgentMemory(agent, 'preference', `My skills include: ${agent.skills.join(', ') || 'general purpose'}`, { key: 'agent_skills' });
+
+    console.log(`  ✅ Agent ${agent.name} synchronized`);
+    return true;
+  } catch (err) {
+    console.error(`  ❌ Error syncing ${agent.name}:`, err.message);
+    return false;
+  }
+}
+
+/**
+ * Configure le swarm pour tous les agents
+ */
+async function setupSwarm(agents) {
+  console.log('\n🔗 Setting up Vutler Swarm...');
+  
+  try {
+    // Créer le swarm
+    const result = await callSnipara('rlm_swarm_create', {
+      project: SNIPARA_CONFIG.projectSlug,
+      name: 'vutler-team',
+      description: 'Vutler AI Agent Team - 10 agents coordinating on the Vutler platform',
+      agents: agents.map(a => a.id),
+      config: {
+        auto_broadcast: true,
+        task_distribution: 'round_robin'
+      }
+    });
+    
+    console.log('✅ Swarm configured');
+    return result;
+  } catch (err) {
+    console.error('❌ Failed to setup swarm:', err.message);
+    return null;
+  }
 }
 
 /**
@@ -317,14 +404,36 @@ async function main() {
   console.log('╚════════════════════════════════════════════════════════╝');
   console.log(`\nProject: ${SNIPARA_CONFIG.projectSlug}`);
   console.log(`API URL: ${SNIPARA_CONFIG.apiUrl}`);
-  console.log(`Agents to sync: ${VUTLER_AGENTS.length}\n`);
+  console.log(`Mode: ${dryRun ? 'DRY RUN (no actual API calls)' : 'LIVE'}`);
 
+  // Filtrer les agents si spécifié
+  let agentsToSync = VUTLER_AGENTS;
+  if (specificAgent) {
+    agentsToSync = VUTLER_AGENTS.filter(a => a.id === specificAgent);
+    if (agentsToSync.length === 0) {
+      console.error(`❌ Agent ${specificAgent} not found`);
+      process.exit(1);
+    }
+  }
+  
+  console.log(`Agents to sync: ${agentsToSync.length}\n`);
+
+  // Tester la connexion
+  if (!dryRun) {
+    const connected = await testConnection();
+    if (!connected) {
+      console.error('\n❌ Cannot connect to Snipara API. Exiting.');
+      process.exit(1);
+    }
+  }
+
+  // Synchroniser chaque agent
   const results = {
     success: [],
     failed: []
   };
 
-  for (const agent of VUTLER_AGENTS) {
+  for (const agent of agentsToSync) {
     const success = await createOrUpdateAgent(agent);
     if (success) {
       results.success.push(agent.name);
@@ -333,11 +442,16 @@ async function main() {
     }
   }
 
+  // Configurer le swarm
+  if (!specificAgent) {
+    await setupSwarm(VUTLER_AGENTS);
+  }
+
   // Résumé
   console.log('\n╔════════════════════════════════════════════════════════╗');
   console.log('║   SYNC SUMMARY                                         ║');
   console.log('╚════════════════════════════════════════════════════════╝');
-  console.log(`\n✅ Success: ${results.success.length}/${VUTLER_AGENTS.length}`);
+  console.log(`\n✅ Success: ${results.success.length}/${agentsToSync.length}`);
   results.success.forEach(name => console.log(`   ✓ ${name}`));
   
   if (results.failed.length > 0) {
@@ -346,6 +460,10 @@ async function main() {
   }
 
   console.log('\n✨ Done!');
+  
+  if (dryRun) {
+    console.log('\n💡 This was a dry run. Remove --dry-run to actually sync.');
+  }
 }
 
 // Exécution
