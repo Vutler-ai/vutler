@@ -52,4 +52,38 @@ router.post("/events", async (req, res) => {
   }
 });
 
+// PUT /api/v1/calendar/events/:id
+router.put("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, start, end, allDay } = req.body;
+    
+    // Mock update
+    const event = {
+      id,
+      title: title || 'Updated Event',
+      start: start || new Date().toISOString(),
+      end: end || start || new Date().toISOString(),
+      allDay: allDay || false,
+      updatedAt: new Date().toISOString()
+    };
+    
+    res.json({ success: true, event });
+  } catch (err) {
+    console.error("[CALENDAR] Update event error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/v1/calendar/events/:id
+router.delete("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    res.json({ success: true, message: "Event deleted successfully", id });
+  } catch (err) {
+    console.error("[CALENDAR] Delete event error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

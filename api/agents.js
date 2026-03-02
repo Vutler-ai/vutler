@@ -278,4 +278,45 @@ router.post("/deploy", async (req, res) => {
   }
 });
 
+// GET /api/v1/agents/:id/config
+router.get("/:id/config", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Mock config
+    const config = {
+      agentId: id,
+      integrations: [],
+      webhooks: [],
+      autoReply: false,
+      workingHours: { start: '09:00', end: '18:00' }
+    };
+    
+    res.json({ success: true, config });
+  } catch (err) {
+    console.error("[AGENTS] Get config error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/v1/agents/:id/config
+router.put("/:id/config", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    
+    // Mock update
+    const config = {
+      agentId: id,
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+    
+    res.json({ success: true, config });
+  } catch (err) {
+    console.error("[AGENTS] Update config error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

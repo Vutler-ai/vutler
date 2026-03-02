@@ -104,4 +104,41 @@ router.get("/:provider", async (req, res) => {
   }
 });
 
+// GET /api/v1/integrations/available
+router.get("/available", async (req, res) => {
+  try {
+    const available = [
+      { id: 'n8n', name: 'n8n', category: 'automation' },
+      { id: 'zapier', name: 'Zapier', category: 'automation' },
+      { id: 'slack', name: 'Slack', category: 'communication' },
+      { id: 'github', name: 'GitHub', category: 'development' },
+      { id: 'gitlab', name: 'GitLab', category: 'development' },
+      { id: 'jira', name: 'Jira', category: 'project-management' }
+    ];
+    
+    res.json({ success: true, integrations: available });
+  } catch (err) {
+    console.error("[INTEGRATIONS] Available error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/:provider/agents
+router.get("/:provider/agents", async (req, res) => {
+  try {
+    const { provider } = req.params;
+    
+    // Mock agents for this integration
+    const agents = [
+      { id: '1', name: 'Support Agent', connected: true },
+      { id: '2', name: 'Sales Agent', connected: false }
+    ];
+    
+    res.json({ success: true, agents });
+  } catch (err) {
+    console.error("[INTEGRATIONS] Agents error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

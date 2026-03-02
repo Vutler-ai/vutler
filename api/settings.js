@@ -36,4 +36,42 @@ router.put("/", async (req, res) => {
   }
 });
 
+// GET /api/v1/settings/notifications
+router.get("/notifications", async (req, res) => {
+  try {
+    const settings = {
+      email: req.user?.email,
+      settings: {
+        emailEnabled: true,
+        pushEnabled: false,
+        digestEnabled: true,
+        mentionsOnly: false
+      }
+    };
+    
+    res.json({ success: true, ...settings });
+  } catch (err) {
+    console.error("[SETTINGS] Get notifications error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/v1/settings/notifications
+router.put("/notifications", async (req, res) => {
+  try {
+    const { email, settings } = req.body;
+    
+    // In production, save to database
+    res.json({ 
+      success: true, 
+      message: "Notification settings updated",
+      email,
+      settings
+    });
+  } catch (err) {
+    console.error("[SETTINGS] Update notifications error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

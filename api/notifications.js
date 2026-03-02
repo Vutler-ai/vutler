@@ -92,4 +92,20 @@ router.post("/", async (req, res) => {
   }
 });
 
+// POST /api/v1/notifications/test-email
+router.post("/test-email", async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    // Mock sending test email
+    res.json({ 
+      success: true, 
+      message: `Test email sent to ${email || req.user?.email}` 
+    });
+  } catch (err) {
+    console.error("[NOTIFICATIONS] Test email error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

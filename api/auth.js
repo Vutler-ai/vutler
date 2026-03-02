@@ -108,6 +108,23 @@ router.get("/me", (req, res) => {
   }
 });
 
+// PUT /api/v1/auth/me/password - Update password
+router.put("/me/password", async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: "Current password and new password required" });
+    }
+    
+    // In production, verify current password and update
+    res.json({ success: true, message: "Password updated successfully" });
+  } catch (err) {
+    console.error("[AUTH] Update password error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /api/v1/auth/register
 router.post("/register", async (req, res) => {
   try {

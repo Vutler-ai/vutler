@@ -174,11 +174,15 @@ app.use("/api/v1/tasks", tasksAPI);
     const deploymentsAPI = require('./api/deployments');
     const integrationsAPI = require('./api/integrations');
     const nexusAPI = require('./api/nexus');
+    const marketplaceAPI = require('./api/marketplace');
+    const auditLogsAPI = require('./api/audit-logs');
     
     app.use('/api/v1/notifications', notificationsAPI);
     app.use('/api/v1/deployments', deploymentsAPI);
     app.use('/api/v1/integrations', integrationsAPI);
     app.use('/api/v1/nexus', nexusAPI);
+    app.use('/api/v1/marketplace', marketplaceAPI);
+    app.use('/api/v1/audit-logs', auditLogsAPI);
     
     console.log('✅ Additional APIs mounted:');
     console.log('   - GET    /api/v1/notifications');
@@ -186,6 +190,8 @@ app.use("/api/v1/tasks", tasksAPI);
     console.log('   - GET    /api/v1/deployments');
     console.log('   - GET    /api/v1/integrations');
     console.log('   - GET    /api/v1/nexus/status');
+    console.log('   - GET    /api/v1/marketplace/templates');
+    console.log('   - GET    /api/v1/audit-logs');
     
     console.log('✅ Vutler APIs mounted:');
     console.log('   - POST   /api/v1/agents');
