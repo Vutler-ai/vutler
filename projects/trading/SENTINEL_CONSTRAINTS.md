@@ -115,9 +115,16 @@ USER_ID: alopez3006
 - **2026-02-24 16:00 CET:** Summary run — API constraints documented ⚠️
 - **2026-02-24 20:00 CET:** Next cycle (pending API fixes)
 - **2026-02-25 onwards:** Resume 4-hour briefing cycle (when APIs configured)
+- **2026-02-27 08:00 CET:** News collection & summary generation ✅
+  - 8 structured news briefs saved → `news-2026-02-27.jsonl`
+  - Market brief markdown generated → `brief-2026-02-27-0800.md`
+  - Vchat posting attempted with `lNQEZVjHdJsvTy4hP6wX8m` token → 401 "You must be logged in" ❌
+  - Alternative kChat webhook approaches tested → 404 errors ❌
+  - **Workaround:** Data stored locally in projects/trading/memory/ for Marcus review
 
 ---
 
 **Contact:** Sentinel (News Analyst)  
 **Owner:** Marcus (Portfolio Manager) / Jarvis (Coordinator)  
-**Escalation:** Resolve API access for uninterrupted briefing cycle
+**Escalation:** Resolve Vutler RC API auth (tokens may have expired or require regeneration)  
+**Status:** Data pipeline operational | Channel posting pending

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Providers — Vutler Admin</title>
+  <link rel="icon" href="/landing/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    .provider-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+    }
+    .provider-card {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      transition: all .2s;
+    }
+    .provider-card:hover {
+      border-color: var(--border-h);
+      transform: translateY(-2px);
+    }
+    .provider-card.connected {
+      border-color: var(--green);
+    }
+    .provider-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .provider-logo {
+      font-size: 32px;
+    }
+    .provider-status {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .provider-status.connected {
+      background: rgba(16,185,129,.15);
+      color: var(--green);
+    }
+    .provider-status.disconnected {
+      background: rgba(107,114,128,.15);
+      color: var(--text-3);
+    }
+    .provider-name {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .provider-desc {
+      font-size: 13px;
+      color: var(--text-2);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .provider-models {
+      font-size: 12px;
+      color: var(--text-3);
+      margin-bottom: 16px;
+    }
+    .provider-actions {
+      display: flex;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/landing/vutler-logo-full-white.png" alt="Vutler">
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Main</div>
+          <a href="/admin/" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            Dashboard
+          </a>
+          <a href="/admin/agents" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3m6-3v3M9 20v3m6-3v3M20 9h3m-3 6h3M1 9h3m-3 6h3"/></svg>
+            Agents
+          </a>
+          <a href="/admin/agent-builder" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Builder
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Config</div>
+          <a href="/admin/providers" class="nav-item active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+            Providers
+          </a>
+          <a href="/admin/llm-settings" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+            LLM Settings
+          </a>
+          <a href="/admin/usage" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            Usage
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Discover</div>
+          <a href="/admin/templates" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+            Templates
+          </a>
+          <a href="/admin/marketplace" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/></svg>
+            Marketplace
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">System</div>
+          <a href="/admin/activity" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Activity
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-user">
+          <div class="sidebar-user-avatar">AL</div>
+          <div class="sidebar-user-info">
+            <div class="sidebar-user-name">Admin User</div>
+            <div class="sidebar-user-email">admin@vutler.ai</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 class="topbar-title">LLM Providers</h1>
+        <div class="topbar-actions">
+          <button class="topbar-btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/>
+            </svg>
+            Add Provider
+          </button>
+        </div>
+      </header>
+
+      <div class="page">
+        <div class="provider-grid">
+          <!-- Anthropic -->
+          <div class="provider-card connected">
+            <div class="provider-header">
+              <div class="provider-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                </svg>
+              </div>
+              <div class="provider-status connected">Connected</div>
+            </div>
+            <div class="provider-name">Anthropic</div>
+            <div class="provider-desc">Claude AI models for advanced reasoning and analysis</div>
+            <div class="provider-models">Claude Opus 4, Sonnet 4, Haiku 4</div>
+            <div class="provider-actions">
+              <button class="btn btn-secondary" style="flex: 1; font-size: 13px;">Configure</button>
+              <button class="btn btn-secondary" style="padding: 10px 14px; font-size: 13px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                  <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- OpenAI -->
+          <div class="provider-card connected">
+            <div class="provider-header">
+              <div class="provider-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+              </div>
+              <div class="provider-status connected">Connected</div>
+            </div>
+            <div class="provider-name">OpenAI</div>
+            <div class="provider-desc">GPT-4 and GPT-4o models for versatile AI tasks</div>
+            <div class="provider-models">GPT-4 Turbo, GPT-4o, GPT-3.5 Turbo</div>
+            <div class="provider-actions">
+              <button class="btn btn-secondary" style="flex: 1; font-size: 13px;">Configure</button>
+              <button class="btn btn-secondary" style="padding: 10px 14px; font-size: 13px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                  <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Groq -->
+          <div class="provider-card connected">
+            <div class="provider-header">
+              <div class="provider-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+                </svg>
+              </div>
+              <div class="provider-status connected">Connected</div>
+            </div>
+            <div class="provider-name">Groq</div>
+            <div class="provider-desc">Ultra-fast inference with Llama models</div>
+            <div class="provider-models">Llama 3.3 70B, Mixtral 8x7B</div>
+            <div class="provider-actions">
+              <button class="btn btn-secondary" style="flex: 1; font-size: 13px;">Configure</button>
+              <button class="btn btn-secondary" style="padding: 10px 14px; font-size: 13px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px;">
+                  <circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Mistral -->
+          <div class="provider-card">
+            <div class="provider-header">
+              <div class="provider-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <path d="M17.7 7.7a5.5 5.5 0 1 0-11.4 0"/><path d="M6.3 16.3a5.5 5.5 0 1 0 11.4 0"/>
+                </svg>
+              </div>
+              <div class="provider-status disconnected">Not Connected</div>
+            </div>
+            <div class="provider-name">Mistral AI</div>
+            <div class="provider-desc">European AI models with multilingual capabilities</div>
+            <div class="provider-models">Mistral Large, Mistral Medium</div>
+            <div class="provider-actions">
+              <button class="btn btn-primary" style="flex: 1; font-size: 13px;">Connect</button>
+            </div>
+          </div>
+
+          <!-- Ollama -->
+          <div class="provider-card">
+            <div class="provider-header">
+              <div class="provider-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+              </div>
+              <div class="provider-status disconnected">Not Connected</div>
+            </div>
+            <div class="provider-name">Ollama</div>
+            <div class="provider-desc">Run open-source models locally on your infrastructure</div>
+            <div class="provider-models">Llama 3.3, Mistral, Codellama</div>
+            <div class="provider-actions">
+              <button class="btn btn-primary" style="flex: 1; font-size: 13px;">Connect</button>
+            </div>
+          </div>
+
+          <!-- Google AI -->
+          <div class="provider-card">
+            <div class="provider-header">
+              <div class="provider-logo">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px;">
+                  <circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/>
+                </svg>
+              </div>
+              <div class="provider-status disconnected">Not Connected</div>
+            </div>
+            <div class="provider-name">Google AI</div>
+            <div class="provider-desc">Gemini models for multimodal AI applications</div>
+            <div class="provider-models">Gemini Pro, Gemini Flash</div>
+            <div class="provider-actions">
+              <button class="btn btn-primary" style="flex: 1; font-size: 13px;">Connect</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Info Card -->
+        <div class="card" style="margin-top: 32px;">
+          <div style="display: flex; gap: 16px; align-items: flex-start;">
+            <div style="width: 48px; height: 48px; background: rgba(37,99,235,.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; color: var(--blue-h);">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                <path d="M12 17h.01"/>
+              </svg>
+            </div>
+            <div>
+              <h3 style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">API Keys Required</h3>
+              <p style="font-size: 14px; color: var(--text-2); line-height: 1.6;">
+                You need to provide your own API keys for each provider. Your keys are stored securely and never shared. 
+                <a href="/landing/docs.html" style="color: var(--blue-h); text-decoration: underline;">Learn more</a> about managing API keys.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

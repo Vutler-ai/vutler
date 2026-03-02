@@ -1,0 +1,326 @@
+#!/bin/bash
+# snipara - CLI wrapper for Snipara MCP tools (48 tools)
+# Usage: snipara [--project moltbot|vutler] <tool> [args as key=value pairs]
+#
+# Examples:
+#   snipara recall query="project architecture"
+#   snipara --project vutler cq query="how does auth work"
+#   snipara remember text="User prefers dark mode" type=preference
+#   snipara task_create title="Fix bug" description="..." priority=high
+
+set -euo pipefail
+
+# ── API Keys ──────────────────────────────────────────────────
+TEAM_KEY="${SNIPARA_TEAM_KEY:-rlm_b1ea0cb9c7a09928d0dfdc5f13f926cffe336d91a7a1c84fdfec653a3c6c0ce9}"
+MOLTBOT_KEY="${SNIPARA_MOLTBOT_KEY:-$TEAM_KEY}"
+VUTLER_KEY="${SNIPARA_VUTLER_KEY:-rlm_f16069fff6267c8cb7e889d4deecdefa7dbc0ec9dccd44065bdac50b58b8dc45}"
+
+# ── Endpoints ─────────────────────────────────────────────────
+TEAM_URL="https://api.snipara.com/mcp/team/alopez-nevicom-1769121450132"
+MOLTBOT_PROJECT_ID="cmjolyiqq0001uw0jyv3nblr9"
+VUTLER_PROJECT_ID="cmlphjm4z0001uwy7ybptfrhx"
+
+# ── Default project ──────────────────────────────────────────
+PROJECT_SLUG="moltbot"
+
+# Parse --project flag
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    --project|-p) PROJECT_SLUG="${2:-moltbot}"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+# Resolve API key for project
+case "$PROJECT_SLUG" in
+  moltbot) API_KEY="$MOLTBOT_KEY" ;;
+  vutler)  API_KEY="$VUTLER_KEY" ;;
+  *)       API_KEY="$TEAM_KEY" ;;
+esac
+
+PROJECT_URL="https://api.snipara.com/mcp/${PROJECT_SLUG}"
+
+TOOL="${1:-help}"
+shift 2>/dev/null || true
+
+# ── Map ALL tool names (short aliases + full rlm_ names) ─────
+case "$TOOL" in
+  # --- Query tools ---
+  context_query|cq)        TOOL_NAME="rlm_context_query" ;;
+  ask)                     TOOL_NAME="rlm_ask" ;;
+  search)                  TOOL_NAME="rlm_search" ;;
+  read)                    TOOL_NAME="rlm_read" ;;
+  decompose)               TOOL_NAME="rlm_decompose" ;;
+  multi_query|mq)          TOOL_NAME="rlm_multi_query" ;;
+  plan)                    TOOL_NAME="rlm_plan" ;;
+  orchestrate|orc)         TOOL_NAME="rlm_orchestrate" ;;
+  repl_context|repl)       TOOL_NAME="rlm_repl_context" ;;
+  get_chunk)               TOOL_NAME="rlm_get_chunk" ;;
+  # --- Document tools ---
+  load_document|ld)        TOOL_NAME="rlm_load_document" ;;
+  load_project|lp)         TOOL_NAME="rlm_load_project" ;;
+  upload_document|ud)      TOOL_NAME="rlm_upload_document" ;;
+  sync_documents|sync)     TOOL_NAME="rlm_sync_documents" ;;
+  sections)                TOOL_NAME="rlm_sections" ;;
+  stats)                   TOOL_NAME="rlm_stats" ;;
+  settings)                TOOL_NAME="rlm_settings" ;;
+  help_tool)               TOOL_NAME="rlm_help" ;;
+  # --- Memory tools ---
+  remember|rem)            TOOL_NAME="rlm_remember" ;;
+  remember_bulk)           TOOL_NAME="rlm_remember_bulk" ;;
+  recall|rec)              TOOL_NAME="rlm_recall" ;;
+  memories|mem)            TOOL_NAME="rlm_memories" ;;
+  forget)                  TOOL_NAME="rlm_forget" ;;
+  # --- Context tools ---
+  inject)                  TOOL_NAME="rlm_inject" ;;
+  context|ctx)             TOOL_NAME="rlm_context" ;;
+  clear_context)           TOOL_NAME="rlm_clear_context" ;;
+  shared_context|sc)       TOOL_NAME="rlm_shared_context" ;;
+  # --- Summary tools ---
+  store_summary)           TOOL_NAME="rlm_store_summary" ;;
+  get_summaries)           TOOL_NAME="rlm_get_summaries" ;;
+  delete_summary)          TOOL_NAME="rlm_delete_summary" ;;
+  # --- Template/Collection tools ---
+  list_templates)          TOOL_NAME="rlm_list_templates" ;;
+  get_template)            TOOL_NAME="rlm_get_template" ;;
+  list_collections)        TOOL_NAME="rlm_list_collections" ;;
+  upload_shared|usd)       TOOL_NAME="rlm_upload_shared_document" ;;
+  # --- Cross-project ---
+  multi_project|mp)        TOOL_NAME="rlm_multi_project_query" ;;
+  # --- Swarm tools ---
+  swarm_create)            TOOL_NAME="rlm_swarm_create" ;;
+  swarm_join)              TOOL_NAME="rlm_swarm_join" ;;
+  claim)                   TOOL_NAME="rlm_claim" ;;
+  release)                 TOOL_NAME="rlm_release" ;;
+  state_get|sg)            TOOL_NAME="rlm_state_get" ;;
+  state_set|ss)            TOOL_NAME="rlm_state_set" ;;
+  state_poll|sp)           TOOL_NAME="rlm_state_poll" ;;
+  broadcast|bc)            TOOL_NAME="rlm_broadcast" ;;
+  swarm_events|events|ev)  TOOL_NAME="rlm_swarm_events" ;;
+  # --- Task queue tools ---
+  task_create|tc)          TOOL_NAME="rlm_task_create" ;;
+  task_bulk_create|tbc)    TOOL_NAME="rlm_task_bulk_create" ;;
+  task_claim|tcl)          TOOL_NAME="rlm_task_claim" ;;
+  task_complete|td)        TOOL_NAME="rlm_task_complete" ;;
+  # --- Help ---
+  help|--help|-h)
+    cat <<'HELP'
+snipara - Snipara MCP CLI (48 tools)
+
+PROJECTS:
+  moltbot (default)  Agent docs, skills, SOULs
+  vutler             Vutler project docs
+  Use: snipara --project vutler <tool> ...
+
+QUERY TOOLS:
+  context_query (cq)  query="..." [max_tokens=4000] [search_mode=hybrid]
+  ask                 query="..."
+  search              pattern="..."
+  read                file="..." [start_line=1] [end_line=50]
+  decompose           query="..."
+  multi_query (mq)    queries='["q1","q2"]'
+  plan                query="..."
+  orchestrate (orc)   query="..." [max_tokens=16000]
+  repl_context (repl) query="..."
+  get_chunk           chunk_id="..."
+
+DOCUMENT TOOLS:
+  load_document (ld)  path="docs/api.md"
+  load_project (lp)   [max_tokens=16000]
+  upload_document (ud) path="..." content="..."
+  sync_documents (sync) documents='[{"path":"...","content":"..."}]'
+  sections            [limit=50] [filter="..."]
+  stats
+  settings
+  help_tool           query="what tool should I use for..."
+
+MEMORY TOOLS:
+  remember (rem)      text="..." [type=fact] [scope=project] [category="..."]
+  remember_bulk       memories='[{"text":"...","type":"fact"}]'
+  recall (rec)        query="..." [type=fact] [limit=5]
+  memories (mem)      [type=...] [search="..."] [limit=20]
+  forget              memory_id="..." | type="..." | older_than_days=30
+
+CONTEXT TOOLS:
+  inject              context="..." [append=true]
+  context (ctx)       (show current session context)
+  clear_context       (clear session context)
+  shared_context (sc) [categories=MANDATORY,BEST_PRACTICES]
+
+SUMMARY TOOLS:
+  store_summary       file="..." summary="..."
+  get_summaries       [file="..."]
+  delete_summary      [file="..."]
+
+TEMPLATE/COLLECTION TOOLS:
+  list_templates
+  get_template        id="..." [variables='{"key":"val"}']
+  list_collections
+  upload_shared (usd) collection_id="..." path="..." content="..."
+
+CROSS-PROJECT:
+  multi_project (mp)  query="..." [project_ids="ID1,ID2"]
+  Project IDs: moltbot=cmjolyiqq0001uw0jyv3nblr9  vutler=cmlphjm4z0001uwy7ybptfrhx
+
+SWARM TOOLS:
+  swarm_create        name="..." [config='{}']
+  swarm_join          swarm_id="..." agent_id="..."
+  claim               resource="..." agent_id="..."
+  release             resource="..." agent_id="..."
+  state_get (sg)      key="..."
+  state_set (ss)      key="..." value="..." [version=1]
+  state_poll (sp)     keys='["k1","k2"]' [since="timestamp"]
+  broadcast (bc)      event="..." [data='{}']
+  swarm_events (ev)   [event="..."] [agent_id="..."] [limit=20]
+
+TASK QUEUE TOOLS:
+  task_create (tc)    title="..." [description="..."] [priority=medium] [assigned_to="..."]
+  task_bulk_create (tbc) tasks='[{"title":"..."}]'
+  task_claim (tcl)    [task_id="..."] [agent_id="..."]
+  task_complete (td)  task_id="..." [status=completed] [result="..."]
+
+NOTE: You can also use full rlm_ names directly: snipara rlm_task_create title="..."
+
+EXAMPLES:
+  snipara recall query="auth architecture"
+  snipara cq query="how does the gateway work"
+  snipara --project vutler cq query="deployment process"
+  snipara mp query="auth"
+  snipara mem type=decision limit=5
+  snipara tc title="Fix login bug" priority=high
+  snipara events limit=10
+  snipara sg key="task_status"
+HELP
+    exit 0
+    ;;
+  *)
+    # Allow passing full rlm_ names directly
+    if [[ "$TOOL" == rlm_* ]]; then
+      TOOL_NAME="$TOOL"
+    else
+      echo "Unknown tool: $TOOL" >&2
+      echo "Run 'snipara help' for the full list of 48 available tools." >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# Build JSON arguments from key=value pairs
+ARGS="{}"
+if [ $# -gt 0 ]; then
+  # Check if first arg looks like raw JSON
+  if [[ "$1" == "{"* ]]; then
+    ARGS="$1"
+  else
+    # Parse key=value pairs into JSON
+    ARGS_PARTS=""
+    for arg in "$@"; do
+      key="${arg%%=*}"
+      value="${arg#*=}"
+      # Handle array/object values (JSON literals)
+      if [[ "$value" == "["* || "$value" == "{"* ]]; then
+        ARGS_PARTS="${ARGS_PARTS}\"${key}\":${value},"
+      # Detect numbers
+      elif [[ "$value" =~ ^[0-9]+$ ]]; then
+        ARGS_PARTS="${ARGS_PARTS}\"${key}\":${value},"
+      elif [[ "$value" == "true" || "$value" == "false" ]]; then
+        ARGS_PARTS="${ARGS_PARTS}\"${key}\":${value},"
+      elif [[ "$value" == "null" ]]; then
+        ARGS_PARTS="${ARGS_PARTS}\"${key}\":null,"
+      else
+        # Escape quotes in value
+        escaped_value=$(printf '%s' "$value" | sed 's/"/\\"/g')
+        ARGS_PARTS="${ARGS_PARTS}\"${key}\":\"${escaped_value}\","
+      fi
+    done
+    # Remove trailing comma and wrap
+    ARGS="{${ARGS_PARTS%,}}"
+  fi
+fi
+
+# ── Routing ───────────────────────────────────────────────────
+if [[ "$TOOL_NAME" == "rlm_multi_project_query" ]]; then
+  BASE_URL="$TEAM_URL"
+  API_KEY="$TEAM_KEY"
+else
+  BASE_URL="$PROJECT_URL"
+fi
+
+PAYLOAD=$(cat <<EOF
+{"jsonrpc":"2.0","id":$(date +%s),"method":"tools/call","params":{"name":"${TOOL_NAME}","arguments":${ARGS}}}
+EOF
+)
+
+RESPONSE=$(curl -s -X POST "$BASE_URL" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d "$PAYLOAD" 2>&1)
+
+# ── Check for rate limit and fallback to team endpoint ────────
+RATE_LIMITED=$(echo "$RESPONSE" | python3 -c "
+import sys, json
+try:
+    data = json.loads(sys.stdin.read())
+    if data.get('success') == False and 'limit' in str(data.get('error', '')).lower():
+        print('yes')
+    else:
+        print('no')
+except:
+    print('no')
+" 2>/dev/null || echo "no")
+
+if [[ "$RATE_LIMITED" == "yes" ]]; then
+  case "$TOOL_NAME" in
+    rlm_context_query|rlm_ask|rlm_search|rlm_orchestrate)
+      QUERY=$(echo "$ARGS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('query',''))" 2>/dev/null)
+      if [ -n "$QUERY" ]; then
+        case "$PROJECT_SLUG" in
+          moltbot) PID="$MOLTBOT_PROJECT_ID" ;;
+          vutler)  PID="$VUTLER_PROJECT_ID" ;;
+          *)       PID="" ;;
+        esac
+        echo "NOTE: Project rate-limited, using cross-project query fallback" >&2
+        FALLBACK_ARGS="{\"query\":\"${QUERY}\",\"project_ids\":[\"${PID}\"],\"max_tokens\":4000}"
+        FALLBACK_PAYLOAD="{\"jsonrpc\":\"2.0\",\"id\":$(date +%s),\"method\":\"tools/call\",\"params\":{\"name\":\"rlm_multi_project_query\",\"arguments\":${FALLBACK_ARGS}}}"
+        RESPONSE=$(curl -s -X POST "$TEAM_URL" \
+          -H "Content-Type: application/json" \
+          -H "X-API-Key: $TEAM_KEY" \
+          -d "$FALLBACK_PAYLOAD" 2>&1)
+      fi
+      ;;
+    *)
+      echo "ERROR: Project '$PROJECT_SLUG' rate-limited. This tool requires project quota." >&2
+      echo "Try again later or upgrade the project plan." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# ── Extract and format the result ─────────────────────────────
+if echo "$RESPONSE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if data.get('success') == False:
+    print('ERROR:', data.get('error', 'Unknown error'), file=sys.stderr)
+    sys.exit(1)
+if 'error' in data and isinstance(data['error'], dict):
+    print('ERROR:', data['error'].get('message', str(data['error'])), file=sys.stderr)
+    sys.exit(1)
+elif 'error' in data:
+    print('ERROR:', data['error'], file=sys.stderr)
+    sys.exit(1)
+result = data.get('result', {})
+content = result.get('content', [])
+for item in content:
+    text = item.get('text', '')
+    try:
+        parsed = json.loads(text)
+        print(json.dumps(parsed, indent=2, ensure_ascii=False))
+    except:
+        print(text)
+" 2>&1; then
+  exit 0
+else
+  echo "$RESPONSE"
+  exit 1
+fi

@@ -1,0 +1,49 @@
+📊 **SENTINEL NEWS INTELLIGENCE — Feb 27, 2026 | 12:00 CET**
+
+**SUMMARY:** Mixed sentiment today. Tech weakness from NVIDIA earnings spreading to crypto. ECB stable but cautious on growth. Fed sending mixed signals on rate cuts.
+
+---
+
+🔴 **KEY MOVES:**
+• **S&P 500:** -0.6% (6,908) | **NASDAQ:** -1.2% (22,878) — AI fatigue
+• **Gold:** +0.6% to $5,196/oz | Safe-haven bid on tariff jitters
+• **BTC:** $67-68k range | Failed $70k resistance, but holding support
+• **EUR/USD:** Steady | ECB rates unchanged, inflation at 2% target
+
+---
+
+🏦 **CENTRAL BANKS:**
+• **ECB:** Hold rates (deposit 2.0%) | Eurozone inflation ~2% (on target)
+• **Fed (mixed):** 
+  - Warsh: Rate cut path narrowing (strong economy)
+  - Miran: 4 cuts warranted (labor market risks)
+  - Goolsbee: "Several more cuts possible...but not soon"
+  - Kansas City: Manufacturing index up to 5 from 0
+
+**Verdict:** Ambiguous Fed messaging = policy uncertainty.
+
+---
+
+⚠️ **SECTOR RISKS:**
+• Tech contagion from NVIDIA — monitor QQQ/SPY recovery
+• Services weakening in Eurozone — growth not guaranteed in 2026
+• US tariff jitters keeping safe-haven bid (Gold, USD strength)
+
+---
+
+💡 **BULLISH SIGNAL:**
+Citi integrating Bitcoin into institutional infrastructure (2026) — long-term adoption acceleration despite near-term volatility.
+
+---
+
+📈 **MARCUS ALERTS:**
+1. Consider tech profit-taking; NVIDIA volatility spreading
+2. Fed messaging divergence = watch FOMC calendar closely
+3. Gold $5,200 breakout would signal major safe-haven shift
+4. BTC institutional move positive but short-term equity correlation remains
+
+**Next data:** US PPI today (inflation indicator for rates/Gold direction)
+
+*Analysis & detailed briefs saved to projects/trading/memory/*
+---
+**Sentinel 📰 | Starbox Trading Sim**

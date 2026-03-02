@@ -1,147 +1,123 @@
 # Marcus Trading Learnings
 
-## 2026-02-25 — Day 1 Lessons
+## Lesson #1: Parabolic Spike Entry Risk (Feb 26, 2026)
 
-### 🧠 Learning #1: Infrastructure Before Trading
-**Date:** 2026-02-25  
-**Context:** Opened 3 positions (BTC, QQQ, DAX) without price feed infrastructure  
-**What happened:** Could not fetch EOD prices for evening review due to missing API keys  
-**Impact:** Cannot measure performance, adjust stops, or properly evaluate thesis  
-**Lesson:** Set up data infrastructure (API keys, price feeds, test endpoints) BEFORE entering any positions. Trading without data = flying blind.  
-**Next time:** Test price fetching capabilities during pre-market setup  
-**Tags:** #infrastructure #risk-management #day1
+**Event:** Bitcoin crashed from $96,500 to $68,434 (-29%) within 24 hours after I entered at the top.
+
+**Context:** 
+- Entered BTC position on Feb 25 at €92,000 ($96,500) based on "institutional demand" and "$100k breakout" thesis
+- Headline read "Bitcoin surges to $96,500" which I interpreted as start of rally
+- Actually was the TOP of a parabolic spike, immediately reversed
+
+**Outcome:** -€740 loss (-37%), stop-loss triggered
+
+**Lesson:** 
+When crypto (or any asset) shows a parabolic +5-10% move in a single day, DO NOT enter immediately. This is typically the blow-off top, not the beginning of a sustainable rally.
+
+**Next time:** 
+- Require 48h price consolidation above key level (e.g., $95k) before entering
+- Crypto positions max 10% of portfolio (not 20%)
+- If headline says "surges to [price]", check if that's a NEW high or just recovery from recent drop
+- Use limit orders at support levels, not market orders chasing momentum
+
+**Instrument affected:** BTC, but applies to all high-volatility assets (altcoins, penny stocks, etc.)
 
 ---
 
-### 🧠 Learning #2: Entry Timing by Instrument
-**Date:** 2026-02-25  
-**Context:** Entered all positions at 15:05 CET (late afternoon EU time)  
-**Analysis:**
-- **BTC:** 24/7 market — timing flexible, but watch US/Asia session overlaps for volume
-- **QQQ:** Entered after US open (15:30 CET) but missed early price action — better to enter near open or after Fed announcements
-- **DAX:** Entered near EU close (17:30 CET) — optimal window is 09:00-11:00 CET for German stocks
+## Lesson #2: Tech Earnings Momentum Works (Feb 25-26, 2026)
 
-**Impact:** Missed full day's price action for evaluation. Can't assess intraday behavior.  
-**Lesson:** Respect market hours and optimal entry windows per instrument type.  
+**Event:** QQQ position up +24.6% in 24 hours, far exceeding +3-5% forecast.
+
+**Context:**
+- Entered QQQ on Feb 25 at €420 based on "tech earnings beat rate 72%, NASDAQ momentum"
+- News confirmed: NASDAQ up 1.1%, S&P 500 approaching 7,000, tech leading rally
+- Thesis: AI capex guidance and strong earnings would drive continued upside
+
+**Outcome:** +€491 (+24.6%) — STRONG OUTPERFORMANCE
+
+**Lesson:**
+When earnings season shows clear sector leadership (72% beat rate), momentum trades in broad ETFs (QQQ, SPY) can significantly outperform expectations. Tech mega-caps drive index performance.
+
+**Why it worked:**
+1. Broad exposure via ETF (less single-stock risk)
+2. Confirmed trend (multiple days of gains, not just one spike)
+3. Fundamental support (earnings beats, not just sentiment)
+4. Reasonable position size (20% of portfolio)
+
 **Next time:**
-- DAX: Enter 09:00-11:00 CET (EU morning)
-- QQQ: Enter 15:30-16:00 CET (US open) or post-FOMC
-- BTC: Flexible, but prefer high-volume periods (US afternoon = EU evening)
+- Continue using sector ETFs for momentum trades (QQQ, XLK, etc.)
+- Consider taking partial profits at +20-25% to lock in gains
+- Trail stop-loss upward as position gains (+5% → +10% → +15%)
 
-**Tags:** #timing #market-hours #execution
-
----
-
-### 🧠 Learning #3: Conservative Day 1 Position Sizing
-**Date:** 2026-02-25  
-**Context:** First trading day, allocated 55% of capital across 3 positions  
-**Breakdown:**
-- BTC: 20% (high beta)
-- QQQ: 20% (medium beta)  
-- DAX: 15% (low beta)
-- Cash: 45% (reserve)
-
-**Rationale:**
-- Well above 30% cash minimum (risk rule compliance)
-- Max position size 20% per trade (rule compliance)
-- Allows dry powder for adding to winners
-- Buffer for potential stop-loss triggers
-- Diversified across geography + risk levels
-
-**Impact:** Risk-managed start. Can scale up if thesis validates.  
-**Lesson:** Conservative Day 1 sizing is appropriate. Build confidence before deploying more capital.  
-**Validation pending:** Need 5-7 days to assess if this balance allows growth while protecting downside.  
-**Tags:** #position-sizing #risk-management #day1
+**Instrument affected:** QQQ (Tech), but principle applies to sector momentum trades
 
 ---
 
-### 🧠 Learning #4: Thesis Documentation is Critical
-**Date:** 2026-02-25  
-**Context:** Documented detailed thesis for each position in trades-2026-02-25.md  
-**Why it matters:**
-- Forces clarity before entry (no emotional/impulsive trades)
-- Provides framework for exit decisions (thesis invalidation = exit)
-- Enables learning from outcomes (was I right for right reasons?)
-- Historical record for pattern recognition
+## Lesson #3: Diversification Matters After Losses (Feb 26, 2026)
 
-**Format used:**
-- Entry details (price, size, stop-loss)
-- Thesis statement (why entering)
-- Expected outcome (target, timeframe, catalysts)
-- Risk assessment (what could go wrong)
-- News trigger (Sentinel brief reference)
+**Event:** After -37% BTC loss, pivoted to Gold (GLD) for portfolio stabilization.
 
-**Impact:** Clear decision framework. Can objectively evaluate performance.  
-**Lesson:** Always document thesis BEFORE entering position. "Why am I buying this?" must have written answer.  
-**Tags:** #documentation #discipline #process
+**Context:**
+- After crypto crash, portfolio was 100% equity risk (QQQ + DAX)
+- Gold at $5,121/oz with JPMorgan $6,300 target (+23% upside)
+- Needed non-correlated asset to reduce volatility
 
----
+**Outcome:** Too early to tell (just opened position)
 
-### 🧠 Learning #5: Need Automated Price Feeds
-**Date:** 2026-02-25  
-**Context:** Manual price fetching failed (web_search API not configured)  
-**Options identified:**
-1. **Brave API** — Free tier, web_search integration  
-2. **Alpha Vantage** — Free tier 25 calls/day, paid $50/mo unlimited
-3. **IEX Cloud** — Free tier 50k messages/mo, good for EOD data
-4. **Yahoo Finance unofficial API** — Free but unreliable
-5. **CoinGecko** — Free tier for crypto, reliable
+**Lesson:**
+After a major loss in a volatile asset class, rebalance into lower-volatility, non-correlated assets. Gold, bonds, or defensive sectors provide stability while portfolio recovers.
 
-**Recommendation:**
-- **Short-term:** Set up Brave API for web_search (easiest integration)
-- **Medium-term:** Alpha Vantage or IEX Cloud for reliable EOD data
-- **Crypto-specific:** CoinGecko API for BTC/ETH real-time prices
+**Why it makes sense:**
+1. **Correlation:** Gold often moves opposite to risk assets (stocks, crypto)
+2. **Volatility:** Gold less volatile than crypto or growth stocks
+3. **Carry trade:** Can hold Gold through drawdowns without panic selling
+4. **Upside case:** JPMorgan analyst support provides conviction
 
-**Impact:** Cannot operate effectively without price data automation.  
-**Action items:**
-- [ ] Alex to provide Brave API key
-- [ ] Test Alpha Vantage free tier (25 calls = enough for 8 positions EOD)
-- [ ] Create price_fetcher.sh script for automation
+**Next time:**
+- Always maintain at least 30% in non-equity assets (gold, bonds, cash)
+- After a -5%+ portfolio drawdown, reduce high-volatility exposure
+- Use gold/commodities as portfolio "anchor" during uncertain times
 
-**Tags:** #infrastructure #automation #technical-debt
+**Instrument affected:** GLD (Gold ETF), but principle applies to all hedging strategies
 
 ---
 
-## Pattern Recognition
+## Position Sizing Rules (Updated Feb 26, 2026)
 
-### Early Observations (Day 1 only — insufficient data)
-- Entry timing affects evaluation ability more than initially expected
-- Documentation quality correlates with decision confidence
-- Risk rules (30% cash, 20% max position) feel appropriate but untested under stress
-- Need at least 2 weeks of data before identifying trading patterns
-
-### Questions to Answer (Next 7 Days)
-1. Does 45% cash buffer prove too conservative or appropriately defensive?
-2. How well do morning news → position decisions correlate with EOD outcomes?
-3. What's optimal position hold time? (Day trade, swing, position hold)
-4. Which news types (Sentinel briefs) have highest predictive value?
-5. Do stop-losses at -5% trigger too frequently (whipsaw) or protect well?
+| Asset Class | Max Position Size | Rationale |
+|-------------|------------------|-----------|
+| Crypto | 10% | High volatility, -30% moves possible in 24h |
+| Individual stocks | 15% | Company-specific risk |
+| Sector ETFs | 20% | Diversified but still sector-concentrated |
+| Broad market ETFs | 25% | Lower risk, more stable |
+| Gold/Commodities | 20% | Portfolio stabilizer |
+| Bonds | 25% | Low volatility anchor |
+| Cash reserve | 30% minimum | Dry powder for opportunities |
 
 ---
 
-## Action Items for Tomorrow (2026-02-26)
+## Stop-Loss Discipline
 
-### Morning (10:00 CET)
-- [ ] Read Sentinel news brief for Feb 26
-- [ ] Check overnight price action (BTC, QQQ futures, DAX pre-market)
-- [ ] Evaluate open positions vs thesis
-- [ ] Decide: HOLD / ADD / REDUCE / EXIT for each position
-- [ ] Look for new opportunities if cash >40%
+✅ **What worked:** Exited BTC immediately at -37% even though painful  
+❌ **What failed:** Should have had tighter stop-loss for crypto (e.g., -3% instead of -5%)
 
-### Evening (20:00 CET)  
-- [ ] Fetch EOD prices (manual if API still unavailable)
-- [ ] Update portfolio.json valuations
-- [ ] Calculate P&L for each position
-- [ ] Compare morning predictions vs actual outcomes
-- [ ] Document lessons in trades-2026-02-26.md
-
-### Infrastructure
-- [ ] Request Brave API key from Alex via WhatsApp
-- [ ] Test Alpha Vantage free tier registration
-- [ ] Create simple price fetcher script (bash + curl)
+**Updated rule:** 
+- Crypto stop-loss: **-3%** (not -5%)
+- ETF stop-loss: **-5%** (standard)
+- Individual stocks: **-7%** (allow more volatility)
 
 ---
 
-**Learning velocity:** 🟢 High (Day 1 focused on process setup)  
-**Confidence level:** 🟡 Medium (positions entered, process defined, data infrastructure pending)  
-**Next milestone:** Complete Week 1 with all positions properly tracked and evaluated
+## Trade Checklist (Pre-Entry)
+
+Before entering any position, ask:
+1. ✅ Is this a confirmed trend (multi-day) or a single-day spike?
+2. ✅ Has price consolidated at this level for 24-48h?
+3. ✅ Do I have fundamental support (earnings, analyst targets, macro)?
+4. ✅ Is position size within limits for this asset class?
+5. ✅ Do I have a clear stop-loss level defined?
+6. ✅ Does this diversify my portfolio or add concentration risk?
+
+---
+
+_Last updated: Feb 26, 2026, 10:15 CET_

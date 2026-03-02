@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agents — Vutler Admin</title>
+  <link rel="icon" href="/landing/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/landing/vutler-logo-full-white.png" alt="Vutler">
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Main</div>
+          <a href="/admin/" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            Dashboard
+          </a>
+          <a href="/admin/agents" class="nav-item active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3m6-3v3M9 20v3m6-3v3M20 9h3m-3 6h3M1 9h3m-3 6h3"/></svg>
+            Agents
+          </a>
+          <a href="/admin/agent-builder" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Builder
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Config</div>
+          <a href="/admin/providers" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+            Providers
+          </a>
+          <a href="/admin/llm-settings" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+            LLM Settings
+          </a>
+          <a href="/admin/usage" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            Usage
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Discover</div>
+          <a href="/admin/templates" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+            Templates
+          </a>
+          <a href="/admin/marketplace" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2v0a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12v0a2 2 0 0 1-2-2V7"/></svg>
+            Marketplace
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">System</div>
+          <a href="/admin/activity" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Activity
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-user">
+          <div class="sidebar-user-avatar">AL</div>
+          <div class="sidebar-user-info">
+            <div class="sidebar-user-name">Admin User</div>
+            <div class="sidebar-user-email">admin@vutler.ai</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 class="topbar-title">Agents</h1>
+        <div class="topbar-actions">
+          <button class="topbar-btn btn-secondary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+            </svg>
+            Filter
+          </button>
+          <button class="topbar-btn btn-primary" onclick="location.href='/admin/agent-builder'">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" x2="12" y1="5" y2="19"/><line x1="5" x2="19" y1="12" y2="12"/>
+            </svg>
+            New Agent
+          </button>
+        </div>
+      </header>
+
+      <div class="page">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">All Agents</h2>
+              <p class="card-desc">Manage your AI agents</p>
+            </div>
+          </div>
+          
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Model</th>
+                  <th>Last Active</th>
+                  <th>Messages</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Support Bot</strong></td>
+                  <td><span class="badge success">Active</span></td>
+                  <td>Claude Sonnet 4</td>
+                  <td>2 min ago</td>
+                  <td>1,247</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=1'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Sales Assistant</strong></td>
+                  <td><span class="badge success">Active</span></td>
+                  <td>GPT-4 Turbo</td>
+                  <td>15 min ago</td>
+                  <td>892</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=2'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Content Writer</strong></td>
+                  <td><span class="badge success">Active</span></td>
+                  <td>Claude Opus 4</td>
+                  <td>1 hour ago</td>
+                  <td>456</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=3'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Code Helper</strong></td>
+                  <td><span class="badge success">Active</span></td>
+                  <td>Claude Sonnet 4</td>
+                  <td>2 hours ago</td>
+                  <td>623</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=4'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Data Analyst</strong></td>
+                  <td><span class="badge warning">Paused</span></td>
+                  <td>GPT-4o</td>
+                  <td>3 hours ago</td>
+                  <td>234</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=5'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Email Automator</strong></td>
+                  <td><span class="badge success">Active</span></td>
+                  <td>Claude Haiku 4</td>
+                  <td>5 hours ago</td>
+                  <td>1,834</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=6'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Research Assistant</strong></td>
+                  <td><span class="badge success">Active</span></td>
+                  <td>Groq Llama 3.3</td>
+                  <td>1 day ago</td>
+                  <td>95</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=7'">View</button>
+                  </td>
+                </tr>
+                <tr>
+                  <td><strong>Translation Bot</strong></td>
+                  <td><span class="badge gray">Inactive</span></td>
+                  <td>Mistral Large</td>
+                  <td>2 days ago</td>
+                  <td>12</td>
+                  <td>
+                    <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="location.href='/admin/agent-detail?id=8'">View</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

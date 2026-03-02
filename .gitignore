@@ -20,3 +20,6 @@ tmp/
 projects/starbox-group/
 projects/vaultbrix-dashboard/
 references/superpowers/
+
+# Snipara MCP config (contains API key)
+.mcp.json

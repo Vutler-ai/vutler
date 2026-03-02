@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drive — Vutler Admin</title>
+  <link rel="icon" href="/landing/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/admin.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    .drive-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding: 16px;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+    }
+    .breadcrumb-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--text-2);
+    }
+    .breadcrumb-item {
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    .breadcrumb-item:hover {
+      color: var(--text-1);
+    }
+    .breadcrumb-item.current {
+      color: var(--text-1);
+      font-weight: 600;
+    }
+    .drive-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .file-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .file-item {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .file-item:hover {
+      border-color: var(--border-h);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .file-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius);
+      font-size: 24px;
+    }
+    .file-icon.folder {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--blue);
+    }
+    .file-icon.file {
+      background: rgba(107, 114, 128, 0.15);
+      color: var(--text-2);
+    }
+    .file-icon.image {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--green);
+    }
+    .file-icon.document {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--orange);
+    }
+    .file-icon.archive {
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--purple);
+    }
+    .file-name {
+      font-weight: 600;
+      color: var(--text-1);
+      margin-bottom: 4px;
+      word-break: break-word;
+    }
+    .file-meta {
+      font-size: 12px;
+      color: var(--text-2);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--text-2);
+    }
+    .empty-state-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+      opacity: 0.5;
+    }
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 40px;
+      color: var(--text-2);
+    }
+    .error-message {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      color: var(--red);
+      padding: 16px;
+      border-radius: var(--radius-lg);
+      margin-bottom: 20px;
+      display: none;
+    }
+    .spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid var(--green);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 8px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .refresh-btn {
+      background: var(--green);
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .refresh-btn:hover {
+      background: var(--green-h);
+    }
+    .view-toggle {
+      display: flex;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .view-toggle-btn {
+      padding: 6px 10px;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--text-2);
+      transition: all 0.2s;
+    }
+    .view-toggle-btn.active {
+      background: var(--bg-2);
+      color: var(--text-1);
+    }
+    .file-list {
+      display: none;
+    }
+    .file-list table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .file-list th,
+    .file-list td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .file-list th {
+      background: var(--bg-2);
+      font-weight: 600;
+      color: var(--text-1);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <img src="/landing/vutler-logo-full-white.png" alt="Vutler">
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">Main</div>
+          <a href="/admin/" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            Dashboard
+          </a>
+          <a href="/admin/agents" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3m6-3v3M9 20v3m6-3v3M20 9h3m-3 6h3M1 9h3m-3 6h3"/></svg>
+            Agents
+          </a>
+          <a href="/admin/agent-builder" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Builder
+          </a>
+          <a href="/admin/calendar" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Calendar
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Config</div>
+          <a href="/admin/providers" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+            Providers
+          </a>
+          <a href="/admin/llm-settings" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
+            LLM Settings
+          </a>
+          <a href="/admin/templates" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+            Templates
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Storage</div>
+          <a href="/admin/drive" class="nav-item active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Drive
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">Analytics</div>
+          <a href="/admin/usage" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            Usage
+          </a>
+          <a href="/admin/activity" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Activity
+          </a>
+        </div>
+      </nav>
+    </aside>
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">Drive</h1>
+          <div class="breadcrumb">
+            File storage and document management
+            <button class="refresh-btn" onclick="loadFiles()" id="refreshBtn">
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <button class="btn-secondary" onclick="uploadFile()">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Upload
+          </button>
+          <button class="btn-primary" onclick="createFolder()">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            New Folder
+          </button>
+        </div>
+      </header>
+
+      <div class="page-content">
+        <div class="error-message" id="errorMessage">
+          <strong>Failed to load files:</strong> <span id="errorDetails"></span>
+        </div>
+
+        <div class="drive-toolbar">
+          <div class="breadcrumb-nav" id="breadcrumbNav">
+            <span class="breadcrumb-item current" onclick="navigateTo('/')">📁 Drive</span>
+          </div>
+          <div class="drive-actions">
+            <div class="view-toggle">
+              <button class="view-toggle-btn active" onclick="setView('grid')" id="gridViewBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7"/>
+                  <rect x="14" y="3" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/>
+                </svg>
+              </button>
+              <button class="view-toggle-btn" onclick="setView('list')" id="listViewBtn">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2">
+                  <line x1="8" y1="6" x2="21" y2="6"/>
+                  <line x1="8" y1="12" x2="21" y2="12"/>
+                  <line x1="8" y1="18" x2="21" y2="18"/>
+                  <line x1="3" y1="6" x2="3.01" y2="6"/>
+                  <line x1="3" y1="12" x2="3.01" y2="12"/>
+                  <line x1="3" y1="18" x2="3.01" y2="18"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="loading" id="loadingIndicator">
+          <div class="spinner"></div>
+          Loading files...
+        </div>
+
+        <div class="file-grid" id="fileGrid">
+          <!-- Files will be loaded here -->
+        </div>
+
+        <div class="file-list" id="fileList">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Modified</th>
+                <th>Type</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="fileListBody">
+              <!-- File list will be loaded here -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="empty-state" id="emptyState" style="display: none;">
+          <svg viewBox="0 0 24 24" class="empty-state-icon" stroke="currentColor" fill="none" stroke-width="1">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          <h3>This folder is empty</h3>
+          <p>Upload files or create folders to get started</p>
+          <button class="btn-primary" onclick="uploadFile()" style="margin-top: 16px;">
+            Upload Files
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let files = [];
+    let currentPath = '/';
+    let currentView = 'grid';
+
+    async function loadFiles(path = '/') {
+      try {
+        document.getElementById('loadingIndicator').style.display = 'block';
+        document.getElementById('fileGrid').style.display = 'none';
+        document.getElementById('fileList').style.display = 'none';
+        document.getElementById('errorMessage').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'none';
+        
+        const refreshBtn = document.getElementById('refreshBtn');
+        refreshBtn.innerHTML = '⟳ Refreshing...';
+        refreshBtn.disabled = true;
+
+        const response = await fetch(`/api/v1/drive/files?path=${encodeURIComponent(path)}`);
+        const data = await response.json();
+
+        if (data.success) {
+          files = data.files || [];
+          currentPath = data.path || path;
+          renderFiles();
+          updateBreadcrumb();
+        } else {
+          throw new Error(data.error || 'Failed to load files');
+        }
+
+        refreshBtn.innerHTML = '🔄 Refresh';
+        refreshBtn.disabled = false;
+
+      } catch (error) {
+        console.error('Failed to load files:', error);
+        document.getElementById('loadingIndicator').style.display = 'none';
+        document.getElementById('errorMessage').style.display = 'block';
+        document.getElementById('errorDetails').textContent = error.message;
+        
+        refreshBtn.innerHTML = '🔄 Refresh';
+        refreshBtn.disabled = false;
+
+        // Show empty state for API not implemented
+        showEmptyState();
+      }
+    }
+
+    function renderFiles() {
+      document.getElementById('loadingIndicator').style.display = 'none';
+      
+      if (files.length === 0) {
+        showEmptyState();
+        return;
+      }
+
+      if (currentView === 'grid') {
+        renderGridView();
+      } else {
+        renderListView();
+      }
+    }
+
+    function renderGridView() {
+      document.getElementById('fileGrid').style.display = 'grid';
+      document.getElementById('fileList').style.display = 'none';
+      
+      const grid = document.getElementById('fileGrid');
+      grid.innerHTML = files.map(file => `
+        <div class="file-item" onclick="handleFileClick('${escapeHtml(file.name)}', '${file.type}')">
+          <div class="file-icon ${getFileIconClass(file.type)}">
+            ${getFileIcon(file.type)}
+          </div>
+          <div class="file-name">${escapeHtml(file.name)}</div>
+          <div class="file-meta">
+            ${file.size ? formatFileSize(file.size) : '—'} • ${formatDate(file.modified)}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderListView() {
+      document.getElementById('fileGrid').style.display = 'none';
+      document.getElementById('fileList').style.display = 'block';
+      
+      const tbody = document.getElementById('fileListBody');
+      tbody.innerHTML = files.map(file => `
+        <tr onclick="handleFileClick('${escapeHtml(file.name)}', '${file.type}')">
+          <td>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 16px;">${getFileIcon(file.type)}</span>
+              ${escapeHtml(file.name)}
+            </div>
+          </td>
+          <td>${file.size ? formatFileSize(file.size) : '—'}</td>
+          <td>${formatDate(file.modified)}</td>
+          <td>${file.type === 'folder' ? 'Folder' : getFileType(file.name)}</td>
+          <td>
+            <button onclick="event.stopPropagation(); downloadFile('${escapeHtml(file.name)}')" 
+                    style="padding: 4px 8px; font-size: 12px;" class="btn-secondary">
+              Download
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function showEmptyState() {
+      document.getElementById('emptyState').style.display = 'block';
+      document.getElementById('fileGrid').style.display = 'none';
+      document.getElementById('fileList').style.display = 'none';
+    }
+
+    function updateBreadcrumb() {
+      const nav = document.getElementById('breadcrumbNav');
+      const pathParts = currentPath.split('/').filter(p => p);
+      
+      let breadcrumbs = ['<span class="breadcrumb-item" onclick="navigateTo(\'/\')">📁 Drive</span>'];
+      
+      let fullPath = '';
+      pathParts.forEach((part, index) => {
+        fullPath += '/' + part;
+        const isLast = index === pathParts.length - 1;
+        breadcrumbs.push(`
+          <span>›</span>
+          <span class="breadcrumb-item ${isLast ? 'current' : ''}" 
+                onclick="navigateTo('${fullPath}')">
+            ${escapeHtml(part)}
+          </span>
+        `);
+      });
+      
+      nav.innerHTML = breadcrumbs.join('');
+    }
+
+    function navigateTo(path) {
+      loadFiles(path);
+    }
+
+    function handleFileClick(fileName, fileType) {
+      if (fileType === 'folder') {
+        const newPath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
+        navigateTo(newPath);
+      } else {
+        downloadFile(fileName);
+      }
+    }
+
+    function setView(view) {
+      currentView = view;
+      
+      document.getElementById('gridViewBtn').classList.toggle('active', view === 'grid');
+      document.getElementById('listViewBtn').classList.toggle('active', view === 'list');
+      
+      if (files.length > 0) {
+        renderFiles();
+      }
+    }
+
+    function getFileIconClass(type) {
+      if (type === 'folder') return 'folder';
+      if (type && (type.includes('image') || type.includes('png') || type.includes('jpg'))) return 'image';
+      if (type && (type.includes('document') || type.includes('pdf') || type.includes('text'))) return 'document';
+      if (type && (type.includes('archive') || type.includes('zip') || type.includes('tar'))) return 'archive';
+      return 'file';
+    }
+
+    function getFileIcon(type) {
+      if (type === 'folder') return '📁';
+      if (type && (type.includes('image') || type.includes('png') || type.includes('jpg'))) return '🖼️';
+      if (type && (type.includes('document') || type.includes('pdf'))) return '📄';
+      if (type && type.includes('text')) return '📝';
+      if (type && (type.includes('archive') || type.includes('zip'))) return '🗜️';
+      if (type && type.includes('video')) return '🎬';
+      if (type && type.includes('audio')) return '🎵';
+      return '📄';
+    }
+
+    function getFileType(filename) {
+      const ext = filename.split('.').pop()?.toLowerCase();
+      const typeMap = {
+        'pdf': 'PDF',
+        'doc': 'Document',
+        'docx': 'Document',
+        'txt': 'Text',
+        'png': 'Image',
+        'jpg': 'Image',
+        'jpeg': 'Image',
+        'gif': 'Image',
+        'mp4': 'Video',
+        'mp3': 'Audio',
+        'zip': 'Archive'
+      };
+      return typeMap[ext] || 'File';
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '—';
+      const date = new Date(dateStr);
+      const now = new Date();
+      const diffTime = Math.abs(now - date);
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays === 1) return 'Today';
+      if (diffDays === 2) return 'Yesterday';
+      if (diffDays < 7) return `${diffDays} days ago`;
+      return date.toLocaleDateString();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function uploadFile() {
+      alert('Upload functionality coming soon!');
+    }
+
+    function createFolder() {
+      const name = prompt('Enter folder name:');
+      if (name) {
+        alert(`Create folder "${name}" - functionality coming soon!`);
+      }
+    }
+
+    function downloadFile(fileName) {
+      alert(`Download "${fileName}" - functionality coming soon!`);
+    }
+
+    // Initialize
+    loadFiles();
+  </script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vutler Nexus - Local Agent</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">🤖 Vutler Nexus</div>
+            <nav class="nav">
+                <a href="/" class="nav-link active" id="chat-link">Chat</a>
+                <a href="/settings.html" class="nav-link" id="settings-link">Settings</a>
+                <div class="status" id="connection-status">
+                    <span class="spinner"></span>
+                    Connecting...
+                </div>
+            </nav>
+        </header>
+
+        <main class="main">
+            <div class="chat-container">
+                <div class="messages" id="messages">
+                    <div class="message system">
+                        <div>Welcome to Vutler Nexus Local Agent! 🎉</div>
+                        <div class="timestamp" id="welcome-time"></div>
+                    </div>
+                </div>
+
+                <div id="attachment-preview" class="attachment-preview hidden"></div>
+                <div class="input-area">
+                    <button id="attach-button" class="attach-button" title="Attach file (max 10MB)">📎</button>
+                    <div class="input-wrapper">
+                        <textarea 
+                            id="message-input" 
+                            class="message-input" 
+                            placeholder="Type your message... (Shift+Enter for new line)"
+                            rows="1"
+                        ></textarea>
+                    </div>
+                    <button id="send-button" class="send-button">
+                        <span id="send-text">Send</span>
+                        <span id="send-spinner" class="spinner hidden"></span>
+                    </button>
+                    <input type="file" id="file-input" class="hidden" accept="image/jpeg,image/png,image/gif,image/webp,text/plain,text/html,text/css,text/javascript,text/markdown,application/json,application/javascript,application/pdf,.js,.ts,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.sh,.yml,.yaml,.toml,.md,.txt,.json,.xml,.html,.css,.sql" />
+                </div>
+                <div id="drop-overlay" class="drop-overlay hidden">
+                    <div class="drop-overlay-content">📎 Drop file here</div>
+                </div>
+            </div>
+
+            <div class="flex gap-4 mb-4">
+                <button id="clear-history" class="btn">Clear History</button>
+                <button id="export-chat" class="btn">Export Chat</button>
+                <button id="toggle-stream" class="btn">Toggle Streaming</button>
+            </div>
+        </main>
+    </div>
+
+    <script src="/chat.js"></script>
+</body>
+</html>
