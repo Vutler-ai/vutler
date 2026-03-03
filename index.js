@@ -102,16 +102,7 @@ async function start() {
   console.log('🔒 Security: Helmet + CORS + Rate Limiting enabled');
   
   try {
-    // Connect to MongoDB
-    // MongoDB removed
-    
-    
-    
-    
     // Store DB connection in app locals for API routes
-    // MongoDB removed
-    
-    console.log('✅ MongoDB connected');
     app.locals.pg = require('./lib/vaultbrix');
     console.log('✅ Vaultbrix PG pool attached');
     
@@ -126,7 +117,7 @@ async function start() {
     
     // Mount custom API routes
     app.use('/api/v1/agents', agentsAPI);
-    // MongoDB email routes (deprecated - using Vaultbrix)
+    // Legacy email routes disabled (Vaultbrix-only)
     // app.use("/api/v1", emailBetaAPI);
     // app.use('/api/v1', emailAPI);
     app.use("/api/v1/email", emailVaultbrixAPI);
@@ -227,14 +218,13 @@ app.use("/api/v1/tasks", tasksAPI);
     app.get('/api/v1/health', async (req, res) => {
       try {
         const pgOk = await (async () => { try { await app.locals.pg.query("SELECT 1"); return true; } catch { return false; } })();
-        const mongoOk = true; // MongoDB removed
         res.json({
-          status: pgOk && mongoOk ? "healthy" : "degraded",
+          status: pgOk ? "healthy" : "degraded",
           service: "vutler-api",
           version: "1.1.0",
           timestamp: new Date().toISOString(),
           uptime: process.uptime(),
-          db: { postgres: pgOk, mongodb: "removed" },
+          db: { postgres: pgOk },
           endpoints: [
             "/api/v1/dashboard","/api/v1/tasks","/api/v1/calendar/events",
             "/api/v1/providers","/api/v1/settings","/api/v1/goals",
@@ -270,7 +260,7 @@ app.use("/api/v1/tasks", tasksAPI);
           try { conn.ws.close(1001, 'Server shutting down'); } catch (_) {}
         }
       }
-      try { await client.close(); } catch (_) {}
+      try { await app.locals.pg?.end?.(); } catch (_) {}
       process.exit(0);
     }
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
