@@ -1,0 +1,94 @@
+#!/bin/bash
+set -euo pipefail
+
+VPS_KEY="/Users/lopez/.openclaw/workspace/.secrets/vps-ssh-key.pem"
+VPS_HOST="ubuntu@83.228.222.180"
+API_BASE="http://localhost:3001/api/v1"
+AUTH_EMAIL="${VUTLER_EMAIL:-jarvis-cli@vutler.local}"
+AUTH_PASSWORD="${VUTLER_PASSWORD:-jarvis-cli-pass}"
+
+ssh_cmd() {
+  ssh -i "$VPS_KEY" -o ConnectTimeout=10 -o StrictHostKeyChecking=no "$VPS_HOST" "$1" 2>/dev/null
+}
+
+json_escape() {
+  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'
+}
+
+api_token() {
+  local payload
+  payload=$(printf '{"email":%s,"password":%s}' "$(printf '%s' "$AUTH_EMAIL" | json_escape)" "$(printf '%s' "$AUTH_PASSWORD" | json_escape)")
+  ssh_cmd "curl -s -X POST -H 'Content-Type: application/json' '$API_BASE/auth/login' -d '$payload'" | python3 -c '
+import json,sys
+try:
+  d=json.load(sys.stdin)
+  print(d.get("token",""))
+except Exception:
+  print("")
+'
+}
+
+api_get() {
+  local endpoint="$1"
+  local token
+  token="$(api_token)"
+  [ -z "$token" ] && { echo '{"error":"auth failed"}'; return 1; }
+  ssh_cmd "curl -s -H 'Authorization: Bearer $token' '$API_BASE$endpoint'"
+}
+
+api_post() {
+  local endpoint="$1"
+  local data="$2"
+  local token
+  token="$(api_token)"
+  [ -z "$token" ] && { echo '{"error":"auth failed"}'; return 1; }
+  ssh_cmd "curl -s -X POST -H 'Authorization: Bearer $token' -H 'Content-Type: application/json' '$API_BASE$endpoint' -d '$data'"
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  health)
+    api_get "/health"
+    ;;
+  agents)
+    api_get "/agents" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+agents=d.get("agents",[])
+print(f"Total: {len(agents)}")
+print("{:<20} {:<10} {}".format("Username","Status","Model"))
+print("-"*70)
+for a in agents:
+  print("{:<20} {:<10} {}".format(a.get("username","?"), a.get("status","?"), a.get("model","?")))
+'
+    ;;
+  chat)
+    agent="${1:?Usage: vutler-cloud chat <agent> <message>}"; shift
+    msg="$*"; [ -z "$msg" ] && { echo "Error: message required"; exit 1; }
+    msg_json=$(printf '%s' "$msg" | json_escape)
+    api_post "/agents/$agent/chat" "{\"message\":$msg_json}"
+    ;;
+  execute)
+    agent="${1:?Usage: vutler-cloud execute <agent> <task>}"; shift
+    task="$*"; [ -z "$task" ] && { echo "Error: task required"; exit 1; }
+    task_json=$(printf '%s' "$task" | json_escape)
+    api_post "/agents/$agent/chat" "{\"message\":$task_json}"
+    ;;
+  status)
+    api_get "/dashboard"
+    ;;
+  *)
+    cat <<EOF
+vutler-cloud usage:
+  vutler-cloud health
+  vutler-cloud agents
+  vutler-cloud status
+  vutler-cloud chat <agent> <message>
+  vutler-cloud execute <agent> <task>
+
+Env:
+  VUTLER_EMAIL (default: $AUTH_EMAIL)
+  VUTLER_PASSWORD (default: ****)
+EOF
+    ;;
+esac
