@@ -278,6 +278,16 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 // ── GET /download/:id — download file (S3 primary, DB/Synology fallback) ──
 router.get('/download/:id', async (req, res) => {
   try {
+    // Support token via query param (for direct browser open)
+    if (req.query.token && !req.headers.authorization) {
+      req.headers.authorization = 'Bearer ' + req.query.token;
+      // Re-run auth
+      const jwt = require('jsonwebtoken');
+      try {
+        const decoded = jwt.verify(req.query.token, process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV');
+        req.user = decoded;
+      } catch(e) { /* ignore, will fail on workspace check */ }
+    }
     const wsId = getWorkspaceId(req);
     const { userId, isAdmin } = getRequestUser(req);
     let r;
@@ -301,8 +311,21 @@ router.get('/download/:id', async (req, res) => {
     if (r.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
 
     const file = r.rows[0];
-    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+    const disposition = req.query.inline === 'true' ? 'inline' : 'attachment';
+    // Detect mime type from extension if stored as octet-stream
+    const mimeMap = {
+      pdf:'application/pdf', png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg',
+      gif:'image/gif', webp:'image/webp', svg:'image/svg+xml',
+      txt:'text/plain', md:'text/plain', json:'application/json',
+      js:'text/javascript', ts:'text/javascript', html:'text/html', css:'text/css',
+      xml:'text/xml', csv:'text/csv', pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      xlsx:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+    const ext = (file.name || '').split('.').pop().toLowerCase();
+    const mimeType = (file.mime_type && file.mime_type !== 'application/octet-stream') ? file.mime_type : (mimeMap[ext] || 'application/octet-stream');
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${file.name}"`);
 
     // S3 backend
     if (file.storage_backend === 's3' && file.s3_key) {

@@ -61,12 +61,13 @@ const port = process.env.PORT || 3001;
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
-      defaultSrc: ["'self'"],
+      defaultSrc: ["'self'", "blob:"],
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "https://app.vutler.ai"],
+      connectSrc: ["'self'", "https://app.vutler.ai", "blob:"],
+      frameSrc: ["'self'", "blob:"],
     },
   },
   crossOriginEmbedderPolicy: false,
