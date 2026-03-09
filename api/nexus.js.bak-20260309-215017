@@ -1,0 +1,488 @@
+/**
+ * Nexus API — real deployment/runtime flow (API-key-first cloud)
+ */
+const express = require('express');
+const { requireApiKey } = require('../lib/auth');
+const pool = require('../lib/vaultbrix');
+const {
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  ensureApiKeysTable,
+} = require('../services/apiKeys');
+
+const router = express.Router();
+const SCHEMA = 'tenant_vutler';
+const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const HEARTBEAT_ONLINE_SECONDS = 90;
+
+async function ensureNexusTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id UUID NOT NULL,
+      created_by_user_id UUID NULL,
+      agent_id TEXT NOT NULL,
+      mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
+      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
+      api_key_id UUID NULL,
+      client_company TEXT NULL,
+      command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_heartbeat_at TIMESTAMPTZ NULL,
+      last_heartbeat_payload JSONB NULL,
+      runtime_version TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
+      id BIGSERIAL PRIMARY KEY,
+      deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
+      workspace_id UUID NOT NULL,
+      runtime_id TEXT NULL,
+      runtime_version TEXT NULL,
+      status TEXT NOT NULL DEFAULT 'online',
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+function buildCommands({ mode, apiKey, deploymentId, apiBaseUrl }) {
+  const baseEnv = [
+    `export NEXUS_API_BASE="${apiBaseUrl}"`,
+    `export NEXUS_API_KEY="${apiKey}"`,
+    `export NEXUS_DEPLOYMENT_ID="${deploymentId}"`,
+  ];
+
+  if (mode === 'local') {
+    return {
+      install: [
+        'npm i -g vutler-nexus',
+      ],
+      run: [
+        ...baseEnv,
+        'vutler-nexus start',
+      ],
+      heartbeatHint: 'vutler-nexus will call /api/v1/nexus/runtime/heartbeat using NEXUS_API_KEY + NEXUS_DEPLOYMENT_ID.',
+    };
+  }
+
+  return {
+    install: [
+      'docker pull starbox/vutler-nexus:latest || true',
+    ],
+    run: [
+      `docker run -d --name vutler-nexus-${deploymentId.slice(0, 8)} \\`,
+      `  -e NEXUS_API_BASE="${apiBaseUrl}" \\`,
+      `  -e NEXUS_API_KEY="${apiKey}" \\`,
+      `  -e NEXUS_DEPLOYMENT_ID="${deploymentId}" \\`,
+      '  --restart unless-stopped starbox/vutler-nexus:latest',
+    ],
+    heartbeatHint: 'Container runtime must post heartbeat to /api/v1/nexus/runtime/heartbeat.',
+  };
+}
+
+
+router.get('/', async (req, res) => {
+  try {
+    await ensureNexusTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const result = await pool.query(
+      `SELECT id, agent_id, mode, status, runtime_version, last_heartbeat_at, created_at, updated_at
+       FROM ${SCHEMA}.nexus_deployments
+       WHERE workspace_id = $1
+       ORDER BY created_at DESC`,
+      [workspaceId]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('[NEXUS] List deployments error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Management endpoints (JWT-auth via global middleware)
+router.get('/keys', async (req, res) => {
+  try {
+    await ensureApiKeysTable();
+    const keys = await listApiKeys({ workspaceId: req.workspaceId || DEFAULT_WORKSPACE });
+    res.json({ success: true, keys });
+  } catch (err) {
+    console.error('[NEXUS] List keys error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/keys', async (req, res) => {
+  try {
+    await ensureApiKeysTable();
+    const created = await createApiKey({
+      workspaceId: req.workspaceId || DEFAULT_WORKSPACE,
+      userId: req.userId || req.user?.id || null,
+      name: req.body?.name || 'Nexus key',
+    });
+
+    res.json({
+      success: true,
+      key: {
+        id: created.id,
+        name: created.name,
+        key_prefix: created.key_prefix,
+        created_at: created.created_at,
+      },
+      secret: created.secret,
+      message: 'Store this secret now. It will not be shown again.',
+    });
+  } catch (err) {
+    console.error('[NEXUS] Create key error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/keys/:id', async (req, res) => {
+  try {
+    await ensureApiKeysTable();
+    const revoked = await revokeApiKey({
+      workspaceId: req.workspaceId || DEFAULT_WORKSPACE,
+      id: req.params.id,
+    });
+
+    if (!revoked) {
+      return res.status(404).json({ success: false, error: 'API key not found or already revoked' });
+    }
+
+    res.json({ success: true, revoked });
+  } catch (err) {
+    console.error('[NEXUS] Revoke key error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/deploy/plan', async (req, res) => {
+  try {
+    await ensureNexusTables();
+
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const createdBy = req.userId || req.user?.id || null;
+    const { agentIds, mode, apiKeyId, apiKey, clientCompany } = req.body || {};
+
+    if (!Array.isArray(agentIds) || !agentIds.length) {
+      return res.status(400).json({ success: false, error: 'agentIds[] is required' });
+    }
+    if (mode !== 'local' && mode !== 'docker') {
+      return res.status(400).json({ success: false, error: 'mode must be local or docker' });
+    }
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: 'apiKey is required (one-time secret from /nexus/keys)' });
+    }
+
+    const apiBaseUrl = `${req.protocol}://${req.get('host')}`;
+    const deployments = [];
+
+    for (const agentId of agentIds) {
+      const inserted = await pool.query(
+        `INSERT INTO ${SCHEMA}.nexus_deployments (
+          workspace_id,
+          created_by_user_id,
+          agent_id,
+          mode,
+          status,
+          api_key_id,
+          client_company,
+          command_context
+        ) VALUES ($1, $2, $3, $4, 'planned', $5, $6, $7::jsonb)
+        RETURNING id, agent_id, mode, status, created_at`,
+        [
+          workspaceId,
+          createdBy,
+          String(agentId),
+          mode,
+          apiKeyId || null,
+          clientCompany || null,
+          JSON.stringify({ apiBaseUrl }),
+        ]
+      );
+
+      const row = inserted.rows[0];
+      deployments.push({
+        id: row.id,
+        agentId: row.agent_id,
+        mode: row.mode,
+        status: row.status,
+        createdAt: row.created_at,
+        commands: buildCommands({ mode: row.mode, apiKey, deploymentId: row.id, apiBaseUrl }),
+      });
+    }
+
+    res.json({ success: true, deployments, apiBaseUrl });
+  } catch (err) {
+    console.error('[NEXUS] Deploy plan error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Runtime heartbeat requires API key auth (strict)
+router.post('/runtime/heartbeat', requireApiKey, async (req, res) => {
+  try {
+    await ensureNexusTables();
+
+    const { deploymentId, runtimeId, runtimeVersion, status, payload } = req.body || {};
+    if (!deploymentId) {
+      return res.status(400).json({ success: false, error: 'deploymentId is required' });
+    }
+
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const safeStatus = status === 'error' ? 'error' : 'online';
+
+    const updateResult = await pool.query(
+      `UPDATE ${SCHEMA}.nexus_deployments
+       SET status = $3,
+           last_heartbeat_at = NOW(),
+           last_heartbeat_payload = $4::jsonb,
+           runtime_version = $5,
+           updated_at = NOW()
+       WHERE id::text = $1 AND workspace_id = $2
+       RETURNING id`,
+      [deploymentId, workspaceId, safeStatus, JSON.stringify(payload || {}), runtimeVersion || null]
+    );
+
+    if (!updateResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'Deployment not found for this API key workspace' });
+    }
+
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.nexus_runtime_heartbeats (
+        deployment_id,
+        workspace_id,
+        runtime_id,
+        runtime_version,
+        status,
+        payload
+      ) VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)`,
+      [deploymentId, workspaceId, runtimeId || null, runtimeVersion || null, safeStatus, JSON.stringify(payload || {})]
+    );
+
+    res.json({ success: true, deploymentId, status: safeStatus, receivedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('[NEXUS] Heartbeat error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/runtime/verify/:deploymentId', async (req, res) => {
+  try {
+    await ensureNexusTables();
+
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const result = await pool.query(
+      `SELECT
+        id,
+        agent_id,
+        mode,
+        status,
+        runtime_version,
+        last_heartbeat_at,
+        last_heartbeat_payload,
+        created_at,
+        updated_at,
+        CASE
+          WHEN last_heartbeat_at IS NULL THEN false
+          WHEN last_heartbeat_at >= NOW() - ($3::int * INTERVAL '1 second') THEN true
+          ELSE false
+        END AS online
+      FROM ${SCHEMA}.nexus_deployments
+      WHERE id::text = $1 AND workspace_id = $2
+      LIMIT 1`,
+      [req.params.deploymentId, workspaceId, HEARTBEAT_ONLINE_SECONDS]
+    );
+
+    const deployment = result.rows[0];
+    if (!deployment) {
+      return res.status(404).json({ success: false, error: 'Deployment not found' });
+    }
+
+    res.json({
+      success: true,
+      deployment: {
+        id: deployment.id,
+        agentId: deployment.agent_id,
+        mode: deployment.mode,
+        status: deployment.status,
+        runtimeVersion: deployment.runtime_version,
+        online: deployment.online,
+        lastHeartbeat: deployment.last_heartbeat_at,
+        lastHeartbeatPayload: deployment.last_heartbeat_payload || {},
+        createdAt: deployment.created_at,
+        updatedAt: deployment.updated_at,
+      },
+    });
+  } catch (err) {
+    console.error('[NEXUS] Verify runtime error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Legacy CLI token endpoints now backed by workspace API keys
+router.get('/cli/tokens', async (req, res) => {
+  try {
+    await ensureApiKeysTable();
+    const keys = await listApiKeys({ workspaceId: req.workspaceId || DEFAULT_WORKSPACE });
+    const tokens = keys.map((k) => ({
+      id: k.id,
+      name: k.name,
+      token: `${k.key_prefix}...`,
+      createdAt: k.created_at,
+      lastUsed: k.last_used_at,
+      revokedAt: k.revoked_at,
+    }));
+    res.json({ success: true, tokens });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/cli/tokens', async (req, res) => {
+  try {
+    await ensureApiKeysTable();
+    const created = await createApiKey({
+      workspaceId: req.workspaceId || DEFAULT_WORKSPACE,
+      userId: req.userId || req.user?.id || null,
+      name: req.body?.name || 'Nexus key',
+    });
+    res.json({ success: true, token: created.secret, id: created.id, key_prefix: created.key_prefix });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/cli/tokens/:id', async (req, res) => {
+  try {
+    await ensureApiKeysTable();
+    const revoked = await revokeApiKey({ workspaceId: req.workspaceId || DEFAULT_WORKSPACE, id: req.params.id });
+    if (!revoked) return res.status(404).json({ success: false, error: 'Token not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Backward-compatibility shims
+router.post('/local-token', async (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    error: 'Deprecated. Use /api/v1/nexus/keys to create an API key for cloud pairing.',
+    code: 'LOCAL_TOKEN_DEPRECATED',
+  });
+});
+
+router.get('/status', async (req, res) => {
+  try {
+    await ensureNexusTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+
+    const stats = await pool.query(
+      `SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (
+          WHERE last_heartbeat_at IS NOT NULL
+            AND last_heartbeat_at >= NOW() - ($2::int * INTERVAL '1 second')
+        )::int AS online,
+        MAX(last_heartbeat_at) AS last_heartbeat
+      FROM ${SCHEMA}.nexus_deployments
+      WHERE workspace_id = $1`,
+      [workspaceId, HEARTBEAT_ONLINE_SECONDS]
+    );
+
+    const row = stats.rows[0] || { total: 0, online: 0, last_heartbeat: null };
+    res.json({
+      success: true,
+      registered: Number(row.total) > 0,
+      connected: Number(row.online) > 0,
+      syncState: 'cloud',
+      connectedAgents: Number(row.online),
+      deploymentsTotal: Number(row.total),
+      lastSync: row.last_heartbeat,
+      workspaceId,
+      auth: req.authType || 'jwt',
+    });
+  } catch (err) {
+    console.error('[NEXUS] Status error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/register', async (req, res) => {
+  res.json({ success: true, message: 'Registered', workspaceId: req.workspaceId || DEFAULT_WORKSPACE, auth: req.authType || 'jwt' });
+});
+
+
+// === Nexus UI wiring endpoints ===
+
+async function ensureNexusRoutesTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_routes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+      task_type TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      model TEXT DEFAULT 'GPT-4o',
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+
+router.get('/routes', async (req, res) => {
+  try {
+    await ensureNexusRoutesTable();
+    const wsId = req.workspaceId || DEFAULT_WORKSPACE;
+    const result = await pool.query(
+      `SELECT id, task_type, agent_name, model, status, created_at FROM ${SCHEMA}.nexus_routes WHERE workspace_id = $1 ORDER BY created_at`, [wsId]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/routes', async (req, res) => {
+  try {
+    await ensureNexusRoutesTable();
+    const wsId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { task_type, agent_name, model } = req.body || {};
+    if (!task_type || !agent_name) return res.status(400).json({ success: false, error: 'task_type and agent_name required' });
+    const result = await pool.query(
+      `INSERT INTO ${SCHEMA}.nexus_routes (workspace_id, task_type, agent_name, model) VALUES ($1, $2, $3, $4) RETURNING *`,
+      [wsId, task_type, agent_name, model || 'GPT-4o']
+    );
+    res.json({ success: true, data: result.rows[0] });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.get('/stats', async (req, res) => {
+  try {
+    await ensureNexusTables();
+    const wsId = req.workspaceId || DEFAULT_WORKSPACE;
+    const deploys = await pool.query(
+      `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE last_heartbeat_at >= NOW() - INTERVAL '24 hours')::int AS routed_today, COUNT(*) FILTER (WHERE status = 'error')::int AS fallbacks FROM ${SCHEMA}.nexus_deployments WHERE workspace_id = $1`, [wsId]
+    );
+    const row = deploys.rows[0] || {};
+    res.json({ success: true, data: { routedToday: row.routed_today || 0, avgResponseMs: null, fallbackTriggers: row.fallbacks || 0, totalDeployments: row.total || 0 } });
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+router.post('/smoke-test', async (req, res) => {
+  const checks = []; const t0 = Date.now();
+  checks.push({ name: 'API Health', passed: true, ms: Date.now() - t0 });
+  try { const t1 = Date.now(); await pool.query('SELECT 1'); checks.push({ name: 'Database', passed: true, ms: Date.now() - t1 }); }
+  catch (e) { checks.push({ name: 'Database', passed: false, ms: 0, error: e.message }); }
+  try { const t2 = Date.now(); await pool.query(`SELECT COUNT(*)::int FROM ${SCHEMA}.nexus_deployments LIMIT 1`); checks.push({ name: 'Nexus Tables', passed: true, ms: Date.now() - t2 }); }
+  catch (e) { checks.push({ name: 'Nexus Tables', passed: false, ms: 0, error: e.message }); }
+  try { await ensureNexusRoutesTable(); const t3 = Date.now(); await pool.query(`SELECT COUNT(*)::int FROM ${SCHEMA}.nexus_routes LIMIT 1`); checks.push({ name: 'Routes Table', passed: true, ms: Date.now() - t3 }); }
+  catch (e) { checks.push({ name: 'Routes Table', passed: false, ms: 0, error: e.message }); }
+  checks.push({ name: 'Response Time', passed: (Date.now() - t0) < 5000, ms: Date.now() - t0 });
+  res.json({ success: true, data: { checks, totalMs: Date.now() - t0, allPassed: checks.every(c => c.passed), timestamp: new Date().toISOString() } });
+});
+
+module.exports = router;

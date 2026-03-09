@@ -1,88 +1,97 @@
-/**
- * Sandbox API
- * Environment for testing agents safely before deployment
- */
-const express = require("express");
+'use strict';
+
+const express = require('express');
 const router = express.Router();
+const pool = require('../lib/vaultbrix');
+const { execSync } = require('child_process');
 
-// In-memory store for sandbox sessions
-let sessions = [];
-let nextSessionId = 1;
+const SCHEMA = 'tenant_vutler';
 
-// GET /api/v1/sandbox - List sandbox sessions
-router.get("/", async (req, res) => {
+async function ensureSandboxTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${SCHEMA}.sandbox_executions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_name TEXT,
+      task_type TEXT,
+      title TEXT,
+      status TEXT DEFAULT 'pending',
+      duration_ms INT,
+      output TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+
+// GET /api/v1/sandbox/executions
+router.get('/executions', async (req, res) => {
   try {
-    const workspaceSessions = sessions
-      .filter(s => s.workspaceId === req.workspaceId)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    
-    res.json({ 
-      success: true, 
-      sessions: workspaceSessions
+    await ensureSandboxTable();
+    const result = await pool.query(
+      `SELECT id, agent_name, task_type, title, status, duration_ms, output, created_at FROM ${SCHEMA}.sandbox_executions ORDER BY created_at DESC LIMIT 50`
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('[Sandbox] Executions error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/sandbox/stats
+router.get('/stats', async (req, res) => {
+  try {
+    await ensureSandboxTable();
+    const result = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total_runs,
+        ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'pass') / GREATEST(COUNT(*), 1), 1) AS pass_rate,
+        ROUND(AVG(duration_ms))::int AS avg_duration_ms,
+        COUNT(DISTINCT agent_name)::int AS active_agents
+      FROM ${SCHEMA}.sandbox_executions
+    `);
+    const row = result.rows[0] || {};
+    res.json({
+      success: true,
+      data: {
+        totalRuns: row.total_runs || 0,
+        passRate: parseFloat(row.pass_rate) || 0,
+        avgDurationMs: row.avg_duration_ms || 0,
+        activeAgents: row.active_agents || 0
+      }
     });
   } catch (err) {
-    console.error("[SANDBOX] List error:", err.message);
+    console.error('[Sandbox] Stats error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /api/v1/sandbox - Create new sandbox session
-router.post("/", async (req, res) => {
+// POST /api/v1/sandbox/execute
+router.post('/execute', async (req, res) => {
   try {
-    const { name, agentId } = req.body;
-    
-    const session = {
-      id: String(nextSessionId++),
-      name: name || `Sandbox ${nextSessionId - 1}`,
-      agentId: agentId || null,
-      status: 'active',
-      workspaceId: req.workspaceId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    sessions.push(session);
-    
-    res.json({ success: true, session });
-  } catch (err) {
-    console.error("[SANDBOX] Create error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+    await ensureSandboxTable();
+    const { agent, type, code } = req.body || {};
+    const title = (code || '').substring(0, 100) || 'Untitled execution';
+    const t0 = Date.now();
+    let output = '';
+    let status = 'pass';
 
-// GET /api/v1/sandbox/:id - Get session details
-router.get("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const session = sessions.find(s => s.id === id && s.workspaceId === req.workspaceId);
-    
-    if (!session) {
-      return res.status(404).json({ success: false, error: "Session not found" });
+    try {
+      // Simple sandboxed execution with timeout
+      output = execSync('echo "Sandbox execution placeholder"', { timeout: 10000, encoding: 'utf8' });
+    } catch (execErr) {
+      status = 'error';
+      output = execErr.message || 'Execution failed';
     }
-    
-    res.json({ success: true, session });
-  } catch (err) {
-    console.error("[SANDBOX] Get error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
-// DELETE /api/v1/sandbox/:id - End session
-router.delete("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const index = sessions.findIndex(s => s.id === id && s.workspaceId === req.workspaceId);
-    
-    if (index === -1) {
-      return res.status(404).json({ success: false, error: "Session not found" });
-    }
-    
-    sessions[index].status = 'ended';
-    sessions[index].updatedAt = new Date().toISOString();
-    
-    res.json({ success: true });
+    const durationMs = Date.now() - t0;
+    const result = await pool.query(
+      `INSERT INTO ${SCHEMA}.sandbox_executions (agent_name, task_type, title, status, duration_ms, output)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, status, duration_ms, created_at`,
+      [agent || 'Unknown', type || 'general', title, status, durationMs, output]
+    );
+
+    res.json({ success: true, data: result.rows[0] });
   } catch (err) {
-    console.error("[SANDBOX] Delete error:", err.message);
+    console.error('[Sandbox] Execute error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

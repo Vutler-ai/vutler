@@ -8,6 +8,7 @@ const router = express.Router();
 const { transactionWithWorkspace, auditLog } = require('../services/pg');
 const { requireAdmin } = require('../lib/auth');
 const crypto = require('crypto');
+const s3Storage = require('../services/s3Storage');
 
 // ============================================================================
 // POST /api/v1/workspaces — Create new workspace
@@ -180,6 +181,14 @@ router.post('/workspaces', requireAdmin, async (req, res) => {
       admin_username,
       initial_config
     }, workspaceId);
+
+    // Auto-provision S3 bucket for VDrive
+    try {
+      await s3Storage.createBucket(workspaceId);
+      console.log(`[Provisioning] S3 bucket created for workspace ${workspaceId}`);
+    } catch (s3Err) {
+      console.warn(`[Provisioning] S3 bucket creation warning: ${s3Err.message}`);
+    }
 
     res.status(201).json({
       success: true,

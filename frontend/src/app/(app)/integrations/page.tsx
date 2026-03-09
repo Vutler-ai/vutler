@@ -69,7 +69,7 @@ export default function IntegrationsPage() {
 
       const [integrationsRes, availableRes] = await Promise.all([
         authFetch('/api/v1/integrations'),
-        authFetch('/api/v1/integrations/available').catch(() => null) // Fallback if endpoint doesn't exist
+        authFetch('/api/v1/integrations/available').catch(() => null)
       ]);
 
       if (!integrationsRes.ok) {
@@ -81,7 +81,8 @@ export default function IntegrationsPage() {
 
       if (availableRes?.ok) {
         const availableData = await availableRes.json();
-        setAvailableProviders(availableData.providers || defaultProviders);
+        const providers = (availableData.providers || defaultProviders).filter((p: AvailableProvider & { source?: string }) => !p.source || p.source === 'internal');
+        setAvailableProviders(providers);
       } else {
         setAvailableProviders(defaultProviders);
       }
@@ -106,14 +107,8 @@ export default function IntegrationsPage() {
         throw new Error(`Failed to connect to ${provider}`);
       }
 
-      const { authUrl } = await response.json();
-      
-      if (authUrl) {
-        // Redirect to OAuth flow
-        window.location.href = authUrl;
-      } else {
-        throw new Error('No auth URL received');
-      }
+      await response.json();
+      await fetchIntegrationsData();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to connect to ${provider}`);
     } finally {
@@ -179,7 +174,7 @@ export default function IntegrationsPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white mb-2">Connect Your Tools</h1>
         <p className="text-lg text-[#9ca3af]">
-          Integrate with your favorite services to supercharge your workflow
+          Internal integrations catalog for your workspace
         </p>
       </div>
 
@@ -319,7 +314,7 @@ export default function IntegrationsPage() {
                       disabled={isConnecting}
                       className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
                     >
-                      {isConnecting ? 'Connecting...' : 'Connect'}
+                      {isConnecting ? 'Connecting...' : 'Connect (Internal)'}
                     </button>
                   )}
                 </div>

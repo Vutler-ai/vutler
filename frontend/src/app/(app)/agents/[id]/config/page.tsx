@@ -19,13 +19,21 @@ interface AgentConfig {
   system_prompt: string;
 }
 
-const MODELS = [
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku' },
-  { value: 'gpt-4o', label: 'GPT-4o' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'gemini-pro', label: 'Gemini' },
-  { value: 'custom', label: 'Custom Endpoint' },
+interface LLMModel {
+  id?: string;
+  provider: string;
+  model_name: string;
+  tier?: string;
+  context_window?: number;
+  enabled?: boolean;
+}
+
+const FALLBACK_MODELS = [
+  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet', provider: 'anthropic' },
+  { value: 'claude-haiku-4-5', label: 'Claude Haiku', provider: 'anthropic' },
+  { value: 'gpt-4o', label: 'GPT-4o', provider: 'openai' },
+  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', provider: 'openai' },
+  { value: 'custom', label: 'Custom Endpoint', provider: 'custom' },
 ];
 
 const PERMISSIONS = [
@@ -35,6 +43,16 @@ const PERMISSIONS = [
   { key: 'web_search', label: 'Web Search', desc: 'Search the internet' },
   { key: 'tool_use', label: 'Tool Use', desc: 'Use external tools and APIs' },
 ] as const;
+
+const PROVIDER_NAMES: Record<string, string> = {
+  'openai': 'OpenAI',
+  'anthropic': 'Anthropic',
+  'openrouter': 'OpenRouter',
+  'mistral': 'Mistral',
+  'groq': 'Groq',
+  'google': 'Google',
+  'custom': 'Custom Endpoint',
+};
 
 export default function AgentConfigPage() {
   const params = useParams();
@@ -49,6 +67,8 @@ export default function AgentConfigPage() {
     secrets: [],
     system_prompt: '',
   });
+  const [models, setModels] = useState<LLMModel[]>([]);
+  const [loadingModels, setLoadingModels] = useState(true);
   const [agentName, setAgentName] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -56,6 +76,52 @@ export default function AgentConfigPage() {
   const [success, setSuccess] = useState(false);
   const [newSecretKey, setNewSecretKey] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
+
+  // Load models from API
+  useEffect(() => {
+    loadModels();
+  }, []);
+
+  const loadModels = async () => {
+    try {
+      const res = await authFetch('/api/v1/llm/models');
+      if (!res.ok) throw new Error('Failed to load models');
+      const data = await res.json();
+      
+      if (data.success && data.data && data.data.length > 0) {
+        // Add custom endpoint option
+        const modelsWithCustom = [
+          ...data.data.filter((m: LLMModel) => m.enabled !== false),
+          { provider: 'custom', model_name: 'custom', tier: 'custom' }
+        ];
+        setModels(modelsWithCustom);
+      } else {
+        // Fallback
+        setModels(FALLBACK_MODELS.map(m => ({ 
+          provider: m.provider, 
+          model_name: m.value,
+          tier: 'pro',
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to load models:', err);
+      setModels(FALLBACK_MODELS.map(m => ({ 
+        provider: m.provider, 
+        model_name: m.value,
+        tier: 'pro',
+      })));
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  // Group models by provider
+  const groupedModels = models.reduce((acc, model) => {
+    const provider = model.provider || 'other';
+    if (!acc[provider]) acc[provider] = [];
+    acc[provider].push(model);
+    return acc;
+  }, {} as Record<string, LLMModel[]>);
 
   useEffect(() => {
     const load = async () => {
@@ -179,15 +245,65 @@ export default function AgentConfigPage() {
         {/* Model Selector */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <h2 className="text-lg font-semibold text-white mb-4">Model</h2>
-          <select
-            value={config.model}
-            onChange={e => setConfig(prev => ({ ...prev, model: e.target.value }))}
-            className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {MODELS.map(m => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
+          
+          {loadingModels ? (
+            <div className="text-center py-4 text-[#9ca3af]">Loading models...</div>
+          ) : (
+            <>
+              <select
+                value={config.model}
+                onChange={e => setConfig(prev => ({ ...prev, model: e.target.value }))}
+                className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {Object.keys(groupedModels).sort().map(provider => {
+                  const providerModels = groupedModels[provider];
+                  const providerName = PROVIDER_NAMES[provider] || provider;
+                  
+                  return (
+                    <optgroup key={provider} label={providerName}>
+                      {providerModels.map(model => {
+                        const contextInfo = model.context_window 
+                          ? ` • ${(model.context_window / 1000).toFixed(0)}K` 
+                          : '';
+                        const tierInfo = model.tier && model.tier !== 'custom' ? ` • ${model.tier}` : '';
+                        const label = model.model_name === 'custom' ? 'Custom Endpoint' : `${model.model_name}${tierInfo}${contextInfo}`;
+                        
+                        return (
+                          <option key={`${provider}-${model.model_name}`} value={model.model_name}>
+                            {label}
+                          </option>
+                        );
+                      })}
+                    </optgroup>
+                  );
+                })}
+              </select>
+              
+              {/* Show model info */}
+              {config.model && config.model !== 'custom' && (
+                <div className="mt-3 text-xs text-[#6b7280]">
+                  {(() => {
+                    const selectedModel = models.find(m => m.model_name === config.model);
+                    if (!selectedModel) return null;
+                    
+                    const parts = [];
+                    if (selectedModel.provider) {
+                      parts.push(`Provider: ${PROVIDER_NAMES[selectedModel.provider] || selectedModel.provider}`);
+                    }
+                    if (selectedModel.tier) {
+                      parts.push(`Tier: ${selectedModel.tier}`);
+                    }
+                    if (selectedModel.context_window) {
+                      parts.push(`Context: ${selectedModel.context_window.toLocaleString()} tokens`);
+                    }
+                    
+                    return parts.join(' • ');
+                  })()}
+                </div>
+              )}
+            </>
+          )}
+          
           {config.model === 'custom' && (
             <input
               type="url"

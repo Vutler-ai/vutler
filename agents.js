@@ -32,7 +32,8 @@ router.get("/", async (req, res) => {
       max_tokens: a.max_tokens,
       capabilities: a.capabilities || [],
       createdAt: a.created_at,
-      updatedAt: a.updated_at
+      updatedAt: a.updated_at,
+      autoApproveEmail: !!a.auto_approve_email
     }));
     res.json({ success: true, agents, count: agents.length, skip: 0, limit: 100 });
   } catch (err) {
@@ -63,7 +64,8 @@ router.get("/:id", async (req, res) => {
         model: a.model, provider: a.provider, system_prompt: a.system_prompt,
         temperature: a.temperature, max_tokens: a.max_tokens,
         capabilities: a.capabilities || [],
-        createdAt: a.created_at, updatedAt: a.updated_at
+        createdAt: a.created_at, updatedAt: a.updated_at,
+        autoApproveEmail: !!a.auto_approve_email
       }
     });
   } catch (err) {
@@ -75,14 +77,15 @@ router.get("/:id", async (req, res) => {
 // POST /api/v1/agents — create agent
 router.post("/", async (req, res) => {
   try {
-    const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens } = req.body;
+    const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, auto_approve_email, autoApproveEmail } = req.body;
     if (!name || !username) return res.status(400).json({ success: false, error: "name and username required" });
     const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, auto_approve_email)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [name, username, email||null, type||"bot", role||null, mbti||null, model||null, provider||null,
        description||"", system_prompt||null, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, req.workspaceId||"00000000-0000-0000-0000-000000000001"]
+       `/sprites/agent-${username}.png`, req.workspaceId||"00000000-0000-0000-0000-000000000001",
+       (auto_approve_email !== undefined ? !!auto_approve_email : !!autoApproveEmail)]
     );
     res.json({ success: true, agent: result.rows[0] });
   } catch (err) {
@@ -96,7 +99,8 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const fields = req.body;
-    const allowed = ["name","username","email","status","type","role","mbti","model","provider","description","system_prompt","temperature","max_tokens","avatar","capabilities"];
+    const allowed = ["name","username","email","status","type","role","mbti","model","provider","description","system_prompt","temperature","max_tokens","avatar","capabilities","auto_approve_email"];
+    if (fields.autoApproveEmail !== undefined && fields.auto_approve_email === undefined) fields.auto_approve_email = !!fields.autoApproveEmail;
     const sets = []; const vals = []; let idx = 1;
     for (const k of allowed) {
       if (fields[k] !== undefined) { sets.push(`${k} = $${idx}`); vals.push(fields[k]); idx++; }

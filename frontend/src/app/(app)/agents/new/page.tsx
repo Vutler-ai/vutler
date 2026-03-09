@@ -1,15 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/authFetch';
 
-const MODELS = [
+// Keep fallback models in case API fails
+const FALLBACK_MODELS = [
   { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet', provider: 'anthropic' },
   { value: 'claude-haiku-4-5', label: 'Claude Haiku', provider: 'anthropic' },
   { value: 'gpt-4o', label: 'GPT-4o', provider: 'openai' },
   { value: 'gpt-4o-mini', label: 'GPT-4o Mini', provider: 'openai' },
-  { value: 'gemini-pro', label: 'Gemini Pro', provider: 'google' },
 ];
 
 const TOOLS = [
@@ -22,10 +22,30 @@ const TOOLS = [
 
 const EMOJIS = ['🤖', '🧠', '⚡', '🔥', '🎯', '💡', '🛡️', '🚀', '🌟', '🎨', '📊', '🔧', '🤝', '👾', '🦾', '🧬'];
 
+const PROVIDER_NAMES: Record<string, string> = {
+  'openai': 'OpenAI',
+  'anthropic': 'Anthropic',
+  'openrouter': 'OpenRouter',
+  'mistral': 'Mistral',
+  'groq': 'Groq',
+  'google': 'Google',
+};
+
+interface LLMModel {
+  id?: string;
+  provider: string;
+  model_name: string;
+  tier?: string;
+  context_window?: number;
+  enabled?: boolean;
+}
+
 export default function NewAgentPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [models, setModels] = useState<LLMModel[]>([]);
   const [form, setForm] = useState({
     name: '',
     username: '',
@@ -43,6 +63,48 @@ export default function NewAgentPage() {
   });
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
+  // Load models from API
+  useEffect(() => {
+    loadModels();
+  }, []);
+
+  const loadModels = async () => {
+    try {
+      const res = await authFetch('/api/v1/llm/models');
+      if (!res.ok) throw new Error('Failed to load models');
+      const data = await res.json();
+      
+      if (data.success && data.data && data.data.length > 0) {
+        setModels(data.data.filter((m: LLMModel) => m.enabled !== false));
+      } else {
+        // Fallback to hardcoded models
+        setModels(FALLBACK_MODELS.map(m => ({ 
+          provider: m.provider, 
+          model_name: m.value,
+          tier: 'pro',
+        })));
+      }
+    } catch (err) {
+      console.error('Failed to load models:', err);
+      // Use fallback models
+      setModels(FALLBACK_MODELS.map(m => ({ 
+        provider: m.provider, 
+        model_name: m.value,
+        tier: 'pro',
+      })));
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
+  // Group models by provider
+  const groupedModels = models.reduce((acc, model) => {
+    const provider = model.provider || 'other';
+    if (!acc[provider]) acc[provider] = [];
+    acc[provider].push(model);
+    return acc;
+  }, {} as Record<string, LLMModel[]>);
+
   const toggleTool = (key: string) => {
     setForm(prev => ({
       ...prev,
@@ -50,9 +112,13 @@ export default function NewAgentPage() {
     }));
   };
 
-  const handleModelChange = (model: string) => {
-    const m = MODELS.find(x => x.value === model);
-    setForm(prev => ({ ...prev, model, provider: m?.provider || prev.provider }));
+  const handleModelChange = (modelName: string) => {
+    const model = models.find(m => m.model_name === modelName);
+    setForm(prev => ({ 
+      ...prev, 
+      model: modelName, 
+      provider: model?.provider || prev.provider 
+    }));
   };
 
   const create = async () => {
@@ -135,9 +201,61 @@ export default function NewAgentPage() {
         {/* Model */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <h2 className="text-lg font-semibold text-white mb-4">Model</h2>
-          <select value={form.model} onChange={e => handleModelChange(e.target.value)} className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-            {MODELS.map(m => <option key={m.value} value={m.value}>{m.label} ({m.provider})</option>)}
-          </select>
+          
+          {loadingModels ? (
+            <div className="text-center py-4 text-[#9ca3af]">Loading models...</div>
+          ) : (
+            <select 
+              value={form.model} 
+              onChange={e => handleModelChange(e.target.value)} 
+              className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {Object.keys(groupedModels).sort().map(provider => {
+                const providerModels = groupedModels[provider];
+                const providerName = PROVIDER_NAMES[provider] || provider;
+                
+                return (
+                  <optgroup key={provider} label={providerName}>
+                    {providerModels.map(model => {
+                      const contextInfo = model.context_window 
+                        ? ` • ${(model.context_window / 1000).toFixed(0)}K` 
+                        : '';
+                      const tierInfo = model.tier ? ` • ${model.tier}` : '';
+                      
+                      return (
+                        <option key={`${provider}-${model.model_name}`} value={model.model_name}>
+                          {model.model_name}{tierInfo}{contextInfo}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                );
+              })}
+            </select>
+          )}
+          
+          {/* Show model info */}
+          {form.model && (
+            <div className="mt-3 text-xs text-[#6b7280]">
+              {(() => {
+                const selectedModel = models.find(m => m.model_name === form.model);
+                if (!selectedModel) return null;
+                
+                const parts = [];
+                if (selectedModel.provider) {
+                  parts.push(`Provider: ${PROVIDER_NAMES[selectedModel.provider] || selectedModel.provider}`);
+                }
+                if (selectedModel.tier) {
+                  parts.push(`Tier: ${selectedModel.tier}`);
+                }
+                if (selectedModel.context_window) {
+                  parts.push(`Context: ${selectedModel.context_window.toLocaleString()} tokens`);
+                }
+                
+                return parts.join(' • ');
+              })()}
+            </div>
+          )}
         </section>
 
         {/* Tools */}

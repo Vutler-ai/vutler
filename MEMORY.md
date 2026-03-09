@@ -60,7 +60,6 @@
   - Rails secret: 785aef7b81e738923543b4330508b8684dbba1a9170ba511a6237fee2032dbd7
   - **Status**: Running (5 containers up), nginx vhost + SSL not yet configured
   - **TODO**: Create admin user, org, 13 agent email routes (@vutler.ai or @starbox-group.com)
-- ~~K-Suite (Infomaniak)~~ — **DEPRECATED** — plus utilisé. On utilise Postal + Vutler tools
   - K-Chat, K-Drive, K-Mail → remplacés par Vchat (Rocket.Chat), Postal, Vutler dashboard
 
 ## Security Policy — Trust Model (see SECURITY.md for full details)
@@ -69,45 +68,11 @@
 - Default mode: **READ-ONLY**
 - Never execute destructive actions, IAM/DNS changes, secret rotation, prod deploy without dual confirmation or K-Drive authorization
 
-## K-Suite — Fully Operational
-- **All 10 accounts active** on kDrive and kChat
-- **Infomaniak API token** stored in `.secrets/infomaniak-api.md`
-- **kChat base URL:** `https://alejandro-lopez.kchat.infomaniak.com`
-- **kChat Team ID:** `019b17c6-6261-71dc-becc-1b7fe93e54ef`
-- **kDrive ID:** 2021270 (starbox-group.com, 500GB)
-- **Account ID:** 11107
-
-### kChat Channels (10)
-- `#general` (town-square) — everyone
-- `#engineering` — Mike, Philip, Luna
-- `#design` — Philip, Oscar
-- `#product` — Luna, Mike, Philip
-- `#marketing-growth` — Max, Oscar, Nora
-- `#sales` — Victor, Max
-- `#content` — Oscar, Max, Nora
-- `#community` — Nora, Max, Oscar
-- `#ops-jarvis` — PRIVÉ (Alex + Jarvis + Andrea)
-- `#ops-strategy` — PRIVÉ (Alex + Jarvis + Luna + Andrea)
-- Andrea a accès à tous les canaux (office manager)
-
-### kDrive Structure
-```
-Common documents/
-├── 00_SECURITY/ (authorized-actions, credentials, audit-logs)
-├── 01_PROJECTS/ (snipara, vaultbrix, starbox-group-website)
-├── 02_TEAM/ (agent-configs, onboarding)
-├── 03_OPS/ (daily-reports, meeting-notes, decisions)
-├── 04_DOCS/ (product-specs, architecture, legal)
-└── 05_TEMPLATES/
-```
-
 ## Communication
-- **Primary internal channel: kChat** (Infomaniak) — Telegram abandonné
-- kChat bridge: polling 15s → `memory/kchat-inbox.jsonl` → heartbeat traite
-- Réponses via API kChat avec **Jarvis Starbox** token (vrai user, pas bot)
+- 
 - Jarvis Starbox token: stored in `.secrets/infomaniak-api.md`
 - Jarvis Starbox user ID: `019c5abe-30ed-7164-a4a3-9d24bf68453e`
-- Alex contactable via: WhatsApp (+41792031050), kChat, webchat
+- Alex contactable via: WhatsApp (+41792031050), webchat
 
 ## Analytics
 - **Umami** (privacy-friendly) — dashboard: https://cloud.umami.is/share/yqna019gykGlnC4k
@@ -186,7 +151,6 @@ Common documents/
 - alex@vutler.com polled via IMAP (launchd: com.starbox.email-poll)
 - Password: Roxanne1212**#
 - Toutes les redirections partagées starbox-group.com → copient vers alex@vutler.com
-- Agent mailboxes K-Suite: IMAP inaccessible (SSO blocks direct login)
 
 ## Key Decision: Vutler Cloud Agents (2026-02-25)
 - **Dès que le runtime Vutler est opérationnel**, basculer les tâches dev/design/product vers les agents Vutler cloud (VPS) au lieu des sous-agents OpenClaw locaux
@@ -233,9 +197,6 @@ Common documents/
 - Note: No pre-compaction hook exists in OpenClaw (planned: session:start, session:end events)
 
 ## Known Issues
-- kChat WebSocket incompatible (Infomaniak uWebSockets) → polling bridge
-- K-Suite mail: IMAP blocked by SSO, API password change doesn't work
-- Agent mailboxes (andrea@, mike@, etc.): emails directs restent dans boîtes K-Suite inaccessibles
 
 ## Key Dates
 - 2026-02-13: First session, named Jarvis, set up initial 5 agents

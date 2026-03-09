@@ -1,0 +1,246 @@
+#cloud-config
+
+# Vutler Agent Cloud-Init Template
+# This script bootstraps a Vutler agent on a fresh VPS instance
+
+# Set hostname based on agent name
+hostname: vutler-agent-{{AGENT_NAME}}
+manage_etc_hosts: true
+
+# Update packages
+package_update: true
+package_upgrade: true
+
+# Install required packages
+packages:
+  - curl
+  - wget
+  - git
+  - build-essential
+  - ufw
+  - supervisor
+  - htop
+  - nano
+
+# Create vutler-agent user
+users:
+  - name: vutler-agent
+    gecos: Vutler Agent Runtime User
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    lock_passwd: false
+
+# Install Node.js {{NODEJS_VERSION}} LTS
+runcmd:
+  # Install Node.js
+  - curl -fsSL https://deb.nodesource.com/setup_{{NODEJS_VERSION}}.x | sudo -E bash -
+  - apt-get install -y nodejs
+  - node --version
+  - npm --version
+
+  # Create agent directory structure
+  - mkdir -p /opt/vutler-agent
+  - mkdir -p /opt/vutler-agent/logs
+  - mkdir -p /opt/vutler-agent/config
+  - mkdir -p /opt/vutler-agent/tmp
+  - chown -R vutler-agent:vutler-agent /opt/vutler-agent
+
+  # Create agent configuration
+  - echo '{"agentId":"{{AGENT_ID}}","agentToken":"{{AGENT_TOKEN}}","vutlerApiUrl":"{{VUTLER_API_URL}}","workspaceId":"{{WORKSPACE_ID}}","vpsInstanceId":"{{VPS_INSTANCE_ID}}","environment":"production","logging":{"level":"info","file":"/opt/vutler-agent/logs/agent.log"},"heartbeat":{"interval":30000},"reconnect":{"maxRetries":10,"interval":5000}}' > /opt/vutler-agent/config/agent.json
+  - chown vutler-agent:vutler-agent /opt/vutler-agent/config/agent.json
+  - chmod 600 /opt/vutler-agent/config/agent.json
+
+  # Download and install Vutler agent runtime
+  - su - vutler-agent -c "cd /opt/vutler-agent && wget -O agent-runtime.tar.gz 'https://releases.vutler.ai/agent-runtime/latest.tar.gz'"
+  - su - vutler-agent -c "cd /opt/vutler-agent && tar -xzf agent-runtime.tar.gz"
+  - su - vutler-agent -c "cd /opt/vutler-agent && npm install --production"
+
+  # Create startup script
+  - |
+    cat > /opt/vutler-agent/start-agent.sh << 'EOF'
+    #!/bin/bash
+    cd /opt/vutler-agent
+    export NODE_ENV=production
+    export VUTLER_CONFIG=/opt/vutler-agent/config/agent.json
+    node index.js
+    EOF
+  - chmod +x /opt/vutler-agent/start-agent.sh
+  - chown vutler-agent:vutler-agent /opt/vutler-agent/start-agent.sh
+
+  # Configure firewall
+  - ufw --force enable
+  - ufw allow ssh
+  - ufw allow 443/tcp
+  - ufw allow 80/tcp
+  - ufw allow 3001/tcp
+  - ufw reload
+
+  # Configure log rotation
+  - |
+    cat > /etc/logrotate.d/vutler-agent << 'EOF'
+    /opt/vutler-agent/logs/*.log {
+        daily
+        missingok
+        rotate 7
+        compress
+        delaycompress
+        notifempty
+        sharedscripts
+        copytruncate
+    }
+    EOF
+
+# Create systemd service for the agent
+write_files:
+  - path: /etc/systemd/system/vutler-agent.service
+    content: |
+      [Unit]
+      Description=Vutler Agent Runtime
+      After=network.target
+      Wants=network.target
+
+      [Service]
+      Type=simple
+      User=vutler-agent
+      Group=vutler-agent
+      WorkingDirectory=/opt/vutler-agent
+      ExecStart=/opt/vutler-agent/start-agent.sh
+      Restart=always
+      RestartSec=10
+      Environment=NODE_ENV=production
+      Environment=VUTLER_CONFIG=/opt/vutler-agent/config/agent.json
+
+      # Logging
+      StandardOutput=append:/opt/vutler-agent/logs/service.log
+      StandardError=append:/opt/vutler-agent/logs/service-error.log
+
+      # Security settings
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectKernelTunables=true
+      ProtectKernelModules=true
+      ProtectControlGroups=true
+
+      [Install]
+      WantedBy=multi-user.target
+    owner: root:root
+    permissions: '0644'
+
+  - path: /opt/vutler-agent/index.js
+    content: |
+      #!/usr/bin/env node
+      'use strict';
+
+      // Vutler Agent Runtime Bootstrap
+      const fs = require('fs');
+      const https = require('https');
+      const config = JSON.parse(fs.readFileSync(process.env.VUTLER_CONFIG || '/opt/vutler-agent/config/agent.json', 'utf8'));
+      
+      console.log('[VutlerAgent] Starting agent runtime...');
+      console.log('[VutlerAgent] Agent ID:', config.agentId);
+      console.log('[VutlerAgent] Workspace ID:', config.workspaceId);
+      console.log('[VutlerAgent] API URL:', config.vutlerApiUrl);
+      
+      // Simple heartbeat to Vutler platform
+      function sendHeartbeat() {
+        const data = JSON.stringify({
+          agentId: config.agentId,
+          vpsInstanceId: config.vpsInstanceId,
+          status: 'active',
+          timestamp: new Date().toISOString(),
+          version: '1.0.0'
+        });
+        
+        const options = {
+          hostname: new URL(config.vutlerApiUrl).hostname,
+          port: 443,
+          path: '/api/v1/agents/heartbeat',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${config.agentToken}`,
+            'Content-Length': data.length
+          }
+        };
+        
+        const req = https.request(options, (res) => {
+          console.log('[VutlerAgent] Heartbeat response:', res.statusCode);
+        });
+        
+        req.on('error', (err) => {
+          console.error('[VutlerAgent] Heartbeat error:', err.message);
+        });
+        
+        req.write(data);
+        req.end();
+      }
+      
+      // Start heartbeat interval
+      setInterval(sendHeartbeat, config.heartbeat?.interval || 30000);
+      
+      // Send initial heartbeat
+      setTimeout(sendHeartbeat, 5000);
+      
+      console.log('[VutlerAgent] Agent runtime started successfully');
+      
+      // Keep process alive
+      process.on('SIGTERM', () => {
+        console.log('[VutlerAgent] Received SIGTERM, shutting down...');
+        process.exit(0);
+      });
+      
+      process.on('SIGINT', () => {
+        console.log('[VutlerAgent] Received SIGINT, shutting down...');
+        process.exit(0);
+      });
+    owner: vutler-agent:vutler-agent
+    permissions: '0755'
+
+  - path: /opt/vutler-agent/package.json
+    content: |
+      {
+        "name": "vutler-agent-runtime",
+        "version": "1.0.0",
+        "description": "Vutler Agent Runtime for VPS deployment",
+        "main": "index.js",
+        "scripts": {
+          "start": "node index.js",
+          "stop": "pkill -f 'node index.js'"
+        },
+        "dependencies": {},
+        "engines": {
+          "node": ">=18.0.0"
+        },
+        "author": "Vutler Platform",
+        "license": "proprietary"
+      }
+    owner: vutler-agent:vutler-agent
+    permissions: '0644'
+
+# Final system configuration
+bootcmd:
+  - echo 'Starting Vutler Agent cloud-init configuration...'
+
+runcmd:
+  # Enable and start the vutler-agent service
+  - systemctl daemon-reload
+  - systemctl enable vutler-agent.service
+  - systemctl start vutler-agent.service
+  - systemctl status vutler-agent.service
+
+  # Verify installation
+  - echo "=== Vutler Agent Installation Summary ==="
+  - echo "Agent ID: {{AGENT_ID}}"
+  - echo "Workspace ID: {{WORKSPACE_ID}}"
+  - echo "VPS Instance ID: {{VPS_INSTANCE_ID}}"
+  - echo "Node.js version: $(node --version)"
+  - echo "Service status: $(systemctl is-active vutler-agent)"
+  - echo "Installation completed at: $(date)"
+  - echo "======================================="
+
+# Run on first boot
+cloud_final_modules:
+  - [scripts-user, always]
+
+final_message: "Vutler agent deployment completed successfully. Agent ID: {{AGENT_ID}}, Service status: $( systemctl is-active vutler-agent )"

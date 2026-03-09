@@ -16,7 +16,7 @@ interface Execution {
 export default function SandboxPage() {
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState('');
-  const [code, setCode] = useState('# Write your code here\nprint("Hello from Vutler Sandbox!")');
+  const [code, setCode] = useState('// Write your code here\nconsole.log("Hello from Vutler Sandbox!");');
   const [environment, setEnvironment] = useState<'local' | 'docker'>('local');
   const [running, setRunning] = useState(false);
   const [output, setOutput] = useState<{ stdout: string; exit_code: number; duration_ms: number } | null>(null);
@@ -56,10 +56,10 @@ export default function SandboxPage() {
     try {
       const res = await authFetch(`/api/v1/agents/${selectedAgent}/run-code`, {
         method: 'POST',
-        body: JSON.stringify({ code, environment }),
+        body: JSON.stringify({ code, environment, language: 'javascript', runtime: 'node' }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       setOutput({ stdout: data.stdout || data.output || '', exit_code: data.exit_code ?? 0, duration_ms: data.duration_ms ?? 0 });
       loadRecent();
     } catch (err: any) {
@@ -75,7 +75,7 @@ export default function SandboxPage() {
     <div className="max-w-[1600px] mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">🧪 RLM Sandbox</h1>
-        <p className="text-sm text-[#9ca3af] mt-1">Execute code through your agents</p>
+        <p className="text-sm text-[#9ca3af] mt-1">Global sandbox for all agents (not Nexus-specific)</p>
       </div>
 
       <div className="flex gap-6">
@@ -117,7 +117,7 @@ export default function SandboxPage() {
           {/* Code editor */}
           <div className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-[rgba(255,255,255,0.07)] bg-[#0e0f1a]">
-              <span className="text-xs text-[#6b7280] font-mono">code.py</span>
+              <span className="text-xs text-[#6b7280] font-mono">code.js</span>
               <span className="text-xs text-[#6b7280]">{code.split('\n').length} lines</span>
             </div>
             <div className="flex">

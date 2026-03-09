@@ -1,32 +1,165 @@
 /**
- * Email API — Vaultbrix PostgreSQL
+ * Email API — Vaultbrix PostgreSQL + Postal SMTP
  */
-const express = require("express");
+'use strict';
+const express = require('express');
 const router = express.Router();
+const pool = require('../lib/vaultbrix');
+const axios = require('axios');
+const SCHEMA = 'tenant_vutler';
+
+// Postal configuration
+const POSTAL_API_URL = process.env.POSTAL_API_URL || 'http://localhost:8082';
+const POSTAL_API_KEY = process.env.POSTAL_API_KEY || 'aa91f11a58ea9771d5036ed6429073f709a716bf-v2';
+const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.vutler.ai';
+
+/**
+ * Send email via Postal HTTP API
+ */
+async function sendViaPostal({ from, to, subject, body, htmlBody }) {
+  const payload = {
+    to: Array.isArray(to) ? to : [to],
+    from: from || 'jarvis@vutler.ai',
+    subject: subject,
+    plain_body: body || '',
+  };
+  if (htmlBody) payload.html_body = htmlBody;
+
+  const resp = await axios.post(
+    POSTAL_API_URL + '/api/v1/send/message',
+    payload,
+    {
+      headers: {
+        'X-Server-API-Key': POSTAL_API_KEY,
+        'Content-Type': 'application/json',
+        'Host': POSTAL_HOST
+      }
+    }
+  );
+  return resp.data;
+}
+
+// GET /api/v1/email — handles ?folder= query param (frontend compat)
+router.get("/", async (req, res) => {
+  try {
+    const folder = req.query.folder || "inbox";
+    const limit = Number(req.query.limit) || 50;
+    const r = await pool.query(
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = $1 OR ($1 = 'inbox' AND folder IS NULL)
+       ORDER BY created_at DESC LIMIT $2`,
+      [folder, limit]
+    );
+    const emails = r.rows.map(e => ({
+      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
+      subject: e.subject, body: e.body, htmlBody: e.html_body,
+      isRead: e.is_read || false, folder: e.folder || "inbox",
+      agentId: e.agent_id, date: e.created_at
+    }));
+    res.json({ success: true, emails, count: emails.length });
+  } catch (err) {
+    console.error("[EMAIL] List error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // GET /api/v1/email/inbox
-router.get("/inbox", async (req, res) => {
-  res.json({ success: true, emails: [] });
+router.get('/inbox', async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 50;
+    const r = await pool.query(
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'inbox' OR folder IS NULL
+       ORDER BY created_at DESC LIMIT $1`,
+      [limit]
+    );
+    const emails = r.rows.map(e => ({
+      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
+      subject: e.subject, body: e.body, htmlBody: e.html_body,
+      isRead: e.is_read || false, folder: e.folder || 'inbox',
+      agentId: e.agent_id, date: e.created_at
+    }));
+    res.json({ success: true, emails, count: emails.length });
+  } catch (err) {
+    console.error('[EMAIL] Inbox error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // GET /api/v1/email/sent
-router.get("/sent", async (req, res) => {
-  res.json({ success: true, emails: [] });
-});
-
-// POST /api/v1/email/send
-router.post("/send", async (req, res) => {
-  res.json({ success: true, messageId: "email-" + Date.now() });
-});
-
-// PUT /api/v1/email/:uid/read
-router.put("/:uid/read", async (req, res) => {
+router.get('/sent', async (req, res) => {
   try {
-    const { uid } = req.params;
-    // In production, mark email as read in database
-    res.json({ success: true, uid, read: true });
+    const r = await pool.query(
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' ORDER BY created_at DESC LIMIT 50`
+    );
+    const emails = r.rows.map(e => ({
+      id: e.id, from: e.from_addr, to: e.to_addr,
+      subject: e.subject, body: e.body, date: e.created_at
+    }));
+    res.json({ success: true, emails, count: emails.length });
   } catch (err) {
-    console.error("[EMAIL] Mark read error:", err.message);
+    console.error('[EMAIL] Sent error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v1/email/send — Send via Postal + store in DB
+router.post('/send', async (req, res) => {
+  try {
+    const { to, subject, body, htmlBody, from } = req.body;
+    if (!to || !subject) return res.status(400).json({ success: false, error: 'to and subject required' });
+
+    const sender = from || 'jarvis@vutler.ai';
+
+    // 1. Send via Postal
+    let postalResult;
+    try {
+      postalResult = await sendViaPostal({ from: sender, to, subject, body, htmlBody });
+      console.log('[EMAIL] Postal send success:', postalResult.data?.message_id);
+    } catch (postalErr) {
+      console.error('[EMAIL] Postal send failed:', postalErr.response?.data || postalErr.message);
+      return res.status(502).json({
+        success: false,
+        error: 'Failed to send via Postal',
+        details: postalErr.response?.data || postalErr.message
+      });
+    }
+
+    // 2. Store in DB as sent
+    const r = await pool.query(
+      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'sent', true, NOW()) RETURNING id`,
+      [sender, to, subject, body || '', htmlBody || null]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        id: r.rows[0].id,
+        messageId: postalResult.data?.message_id,
+        postal: postalResult.data
+      }
+    });
+  } catch (err) {
+    console.error('[EMAIL] Send error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/v1/email/inbox/:id/read
+router.patch('/inbox/:id/read', async (req, res) => {
+  try {
+    await pool.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1`, [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/v1/email/:uid/read (legacy route)
+router.put('/:uid/read', async (req, res) => {
+  try {
+    await pool.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1`, [req.params.uid]);
+    res.json({ success: true, uid: req.params.uid, read: true });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

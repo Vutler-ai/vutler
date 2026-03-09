@@ -67,11 +67,11 @@ function setupWebSocket(server, app) {
 async function handleConnection(ws, req, app) {
   const url     = new URL(req.url, `http://${req.headers.host}`);
   const agentId = url.searchParams.get('agent_id');
-  const apiKey  = url.searchParams.get('api_key');
+  const apiKey  = url.searchParams.get('api_key') || req.headers['x-api-key'];
 
   // ── Auth ────────────────────────────────────────────────────────────────
-  if (!agentId || !apiKey) {
-    ws.close(4001, 'Missing agent_id or api_key');
+  if (!apiKey) {
+    ws.close(4001, 'Missing api_key');
     return;
   }
 
@@ -91,12 +91,7 @@ async function handleConnection(ws, req, app) {
     return;
   }
 
-  // Ensure the key matches the requested agent
-  const storedId = String(agent._id);
-  if (storedId !== String(agentId)) {
-    ws.close(4004, 'Agent ID mismatch');
-    return;
-  }
+  const storedId = String(agentId || agent._id || 'nexus-runtime');
 
   // ── Register ─────────────────────────────────────────────────────────────
   const connectionId = crypto.randomBytes(8).toString('hex');

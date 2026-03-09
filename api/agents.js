@@ -4,9 +4,10 @@
  */
 const express = require("express");
 const pool = require("../lib/vaultbrix");
-const { authenticateAgent } = require("./middleware/auth");
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
+const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
+
 
 // GET /api/v1/agents — list all agents
 router.get("/", async (req, res) => {
@@ -76,14 +77,31 @@ router.get("/:id", async (req, res) => {
 // POST /api/v1/agents — create agent
 router.post("/", async (req, res) => {
   try {
-    const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens } = req.body;
+    const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, template_id } = req.body;
     if (!name || !username) return res.status(400).json({ success: false, error: "name and username required" });
+
+    const ws = req.workspaceId||"00000000-0000-0000-0000-000000000001";
+    let finalModel = model||null;
+    let finalSystemPrompt = system_prompt || null;
+
+    if (template_id) {
+      const tmpl = await pool.query(
+        `SELECT model, system_prompt FROM ${SCHEMA}.marketplace_templates WHERE id = $1`,
+        [template_id]
+      );
+      if (tmpl.rows.length === 0) return res.status(404).json({ success: false, error: "Template not found" });
+      finalModel = finalModel || tmpl.rows[0].model || null;
+      finalSystemPrompt = tmpl.rows[0].system_prompt || finalSystemPrompt || MINIMAL_PROMPT(name);
+    } else if (!finalSystemPrompt) {
+      finalSystemPrompt = MINIMAL_PROMPT(name);
+    }
+
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [name, username, email||null, type||"bot", role||null, mbti||null, model||null, provider||null,
-       description||"", system_prompt||null, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, req.workspaceId||"00000000-0000-0000-0000-000000000001"]
+      [name, username, email||null, type||"bot", role||null, mbti||null, finalModel, provider||null,
+       description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
+       `/sprites/agent-${username}.png`, ws]
     );
     res.json({ success: true, agent: result.rows[0] });
   } catch (err) {
@@ -157,164 +175,6 @@ router.put("/:id/llm-config", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     res.json({ success: true, config: result.rows[0] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// PUT /api/v1/agents/:username/status — update agent status (for real-time sync in Pixel Office)
-router.put("/:username/status", async (req, res) => {
-  try {
-    const { username } = req.params;
-    const { status } = req.body;
-    
-    // Validate status values
-    const validStatuses = ["busy", "online", "offline"];
-    if (!status || !validStatuses.includes(status)) {
-      return res.status(400).json({ 
-        success: false, 
-        error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` 
-      });
-    }
-
-    const result = await pool.query(
-      `UPDATE ${SCHEMA}.agents SET status = $1, updated_at = NOW() WHERE username = $2 AND workspace_id = $3 RETURNING id, username, status`,
-      [status, username, req.workspaceId || "00000000-0000-0000-0000-000000000001"]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: "Agent not found", 
-        username 
-      });
-    }
-
-    console.log(`[AGENTS] Status updated: ${username} -> ${status}`);
-    res.json({ 
-      success: true, 
-      agent: result.rows[0],
-      message: `Agent status updated to ${status}` 
-    });
-  } catch (err) {
-    console.error("[AGENTS] Status update error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// In-memory executions store
-let executions = [];
-let nextExecutionId = 1;
-
-// GET /api/v1/agents/:id/executions
-router.get("/:id/executions", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { limit = 20 } = req.query;
-    
-    const agentExecutions = executions
-      .filter(e => e.agentId === id)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      .slice(0, parseInt(limit));
-    
-    res.json({ success: true, executions: agentExecutions });
-  } catch (err) {
-    console.error("[AGENTS] Executions error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/v1/agents/:id/executions
-router.post("/:id/executions", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { input, context = {} } = req.body;
-    
-    const execution = {
-      id: String(nextExecutionId++),
-      agentId: id,
-      input,
-      context,
-      status: 'running',
-      output: null,
-      createdAt: new Date().toISOString(),
-      completedAt: null
-    };
-    
-    executions.push(execution);
-    
-    // Simulate execution
-    setTimeout(() => {
-      execution.status = 'completed';
-      execution.output = `Executed: ${input}`;
-      execution.completedAt = new Date().toISOString();
-    }, 1000);
-    
-    res.json({ success: true, execution });
-  } catch (err) {
-    console.error("[AGENTS] Create execution error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/v1/agents/deploy
-router.post("/deploy", async (req, res) => {
-  try {
-    const { agentId, environment = 'production' } = req.body;
-    
-    // Simulate deployment
-    const deployment = {
-      id: 'deploy-' + Date.now(),
-      agentId,
-      environment,
-      status: 'deployed',
-      url: `https://${environment}.vutler.ai/agents/${agentId}`,
-      deployedAt: new Date().toISOString()
-    };
-    
-    res.json({ success: true, deployment });
-  } catch (err) {
-    console.error("[AGENTS] Deploy error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// GET /api/v1/agents/:id/config
-router.get("/:id/config", async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Mock config
-    const config = {
-      agentId: id,
-      integrations: [],
-      webhooks: [],
-      autoReply: false,
-      workingHours: { start: '09:00', end: '18:00' }
-    };
-    
-    res.json({ success: true, config });
-  } catch (err) {
-    console.error("[AGENTS] Get config error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// PUT /api/v1/agents/:id/config
-router.put("/:id/config", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updates = req.body;
-    
-    // Mock update
-    const config = {
-      agentId: id,
-      ...updates,
-      updatedAt: new Date().toISOString()
-    };
-    
-    res.json({ success: true, config });
-  } catch (err) {
-    console.error("[AGENTS] Update config error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

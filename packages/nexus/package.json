@@ -1,0 +1,8 @@
+{
+  "name": "@vutler/nexus",
+  "version": "0.1.0",
+  "description": "Vutler Nexus - Deploy AI agents anywhere",
+  "main": "index.js",
+  "bin": { "vutler-nexus": "./bin/cli.js" },
+  "dependencies": { "ws": "^8.16.0", "commander": "^12.0.0" }
+}

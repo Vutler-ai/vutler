@@ -91,7 +91,6 @@
 - Current MX: probably Infomaniak — need to check/change to VPS IP for Haraka
 
 ## Notes from Alex
-- Email server: dedicated setup, NOT K-Suite (agents need webhooks/API, not human UI)
 - Haraka chosen: Node.js (same stack), lightweight, plugin-based
 - Tools framework: use Anthropic tool_use API
 - Code execution (RLM-Runtime): deferred to Sprint 12

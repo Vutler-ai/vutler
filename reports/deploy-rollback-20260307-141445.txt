@@ -1,0 +1,14 @@
+timestamp=20260307-141445
+old_image=sha256:fd3bc4dbd5a076b491b0834fd94e98877140b8d013726bc61b9ee13f9a2650b9
+git_branch=main
+git_head=e66a5c3
+git_dirty_count=59
+--- before_health
+{"status":"healthy","service":"vutler-api","version":"1.1.0","timestamp":"2026-03-07T14:14:45.188Z","uptime":96.428257938,"db":{"postgres":true},"endpoints":["/api/v1/dashboard","/api/v1/tasks","/api/v1/calendar/events","/api/v1/providers","/api/v1/settings","/api/v1/goals","/api/v1/emails","/api/v1/automations","/api/v1/usage","/api/v1/chat/channels","/api/v1/drive/files","/api/v1/agents","/api/v1/templates","/api/v1/health","/api/v1/auth"],"security":{"helmet":true,"cors":true,"rateLimit":"100 req/min"}}
+--- before_tasks_status
+200
+--- before_sandbox_status
+200
+rollback_image=sha256:fd3bc4dbd5a076b491b0834fd94e98877140b8d013726bc61b9ee13f9a2650b9
+rollback_env=.env.pre-app-deploy-20260307-141445
+rollback_container_image_tag=vutler-api:pre-app-deploy-20260307-141445

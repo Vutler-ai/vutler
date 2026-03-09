@@ -19,7 +19,7 @@ If there are emails:
 1. Read each line (JSON: uid, from, to, subject, body, date, ts)
 2. Determine which agent(s) should handle based on the "to" address and content
 3. Forward to the right agent via `sessions_send` if needed
-4. Reply via kChat or WhatsApp to Alex with a summary
+4. Reply via WhatsApp to Alex with a summary
 5. After processing, clear the file: write empty string to `memory/email-inbox.jsonl`
 
 ### Email → Agent Routing

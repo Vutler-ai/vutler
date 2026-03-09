@@ -12,6 +12,22 @@ export default function LoginPage() {
   const router = useRouter();
 
   useEffect(() => {
+    // Security: never keep credentials in URL query params (can leak via referrer/logs/devtools).
+    // If someone lands on /login?email=...&password=..., strip params immediately.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (Array.from(params.keys()).length > 0) {
+        const qpEmail = params.get("email");
+        const qpPassword = params.get("password");
+        if (qpEmail) setEmail(qpEmail);
+        if (qpPassword) setPassword(qpPassword);
+        window.history.replaceState({}, "", "/login");
+        return;
+      }
+    } catch (_) {
+      // ignore
+    }
+
     // Redirect if already authenticated
     if (isAuthenticated()) {
       router.push('/dashboard');
@@ -95,12 +111,6 @@ export default function LoginPage() {
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
-          </div>
-
-          <div className="text-center">
-            <p className="text-sm text-gray-600">
-              Default credentials: alex@vutler.com / admin123
-            </p>
           </div>
         </form>
       </div>

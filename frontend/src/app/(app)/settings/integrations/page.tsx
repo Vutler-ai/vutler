@@ -68,8 +68,14 @@ export default function IntegrationsPage() {
     (i) => i.name.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleConnect = (provider: string) => {
-    window.location.href = `/api/v1/integrations/${provider}/connect`;
+  const handleConnect = async (provider: string) => {
+    try {
+      const r = await authFetch(`/api/v1/integrations/${provider}/connect`, { method: "POST" });
+      if (!r.ok) throw new Error("Connect failed");
+      setIntegrations((prev) => prev.map((i) => i.provider === provider ? { ...i, status: "connected" as const, connected_at: new Date().toISOString() } : i));
+    } catch {
+      setError("Failed to connect");
+    }
   };
 
   const handleDisconnect = async (provider: string) => {
@@ -89,7 +95,7 @@ export default function IntegrationsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">🔌 Integrations</h1>
-          <p className="text-[#9ca3af] mt-1">Connect third-party services to your workspace · {connectedCount} connected</p>
+          <p className="text-[#9ca3af] mt-1">Internal integrations catalog · {connectedCount} connected</p>
         </div>
         <Link
           href="/settings/integrations/activity"

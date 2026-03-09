@@ -20,8 +20,8 @@ export const metadata: Metadata = {
   title: "Vutler - AI Agent Platform",
   description: "Unified dashboard for managing AI agents across multiple platforms",
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/landing/vutler-logo-full-white.png",
+    shortcut: "/landing/vutler-logo-full-white.png",
     apple: "/icons/icon-192.png",
   },
   manifest: "/manifest.json",

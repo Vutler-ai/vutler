@@ -19,6 +19,7 @@ interface ExecuteState {
   tab: 'execute' | 'history';
   history: any[];
   historyLoading: boolean;
+  autoApproveEmail: boolean;
 }
 
 export default function AgentsPage() {
@@ -49,6 +50,7 @@ export default function AgentsPage() {
       tab: 'execute',
       history: [],
       historyLoading: false,
+      autoApproveEmail: !!agent.autoApproveEmail,
     });
   };
 
@@ -121,6 +123,25 @@ export default function AgentsPage() {
     }
   };
 
+
+  const toggleAutoApprove = async (enabled: boolean) => {
+    if (!exec) return;
+    const prev = exec.autoApproveEmail;
+    setExec(curr => curr ? { ...curr, autoApproveEmail: enabled } : null);
+    try {
+      const res = await authFetch(`/api/v1/agents/${exec.agentId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_approve_email: enabled })
+      });
+      if (!res.ok) throw new Error('Failed to update auto-approval');
+      setAgents(list => list.map(a => a.id === exec.agentId ? { ...a, autoApproveEmail: enabled } : a));
+    } catch (e) {
+      setExec(curr => curr ? { ...curr, autoApproveEmail: prev } : null);
+      console.error(e);
+    }
+  };
+
   const formatDate = (d: string) => {
     const date = new Date(d);
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -151,6 +172,14 @@ export default function AgentsPage() {
                   <p className="text-xs text-[#9ca3af] mt-1">
                     {exec.model} • {exec.provider}
                   </p>
+                  <label className="mt-2 inline-flex items-center gap-2 text-xs text-[#d1d5db]">
+                    <input
+                      type="checkbox"
+                      checked={exec.autoApproveEmail}
+                      onChange={(e) => toggleAutoApprove(e.target.checked)}
+                    />
+                    Auto-approve agent emails
+                  </label>
                 </div>
                 <button onClick={() => setExec(null)} className="text-[#6b7280] hover:text-white text-2xl leading-none">&times;</button>
               </div>

@@ -1,94 +1,65 @@
-/**
- * Tasks API
- */
-const express = require("express");
+'use strict';
+
+const express = require('express');
 const router = express.Router();
+const taskRouter = require('../services/taskRouter');
 
-// In-memory tasks
-let tasks = [];
-let nextId = 1;
-
-// GET /api/v1/tasks
-router.get("/", async (req, res) => {
-  res.json({ success: true, tasks });
-});
-
-// POST /api/v1/tasks
-router.post("/", async (req, res) => {
+// GET / — list tasks (was Snipara, now uses taskRouter PG)
+router.get('/', async (req, res) => {
   try {
-    const { title, description, status = 'pending', priority = 'medium', dueDate } = req.body;
-    
-    const task = {
-      id: String(nextId++),
-      title,
-      description,
-      status,
-      priority,
-      dueDate,
-      createdAt: new Date().toISOString()
-    };
-    
-    tasks.push(task);
-    res.json({ success: true, task });
+    const { status, assigned_agent, workspace_id } = req.query;
+    const tasks = await taskRouter.listTasks({ status, assigned_agent, workspace_id });
+    res.json({ success: true, count: tasks.length, tasks, source: 'task-router' });
   } catch (err) {
-    console.error("[TASKS] Create error:", err.message);
+    console.error('[TASKS] List error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/v1/tasks/:id
-router.put("/:id", async (req, res) => {
+// POST / — create task
+router.post('/', async (req, res) => {
   try {
-    const { id } = req.params;
-    const updates = req.body;
-    
-    const index = tasks.findIndex(t => t.id === id);
-    if (index === -1) {
-      return res.status(404).json({ success: false, error: "Task not found" });
-    }
-    
-    tasks[index] = { ...tasks[index], ...updates, updatedAt: new Date().toISOString() };
-    res.json({ success: true, task: tasks[index] });
+    const { title, description, priority, assignee, due_date, workspace_id } = req.body || {};
+    if (!title) return res.status(400).json({ success: false, error: 'title is required' });
+    const task = await taskRouter.createTask({
+      title, description, priority: priority || 'medium',
+      due_date, created_by: assignee || 'user',
+      workspace_id: workspace_id || '00000000-0000-0000-0000-000000000001'
+    });
+    res.status(201).json({ success: true, data: task });
   } catch (err) {
-    console.error("[TASKS] Update error:", err.message);
+    console.error('[TASKS] Create error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// PUT /api/v1/tasks/:id/complete
-router.put("/:id/complete", async (req, res) => {
+// GET /:id
+router.get('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    
-    const index = tasks.findIndex(t => t.id === id);
-    if (index === -1) {
-      return res.status(404).json({ success: false, error: "Task not found" });
-    }
-    
-    tasks[index].status = tasks[index].status === 'completed' ? 'pending' : 'completed';
-    tasks[index].updatedAt = new Date().toISOString();
-    
-    res.json({ success: true, task: tasks[index] });
+    const task = await taskRouter.getTask(req.params.id);
+    if (!task) return res.status(404).json({ success: false, error: 'Not found' });
+    res.json({ success: true, data: task });
   } catch (err) {
-    console.error("[TASKS] Complete error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// DELETE /api/v1/tasks/:id
-router.delete("/:id", async (req, res) => {
+// PUT /:id
+router.put('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    const index = tasks.findIndex(t => t.id === id);
-    
-    if (index === -1) {
-      return res.status(404).json({ success: false, error: "Task not found" });
-    }
-    
-    tasks.splice(index, 1);
+    const task = await taskRouter.updateTask(req.params.id, req.body);
+    res.json({ success: true, data: task });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /:id
+router.delete('/:id', async (req, res) => {
+  try {
+    await taskRouter.deleteTask(req.params.id);
     res.json({ success: true });
   } catch (err) {
-    console.error("[TASKS] Delete error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

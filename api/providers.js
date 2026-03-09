@@ -1,119 +1,77 @@
-/**
- * Providers API — PostgreSQL (Vaultbrix)
- * LLM provider management
- */
-const express = require("express");
+// Providers API (fixed to match actual DB schema)
+const express = require('express');
 const pool = require("../lib/vaultbrix");
 const router = express.Router();
-const SCHEMA = "tenant_vutler";
 
-// GET /api/v1/providers — list all providers
-router.get("/", async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.llm_providers WHERE workspace_id = $1 ORDER BY provider_name`,
-      [req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+      'SELECT * FROM workspace_llm_providers WHERE workspace_id = $1 ORDER BY created_at DESC',
+      [req.workspaceId]
     );
-    
-    const providers = result.rows.map(p => ({
-      id: p.id,
-      provider_name: p.provider_name,
-      display_name: p.display_name || p.provider_name,
-      api_key_encrypted: p.api_key_encrypted ? p.api_key_encrypted.slice(0, 8) + '...' : null,
-      is_active: p.is_active !== false,
-      supported_models: p.supported_models || [],
-      default_model: p.default_model,
-      config: p.config || {},
-      created_at: p.created_at,
-      updated_at: p.updated_at
-    }));
-    
-    res.json({ success: true, providers });
-  } catch (err) {
-    console.error("[PROVIDERS] List error:", err.message);
-    // Return empty providers array instead of error for now
-    res.json({ success: true, providers: [] });
+    const masked = result.rows.map(p => ({...p, api_key_encrypted: p.api_key_encrypted ? p.api_key_encrypted.slice(0,8) + "..." + p.api_key_encrypted.slice(-4) : null})); res.json({ success: true, providers: masked, count: masked.length });
+  } catch (error) {
+    console.error('[PROVIDERS] Error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch providers', error: error.message });
   }
 });
 
-// GET /api/v1/providers/:id — single provider
-router.get("/:id", async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
     const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.llm_providers WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
-      [id, req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+      'SELECT * FROM workspace_llm_providers WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, req.workspaceId]
     );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: "Provider not found" });
-    }
-    
-    const p = result.rows[0];
-    res.json({
-      success: true,
-      provider: {
-        id: p.id,
-        provider_name: p.provider_name,
-        display_name: p.display_name,
-        is_active: p.is_active !== false,
-        supported_models: p.supported_models || [],
-        default_model: p.default_model,
-        config: p.config || {}
-      }
-    });
-  } catch (err) {
-    console.error("[PROVIDERS] Get error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// PUT /api/v1/providers/:id — update provider
-router.put("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { is_active, api_key, default_model } = req.body;
-    
-    const updates = [];
-    const values = [];
-    let idx = 1;
-    
-    if (is_active !== undefined) {
-      updates.push(`is_active = $${idx++}`);
-      values.push(is_active);
-    }
-    
-    if (default_model) {
-      updates.push(`default_model = $${idx++}`);
-      values.push(default_model);
-    }
-    
-    if (api_key) {
-      updates.push(`api_key_encrypted = $${idx++}`);
-      values.push(api_key); // In production, encrypt this
-    }
-    
-    if (updates.length === 0) {
-      return res.status(400).json({ success: false, error: "No fields to update" });
-    }
-    
-    values.push(id);
-    values.push(req.workspaceId || "00000000-0000-0000-0000-000000000001");
-    
-    const result = await pool.query(
-      `UPDATE ${SCHEMA}.llm_providers SET ${updates.join(', ')}, updated_at = NOW() 
-       WHERE id::text = $${idx++} AND workspace_id = $${idx} RETURNING *`,
-      values
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: "Provider not found" });
-    }
-    
+    if (result.rows.length === 0) return res.status(404).json({ success: false, message: 'Provider not found' });
     res.json({ success: true, provider: result.rows[0] });
-  } catch (err) {
-    console.error("[PROVIDERS] Update error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.post('/', async (req, res) => {
+  try {
+    const { name, provider, provider_type, type, api_key, base_url, api_url, is_active = true } = req.body;
+    const providerVal = provider || provider_type || type || 'openai';
+    if (!name) return res.status(400).json({ success: false, message: 'Name is required' });
+    const result = await pool.query(
+      'INSERT INTO workspace_llm_providers (name, provider, api_key_encrypted, base_url, is_active, workspace_id, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) RETURNING *',
+      [name, providerVal, api_key || '', base_url || api_url || null, is_active, req.workspaceId]
+    );
+    res.status(201).json({ success: true, message: 'Provider created', provider: result.rows[0] });
+  } catch (error) {
+    console.error('[PROVIDERS] Error creating:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, provider, api_key, base_url, is_active } = req.body;
+    const updates = []; const params = []; let pc = 1;
+    if (name !== undefined) { updates.push('name = $' + pc); params.push(name); pc++; }
+    if (provider !== undefined) { updates.push('provider = $' + pc); params.push(provider); pc++; }
+    if (api_key !== undefined) { updates.push('api_key_encrypted = $' + pc); params.push(api_key); pc++; }
+    if (base_url !== undefined) { updates.push('base_url = $' + pc); params.push(base_url); pc++; }
+    if (is_active !== undefined) { updates.push('is_active = $' + pc); params.push(is_active); pc++; }
+    if (!updates.length) return res.status(400).json({ success: false, message: 'No fields to update' });
+    updates.push('updated_at = NOW()');
+    params.push(req.params.id, req.workspaceId);
+    const result = await pool.query('UPDATE workspace_llm_providers SET ' + updates.join(', ') + ' WHERE id = $' + pc + ' AND workspace_id = $' + (pc+1) + ' RETURNING *', params);
+    if (!result.rows.length) return res.status(404).json({ success: false, message: 'Not found' });
+    res.json({ success: true, provider: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.delete('/:id', async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM workspace_llm_providers WHERE id = $1 AND workspace_id = $2 RETURNING *', [req.params.id, req.workspaceId]);
+    if (!result.rows.length) return res.status(404).json({ success: false, message: 'Not found' });
+    res.json({ success: true, message: 'Deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

@@ -62,8 +62,15 @@ export default function IntegrationDetailPage() {
     });
   }, [provider]);
 
-  const handleReconnect = () => {
-    window.location.href = `/api/v1/integrations/${provider}/connect`;
+  const handleReconnect = async () => {
+    try {
+      const r = await authFetch(`/api/v1/integrations/${provider}/connect`, { method: "POST" });
+      if (!r.ok) throw new Error("Reconnect failed");
+      const data = await r.json();
+      setDetail((prev) => prev ? { ...prev, status: data?.integration?.status || "connected", connected_at: data?.integration?.connected_at || new Date().toISOString() } : prev);
+    } catch {
+      setError("Failed to reconnect");
+    }
   };
 
   const handleDisconnect = async () => {

@@ -225,7 +225,7 @@ export default function DashboardPage() {
           <div className="space-y-3">
             <div className="flex items-center gap-3 text-green-400"><span>✅</span><span className="text-sm">Create your first agent</span></div>
             <a href="/nexus/setup" className="flex items-center gap-3 text-[#94a3b8] hover:text-white transition-colors"><span>⬜</span><span className="text-sm">Configure a local Nexus</span></a>
-            <a href="/deployments" className="flex items-center gap-3 text-[#94a3b8] hover:text-white transition-colors"><span>⬜</span><span className="text-sm">Deploy an agent</span></a>
+            <a href="/nexus/setup" className="flex items-center gap-3 text-[#94a3b8] hover:text-white transition-colors"><span>⬜</span><span className="text-sm">Run Nexus setup & deploy</span></a>
           </div>
         </section>
       )}

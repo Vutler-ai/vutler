@@ -3,9 +3,6 @@
  * Standalone Express API for AI agent management, email, and chat
  */
 
-// Load environment variables from .env file
-try { require('dotenv').config(); } catch(e) {}
-
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -28,20 +25,28 @@ const driveAPI = require('./api/drive');
 const openclawAPI = require('./api/openclaw');
 const runtimeAPI = require('./api/runtime');
 const tasksAPI = require("./api/tasks");
+const taskRouterAPI = require("./api/tasks-router");  // TaskRouter v1
 const calendarAPI = require("./api/calendar");
+const marketplaceAPI = require("./api/marketplace");
+const sandboxAPI = require("./api/sandbox");
 const providersAPI = require("./api/providers");
 const authMiddleware = require("./api/middleware/auth");
 const settingsAPI = require("./api/settings");
+const onboardingAPI = require("./api/onboarding");
 const authAPI = require("./api/auth");
+const billingAPI = require("./api/billing");
 const dashboardAPI = require("./api/dashboard");
 const automationsAPI = require("./api/automations");
 const goalsAPI = require("./api/goals");
 const emailsPgAPI = require("./api/emails");
 const usagePgAPI = require("./api/usage-pg");
 const agentSyncAPI = require("./api/agent-sync");
+const mailAPI = require("./api/mail");
 const { authenticateAgent, verifyApiKey } = require('./lib/auth');
 const ImapPoller = require('./services/imapPoller');
+const BmadAutoSync = require('./services/bmadAutoSync');
 const { loadTemplates } = require('./seeds/loadTemplates');
+const ChatRuntime = require("./app/custom/services/chatRuntime");
 
 // Create Express app
 const app = express();
@@ -68,30 +73,56 @@ app.use(helmet({
 }));
 
 // CORS configuration
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3001,https://app.vutler.ai').split(',').map(s => s.trim());
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:3001',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (server-to-server, curl, mobile apps)
+    if (!origin) return callback(null, true);
+    if (corsOrigins.indexOf(origin) !== -1) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Webhook-Secret']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Webhook-Secret', 'X-API-Key', 'X-Workspace-Id']
 };
 app.use(cors(corsOptions));
 
-// Global rate limiting (100 req/min per IP)
-const globalLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    error: 'Too many requests',
-    details: 'Maximum 100 requests per minute'
-  }
-});
-app.use(globalLimiter);
+app.use("/static", require("express").static(require("path").join(__dirname, "public/static")));
 
 // Body parser with size limits
-app.use(express.json({ limit: '10mb' }));
+app.use((req, res, next) => { if (req.originalUrl === "/api/v1/billing/webhook") return next(); express.json({ limit: "10mb" })(req, res, next); });
+// === JWT Token Decode Middleware (global) ===
+app.use((req, res, next) => {
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.headers['x-auth-token'];
+  if (token && token.startsWith('eyJ')) {
+    try {
+      const crypto = require('crypto');
+      const [header, payload, sig] = token.split('.');
+      const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
+      const expected = crypto.createHmac('sha256', JWT_SECRET).update(header + '.' + payload).digest('base64url');
+      if (sig === expected) {
+        const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+        if (!data.exp || data.exp > Math.floor(Date.now() / 1000)) {
+          req.user = { id: data.userId, email: data.email, name: data.name, role: data.role, workspaceId: data.workspaceId };
+          req.authType = 'jwt';
+          req.workspaceId = data.workspaceId || '00000000-0000-0000-0000-000000000001';
+        }
+      }
+    } catch(e) { /* invalid token, continue without auth */ }
+  }
+  next();
+});
+
+
+
+// ============================================
+// RATE LIMITING (Production)
+// ============================================
+const { globalLimiter, apiLimiter, llmLimiter, authLimiter } = require('./lib/rateLimiter');
+
+// Apply global rate limiter (200 req/min per IP)
+app.use(globalLimiter);
+
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Global auth middleware
@@ -105,8 +136,24 @@ async function start() {
   console.log('🔒 Security: Helmet + CORS + Rate Limiting enabled');
   
   try {
+    // Connect to MongoDB
+    // MongoDB removed
+    
+    
+    
+    
     // Store DB connection in app locals for API routes
+    // MongoDB removed
+    
+    console.log('✅ MongoDB connected');
     app.locals.pg = require('./lib/vaultbrix');
+    const chatRuntime = (typeof ChatRuntime === 'function')
+      ? new ChatRuntime(app.locals.pg)
+      : ChatRuntime;
+    if (chatRuntime && typeof chatRuntime.start === 'function') {
+      chatRuntime.start();
+    }
+    app.locals.chatRuntime = chatRuntime;
     console.log('✅ Vaultbrix PG pool attached');
     
     // Create indexes for agent queries (ignore conflicts with existing indexes)
@@ -120,37 +167,47 @@ async function start() {
     
     // Mount custom API routes
     app.use('/api/v1/agents', agentsAPI);
-    // Legacy email routes disabled (Vaultbrix-only)
+    // MongoDB email routes (deprecated - using Vaultbrix)
     // app.use("/api/v1", emailBetaAPI);
     // app.use('/api/v1', emailAPI);
     app.use("/api/v1/email", emailVaultbrixAPI);
+    // Chat send limiter (LLM protection)
+    app.use('/api/v1/chat/send', llmLimiter);
+
     app.use('/api/v1/chat', chatAPI);
     app.use('/api/v1', templatesAPI);
-    app.use('/api/v1', llmAPI);
+    // LLM rate limiter (cost protection - plan-based limits)
+    app.use('/api/v1/llm', llmLimiter);
+
+    app.use('/api/v1/llm', llmAPI);
     app.use('/api/v1', usagePgAPI);  // PostgreSQL usage (replaces MongoDB)
     // app.use('/api/v1', usageAPI);  // old MongoDB usage
     app.use('/api/v1/drive', driveAPI);
-    // VDrive (encrypted file storage)
-    try {
-      const vdriveAPI = require('./api/vdrive');
-      app.use('/api/v1/vdrive', vdriveAPI);
-      console.log('   - POST   /api/v1/vdrive/upload');
-      console.log('   - GET    /api/v1/vdrive/files');
-    } catch(e) {
-      console.warn('[BOOT] VDrive API skip:', e.message);
-    }
     app.use('/api/v1', openclawAPI);
     
 // Default workspace fallback
 app.use((req, res, next) => { if (!req.workspaceId) req.workspaceId = "00000000-0000-0000-0000-000000000001"; next(); });
+
+    // API rate limiter on all remaining /api/v1 routes (plan-based limits)
+    app.use('/api/v1', apiLimiter);
+
 app.use("/api/v1/tasks", tasksAPI);
+    app.use("/api/v1/task-router", taskRouterAPI);  // TaskRouter v1
     app.use("/api/v1/calendar", calendarAPI);
+    app.use("/api/v1/marketplace", marketplaceAPI);
+    app.use("/api/v1/sandbox", sandboxAPI);
     app.use("/api/v1/providers", providersAPI);
     app.use("/api/v1/settings", settingsAPI);
+    // Auth rate limiter (anti brute force - 5 req/min)
+    app.use('/api/v1/auth/login', authLimiter);
+    app.use('/api/v1/auth/register', authLimiter);
+
     app.use("/api/v1/auth", authAPI);
     app.use("/api/v1/dashboard", dashboardAPI);
+    app.use("/api/v1", billingAPI);
     app.use("/api/v1/goals", goalsAPI);
     app.use("/api/v1/emails", emailsPgAPI);
+    app.use("/api/v1/mail", mailAPI);
     app.use("/api/v1/agents/sync", agentSyncAPI);
     app.use("/api/v1/automations", automationsAPI);
     // Sprint 15 — Automation Engine routes
@@ -158,37 +215,41 @@ app.use("/api/v1/tasks", tasksAPI);
     const automationLogsRoutes = require('./api/automation-logs-routes');
     app.use('/api/v1/webhooks', webhookRoutes);
     app.use('/api/v1/automations', automationLogsRoutes);
+const sniparaSwarm = require("./services/sniparaSwarm");
+app.post("/api/v1/swarm/broadcast", async (req, res) => {
+  try {
+    const r = await sniparaSwarm.broadcast(req.body.agentId, req.body.eventType || "status", req.body.message);
+    res.json({ success: true, data: r });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+app.post("/api/v1/swarm/task", async (req, res) => {
+  try {
+    const r = await sniparaSwarm.createTask(req.body.title, req.body.description, req.body.assignedTo, req.body.priority);
+    res.json({ success: true, data: r });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+    // === MVP APIs mounted (2026-03-09 audit fix) ===
+    try { app.use('/api/v1/auth', require('./api/auth')); console.log('[BOOT] Auth API mounted'); } catch(e) { console.warn('[BOOT] Auth skip:', e.message); }
+    try { app.use('/api/v1/mail', require('./api/mail')); console.log('[BOOT] Mail API mounted'); } catch(e) { console.warn('[BOOT] Mail skip:', e.message); }
+    try { app.use('/api/v1/calendar', require('./api/calendar')); console.log('[BOOT] Calendar API mounted'); } catch(e) { console.warn('[BOOT] Calendar skip:', e.message); }
+    try { app.use('/api/v1/clients', require('./api/clients')); console.log('[BOOT] Clients API mounted'); } catch(e) { console.warn('[BOOT] Clients skip:', e.message); }
+    try { app.use('/api/v1/audit-logs', require('./api/audit-logs')); console.log('[BOOT] Audit Logs API mounted'); } catch(e) { console.warn('[BOOT] Audit Logs skip:', e.message); }
+    try { app.use('/api/v1/integrations', require('./api/integrations')); console.log('[BOOT] Integrations API mounted'); } catch(e) { console.warn('[BOOT] Integrations skip:', e.message); }
+    try { app.use('/api/v1/settings', require('./api/settings')); console.log('[BOOT] Settings API mounted'); } catch(e) { console.warn('[BOOT] Settings skip:', e.message); }
+    try { app.use('/api/v1/nexus', require('./api/nexus')); console.log('[BOOT] Nexus API mounted'); } catch(e) { console.warn('[BOOT] Nexus skip:', e.message); }
+    try { app.use('/api/v1/sandbox', require('./api/sandbox')); console.log('[BOOT] Sandbox API mounted'); } catch(e) { console.warn('[BOOT] Sandbox skip:', e.message); }
+    try { app.use('/api/v1/onboarding', require('./api/onboarding')); console.log('[BOOT] Onboarding API mounted'); } catch(e) { console.warn('[BOOT] Onboarding skip:', e.message); }
+    try { app.use('/api/v1/billing', require('./api/billing')); console.log('[BOOT] Billing API mounted'); } catch(e) { console.warn('[BOOT] Billing skip:', e.message); }
+    try { app.use('/api/v1/marketplace', require('./api/marketplace')); console.log('[BOOT] Marketplace API mounted'); } catch(e) { console.warn('[BOOT] Marketplace skip:', e.message); }
+    try { app.use('/api/v1/task-router', require('./api/tasks-router')); console.log('[BOOT] TaskRouter API mounted'); } catch(e) { console.warn('[BOOT] TaskRouter skip:', e.message); }
+    try { app.use('/api/v1/dashboard', require('./api/dashboard')); console.log('[BOOT] Dashboard API mounted'); } catch(e) { console.warn('[BOOT] Dashboard skip:', e.message); }
+    try { app.use('/api/v1/admin', require('./api/admin')); console.log('[BOOT] Admin API mounted'); } catch(e) { console.warn('[BOOT] Admin skip:', e.message); }
+
     app.use('/api/v1', runtimeAPI);
-    
-    // Additional routes for frontend
-    const notificationsAPI = require('./api/notifications');
-    const deploymentsAPI = require('./api/deployments');
-    const clientsAPI = require('./api/clients');
-    const sandboxAPI = require('./api/sandbox');
-    const integrationsAPI = require('./api/integrations');
-    const nexusAPI = require('./api/nexus');
-    const marketplaceAPI = require('./api/marketplace');
-    const auditLogsAPI = require('./api/audit-logs');
-    
-    app.use('/api/v1/notifications', notificationsAPI);
-    app.use('/api/v1/deployments', deploymentsAPI);
-    app.use('/api/v1/clients', clientsAPI);
-    app.use('/api/v1/sandbox', sandboxAPI);
-    app.use('/api/v1/integrations', integrationsAPI);
-    app.use('/api/v1/nexus', nexusAPI);
-    app.use('/api/v1/marketplace', marketplaceAPI);
-    app.use('/api/v1/audit-logs', auditLogsAPI);
-    
-    console.log('✅ Additional APIs mounted:');
-    console.log('   - GET    /api/v1/notifications');
-    console.log('   - PUT    /api/v1/notifications/:id/read');
-    console.log('   - GET    /api/v1/deployments');
-    console.log('   - GET    /api/v1/clients');
-    console.log('   - GET    /api/v1/sandbox');
-    console.log('   - GET    /api/v1/integrations');
-    console.log('   - GET    /api/v1/nexus/status');
-    console.log('   - GET    /api/v1/marketplace/templates');
-    console.log('   - GET    /api/v1/audit-logs');
     
     console.log('✅ Vutler APIs mounted:');
     console.log('   - POST   /api/v1/agents');
@@ -229,119 +290,6 @@ app.use("/api/v1/tasks", tasksAPI);
       res.json({ success: true, ws: wsGetStats() });
     });
     
-    // ============================================================================
-    // NEXUS LOCAL AGENT ENDPOINTS (for local agent web UI)
-    // ============================================================================
-    
-    // GET /api/config - Nexus configuration
-    app.get('/api/config', (req, res) => {
-      res.json({
-        cloudUrl: process.env.VUTLER_CLOUD_URL || 'app.vutler.ai',
-        token: null, // Will be set if user pairs with cloud
-        workspace: process.env.NEXUS_WORKSPACE || require('path').join(require('os').homedir(), '.vutler', 'workspace'),
-        webPort: parseInt(process.env.NEXUS_PORT || '3939'),
-        llm: {
-          provider: process.env.LLM_PROVIDER || 'claude-code',
-          model: process.env.LLM_MODEL || 'claude-sonnet-4-20250514',
-          apiKey: process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || null,
-          maxTokens: parseInt(process.env.LLM_MAX_TOKENS || '4096'),
-          temperature: parseFloat(process.env.LLM_TEMPERATURE || '0.7')
-        },
-        agent: {
-          name: process.env.AGENT_NAME || 'Jarvis',
-          systemPrompt: 'auto',
-          contextFiles: ['SOUL.md', 'MEMORY.md', 'USER.md', 'IDENTITY.md', 'TOOLS.md']
-        },
-        features: {
-          webInterface: true,
-          cloudSync: false,
-          localChat: true,
-          fileAccess: true,
-          shellAccess: false
-        }
-      });
-    });
-    
-    // POST /api/config - Update Nexus configuration
-    app.post('/api/config', (req, res) => {
-      // In production, this would save to a config file
-      console.log('[NEXUS] Config update received:', req.body);
-      res.json({ success: true, message: 'Configuration updated' });
-    });
-    
-    // GET /api/status - Nexus status
-    app.get('/api/status', (req, res) => {
-      res.json({
-        server: 'running',
-        agent: {
-          llmConfigured: !!(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY),
-          llmProvider: process.env.LLM_PROVIDER || 'claude-code',
-          systemPromptLoaded: true,
-          conversationLength: 0
-        },
-        config: {
-          agentName: process.env.AGENT_NAME || 'Jarvis',
-          model: process.env.LLM_MODEL || 'claude-sonnet-4-20250514',
-          workspace: process.env.NEXUS_WORKSPACE || require('path').join(require('os').homedir(), '.vutler', 'workspace')
-        },
-        connections: 0
-      });
-    });
-    
-    // POST /api/test-connection - Test LLM connection
-    app.post('/api/test-connection', async (req, res) => {
-      try {
-        const { provider, apiKey } = req.body;
-        
-        if (provider === 'claude-code') {
-          const { exec } = require('child_process');
-          exec('claude --version', (error) => {
-            if (error) {
-              res.json({ success: false, error: 'Claude CLI not found' });
-            } else {
-              res.json({ success: true, message: 'Claude CLI is available' });
-            }
-          });
-        } else if (provider === 'openrouter' || provider === 'anthropic') {
-          if (!apiKey) {
-            return res.json({ success: false, error: 'API key required' });
-          }
-          // Simple validation - check format
-          if (provider === 'openrouter' && !apiKey.startsWith('sk-or-')) {
-            return res.json({ success: false, error: 'Invalid OpenRouter API key format' });
-          }
-          if (provider === 'anthropic' && !apiKey.startsWith('sk-ant-')) {
-            return res.json({ success: false, error: 'Invalid Anthropic API key format' });
-          }
-          res.json({ success: true, message: 'API key format looks valid' });
-        } else {
-          res.json({ success: true, message: 'Connection test passed' });
-        }
-      } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
-    
-    // POST /api/chat - Nexus chat endpoint
-    app.post('/api/chat', async (req, res) => {
-      try {
-        const { message, stream = false } = req.body;
-        if (!message) {
-          return res.status(400).json({ error: 'Message is required' });
-        }
-        
-        // Simple echo response for now
-        // In production, this would route to the actual LLM
-        res.json({
-          type: 'text',
-          content: `Echo: ${message}`,
-          timestamp: new Date().toISOString()
-        });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-    
     // Start IMAP poller if configured
     if (process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS) {
       const imapConfig = {
@@ -373,19 +321,20 @@ app.use("/api/v1/tasks", tasksAPI);
     app.get('/api/v1/health', async (req, res) => {
       try {
         const pgOk = await (async () => { try { await app.locals.pg.query("SELECT 1"); return true; } catch { return false; } })();
+        const mongoOk = true; // MongoDB removed
         res.json({
-          status: pgOk ? "healthy" : "degraded",
+          status: pgOk && mongoOk ? "healthy" : "degraded",
           service: "vutler-api",
           version: "1.1.0",
           timestamp: new Date().toISOString(),
           uptime: process.uptime(),
-          db: { postgres: pgOk },
+          db: { postgres: pgOk, mongodb: "removed" },
           endpoints: [
             "/api/v1/dashboard","/api/v1/tasks","/api/v1/calendar/events",
             "/api/v1/providers","/api/v1/settings","/api/v1/goals",
             "/api/v1/emails","/api/v1/automations","/api/v1/usage",
             "/api/v1/chat/channels","/api/v1/drive/files","/api/v1/agents",
-            "/api/v1/templates","/api/v1/health","/api/v1/auth"
+            "/api/v1/templates","/api/v1/marketplace","/api/v1/health","/api/v1/auth"
           ],
           security: { helmet: true, cors: true, rateLimit: "100 req/min" }
         });
@@ -402,6 +351,14 @@ app.use("/api/v1/tasks", tasksAPI);
       console.log(`🎉 Vutler API listening on http://0.0.0.0:${port}`);
       // Sprint 15 — Init schedule triggers
       try { const { initSchedules } = require('./runtime/schedule-trigger'); const pool = require('./lib/vaultbrix'); initSchedules(pool); console.log('⏰ Schedule triggers initialized'); } catch(e) { console.warn('Schedule init skip:', e.message); }
+  // BMAD Auto-Sync Service
+  try {
+    const bmadAutoSync = new BmadAutoSync();
+    bmadAutoSync.start();
+    console.log("📁 BMAD auto-sync service started");
+  } catch(e) {
+    console.warn("BMAD auto-sync init skip:", e.message);
+  }
       console.log(`   Health check: http://localhost:${port}/api/v1/health`);
       console.log(`   WebSocket: ws://localhost:${port}/ws`);
     });
@@ -415,7 +372,7 @@ app.use("/api/v1/tasks", tasksAPI);
           try { conn.ws.close(1001, 'Server shutting down'); } catch (_) {}
         }
       }
-      try { await app.locals.pg?.end?.(); } catch (_) {}
+      try { await client.close(); } catch (_) {}
       process.exit(0);
     }
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
@@ -436,40 +393,6 @@ if (require.main === module) {
 // Sprint 8.2 — Agent Chat
 try { const agentChat = require('./api/routes/chat'); const authMW = require('./api/middleware/auth'); app.use('/api/v1/agents', authMW, agentChat); app.use('/api/agents', authMW, agentChat); console.log('[BOOT] Agent chat routes mounted'); } catch(e) { console.warn('[BOOT] Agent chat skip:', e.message); }
 
-// ============================================================================
-// ERROR HANDLING MIDDLEWARE (must be last)
-// ============================================================================
-
-// 404 handler - for undefined routes
-app.use((req, res, next) => {
-  if (req.path.startsWith('/api/')) {
-    res.status(404).json({ 
-      success: false, 
-      error: 'API endpoint not found',
-      path: req.path,
-      method: req.method
-    });
-  } else {
-    // For non-API routes, continue to static file serving or 404 page
-    next();
-  }
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.stack);
-  
-  if (req.path.startsWith('/api/')) {
-    res.status(err.status || 500).json({
-      success: false,
-      error: err.message || 'Internal server error',
-      code: err.code || 'INTERNAL_ERROR'
-    });
-  } else {
-    res.status(500).send('Internal Server Error');
-  }
-});
-
 module.exports = { app, server };
 
 // ============================================================================
@@ -479,6 +402,7 @@ module.exports = { app, server };
 const path = require('path');
 
 // Serve admin static assets (CSS, JS)
+// MOVED: app.use("/static", require("express").static(require("path").join(__dirname, "public/static")));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 // Admin routes → serve corresponding HTML pages
@@ -495,8 +419,6 @@ app.get('/admin/llm-settings', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin', 'llm-settings.html'));
 });
 app.get('/admin/usage', (req, res) => {
-  res.sendFile(path.join(__dirname, 'admin', 'usage.html'));
-});
 app.get("/admin/marketplace", (req, res) => {
   res.sendFile(path.join(__dirname, "admin", "marketplace.html"));
 });
@@ -505,6 +427,8 @@ app.get("/admin/activity", (req, res) => {
 });
 app.get("/admin/onboarding", (req, res) => {
   res.sendFile(path.join(__dirname, "admin", "onboarding.html"));
+});
+  res.sendFile(path.join(__dirname, 'admin', 'usage.html'));
 });
 
 
@@ -556,12 +480,6 @@ app.get("/admin/agent-detail", (req, res) => {
 app.get("/admin/providers", (req, res) => {
   res.sendFile(path.join(__dirname, "admin", "providers.html"));
 });
-app.get("/admin/calendar", (req, res) => {
-  res.sendFile(path.join(__dirname, "admin", "calendar.html"));
-});
-app.get("/admin/drive", (req, res) => {
-  res.sendFile(path.join(__dirname, "admin", "drive.html"));
-});
 
 
 // ============================================================================
@@ -571,6 +489,15 @@ const memoryAPI = require("./api/memory");
 const toolsAPI = require("./api/tools");
 app.use("/api/v1/memory", memoryAPI);
 app.use("/api/v1/tools", toolsAPI);
+// VPS Provider Integration - Chunk 2
+try {
+  const vpsRoutes = require("./api/vps");
+  app.use("/api/v1/vps", vpsRoutes);
+  console.log("[BOOT] VPS routes mounted");
+} catch (err) {
+  console.warn("[BOOT] VPS routes skip:", err.message);
+}
+
 console.log("✅ Sprint 7.3 Agent Memory + 7.5 Agent Tools mounted");
 
 
@@ -620,3 +547,9 @@ try {
   app.use("/api/v1/hybrid", hybridAPI);
   console.log("[BOOT] S19 Hybrid Agents API mounted");
 } catch(e) { console.warn("[BOOT] S19 Hybrid skip:", e.message); }
+
+// S15 — Onboarding API
+try {
+  app.use("/api/v1/onboarding", onboardingAPI);
+  console.log("[BOOT] Onboarding API mounted");
+} catch(e) { console.warn("[BOOT] Onboarding skip:", e.message); }

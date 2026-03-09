@@ -97,7 +97,6 @@ vutler/
 │
 ├── scripts/                  # Utility scripts
 │   ├── email-poll.py         # IMAP email polling
-│   ├── kchat-poll.py         # kChat message polling
 │   └── jarvis-sync.sh        # Deployment sync script
 │
 ├── skills/                   # Agent skill definitions

@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vutler Admin — Users</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#252830;--border:#2e3140;--text:#e4e5e9;--text2:#9ca3af;--accent:#6366f1;--accent-hover:#818cf8;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--orange:#f97316}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.container{max-width:1400px;margin:0 auto;padding:20px}
+h1{font-size:1.5rem;margin-bottom:6px}
+.subtitle{color:var(--text2);font-size:.875rem;margin-bottom:24px}
+
+/* Login */
+.login-overlay{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:1000}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;width:380px}
+.login-box h2{margin-bottom:20px;text-align:center}
+.login-box input{width:100%;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;margin-bottom:12px}
+.login-box button{width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:.9rem;cursor:pointer}
+.login-box button:hover{background:var(--accent-hover)}
+.login-error{color:var(--red);font-size:.8rem;margin-bottom:10px;display:none}
+
+/* Stats */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center}
+.stat-card .value{font-size:1.8rem;font-weight:700;color:var(--accent)}
+.stat-card .label{font-size:.75rem;color:var(--text2);margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.stat-card.green .value{color:var(--green)}
+.stat-card.red .value{color:var(--red)}
+.stat-card.yellow .value{color:var(--yellow)}
+.stat-card.orange .value{color:var(--orange)}
+
+/* Controls */
+.controls{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.controls input,.controls select{padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.85rem}
+.controls input{flex:1;min-width:200px}
+.controls select{min-width:100px}
+.btn{padding:8px 16px;border:none;border-radius:8px;font-size:.8rem;cursor:pointer;font-weight:500;transition:opacity .15s}
+.btn:hover{opacity:.85}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-danger{background:var(--red);color:#fff}
+.btn-success{background:var(--green);color:#fff}
+.btn-warning{background:var(--orange);color:#fff}
+.btn-sm{padding:4px 10px;font-size:.75rem}
+.btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text2)}
+
+/* Table */
+.table-wrap{overflow-x:auto;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+table{width:100%;border-collapse:collapse}
+th{background:var(--surface2);padding:10px 14px;text-align:left;font-size:.75rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);border-bottom:1px solid var(--border);position:sticky;top:0}
+td{padding:10px 14px;border-bottom:1px solid var(--border);font-size:.85rem;white-space:nowrap}
+tr:hover td{background:rgba(99,102,241,.04)}
+.role-badge{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600;text-transform:uppercase}
+.role-admin{background:rgba(99,102,241,.2);color:var(--accent)}
+.role-user{background:rgba(34,197,94,.15);color:var(--green)}
+.role-banned{background:rgba(239,68,68,.15);color:var(--red)}
+.plan-badge{padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600;text-transform:uppercase;background:rgba(255,255,255,.08);color:var(--text2)}
+.plan-starter{background:rgba(99,102,241,.15);color:var(--accent-hover)}
+.plan-team{background:rgba(234,179,8,.15);color:var(--yellow)}
+.plan-enterprise{background:rgba(249,115,22,.15);color:var(--orange)}
+.plan-beta{background:rgba(34,197,94,.15);color:var(--green)}
+.actions{display:flex;gap:4px}
+
+/* Pagination */
+.pagination{display:flex;justify-content:space-between;align-items:center;margin-top:16px;font-size:.85rem;color:var(--text2)}
+.pagination button{margin:0 2px}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:500}
+.modal-overlay.active{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;width:420px;max-width:90vw}
+.modal h3{margin-bottom:16px}
+.modal label{display:block;font-size:.8rem;color:var(--text2);margin-bottom:4px;margin-top:12px}
+.modal input,.modal select,.modal textarea{width:100%;padding:8px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.85rem}
+.modal textarea{min-height:60px;resize:vertical}
+.modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+
+/* Toast */
+.toast{position:fixed;bottom:20px;right:20px;padding:12px 20px;border-radius:8px;font-size:.85rem;color:#fff;z-index:2000;transform:translateY(100px);opacity:0;transition:all .3s}
+.toast.show{transform:translateY(0);opacity:1}
+.toast.success{background:var(--green)}
+.toast.error{background:var(--red)}
+
+@media(max-width:768px){.stats-grid{grid-template-columns:repeat(2,1fr)}.container{padding:12px}}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <h2>🔐 Vutler Admin</h2>
+    <div class="login-error" id="loginError"></div>
+    <input type="email" id="loginEmail" placeholder="Admin email" autocomplete="email">
+    <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password">
+    <button onclick="doLogin()">Sign In</button>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="container" id="mainContent" style="display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap">
+    <div>
+      <h1>👥 User Management</h1>
+      <p class="subtitle">Manage users, roles and plans</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="adminEmail" style="color:var(--text2);font-size:.8rem"></span>
+      <button class="btn btn-ghost btn-sm" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-grid" id="statsGrid"></div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <input type="text" id="searchInput" placeholder="Search by email or name…" oninput="debounceSearch()">
+    <select id="roleFilter" onchange="loadUsers()">
+      <option value="">All Roles</option>
+      <option value="admin">Admin</option>
+      <option value="user">User</option>
+      <option value="banned">Banned</option>
+    </select>
+    <select id="planFilter" onchange="loadUsers()">
+      <option value="">All Plans</option>
+      <option value="free">Free</option>
+      <option value="starter">Starter</option>
+      <option value="team">Team</option>
+      <option value="enterprise">Enterprise</option>
+      <option value="beta">Beta</option>
+    </select>
+    <button class="btn btn-primary" onclick="showCreateModal()">+ New User</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Email</th><th>Name</th><th>Role</th><th>Plan</th><th>Created</th><th>Last Login</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="usersTable"></tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    <span id="pageInfo"></span>
+    <div>
+      <button class="btn btn-ghost btn-sm" id="prevBtn" onclick="changePage(-1)">← Prev</button>
+      <button class="btn btn-ghost btn-sm" id="nextBtn" onclick="changePage(1)">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create User Modal -->
+<div class="modal-overlay" id="createModal">
+  <div class="modal">
+    <h3>Create User</h3>
+    <label>Email *</label>
+    <input type="email" id="newEmail">
+    <label>Password *</label>
+    <input type="password" id="newPassword">
+    <label>Name</label>
+    <input type="text" id="newName">
+    <label>Role</label>
+    <select id="newRole"><option value="user">User</option><option value="admin">Admin</option></select>
+    <label>Plan</label>
+    <select id="newPlan"><option value="free">Free</option><option value="starter">Starter</option><option value="team">Team</option><option value="enterprise">Enterprise</option><option value="beta">Beta</option></select>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('createModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createUser()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Plan Modal -->
+<div class="modal-overlay" id="planModal">
+  <div class="modal">
+    <h3>Change Plan</h3>
+    <input type="hidden" id="planUserId">
+    <label>Plan</label>
+    <select id="editPlan"><option value="free">Free</option><option value="starter">Starter</option><option value="team">Team</option><option value="enterprise">Enterprise</option><option value="beta">Beta</option></select>
+    <label>Expires At (optional)</label>
+    <input type="datetime-local" id="editPlanExpires">
+    <label>Beta Code (optional)</label>
+    <input type="text" id="editBetaCode">
+    <label>Notes</label>
+    <textarea id="editNotes"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('planModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="savePlan()">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '/api/v1/admin';
+let token = localStorage.getItem('vutler_admin_token');
+let currentPage = 1;
+let searchTimeout;
+
+// Init
+if (token) { showMain(); } else { document.getElementById('loginOverlay').style.display = 'flex'; }
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  try {
+    const res = await api('POST', '/login', { email, password });
+    token = res.data.token;
+    localStorage.setItem('vutler_admin_token', token);
+    showMain();
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+document.getElementById('loginPassword').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+
+function logout() {
+  token = null;
+  localStorage.removeItem('vutler_admin_token');
+  location.reload();
+}
+
+async function showMain() {
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'block';
+  try {
+    await Promise.all([loadStats(), loadUsers()]);
+  } catch(e) {
+    if (e.message.includes('expired') || e.message.includes('Invalid')) { logout(); }
+  }
+}
+
+async function loadStats() {
+  const res = await api('GET', '/stats');
+  const s = res.data;
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-card"><div class="value">${s.total}</div><div class="label">Total Users</div></div>
+    <div class="stat-card green"><div class="value">${s.admins}</div><div class="label">Admins</div></div>
+    <div class="stat-card"><div class="value">${s.users}</div><div class="label">Users</div></div>
+    <div class="stat-card red"><div class="value">${s.banned}</div><div class="label">Banned</div></div>
+    <div class="stat-card"><div class="value">${s.plan_free}</div><div class="label">Free</div></div>
+    <div class="stat-card"><div class="value">${s.plan_starter}</div><div class="label">Starter</div></div>
+    <div class="stat-card yellow"><div class="value">${s.plan_team}</div><div class="label">Team</div></div>
+    <div class="stat-card orange"><div class="value">${s.plan_enterprise}</div><div class="label">Enterprise</div></div>
+    <div class="stat-card green"><div class="value">${s.plan_beta}</div><div class="label">Beta</div></div>
+    <div class="stat-card"><div class="value">${s.signups_7d}</div><div class="label">7d Signups</div></div>
+  `;
+}
+
+async function loadUsers() {
+  const search = document.getElementById('searchInput').value;
+  const role = document.getElementById('roleFilter').value;
+  const plan = document.getElementById('planFilter').value;
+  const params = new URLSearchParams({ page: currentPage, limit: 50 });
+  if (search) params.set('search', search);
+  if (role) params.set('role', role);
+  if (plan) params.set('plan', plan);
+
+  const res = await api('GET', '/users?' + params);
+  const { data, meta } = res;
+
+  const tbody = document.getElementById('usersTable');
+  tbody.innerHTML = data.map(u => `<tr>
+    <td>${esc(u.email)}</td>
+    <td>${esc(u.name || u.display_name || '—')}</td>
+    <td><span class="role-badge role-${u.role}">${u.role}</span></td>
+    <td><span class="plan-badge plan-${u.plan||'free'}">${u.plan||'free'}</span></td>
+    <td>${fmtDate(u.created_at)}</td>
+    <td>${u.last_login_at ? fmtDate(u.last_login_at) : '—'}</td>
+    <td class="actions">
+      <select class="btn btn-ghost btn-sm" onchange="changeRole('${u.id}',this.value);this.value=''">
+        <option value="">Role…</option>
+        <option value="user">User</option><option value="admin">Admin</option><option value="banned">Ban</option>
+      </select>
+      <button class="btn btn-warning btn-sm" onclick="showPlanModal('${u.id}','${u.plan||'free'}','${u.beta_code||''}','${esc(u.notes||'')}')">Plan</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}','${esc(u.email)}')">✕</button>
+    </td>
+  </tr>`).join('');
+
+  document.getElementById('pageInfo').textContent = `Page ${meta.page} of ${meta.pages} (${meta.total} users)`;
+  document.getElementById('prevBtn').disabled = meta.page <= 1;
+  document.getElementById('nextBtn').disabled = meta.page >= meta.pages;
+}
+
+function debounceSearch() { clearTimeout(searchTimeout); searchTimeout = setTimeout(() => { currentPage=1; loadUsers(); }, 300); }
+function changePage(d) { currentPage += d; loadUsers(); }
+
+async function changeRole(id, role) {
+  if (!role) return;
+  if (role === 'banned' && !confirm('Ban this user?')) return;
+  try { await api('PUT', `/users/${id}/role`, { role }); toast('Role updated', 'success'); loadUsers(); loadStats(); }
+  catch(e) { toast(e.message, 'error'); }
+}
+
+function showPlanModal(id, plan, betaCode, notes) {
+  document.getElementById('planUserId').value = id;
+  document.getElementById('editPlan').value = plan;
+  document.getElementById('editBetaCode').value = betaCode;
+  document.getElementById('editNotes').value = notes;
+  document.getElementById('editPlanExpires').value = '';
+  document.getElementById('planModal').classList.add('active');
+}
+
+async function savePlan() {
+  const id = document.getElementById('planUserId').value;
+  const body = {
+    plan: document.getElementById('editPlan').value,
+    beta_code: document.getElementById('editBetaCode').value || null,
+    notes: document.getElementById('editNotes').value || null,
+    plan_expires_at: document.getElementById('editPlanExpires').value || null
+  };
+  try { await api('PUT', `/users/${id}/plan`, body); closeModal('planModal'); toast('Plan updated', 'success'); loadUsers(); loadStats(); }
+  catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteUser(id, email) {
+  if (!confirm(`Delete user ${email}? This cannot be undone.`)) return;
+  try { await api('DELETE', `/users/${id}`); toast('User deleted', 'success'); loadUsers(); loadStats(); }
+  catch(e) { toast(e.message, 'error'); }
+}
+
+function showCreateModal() { document.getElementById('createModal').classList.add('active'); }
+
+async function createUser() {
+  const body = {
+    email: document.getElementById('newEmail').value,
+    password: document.getElementById('newPassword').value,
+    name: document.getElementById('newName').value,
+    role: document.getElementById('newRole').value,
+    plan: document.getElementById('newPlan').value
+  };
+  try { await api('POST', '/users', body); closeModal('createModal'); toast('User created', 'success'); loadUsers(); loadStats(); }
+  catch(e) { toast(e.message, 'error'); }
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function fmtDate(d) { if(!d)return'—'; const dt=new Date(d); return dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}); }
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast ' + type + ' show';
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal-overlay').forEach(el => el.addEventListener('click', e => { if(e.target===el) el.classList.remove('active'); }));
+</script>
+</body>
+</html>

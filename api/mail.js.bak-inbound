@@ -1,0 +1,223 @@
+'use strict';
+
+const express = require('express');
+const router = express.Router();
+const http = require('http');
+
+const POSTAL_HOST = 'mail.vutler.ai';
+const POSTAL_ENDPOINT = 'http://localhost:8082';
+const POSTAL_API_KEY = 'aa91f11a58ea9771d5036ed6429073f709a716bf-v2';
+
+const AGENTS = {
+  'andrea@vutler.ai': { name: 'Andrea', color: '#8B5CF6' },
+  'nora@vutler.ai':   { name: 'Nora',   color: '#EC4899' },
+  'victor@vutler.ai': { name: 'Victor', color: '#F59E0B' },
+  'mike@vutler.ai':   { name: 'Mike',   color: '#10B981' },
+  'max@vutler.ai':    { name: 'Max',    color: '#3B82F6' },
+  'luna@vutler.ai':   { name: 'Luna',   color: '#06B6D4' },
+};
+
+// In-memory draft store (production would use DB)
+const drafts = new Map();
+
+function postalRequest(path, body) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(POSTAL_ENDPOINT + path);
+    const postData = JSON.stringify(body || {});
+    const req = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Host': POSTAL_HOST,
+        'X-Server-API-Key': POSTAL_API_KEY,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch(e) { reject(new Error('Invalid JSON from Postal')); }
+      });
+    });
+    req.on('error', reject);
+    req.write(postData);
+    req.end();
+  });
+}
+
+// GET /api/v1/mail/inbox — list messages by iterating IDs
+router.get('/inbox', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const perPage = parseInt(req.query.per_page) || 25;
+    const messages = [];
+    let id = 1;
+    let consecutive404 = 0;
+
+    // Scan up to 500 IDs to find messages
+    while (id <= 500 && consecutive404 < 10) {
+      const r = await postalRequest('/api/v1/messages/message', { id, _expansions: true });
+      if (r.status === 'success' && r.data) {
+        const d = r.data;
+        const details = d.details || {};
+        messages.push({
+          id: d.id,
+          token: d.token,
+          from: details.mail_from || '',
+          to: details.rcpt_to || '',
+          subject: details.subject || '(no subject)',
+          timestamp: details.timestamp ? new Date(details.timestamp * 1000).toISOString() : null,
+          direction: details.direction || 'unknown',
+          size: details.size,
+          bounce: details.bounce,
+          plain_body: (d.plain_body || '').substring(0, 200),
+          html_body: d.html_body ? true : false,
+          status: d.status ? d.status.status : null,
+          spam: d.inspection ? d.inspection.spam : false,
+          agent: AGENTS[details.mail_from] || AGENTS[details.rcpt_to] || null,
+        });
+        consecutive404 = 0;
+      } else {
+        consecutive404++;
+      }
+      id++;
+    }
+
+    // Sort newest first
+    messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    const start = (page - 1) * perPage;
+    const paged = messages.slice(start, start + perPage);
+
+    res.json({ success: true, data: paged, meta: { total: messages.length, page, per_page: perPage } });
+  } catch (err) {
+    console.error('[Mail] inbox error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/mail/message/:id — single message with full body
+router.get('/message/:id', async (req, res) => {
+  try {
+    const r = await postalRequest('/api/v1/messages/message', { id: parseInt(req.params.id), _expansions: true });
+    if (r.status !== 'success') return res.status(404).json({ success: false, error: 'Message not found' });
+
+    const d = r.data;
+    const details = d.details || {};
+    const draft = drafts.get(d.id);
+
+    res.json({
+      success: true,
+      data: {
+        id: d.id,
+        token: d.token,
+        from: details.mail_from || '',
+        to: details.rcpt_to || '',
+        subject: details.subject || '(no subject)',
+        timestamp: details.timestamp ? new Date(details.timestamp * 1000).toISOString() : null,
+        direction: details.direction,
+        plain_body: d.plain_body || '',
+        html_body: d.html_body || '',
+        headers: d.headers || {},
+        attachments: d.attachments || [],
+        status: d.status,
+        inspection: d.inspection,
+        agent: AGENTS[details.mail_from] || AGENTS[details.rcpt_to] || null,
+        draft: draft || null,
+      }
+    });
+  } catch (err) {
+    console.error('[Mail] message error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v1/mail/send — send email via Postal
+router.post('/send', async (req, res) => {
+  try {
+    const { to, from, subject, plain_body, html_body } = req.body;
+    if (!to || !subject) return res.status(400).json({ success: false, error: 'to and subject required' });
+
+    const r = await postalRequest('/api/v1/send/message', {
+      to: [to],
+      from: from || 'noreply@vutler.ai',
+      subject,
+      plain_body: plain_body || '',
+      html_body: html_body || '',
+    });
+
+    res.json({ success: true, data: r.data });
+  } catch (err) {
+    console.error('[Mail] send error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v1/mail/draft/approve — approve and send agent draft
+router.post('/draft/approve', async (req, res) => {
+  try {
+    const { messageId } = req.body;
+    const draft = drafts.get(messageId);
+    if (!draft) return res.status(404).json({ success: false, error: 'No draft found for this message' });
+
+    const r = await postalRequest('/api/v1/send/message', {
+      to: [draft.to],
+      from: draft.from,
+      subject: draft.subject,
+      plain_body: draft.plain_body || '',
+      html_body: draft.html_body || '',
+    });
+
+    drafts.delete(messageId);
+    res.json({ success: true, data: r.data });
+  } catch (err) {
+    console.error('[Mail] draft/approve error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/v1/mail/draft/regenerate — regenerate draft (stub)
+router.post('/draft/regenerate', async (req, res) => {
+  const { messageId } = req.body;
+  // In production: call LLM to regenerate. For now return placeholder.
+  const draft = drafts.get(messageId);
+  if (draft) {
+    draft.plain_body = '[Regenerated draft] ' + draft.plain_body;
+    draft.updatedAt = new Date().toISOString();
+    drafts.set(messageId, draft);
+  }
+  res.json({ success: true, data: draft || null, message: 'Draft regeneration requested' });
+});
+
+// POST /api/v1/mail/assign — assign email to agent
+router.post('/assign', async (req, res) => {
+  const { messageId, agentEmail } = req.body;
+  if (!messageId || !agentEmail) return res.status(400).json({ success: false, error: 'messageId and agentEmail required' });
+
+  const agent = AGENTS[agentEmail];
+  if (!agent) return res.status(400).json({ success: false, error: 'Unknown agent' });
+
+  // Create a placeholder draft from the agent
+  const r = await postalRequest('/api/v1/messages/message', { id: messageId, _expansions: true });
+  if (r.status !== 'success') return res.status(404).json({ success: false, error: 'Message not found' });
+
+  const details = r.data.details || {};
+  const draft = {
+    messageId,
+    from: agentEmail,
+    to: details.mail_from || details.rcpt_to,
+    subject: 'Re: ' + (details.subject || ''),
+    plain_body: `Hi,\n\nThank you for your email. I'm ${agent.name}, and I'll be handling this for you.\n\nBest regards,\n${agent.name}\nVutler AI`,
+    agentName: agent.name,
+    agentEmail,
+    createdAt: new Date().toISOString(),
+  };
+  drafts.set(messageId, draft);
+
+  res.json({ success: true, data: { agent, draft } });
+});
+
+module.exports = router;

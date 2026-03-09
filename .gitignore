@@ -23,3 +23,12 @@ references/superpowers/
 
 # Snipara MCP config (contains API key)
 .mcp.json
+.env
+data/
+node_modules/
+.env
+.env.*
+*.bak
+*.bak.*
+*.backup*
+*.orig

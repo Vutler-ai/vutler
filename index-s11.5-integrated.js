@@ -8,7 +8,7 @@ const http = require('http');
 const { MongoClient } = require('mongodb');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+// const rateLimit = require('express-rate-limit'); // DISABLED
 const crypto = require('crypto');
 // WebSocket module (S4.3)
 const { setupWebSocket, getStats: wsGetStats } = require('./api/websocket');
@@ -18,7 +18,7 @@ const agentsAPI = require('./api/agents');
 const emailAPI = require('./api/email');
 const chatAPI = require('./api/chat');
 const templatesAPI = require('./api/templates');
-const templatesMarketplaceAPI = require("./api/templates-marketplace");
+const templatesMarketplaceAPI = require("./api/marketplace");
 const llmAPI = require('./api/llm');
 const usageAPI = require('./api/usage');
 const driveAPI = require('./api/drive');
@@ -49,9 +49,22 @@ const billingAPI = require("./api/billing");        // Stripe Billing Integratio
 const analyticsAPI = require("./api/analytics-api");
 const signaturesAPI = require("./api/signatures");
 const sniparaWebhookAPI = require("./api/sniparaWebhook"); // Snipara Webhook
+// === Newly mounted APIs (MVP audit fix 2026-03-09) ===
+const authAPI = require('./api/auth');
+const mailAPI = require('./api/mail');
+const calendarAPI = require('./api/calendar');
+const clientsAPI = require('./api/clients');
+const auditLogsAPI = require('./api/audit-logs');
+const integrationsAPI = require('./api/integrations');
+const settingsAPI = require('./api/settings');
+const nexusAPI = require('./api/nexus');
+const sandboxAPI = require('./api/sandbox');
+const dashboardAPI = require('./api/dashboard');
+
 const sniparaAdminAPI = require("./api/sniparaAdmin"); // Snipara Client Provisioning
 const { vchatAPI } = require("./api/vchat");
 const provisioningAPI = require("./api/provisioning"); // S8.3 — Workspace Provisioning
+const taskRouterAPI = require("./api/tasks-router");  // TaskRouter v1
 const AgentRuntime   = require('./services/agentRuntime');
 const { requestLogger, setupErrorHandlers } = require('./lib/logger');
 const { configureSwagger } = require('./services/swagger'); // S11.4 — API Documentation
@@ -67,6 +80,7 @@ const SkillSystem = require('./services/skillSystem');          // Skills
 
 // Create Express app
 const app = express();
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const port = process.env.PORT || 3001;
 
@@ -100,18 +114,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Global rate limiting (100 req/min per IP)
-const globalLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100, // 100 requests per minute
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    error: 'Rate limit exceeded. Please try again later.',
-    retryAfter: 60
-  }
-});
-app.use(globalLimiter);
+// globalLimiter REMOVED for beta
+// app.use(globalLimiter); // DISABLED for beta - re-enable for prod
 
 // ============================================================================
 // MIDDLEWARE
@@ -123,9 +127,42 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 // Request logging middleware
 app.use(requestLogger);
 
-// Auth middleware (applied to all routes)
+// Auth middleware - JWT verification (public routes exempt)
+const PUBLIC_PATHS = ['/api/v1/auth/', '/api/v1/health', '/api/v1/billing/webhook', '/api/v1/billing/plans', '/api/v1/mail/inbound-webhook', '/api/v1/task-router', '/health'];
 app.use((req, res, next) => {
-  req.user = { id: 'default', workspace: 'default' }; // TODO: real auth
+  // Skip auth for public paths
+  if (PUBLIC_PATHS.some(p => req.path.startsWith(p)) || req.path === '/health') {
+    req.user = { id: 'anonymous', workspace: 'default' };
+    return next();
+  }
+  
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.headers['x-auth-token'];
+  if (!token) {
+    req.user = { id: 'default', workspace: 'default' };
+    req.workspaceId = '00000000-0000-0000-0000-000000000001';
+    return next(); // Allow for now during beta - TODO: return 401
+  }
+  
+  try {
+    const [header, payload, sig] = token.split('.');
+    const crypto = require('crypto');
+    const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
+    const expected = crypto.createHmac('sha256', JWT_SECRET).update(header + '.' + payload).digest('base64url');
+    if (sig === expected) {
+      const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+      if (data.exp && data.exp < Math.floor(Date.now() / 1000)) {
+        req.user = { id: 'default', workspace: 'default' };
+      } else {
+        req.user = { id: data.userId, email: data.email, name: data.name, role: data.role };
+        req.workspaceId = data.workspaceId || '00000000-0000-0000-0000-000000000001';
+      }
+    } else {
+      req.user = { id: 'default', workspace: 'default' };
+    }
+  } catch(e) {
+    req.user = { id: 'default', workspace: 'default' };
+  }
+  req.workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
   next();
 });
 
@@ -231,10 +268,23 @@ async function startVutlerAPI() {
     app.use('/api/v1', agentEmailAPI); // S6.5 — Agent Email Config
     app.use('/api/v1', healthAPI);     // S6.7 — Health Dashboard
     app.use('/api/v1', webhookAPI);   // S8.5 — Webhook Integration
+    app.use("/api/v1", taskRouterAPI);   // TaskRouter v1 — Task management
     // Sprint 11 — E2E Encryption + VDrive Chat + GitHub Connector
     app.use("/api/v1/crypto", cryptoAPI);         // E2E encryption endpoints
     app.use("/api/v1/vdrive", driveChatAPI);      // VDrive-Chat integration
     app.use("/api/v1/github", githubAPI);         // GitHub connector
+    
+    // === Newly mounted APIs (MVP audit fix 2026-03-09) ===
+    app.use('/api/v1/auth', authAPI);
+    app.use('/api/v1/mail', mailAPI);
+    app.use('/api/v1/calendar', calendarAPI);
+    app.use('/api/v1/clients', clientsAPI);
+    app.use('/api/v1/audit-logs', auditLogsAPI);
+    app.use('/api/v1/integrations', integrationsAPI);
+    app.use('/api/v1/settings', settingsAPI);
+    app.use('/api/v1/nexus', nexusAPI);
+    app.use('/api/v1/sandbox', sandboxAPI);
+    app.use('/api/v1/dashboard', dashboardAPI);
     app.use("/api/v1/onboarding", onboardingAPI); // S9.5 — Onboarding API
     
     console.log('✅ Vutler APIs mounted:');

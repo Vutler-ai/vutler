@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from './sidebar';
 import NotificationBell from './notification-bell';
+import { api } from '@/lib/api';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -20,6 +21,16 @@ export default function AppShell({
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
 
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch {
+      // best effort
+    } finally {
+      window.location.href = '/login';
+    }
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem('sidebar-collapsed');
     if (saved === 'true') setCollapsed(true);
@@ -36,8 +47,14 @@ export default function AppShell({
     <div className="min-h-screen bg-[#08090f]">
       <Sidebar user={user} />
       <div className={`transition-all duration-300 ${collapsed ? 'lg:pl-16' : 'lg:pl-64'}`}>
-        <div className="sticky top-0 z-30 flex items-center justify-end px-6 py-3 bg-[#08090f]/80 backdrop-blur-xl border-b border-[rgba(255,255,255,0.07)]">
+        <div className="sticky top-0 z-30 flex items-center justify-end gap-3 px-6 py-3 bg-[#08090f]/80 backdrop-blur-xl border-b border-[rgba(255,255,255,0.07)]">
           <NotificationBell />
+          <button
+            onClick={handleLogout}
+            className="px-3 py-1.5 text-sm bg-[#1f2028] border border-[rgba(255,255,255,0.1)] rounded-lg text-white hover:bg-[#2a2c36] transition-colors"
+          >
+            Logout
+          </button>
         </div>
         <main className="p-6">
           {children}
