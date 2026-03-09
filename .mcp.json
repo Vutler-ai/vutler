@@ -4,9 +4,9 @@
       "command": "npx",
       "args": ["-y", "@snipara/mcp@latest"],
       "env": {
-        "SNIPARA_API_KEY": "rlm_52ab2c077702ef86109f6f5b4e6bd32e1696c73e85ebbca09e7e2b48a95e1d2b",
-        "SNIPARA_PROJECT_ID": "cmlunio5v00016imvktf58v0b",
-        "SNIPARA_PROJECT_SLUG": "vutler"
+        "SNIPARA_API_KEY": "REDACTED_SNIPARA_KEY_2",
+        "SNIPARA_PROJECT_ID": "cmmfdy2up0002o1colc66rxs2",
+        "SNIPARA_PROJECT_SLUG": "test-workspace-api-vutler"
       }
     }
   }

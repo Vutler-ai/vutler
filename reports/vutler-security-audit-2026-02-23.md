@@ -13,7 +13,7 @@
 
 **C1 — API Key Snipara hardcodée dans le code source**
 - `api/knowledge.js:37` et `api/memory.js:11` contiennent une clé API Snipara en clair
-- `rlm_b23016032ec4bc37df82fcf75a2dceb0623c9f5d8d8283dd634872a88bdf9056`
+- `[REDACTED]`
 - **Impact:** Compromission de la clé si le repo fuite. Violation SOC2 CC6.1
 - **Fix:** Déplacer vers variable d'environnement. Rotation immédiate de la clé.
 

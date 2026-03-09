@@ -6,13 +6,14 @@
 
 const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
+const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 // Snipara config
-const SNIPARA_URL = process.env.SNIPARA_API_URL || 'https://api.snipara.com/mcp/vutler';
+const SNIPARA_URL = process.env.SNIPARA_API_URL || 'https://api.snipara.com/mcp/test-workspace-api-vutler';
 const SNIPARA_KEY = process.env.SNIPARA_API_KEY || '';
 
 // In-memory caches
@@ -59,7 +60,7 @@ async function sniparaCall(toolName, args) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': SNIPARA_KEY
+        'Authorization': `Bearer ${SNIPARA_KEY}`
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
@@ -252,6 +253,32 @@ async function processMessage(msg) {
     if (channelAgents.length === 0) {
       console.warn('[ChatRuntime] No agents available');
       return;
+    }
+
+    const swarmCoordinator = getSwarmCoordinator();
+    try {
+      const routing = await swarmCoordinator.analyzeAndRoute(msg, channelAgents);
+      if (routing?.routed) {
+          await pool.query(
+            `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
+             VALUES ($1, $2, $3, $4, 'text', $5, NOW())`,
+            [
+              msg.channel_id,
+              'mike',
+              'Mike',
+              `Bien reçu. J'orchestre l'équipe et on lance l'exécution. (${routing.created_count} tâche(s) distribuée(s))`,
+              DEFAULT_WORKSPACE
+            ]
+          );
+
+          await pool.query(
+            `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW() WHERE id = $1`,
+            [msg.id]
+          );
+          return;
+        }
+    } catch (swarmErr) {
+      console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', swarmErr.message);
     }
 
     // Route: @mention or random

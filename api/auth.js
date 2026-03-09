@@ -10,6 +10,7 @@ const express = require('express');
 const crypto = require('crypto');
 const https = require('https');
 const router = express.Router();
+const coordinatorPrompt = require('../services/coordinatorPrompt');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
@@ -468,8 +469,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/v1/auth/register
-router.post('/register', async (req, res) => {
+async function registerHandler(req, res) {
   try {
     const { email, password, name } = req.body;
     if (!email || !password) {
@@ -483,45 +483,83 @@ router.post('/register', async (req, res) => {
     if (!schemaReady) { await ensureSchema(pool); schemaReady = true; }
 
     const cleanEmail = email.toLowerCase().trim();
+    const existing = await pool.query(`SELECT id FROM ${SCHEMA}.users_auth WHERE email = $1`, [cleanEmail]);
+    if (existing.rows.length) return res.status(409).json({ success: false, error: 'User already exists' });
 
-    // Check existing
-    const existing = await pool.query(
-      `SELECT id FROM ${SCHEMA}.users_auth WHERE email = $1`,
-      [cleanEmail]
-    );
-    if (existing.rows.length) {
-      return res.status(409).json({ success: false, error: 'User already exists' });
+    const { hash, salt } = hashPassword(password);
+    const client = await pool.connect();
+    let user;
+    try {
+      await client.query('BEGIN');
+      const workspaceName = `${(name || cleanEmail.split('@')[0])}'s Workspace`;
+      const workspaceSlug = (name || cleanEmail.split('@')[0]).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Math.random().toString(36).slice(2, 6);
+      const wsRes = await client.query(
+        `INSERT INTO ${SCHEMA}.workspaces (id, name, slug, owner_id, plan, settings, onboarding_completed, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, NULL, 'free', '{}'::jsonb, false, NOW(), NOW())
+         RETURNING id`,
+        [workspaceName, workspaceSlug]
+      );
+      const workspaceId = wsRes.rows[0].id;
+
+      const userRes = await client.query(
+        `INSERT INTO ${SCHEMA}.users_auth (email, password_hash, salt, name, role, workspace_id, created_at)
+         VALUES ($1, $2, $3, $4, 'user', $5, NOW())
+         RETURNING id, email, name, role, workspace_id`,
+        [cleanEmail, hash, salt, name || cleanEmail.split('@')[0], workspaceId]
+      );
+      user = userRes.rows[0];
+
+      await client.query(
+        `INSERT INTO ${SCHEMA}.workspace_members (id, workspace_id, user_id, role, invited_by, created_at)
+         VALUES (gen_random_uuid(), $1, $2, 'owner', $2, NOW()) ON CONFLICT DO NOTHING`,
+        [workspaceId, user.id]
+      );
+
+      await client.query(
+        `UPDATE ${SCHEMA}.workspaces SET owner_id = $1 WHERE id = $2`,
+        [user.id, workspaceId]
+      );
+
+      await client.query(
+        `INSERT INTO tenant_vutler.agents (id, name, username, workspace_id, agent_type, system_prompt, model, status, avatar)
+         VALUES (gen_random_uuid(), 'Jarvis', 'jarvis', $1, 'coordinator', $2, 'claude-sonnet-4-20250514', 'active', '/static/avatars/jarvis.png')
+         ON CONFLICT DO NOTHING`,
+        [workspaceId, coordinatorPrompt.FULL_PROMPT]
+      );
+
+      await client.query(
+        `INSERT INTO tenant_vutler.chat_channels (id, name, workspace_id, type)
+         VALUES (gen_random_uuid(), 'DM-jarvis', $1, 'dm') ON CONFLICT DO NOTHING`,
+        [workspaceId]
+      );
+
+      await client.query(
+        `INSERT INTO tenant_vutler.chat_channels (id, name, workspace_id, type)
+         VALUES (gen_random_uuid(), 'team-coordination', $1, 'team') ON CONFLICT DO NOTHING`,
+        [workspaceId]
+      );
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
     }
 
-    // Hash password
-    const { hash, salt } = hashPassword(password);
-
-    const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.users_auth (email, password_hash, salt, name, role, workspace_id, created_at)
-       VALUES ($1, $2, $3, $4, 'user', $5, NOW())
-       RETURNING id, email, name, role, workspace_id`,
-      [cleanEmail, hash, salt, name || cleanEmail.split('@')[0], DEFAULT_WORKSPACE]
-    );
-
-    const user = result.rows[0];
     const token = generateJWT(user);
-
     console.log(`[AUTH] Register OK: ${cleanEmail}`);
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
-    });
+    res.json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
   } catch (err) {
     console.error('[AUTH] Register error:', err.message);
     res.status(500).json({ success: false, error: 'Registration failed' });
   }
-});
+}
+
+// POST /api/v1/auth/register
+router.post('/register', registerHandler);
+// POST /api/v1/auth/signup
+router.post('/signup', registerHandler);
 
 // POST /api/v1/auth/logout
 router.post('/logout', (_req, res) => {

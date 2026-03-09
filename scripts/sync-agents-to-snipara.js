@@ -17,7 +17,7 @@ const path = require('path');
 // Configuration Snipara
 const SNIPARA_CONFIG = {
   apiUrl: 'https://api.snipara.com',
-  apiKey: 'rlm_52ab2c077702ef86109f6f5b4e6bd32e1696c73e85ebbca09e7e2b48a95e1d2b',
+  apiKey: 'REDACTED_SNIPARA_KEY_2',
   projectId: 'cmlunio5v00016imvktf58v0b',
   projectSlug: 'vutler',
   teamId: 'alopez-nevicom-1769121450132'

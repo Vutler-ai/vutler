@@ -7,6 +7,7 @@ const pool = require("../lib/vaultbrix");
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
+const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 
 
 // GET /api/v1/agents — list all agents
@@ -29,10 +30,12 @@ router.get("/", async (req, res) => {
       mbti: a.mbti,
       model: a.model,
       provider: a.provider,
-      system_prompt: a.system_prompt,
+      system_prompt: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? null : a.system_prompt),
       temperature: a.temperature,
       max_tokens: a.max_tokens,
       capabilities: a.capabilities || [],
+      badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
+      systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
       createdAt: a.created_at,
       updatedAt: a.updated_at
     }));
@@ -62,9 +65,12 @@ router.get("/:id", async (req, res) => {
         status: a.status, type: a.type,
         avatar: a.avatar || `/sprites/agent-${a.username}.png`,
         description: a.description || "", role: a.role, mbti: a.mbti,
-        model: a.model, provider: a.provider, system_prompt: a.system_prompt,
+        model: a.model, provider: a.provider,
+        system_prompt: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? null : a.system_prompt),
         temperature: a.temperature, max_tokens: a.max_tokens,
         capabilities: a.capabilities || [],
+        badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
+        systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
         createdAt: a.created_at, updatedAt: a.updated_at
       }
     });
@@ -81,6 +87,13 @@ router.post("/", async (req, res) => {
     if (!name || !username) return res.status(400).json({ success: false, error: "name and username required" });
 
     const ws = req.workspaceId||"00000000-0000-0000-0000-000000000001";
+
+    const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
+    const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
+    if (plan === 'free' && String(type || 'bot').toLowerCase() !== 'coordinator') {
+      return res.status(403).json({ success: false, error: 'Free plan allows only the Coordinator. Upgrade to Pro to add specialized agents.' });
+    }
+
     let finalModel = model||null;
     let finalSystemPrompt = system_prompt || null;
 
@@ -115,6 +128,16 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const fields = req.body;
+    const existing = await pool.query(`SELECT id,name,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [id]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const ex = existing.rows[0];
+    const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
+    if (isCoordinator && fields.system_prompt !== undefined) {
+      return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
+    }
+    if (isCoordinator && (fields.type || fields.role || fields.username || fields.status === 'inactive')) {
+      return res.status(403).json({ success: false, error: 'System Coordinator is protected' });
+    }
     const allowed = ["name","username","email","status","type","role","mbti","model","provider","description","system_prompt","temperature","max_tokens","avatar","capabilities"];
     const sets = []; const vals = []; let idx = 1;
     for (const k of allowed) {
@@ -138,6 +161,12 @@ router.put("/:id", async (req, res) => {
 // DELETE /api/v1/agents/:id
 router.delete("/:id", async (req, res) => {
   try {
+    const existing = await pool.query(`SELECT id,name,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const ex = existing.rows[0];
+    const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
+    if (isCoordinator) return res.status(403).json({ success: false, error: 'Cannot delete system coordinator' });
+
     const result = await pool.query(
       `DELETE FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) RETURNING id, name`,
       [req.params.id]
@@ -153,11 +182,20 @@ router.delete("/:id", async (req, res) => {
 router.get("/:id/llm-config", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT model, provider, temperature, max_tokens, system_prompt FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
+      `SELECT model, provider, temperature, max_tokens, system_prompt, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
-    res.json({ success: true, config: result.rows[0] });
+    const row = result.rows[0];
+    const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
+    res.json({ success: true, config: {
+      model: row.model,
+      provider: row.provider,
+      temperature: row.temperature,
+      max_tokens: row.max_tokens,
+      system_prompt: isCoordinator ? null : row.system_prompt,
+      locked_prompt: isCoordinator
+    }});
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -167,10 +205,18 @@ router.get("/:id/llm-config", async (req, res) => {
 router.put("/:id/llm-config", async (req, res) => {
   try {
     const { model, provider, temperature, max_tokens, system_prompt } = req.body;
+    const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const ex = existing.rows[0];
+    const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
+    if (isCoordinator && system_prompt !== undefined) {
+      return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
+    }
+
     const result = await pool.query(
-      `UPDATE ${SCHEMA}.agents SET model=$1, provider=$2, temperature=$3, max_tokens=$4, system_prompt=$5, updated_at=NOW()
+      `UPDATE ${SCHEMA}.agents SET model=$1, provider=$2, temperature=$3, max_tokens=$4, system_prompt=COALESCE($5, system_prompt), updated_at=NOW()
        WHERE (id::text = $6 OR username = $6) RETURNING model, provider, temperature, max_tokens, system_prompt`,
-      [model, provider, temperature||0.7, max_tokens||4096, system_prompt||null, req.params.id]
+      [model, provider, temperature||0.7, max_tokens||4096, isCoordinator ? null : (system_prompt||null), req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     res.json({ success: true, config: result.rows[0] });

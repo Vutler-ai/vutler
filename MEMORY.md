@@ -96,7 +96,7 @@
 ## Snipara Swarm
 - **Swarm ID:** `cmlmja4s9000as8abdg7e3rfw`
 - **Swarm name:** `starbox-team`
-- **API Key (ADMIN):** stored in openclaw.json env (rlm_3097deec...)
+- **API Key (ADMIN):** stored in openclaw.json env ([REDACTED])
 - **Project:** moltbot
 - **10/10 agents enrolled:** jarvis (coordinator), mike, andrea, philip, luna, max, victor, oscar, nora, stephen (workers)
 - **OpenClaw Hooks:** 6 Snipara hooks active (startup, session, stop, bootstrap, persist, context)

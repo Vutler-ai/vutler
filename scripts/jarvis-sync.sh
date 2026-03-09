@@ -4,7 +4,7 @@
 #
 # Usage: ./jarvis-sync.sh [push|pull|test]
 
-SNIPARA_KEY="REDACTED_SNIPARA_KEY_3"
+SNIPARA_KEY="REDACTED_SNIPARA_KEY_2"
 SNIPARA_MCP="https://api.snipara.com/mcp"
 WORKSPACE="/Users/lopez/.openclaw/workspace"
 

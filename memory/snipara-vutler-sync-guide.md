@@ -2,7 +2,7 @@
 
 > **Date:** 2026-03-02  
 > **Status:** Configuration ready — agents can be synced to Snipara swarm  
-> **API Key:** `rlm_52ab2c077702ef86109f6f5b4e6bd32e1696c73e85ebbca09e7e2b48a95e1d2b`  
+> **API Key:** `${SNIPARA_API_KEY}`  
 > **Project ID:** `cmlunio5v00016imvktf58v0b`  
 > **Project Slug:** `vutler`
 
@@ -45,7 +45,7 @@ All Vutler agents are now configured to sync with Snipara's swarm system. Each a
       "command": "npx",
       "args": ["-y", "@snipara/mcp@latest"],
       "env": {
-        "SNIPARA_API_KEY": "rlm_52ab2c077702ef86109f6f5b4e6bd32e1696c73e85ebbca09e7e2b48a95e1d2b",
+        "SNIPARA_API_KEY": "${SNIPARA_API_KEY}",
         "SNIPARA_PROJECT_ID": "cmlunio5v00016imvktf58v0b",
         "SNIPARA_PROJECT_SLUG": "vutler"
       }
@@ -57,7 +57,7 @@ All Vutler agents are now configured to sync with Snipara's swarm system. Each a
 ### Environment Variables
 ```bash
 export SNIPARA_API_URL="https://api.snipara.com"
-export SNIPARA_API_KEY="rlm_52ab2c077702ef86109f6f5b4e6bd32e1696c73e85ebbca09e7e2b48a95e1d2b"
+export SNIPARA_API_KEY="${SNIPARA_API_KEY}"
 export SNIPARA_PROJECT_ID="cmlunio5v00016imvktf58v0b"
 export SNIPARA_PROJECT_SLUG="vutler"
 ```

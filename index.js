@@ -22,7 +22,7 @@ const templatesAPI = require('./api/templates');
 const llmAPI = require('./api/llm');
 const usageAPI = require('./api/usage');
 const driveAPI = require('./api/drive');
-const openclawAPI = require('./api/openclaw');
+const localAgentAPI = require('./api/local-agent');
 const runtimeAPI = require('./api/runtime');
 const tasksAPI = require("./api/tasks");
 const taskRouterAPI = require("./api/tasks-router");  // TaskRouter v1
@@ -47,6 +47,8 @@ const ImapPoller = require('./services/imapPoller');
 const BmadAutoSync = require('./services/bmadAutoSync');
 const { loadTemplates } = require('./seeds/loadTemplates');
 const ChatRuntime = require("./app/custom/services/chatRuntime");
+const swarmAPI = require("./api/swarm");
+const { getSwarmCoordinator } = require("./services/swarmCoordinator");
 
 // Create Express app
 const app = express();
@@ -155,6 +157,8 @@ async function start() {
       chatRuntime.start();
     }
     app.locals.chatRuntime = chatRuntime;
+    app.locals.swarmCoordinator = getSwarmCoordinator();
+    await app.locals.swarmCoordinator.init();
     console.log('✅ Vaultbrix PG pool attached');
     
     // Create indexes for agent queries (ignore conflicts with existing indexes)
@@ -184,7 +188,7 @@ async function start() {
     app.use('/api/v1', usagePgAPI);  // PostgreSQL usage (replaces MongoDB)
     // app.use('/api/v1', usageAPI);  // old MongoDB usage
     app.use('/api/v1/drive', driveAPI);
-    app.use('/api/v1', openclawAPI);
+    app.use('/api/v1', localAgentAPI);
     
 // Default workspace fallback
 app.use((req, res, next) => { if (!req.workspaceId) req.workspaceId = "00000000-0000-0000-0000-000000000001"; next(); });
@@ -216,23 +220,7 @@ app.use("/api/v1/tasks", tasksAPI);
     const automationLogsRoutes = require('./api/automation-logs-routes');
     app.use('/api/v1/webhooks', webhookRoutes);
     app.use('/api/v1/automations', automationLogsRoutes);
-const sniparaSwarm = require("./services/sniparaSwarm");
-app.post("/api/v1/swarm/broadcast", async (req, res) => {
-  try {
-    const r = await sniparaSwarm.broadcast(req.body.agentId, req.body.eventType || "status", req.body.message);
-    res.json({ success: true, data: r });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-app.post("/api/v1/swarm/task", async (req, res) => {
-  try {
-    const r = await sniparaSwarm.createTask(req.body.title, req.body.description, req.body.assignedTo, req.body.priority);
-    res.json({ success: true, data: r });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
+app.use('/api/v1/swarm', swarmAPI);
     // === MVP APIs mounted (2026-03-09 audit fix) ===
     try { app.use('/api/v1/auth', require('./api/auth')); console.log('[BOOT] Auth API mounted'); } catch(e) { console.warn('[BOOT] Auth skip:', e.message); }
     try { app.use('/api/v1/mail', require('./api/mail')); console.log('[BOOT] Mail API mounted'); } catch(e) { console.warn('[BOOT] Mail skip:', e.message); }

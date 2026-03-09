@@ -86,10 +86,18 @@ async function createTask({ title, description, source, source_ref, priority, du
         const swarmTaskId = await sniparaService.createTask(task, sniparaKey);
         if (swarmTaskId) {
           // Update task with swarm_task_id
-          await pool.query(
-            `UPDATE ${SCHEMA}.tasks SET swarm_task_id = $1 WHERE id = $2`,
-            [swarmTaskId, task.id]
-          );
+          try {
+            await pool.query(
+              `UPDATE ${SCHEMA}.tasks SET swarm_task_id = $1, snipara_task_id = $1 WHERE id = $2`,
+              [swarmTaskId, task.id]
+            );
+            task.snipara_task_id = swarmTaskId;
+          } catch (_) {
+            await pool.query(
+              `UPDATE ${SCHEMA}.tasks SET swarm_task_id = $1 WHERE id = $2`,
+              [swarmTaskId, task.id]
+            );
+          }
           task.swarm_task_id = swarmTaskId;
           console.log('[TaskRouter] Synced to Snipara swarm:', swarmTaskId);
         }

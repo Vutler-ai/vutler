@@ -6,9 +6,9 @@
 - **Team API URL**: https://api.snipara.com/mcp/team/alopez-nevicom-1769121450132
 - **Vutler MCP URL**: https://api.snipara.com/mcp/vutler
 - **Vutler Project ID**: cmlphjm4z0001uwy7ybptfrhx
-- **Team API Key (moltbot)**: rlm_e4fe04c335330563e03bbb9e15f2a8aeb49443c7a53995d20626afb8c7017708
-- **Vutler API Key**: REDACTED_SNIPARA_KEY_3
-- **New Snipara Key (2026-02-27)**: rlm_1e3c2b706342ce9f49613ea56891d0b39a25c368144841a08855f0043dd9133b
+- **Team API Key (moltbot)**: [REMOVED]
+- **Vutler API Key**: [REMOVED]
+- **New Snipara Key (2026-02-27)**: [REMOVED]
 - 54 fichiers indexés, 708 sections
 - **12 projets**: dubgrr, zorai, vaultbrix, snipara, moltbot, snipara-fastapi, snipara-demo, rlm-runtime, my-api, superdb, swaploom, vibe-coding
 

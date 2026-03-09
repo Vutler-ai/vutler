@@ -24,8 +24,10 @@ const toolsAPI = require('./api/tools');
 const nexusAPI = require('./api/nexus');
 const marketplaceAPI = require('./api/marketplace');
 const adminAPI = require("./api/admin");
+const swarmAPI = require('./api/swarm');
 const { authenticateAgent } = require('./lib/auth');
 const ImapPoller = require('./services/imapPoller');
+const { getSwarmCoordinator } = require('./services/swarmCoordinator');
 
 /**
  * Initialize Vutler custom extensions
@@ -104,6 +106,8 @@ async function initializeVutler(app, httpServer) {
     
     // Store strictLimiter in app locals for API routes
     app.locals.strictLimiter = strictLimiter;
+    app.locals.swarmCoordinator = getSwarmCoordinator();
+    await app.locals.swarmCoordinator.init();
     
     // ===================
     // WEBSOCKET CHAT (simplified, no MongoDB dependency)
@@ -255,6 +259,7 @@ async function initializeVutler(app, httpServer) {
     app.use('/api/v1', toolsAPI);
     app.use('/api/v1', nexusAPI);
     app.use('/api/v1', marketplaceAPI);
+    app.use('/api/v1/swarm', swarmAPI);
     // Admin API & page
     app.use("/api/v1/admin", adminAPI);
     const path = require("path");

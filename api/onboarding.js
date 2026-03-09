@@ -1,188 +1,80 @@
-/**
- * Onboarding API — Sprint 15 + Snipara Auto-Provisioning
- * POST /complete — persist onboarding data to Vaultbrix + create Snipara project
- * GET  /status   — check if user already onboarded
- */
-const express = require("express");
+'use strict';
+
+const express = require('express');
 const router = express.Router();
-const pool = require("../lib/vaultbrix");
-const sniparaService = require("../services/sniparaService");
-const SCHEMA = "tenant_vutler";
+const pool = require('../lib/vaultbrix');
+const { recommendAgents } = require('../services/coordinatorPrompt');
+const SCHEMA = 'tenant_vutler';
 
-const CATEGORY_AGENTS = {
-  startup: ["Mike", "Luna", "Philip", "Max"],
-  commerce: ["Victor", "Max", "Oscar", "Nora"],
-  agency: ["Luna", "Philip", "Oscar", "Max"],
-  education: ["Oscar", "Nora", "Luna"],
-  health: ["Andrea", "Oscar", "Nora"],
-  finance: ["Andrea", "Rex", "Victor"],
-  creative: ["Philip", "Oscar", "Max", "Nora"],
-  industry: ["Mike", "Rex", "Andrea", "Luna"],
-  legal: ["Andrea", "Rex", "Oscar"],
-  realestate: ["Victor", "Max", "Oscar"],
-  restaurant: ["Nora", "Victor", "Oscar", "Max"],
-  other: ["Luna", "Max", "Oscar"],
-};
-
-const AGENT_DEFAULTS = {
-  Jarvis:  { role: "coordinator", model: "gpt-4o", provider: "openai", description: "Coordinateur IA" },
-  Andrea:  { role: "office-manager", model: "gpt-4o-mini", provider: "openai", description: "Office manager, admin" },
-  Mike:    { role: "engineer", model: "gpt-4o", provider: "openai", description: "Lead engineer" },
-  Philip:  { role: "designer", model: "gpt-4o-mini", provider: "openai", description: "UI/UX Designer" },
-  Luna:    { role: "product-manager", model: "gpt-4o", provider: "openai", description: "Product Manager" },
-  Max:     { role: "marketing", model: "gpt-4o-mini", provider: "openai", description: "Marketing & Growth" },
-  Victor:  { role: "sales", model: "gpt-4o-mini", provider: "openai", description: "Commercial & Sales" },
-  Oscar:   { role: "content", model: "gpt-4o-mini", provider: "openai", description: "Content & Copywriting" },
-  Nora:    { role: "community", model: "gpt-4o-mini", provider: "openai", description: "Community Manager" },
-  Rex:     { role: "security", model: "gpt-4o-mini", provider: "openai", description: "Security & Monitoring" },
-};
-
-function toSlug(name) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+function getWorkspaceId(req) {
+  return req.workspaceId || req.user?.workspaceId || null;
 }
 
-// GET /status
-router.get("/status", async (req, res) => {
+router.get('/status', async (req, res) => {
   try {
-    if (!req.userId) return res.status(401).json({ success: false, error: "Not authenticated" });
-    const result = await pool.query(
-      `SELECT w.id, w.name, w.slug, w.plan FROM ${SCHEMA}.workspaces w
-       INNER JOIN ${SCHEMA}.workspace_members wm ON wm.workspace_id = w.id
-       WHERE wm.user_id = $1 LIMIT 1`,
-      [req.userId]
+    const workspaceId = getWorkspaceId(req);
+    if (!workspaceId) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+    const ws = await pool.query(
+      `SELECT onboarding_completed FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
+      [workspaceId]
     );
-    if (result.rows.length > 0) {
-      return res.json({ success: true, data: { completed: true, workspace: result.rows[0] } });
-    }
-    res.json({ success: true, data: { completed: false } });
+
+    if (!ws.rows.length) return res.status(404).json({ success: false, error: 'Workspace not found' });
+
+    const coordinator = await pool.query(
+      `SELECT id FROM ${SCHEMA}.agents WHERE workspace_id = $1 AND agent_type = 'coordinator' ORDER BY created_at ASC LIMIT 1`,
+      [workspaceId]
+    );
+
+    const channel = await pool.query(
+      `SELECT id FROM ${SCHEMA}.chat_channels WHERE workspace_id = $1 AND name = 'DM-jarvis' AND type = 'dm' ORDER BY created_at ASC LIMIT 1`,
+      [workspaceId]
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        onboarding_completed: !!ws.rows[0].onboarding_completed,
+        coordinator_channel_id: channel.rows[0]?.id || null,
+        coordinator_agent_id: coordinator.rows[0]?.id || null,
+      },
+    });
   } catch (err) {
-    console.error("[ONBOARDING] Status error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
+    console.error('[ONBOARDING] status error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /complete
-router.post("/complete", async (req, res) => {
-  const client = await pool.connect();
+router.post('/complete', async (req, res) => {
   try {
-    if (!req.userId) { client.release(); return res.status(401).json({ success: false, error: "Not authenticated" }); }
+    const workspaceId = getWorkspaceId(req);
+    if (!workspaceId) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
-    const { workspaceName, userName, categories, plan, selectedTools, authorizedTools } = req.body;
-    if (!workspaceName || !categories || !Array.isArray(categories)) {
-      client.release();
-      return res.status(400).json({ success: false, error: "workspaceName and categories are required" });
-    }
-
-    const baseSlug = toSlug(workspaceName);
-    const userId = req.userId;
-    const chosenPlan = plan || "free";
-
-    await client.query("BEGIN");
-    await client.query("SET search_path TO tenant_vutler");
-
-    // Make slug unique by appending random suffix if needed
-    let slug = baseSlug;
-    const existing = await client.query(`SELECT id FROM ${SCHEMA}.workspaces WHERE slug = $1`, [slug]);
-    if (existing.rows.length > 0) {
-      slug = baseSlug + "-" + Math.random().toString(36).slice(2, 6);
-    }
-
-    // 🔵 SNIPARA AUTO-PROVISIONING
-    let sniparaProjectId = null;
-    let sniparaApiKey = null;
-    try {
-      const sniparaProject = await sniparaService.createProject(workspaceName, slug);
-      sniparaProjectId = sniparaProject.project_id;
-      sniparaApiKey = sniparaProject.api_key;
-      console.log(`[ONBOARDING] Snipara project created: ${sniparaProjectId}`);
-    } catch (sniparaErr) {
-      console.error("[ONBOARDING] Snipara provisioning failed (non-blocking):", sniparaErr.message);
-      // Continue without Snipara if it fails
-    }
-
-    // 1. Create workspace (with Snipara columns)
-    const wsResult = await client.query(
-      `INSERT INTO ${SCHEMA}.workspaces (id, name, slug, owner_id, plan, settings, snipara_project_id, snipara_api_key, created_at, updated_at)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6, $7, NOW(), NOW()) RETURNING *`,
-      [workspaceName, slug, userId, chosenPlan, JSON.stringify({ onboarding: true }), sniparaProjectId, sniparaApiKey]
-    );
-    const workspace = wsResult.rows[0];
-
-    // 2. Create workspace_member
-    await client.query(
-      `INSERT INTO ${SCHEMA}.workspace_members (id, workspace_id, user_id, role, invited_by, created_at)
-       VALUES (gen_random_uuid(), $1, $2, 'owner', $2, NOW())`,
-      [workspace.id, userId]
+    await pool.query(
+      `UPDATE ${SCHEMA}.workspaces SET onboarding_completed = true, updated_at = NOW() WHERE id = $1`,
+      [workspaceId]
     );
 
-    // 3. Determine agents
-    let agentNames = new Set(["Jarvis", "Andrea"]);
-    (categories || []).forEach(catId => {
-      (CATEGORY_AGENTS[catId] || []).forEach(a => agentNames.add(a));
-    });
-    let agentList = [...agentNames];
-    if (chosenPlan === "free") agentList = agentList.slice(0, 2);
-    else if (chosenPlan === "starter") agentList = agentList.slice(0, 4);
-    else if (chosenPlan === "team") agentList = agentList.slice(0, 8);
-
-    // 4. Create agents (username scoped to workspace)
-    const createdAgents = [];
-    for (const name of agentList) {
-      const defaults = AGENT_DEFAULTS[name] || { role: "assistant", model: "gpt-4o-mini", provider: "openai", description: "" };
-      const username = name.toLowerCase() + "-" + workspace.id.slice(0, 8);
-      const agentResult = await client.query(
-        `INSERT INTO ${SCHEMA}.agents (id, name, username, status, type, role, model, provider, description, workspace_id, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, 'active', 'bot', $3, $4, $5, $6, $7, NOW(), NOW()) RETURNING *`,
-        [name, username, defaults.role, defaults.model, defaults.provider, defaults.description, workspace.id]
-      );
-      createdAgents.push(agentResult.rows[0]);
-    }
-
-    // 5. Save workspace_settings
-    if (selectedTools && selectedTools.length > 0) {
-      await client.query(
-        `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, category, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, 'selected_tools', $2::jsonb, 'onboarding', NOW(), NOW())`,
-        [workspace.id, JSON.stringify(selectedTools)]
-      );
-    }
-    if (authorizedTools && authorizedTools.length > 0) {
-      await client.query(
-        `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, category, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, 'authorized_tools', $2::jsonb, 'onboarding', NOW(), NOW())`,
-        [workspace.id, JSON.stringify(authorizedTools)]
-      );
-    }
-
-    // 6. Update user onboarding status (best-effort)
-    try {
-      await client.query(`UPDATE ${SCHEMA}.users_auth SET onboarding_completed = true, updated_at = NOW() WHERE id = $1`, [userId]);
-    } catch (_) { /* column may not exist */ }
-
-    await client.query("COMMIT");
-    console.log(`[ONBOARDING] COMMIT done. Completed for user ${userId}: workspace=${workspace.id}, agents=${agentList.length}, snipara=${sniparaProjectId}`);
-
-    res.json({
-      success: true,
-      data: {
-        workspace: { 
-          id: workspace.id, 
-          name: workspace.name, 
-          slug: workspace.slug, 
-          plan: workspace.plan,
-          snipara_project_id: sniparaProjectId 
-        },
-        agents: createdAgents.map(a => ({ id: a.id, name: a.name, username: a.username, role: a.role })),
-        toolsConfigured: (selectedTools || []).length,
-        toolsAuthorized: (authorizedTools || []).length,
-      }
-    });
+    return res.json({ success: true, data: { onboarding_completed: true } });
   } catch (err) {
-    await client.query("ROLLBACK").catch(() => {});
-    console.error("[ONBOARDING] Complete error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  } finally {
-    client.release();
+    console.error('[ONBOARDING] complete error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/recommend-agents', async (req, res) => {
+  try {
+    const { use_case } = req.body || {};
+    if (!use_case || typeof use_case !== 'string') {
+      return res.status(400).json({ success: false, error: 'use_case is required' });
+    }
+
+    const templates = recommendAgents(use_case);
+    return res.json({ success: true, data: { use_case, templates } });
+  } catch (err) {
+    console.error('[ONBOARDING] recommend-agents error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

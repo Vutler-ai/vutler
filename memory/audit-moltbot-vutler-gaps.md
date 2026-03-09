@@ -166,7 +166,7 @@
 - Consumer Key, Access Token (pas testé après Free plan = 0 posting)
 
 **Snipara:**
-- API key "ADMIN" dans openclaw.json (rlm_3097deec...)
+- API key "ADMIN" dans openclaw.json ([REDACTED])
 - Project slug: moltbot
 - Swarm ID: cmlmja4s9000as8abdg7e3rfw
 

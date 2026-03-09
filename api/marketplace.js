@@ -278,6 +278,12 @@ router.post("/templates/:id/install", async (req, res) => {
     const ws = req.workspaceId;
     const userId = req.user?.id;
 
+    const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
+    const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
+    if (plan === 'free') {
+      return res.status(403).json({ success: false, error: 'Free plan includes only the Coordinator. Upgrade to Pro to install additional agents.' });
+    }
+
     const tmpl = await pool.query(`SELECT * FROM ${SCHEMA}.marketplace_templates WHERE id = $1 AND published = true`, [id]);
     if (tmpl.rows.length === 0) return res.status(404).json({ success: false, error: "Template not found" });
     const t = tmpl.rows[0];
