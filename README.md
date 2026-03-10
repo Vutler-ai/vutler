@@ -264,6 +264,8 @@ Full API documentation available at [vutler.ai/docs/api](https://vutler.ai/docs/
 - 🏢 **Company:** [Starbox Group](https://starboxgroup.com)
 - 📧 **Contact:** hello@starboxgroup.com
 - 🐦 **Twitter:** [@starboxgroup](https://twitter.com/starboxgroup)
+- 🗺️ **Public Roadmap:** [`docs/roadmap/public-roadmap.md`](docs/roadmap/public-roadmap.md)
+- 📝 **Public Changelog:** [`docs/changelog/public-changelog.md`](docs/changelog/public-changelog.md)
 
 ---
 

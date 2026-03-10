@@ -1,13 +1,10 @@
 # Vutler Documentation Index
 
-## Active planning docs (current)
-- `../BMAD-SETTINGS-COMPLETION.md`
-- `../SPRINT-SETTINGS-COMPLETION.md`
-- `../SPRINT-INTEGRATIONS.md`
-- `../SPRINT-SOCIAL-OPS-VISIBILITY.md`
-- `../MVP-SPRINT-PLAN-FINAL.md`
-- `../NEXUS-DOCKER-ARCHITECTURE.md`
-- `../POSTIZ-MAPPING-VUTLER.md`
+## Public docs (current)
+- `roadmap/public-roadmap.md`
+- `changelog/public-changelog.md`
+- `../README.md`
+- `../LICENSE`
 
 ## Product / implementation specs
 - `onboarding-flow-spec.md`
@@ -21,7 +18,7 @@
 - `vaultbrix-soc2/`
 
 ## Archive
-Legacy root documentation moved to:
-- `archive/legacy-root/`
+- Legacy root documentation: `archive/legacy-root/`
+- Internal planning/sprint documentation: `archive/internal/`
 
-These files are kept for traceability only and are not the source of truth for current execution.
+Archived files are kept for traceability and are not the source of truth for public-facing documentation.
