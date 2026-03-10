@@ -12,56 +12,9 @@ This document acknowledges and provides attribution for third-party software com
 
 ---
 
-## Primary Foundation: Rocket.Chat
+## Foundation
 
-### License
-**MIT License**
-
-### Copyright
-Copyright (c) 2016-2026 Rocket.Chat Contributors
-
-### Terms
-Rocket.Chat is distributed under the MIT License, which permits:
-- ✅ Commercial use
-- ✅ Modification
-- ✅ Distribution
-- ✅ Private use
-
-Subject to:
-- ⚠️ License and copyright notice must be included with any distribution
-
-### Attribution
-Vutler is forked from Rocket.Chat and builds upon its foundation for open-source team communication. Vutler contributors extend and customize Rocket.Chat's platform for AI agent orchestration.
-
-### Full License Text
-
-```
-MIT License
-
-Copyright (c) 2016-2026 Rocket.Chat Contributors
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-### Repository
-- **GitHub:** https://github.com/RocketChat/Rocket.Chat
-- **Website:** https://rocket.chat/
+Vutler is distributed as an open-core product by Starbox Group GmbH. The project uses a mix of first-party code and third-party dependencies listed below.
 
 ---
 
@@ -77,10 +30,10 @@ SOFTWARE.
 **Repository:** https://github.com/expressjs/express  
 **Used for:** HTTP server framework
 
-### MongoDB Node Driver
-**License:** Apache 2.0  
-**Repository:** https://github.com/mongodb/node-mongodb-native  
-**Used for:** Database connectivity
+### PostgreSQL Driver (`pg`)
+**License:** MIT  
+**Repository:** https://github.com/brianc/node-postgres  
+**Used for:** Primary database connectivity
 
 ### JWT (jsonwebtoken)
 **License:** MIT  
@@ -115,7 +68,6 @@ SOFTWARE.
 
 ### Multi-Tenancy
 **Dependencies:**
-- mongoose (MIT) — MongoDB ORM
 - passport (MIT) — Authentication framework
 
 ### Cloud Code Execution
