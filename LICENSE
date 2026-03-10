@@ -1,0 +1,16 @@
+# Vutler Licensing
+
+Copyright (c) 2026 Starbox Group GmbH, Geneva, Switzerland.
+
+Vutler uses an **open-core** licensing model:
+
+- **Community Edition (CE)** components are licensed under **Apache License 2.0**.
+- **Enterprise Edition (EE)** components are licensed under the **Vutler Enterprise License**.
+
+For full terms, see:
+
+- `docs/licensing/LICENSE-APACHE-2.0`
+- `docs/licensing/LICENSE-COMMERCIAL.md`
+- `docs/licensing/NOTICE.md`
+
+If you are unsure which license applies to a specific file/module, contact: **legal@starboxgroup.com**.

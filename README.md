@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.1.0--beta-orange.svg" alt="Version" />
-  <img src="https://img.shields.io/badge/license-Proprietary-red.svg" alt="License" />
+  <img src="https://img.shields.io/badge/license-OpenCore-blue.svg" alt="License" />
   <img src="https://img.shields.io/badge/docker-ready-2496ED.svg?logo=docker&logoColor=white" alt="Docker" />
 </p>
 
@@ -269,11 +269,18 @@ Full API documentation available at [vutler.ai/docs/api](https://vutler.ai/docs/
 
 ## 📄 License
 
-**Proprietary License** (for now)
+Vutler follows an **open-core** model:
 
-Vutler is currently proprietary software. We're exploring open-source licensing options for future releases.
+- **Community Edition (CE):** Apache 2.0
+- **Enterprise Edition (EE):** Vutler Enterprise License
 
-© 2025 Starbox Group GmbH, Geneva, Switzerland. All rights reserved.
+See:
+- `LICENSE`
+- `docs/licensing/LICENSE-APACHE-2.0`
+- `docs/licensing/LICENSE-COMMERCIAL.md`
+- `docs/licensing/NOTICE.md`
+
+© 2026 Starbox Group GmbH, Geneva, Switzerland.
 
 ---
 
