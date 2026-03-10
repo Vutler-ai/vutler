@@ -1,0 +1,265 @@
+{
+  "meta": {
+    "test_date": "2026-03-08T22:37:00Z",
+    "tester": "Michael (QA Engineer)",
+    "environment": "production",
+    "base_url": "https://app.vutler.ai",
+    "vps_ip": "83.228.222.180",
+    "test_user": "alex@vutler.com",
+    "workspace": "Starbox Group",
+    "workspace_id": "00000000-0000-0000-0000-000000000001"
+  },
+  "summary": {
+    "overall_score": 68,
+    "max_score": 100,
+    "status": "BETA-READY",
+    "production_ready": false
+  },
+  "api_endpoints": {
+    "total": 22,
+    "passed": 14,
+    "failed": 8,
+    "pass_rate": 0.636,
+    "avg_response_time_ms": 42,
+    "tests": [
+      {"endpoint": "/api/v1/agents", "status": 200, "time_ms": 62, "size_bytes": 10793, "data": "present"},
+      {"endpoint": "/api/v1/tasks-v2", "status": 404, "time_ms": 38, "size_bytes": 91, "data": "not_found"},
+      {"endpoint": "/api/v1/email?folder=inbox", "status": 200, "time_ms": 39, "size_bytes": 38, "data": "empty"},
+      {"endpoint": "/api/v1/drive/files?path=/", "status": 200, "time_ms": 45, "size_bytes": 1039, "data": "present"},
+      {"endpoint": "/api/v1/integrations", "status": 200, "time_ms": 39, "size_bytes": 448, "data": "present"},
+      {"endpoint": "/api/v1/billing", "status": 200, "time_ms": 60, "size_bytes": 201, "data": "present"},
+      {"endpoint": "/api/v1/workspace", "status": 200, "time_ms": 42, "size_bytes": 324, "data": "present"},
+      {"endpoint": "/api/v1/nexus", "status": 404, "time_ms": 34, "size_bytes": 88, "data": "not_found"},
+      {"endpoint": "/api/v1/deployments", "status": 200, "time_ms": 45, "size_bytes": 451, "data": "present"},
+      {"endpoint": "/api/v1/templates", "status": 200, "time_ms": 39, "size_bytes": 92, "data": "empty"},
+      {"endpoint": "/api/v1/marketplace", "status": 404, "time_ms": 33, "size_bytes": 94, "data": "not_found"},
+      {"endpoint": "/api/v1/usage", "status": 404, "time_ms": 40, "size_bytes": 88, "data": "not_found"},
+      {"endpoint": "/api/v1/chat", "status": 404, "time_ms": 37, "size_bytes": 87, "data": "not_found"},
+      {"endpoint": "/api/v1/notifications", "status": 200, "time_ms": 38, "size_bytes": 51, "data": "empty"},
+      {"endpoint": "/api/v1/dashboard", "status": 200, "time_ms": 43, "size_bytes": 163, "data": "minimal"},
+      {"endpoint": "/api/v1/audit-logs", "status": 200, "time_ms": 41, "size_bytes": 572, "data": "present"},
+      {"endpoint": "/api/v1/tools", "status": 404, "time_ms": 40, "size_bytes": 88, "data": "not_found"},
+      {"endpoint": "/api/v1/memory", "status": 404, "time_ms": 35, "size_bytes": 89, "data": "not_found"},
+      {"endpoint": "/api/v1/settings", "status": 200, "time_ms": 38, "size_bytes": 132, "data": "minimal"},
+      {"endpoint": "/api/v1/calendar", "status": 200, "time_ms": 48, "size_bytes": 1473, "data": "present"},
+      {"endpoint": "/api/v1/sandbox", "status": 200, "time_ms": 42, "size_bytes": 52, "data": "empty"},
+      {"endpoint": "/api/v1/onboarding", "status": 404, "time_ms": 36, "size_bytes": 93, "data": "not_found"}
+    ]
+  },
+  "frontend_pages": {
+    "total": 14,
+    "passed": 14,
+    "failed": 0,
+    "pass_rate": 1.0,
+    "avg_load_time_ms": 44,
+    "tests": [
+      {"page": "/login", "status": 200, "time_ms": 42, "size_bytes": 13301, "html_valid": true},
+      {"page": "/dashboard-v2", "status": 200, "time_ms": 63, "size_bytes": 16441, "html_valid": true},
+      {"page": "/agents", "status": 200, "time_ms": 46, "size_bytes": 18146, "html_valid": true},
+      {"page": "/chat", "status": 200, "time_ms": 42, "size_bytes": 17265, "html_valid": true},
+      {"page": "/drive-v2", "status": 200, "time_ms": 41, "size_bytes": 20585, "html_valid": true},
+      {"page": "/integrations-v2", "status": 200, "time_ms": 45, "size_bytes": 17041, "html_valid": true},
+      {"page": "/tasks", "status": 200, "time_ms": 44, "size_bytes": 22416, "html_valid": true},
+      {"page": "/mail", "status": 200, "time_ms": 43, "size_bytes": 16001, "html_valid": true},
+      {"page": "/settings", "status": 200, "time_ms": 46, "size_bytes": 22184, "html_valid": true},
+      {"page": "/billing", "status": 200, "time_ms": 41, "size_bytes": 11633, "html_valid": true},
+      {"page": "/calendar", "status": 200, "time_ms": 41, "size_bytes": 15329, "html_valid": true},
+      {"page": "/nexus", "status": 200, "time_ms": 44, "size_bytes": 11992, "html_valid": true},
+      {"page": "/marketplace", "status": 200, "time_ms": 43, "size_bytes": 10219, "html_valid": true},
+      {"page": "/onboarding-v2", "status": 200, "time_ms": 39, "size_bytes": 12686, "html_valid": true}
+    ]
+  },
+  "infrastructure": {
+    "containers": [
+      {"name": "vutler-api", "status": "running", "uptime": "1 minute", "health": "healthy"},
+      {"name": "vutler-redis", "status": "running", "uptime": "9 days", "health": "healthy"},
+      {"name": "postiz", "status": "running", "uptime": "2 days", "health": "unknown"},
+      {"name": "postiz-db", "status": "running", "uptime": "2 days", "health": "unknown"},
+      {"name": "postiz-redis", "status": "running", "uptime": "2 days", "health": "unknown"},
+      {"name": "postal-smtp", "status": "running", "uptime": "8 days", "health": "unknown"},
+      {"name": "postal-worker", "status": "running", "uptime": "8 days", "health": "unknown"},
+      {"name": "postal-web", "status": "running", "uptime": "8 days", "health": "unknown"},
+      {"name": "postal-rabbitmq", "status": "running", "uptime": "8 days", "health": "unknown"},
+      {"name": "postal-mariadb", "status": "running", "uptime": "8 days", "health": "unknown"}
+    ],
+    "resources": {
+      "disk": {
+        "total_gb": 19,
+        "used_gb": 15,
+        "available_gb": 4.3,
+        "usage_percent": 77,
+        "status": "warning"
+      },
+      "memory": {
+        "total_mb": 11960,
+        "used_mb": 5153,
+        "free_mb": 647,
+        "cached_mb": 6630,
+        "available_mb": 6806,
+        "usage_percent": 43,
+        "status": "ok"
+      },
+      "swap": {
+        "total_mb": 0,
+        "used_mb": 0,
+        "status": "none_configured"
+      }
+    },
+    "nginx": {
+      "config_test": "ok",
+      "status": "running"
+    },
+    "ssl_certificate": {
+      "valid_from": "2026-02-17T10:15:04Z",
+      "valid_until": "2026-05-18T10:15:03Z",
+      "days_remaining": 71,
+      "status": "valid"
+    }
+  },
+  "security": {
+    "total_tests": 4,
+    "passed": 3.5,
+    "pass_rate": 0.875,
+    "tests": [
+      {
+        "name": "Access without token",
+        "expected": 401,
+        "actual": 401,
+        "status": "pass"
+      },
+      {
+        "name": "Access with invalid token",
+        "expected": 401,
+        "actual": 401,
+        "status": "pass"
+      },
+      {
+        "name": "SQL injection attempt",
+        "expected": "blocked/400",
+        "actual": "timeout (HTTP_CODE:000)",
+        "status": "inconclusive"
+      },
+      {
+        "name": "Security headers",
+        "expected": "present",
+        "actual": "all_present",
+        "status": "pass",
+        "headers": {
+          "strict-transport-security": "max-age=31536000; includeSubDomains",
+          "x-frame-options": "DENY",
+          "x-content-type-options": "nosniff",
+          "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' https://app.vutler.ai wss://app.vutler.ai https://fonts.googleapis.com https://fonts.gstatic.com;"
+        }
+      }
+    ]
+  },
+  "bugs": [
+    {
+      "id": "BUG-001",
+      "priority": "P1",
+      "severity": "high",
+      "title": "8 API endpoints return 404",
+      "description": "Missing route modules (S16-S19 patches)",
+      "affected_endpoints": [
+        "/api/v1/tasks-v2",
+        "/api/v1/nexus",
+        "/api/v1/marketplace",
+        "/api/v1/usage",
+        "/api/v1/chat",
+        "/api/v1/tools",
+        "/api/v1/memory",
+        "/api/v1/onboarding"
+      ],
+      "impact": "36% of API endpoints fail",
+      "fix_effort_days": 2.5
+    },
+    {
+      "id": "BUG-002",
+      "priority": "P1",
+      "severity": "high",
+      "title": "Database schema missing table",
+      "description": "relation 'tenant_vutler.llm_providers' does not exist",
+      "affected_endpoints": ["/api/v1/dashboard"],
+      "impact": "Dashboard stats incomplete",
+      "fix_effort_hours": 1
+    },
+    {
+      "id": "BUG-003",
+      "priority": "P1",
+      "severity": "medium",
+      "title": "Express trust proxy misconfigured",
+      "description": "X-Forwarded-For header set but trust proxy is false",
+      "impact": "Rate limiting cannot identify correct user IPs",
+      "fix_effort_minutes": 5
+    },
+    {
+      "id": "BUG-004",
+      "priority": "P2",
+      "severity": "low",
+      "title": "IMAP not configured",
+      "description": "Email polling disabled",
+      "impact": "Email features unavailable",
+      "fix_effort_minutes": 15
+    },
+    {
+      "id": "BUG-005",
+      "priority": "P2",
+      "severity": "medium",
+      "title": "Disk usage at 77%",
+      "description": "15GB / 19GB used, approaching limit",
+      "impact": "May run out of disk in 2-3 weeks",
+      "fix_effort_hours": 1
+    },
+    {
+      "id": "BUG-006",
+      "priority": "P2",
+      "severity": "medium",
+      "title": "No swap configured",
+      "description": "0 MB swap",
+      "impact": "Risk of OOM crashes under memory pressure",
+      "fix_effort_minutes": 30
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": 1,
+      "title": "Fix 8 missing API endpoints",
+      "action": "Implement S16-S19 route modules OR remove frontend references",
+      "timeline": "This week",
+      "effort_days": 2.5,
+      "impact": "High"
+    },
+    {
+      "priority": 2,
+      "title": "Run DB migration for llm_providers table",
+      "action": "Create missing database table",
+      "timeline": "This week",
+      "effort_hours": 1,
+      "impact": "High"
+    },
+    {
+      "priority": 3,
+      "title": "Configure Express trust proxy",
+      "action": "Add app.set('trust proxy', 1) in index.js",
+      "timeline": "This week",
+      "effort_minutes": 5,
+      "impact": "High"
+    },
+    {
+      "priority": 4,
+      "title": "Disk cleanup / expansion",
+      "action": "Run docker system prune OR expand VPS disk",
+      "timeline": "Next 2 weeks",
+      "effort_hours": 1,
+      "impact": "Medium"
+    },
+    {
+      "priority": 5,
+      "title": "Add swap file",
+      "action": "Configure 2GB swap file on VPS",
+      "timeline": "Next 2 weeks",
+      "effort_minutes": 30,
+      "impact": "Medium"
+    }
+  ]
+}

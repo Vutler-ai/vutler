@@ -20,5 +20,6 @@
 ## Archive
 - Legacy root documentation: `archive/legacy-root/`
 - Internal planning/sprint documentation: `archive/internal/`
+- Internal misc assets/reports/specs moved from repository root: `archive/internal/misc/`
 
 Archived files are kept for traceability and are not the source of truth for public-facing documentation.
