@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Nexus — Vutler</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>body{font-family:'Inter',sans-serif;background:#0A1628;color:#e2e8f0}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:3px}.sidebar-link{display:flex;align-items:center;gap:.75rem;padding:.5rem .75rem;border-radius:.5rem;color:#94a3b8;font-size:.875rem;transition:all .15s}
+.sidebar-link:hover,.sidebar-link.active{background:#1e293b;color:#3B82F6}.badge{background:#ef4444;color:#fff;font-size:.65rem;padding:1px 6px;border-radius:9999px;margin-left:auto}
+.menu-toggle{display:none;position:fixed;top:12px;left:12px;z-index:60;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:8px 10px;cursor:pointer;color:#e2e8f0}
+@media(max-width:768px){aside{position:fixed!important;z-index:50!important;height:100vh!important;transform:translateX(-100%);transition:transform .3s ease}aside.open{transform:translateX(0)}.menu-toggle{display:block}main{padding-top:56px!important}}
+</style>
+<script src="https://unpkg.com/lucide@latest"></script>
+
+<style id="light-theme-styles">
+/* Light Theme Overrides */
+.light-theme {
+  background-color: #f8fafc !important;
+  color: #111827 !important;
+}
+.light-theme .sidebar,
+.light-theme nav,
+.light-theme aside,
+.light-theme [class*="bg-gray-900"],
+.light-theme [class*="bg-gray-800"],
+.light-theme [class*="bg-[#0a0a0f]"],
+.light-theme [class*="bg-navy"],
+.light-theme [class*="bg-[#111d33]"] {
+  background-color: #ffffff !important;
+  border-color: #e5e7eb !important;
+}
+.light-theme .text-white {
+  color: #111827 !important;
+}
+.light-theme .text-gray-400,
+.light-theme .text-gray-300,
+.light-theme .text-slate-400,
+.light-theme .text-slate-300,
+.light-theme .text-slate-500 {
+  color: #6b7280 !important;
+}
+.light-theme [class*="bg-white/5"],
+.light-theme [class*="bg-white/10"],
+.light-theme [class*="rgba(255,255,255,0.05)"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+}
+.light-theme [class*="border-gray-700"],
+.light-theme [class*="border-gray-600"],
+.light-theme [class*="border-white/5"],
+.light-theme [class*="border-white/10"] {
+  border-color: #e5e7eb !important;
+}
+.light-theme input,
+.light-theme textarea,
+.light-theme select {
+  background-color: #f9fafb !important;
+  color: #111827 !important;
+  border-color: #d1d5db !important;
+}
+.light-theme .main {
+  background-color: #f8fafc !important;
+}
+.light-theme .stat-card,
+.light-theme .agent-card,
+.light-theme .activity,
+.light-theme .qa-btn,
+.light-theme .modal {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+.light-theme .sidebar-link:hover {
+  background-color: #f1f5f9 !important;
+  color: #111827 !important;
+}
+.light-theme .sidebar-link.active {
+  background-color: rgba(59,130,246,0.1) !important;
+}
+.light-theme #theme-toggle {
+  color: #6b7280 !important;
+}
+.light-theme #theme-toggle:hover {
+  background-color: #f1f5f9 !important;
+  color: #111827 !important;
+}
+</style>
+
+
+
+
+
+
+<style id="sidebar-size-parity-nexus">
+/* Force exact Nexus-like sidebar typography/icon sizing */
+#primary-sidebar .sidebar-link,
+aside.sidebar .sidebar-link,
+aside .sidebar-link {
+  font-size: 14px !important;
+  line-height: 20px !important;
+  font-weight: 500 !important;
+}
+#primary-sidebar .sidebar-link i,
+#primary-sidebar .sidebar-link [data-lucide],
+aside.sidebar .sidebar-link i,
+aside.sidebar .sidebar-link [data-lucide],
+aside .sidebar-link i,
+aside .sidebar-link [data-lucide] {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  stroke-width: 1.75 !important;
+}
+</style>
+
+<style id="sidebar-spacing-parity-nexus">
+/* Force exact Nexus-like vertical spacing */
+#primary-sidebar nav,
+aside.sidebar nav,
+aside nav {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+#primary-sidebar nav .sidebar-link,
+aside.sidebar nav .sidebar-link,
+aside nav .sidebar-link {
+  margin-bottom: 2px !important;
+}
+#primary-sidebar .p-3.border-t.border-white\/5,
+aside.sidebar .p-3.border-t.border-white\/5,
+aside .p-3.border-t.border-white\/5 {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+#primary-sidebar .p-3.border-t.border-white\/5 .sidebar-link,
+aside.sidebar .p-3.border-t.border-white\/5 .sidebar-link,
+aside .p-3.border-t.border-white\/5 .sidebar-link {
+  margin-bottom: 2px !important;
+}
+</style>
+
+</head>
+<body class="flex h-screen overflow-hidden">
+<!-- Sidebar -->
+<button class="menu-toggle" onclick="document.querySelector('aside').classList.toggle('open');document.querySelector('.sidebar-overlay').style.display=document.querySelector('aside').classList.contains('open')?'block':'none'">
+  <i data-lucide="menu" style="width:20px;height:20px"></i>
+</button>
+<div class="sidebar-overlay" onclick="document.querySelector('aside').classList.remove('open');this.style.display='none'" style="display:none"></div>
+<aside class="w-60 bg-navy-light border-r border-white/5 flex flex-col h-screen shrink-0" style="background:#111d33">
+  <div class="p-4 border-b border-white/5">
+    <a href="/dashboard" class="flex items-center gap-2">
+      <img src="/static/vutler-logo-full-white.png" alt="Vutler" style="height:36px">
+    </a>
+  </div>
+  <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto text-sm">
+    <a href="/dashboard" class="sidebar-link"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+    <a href="/agents" class="sidebar-link"><i data-lucide="bot"></i> Agents</a>
+    <a href="/chat" class="sidebar-link"><i data-lucide="message-square"></i> Chat</a>
+    <a href="/drive" class="sidebar-link"><i data-lucide="folder"></i> Drive</a>
+    <a href="/integrations" class="sidebar-link"><i data-lucide="plug"></i> Integrations</a>
+    <a href="/tasks" class="sidebar-link"><i data-lucide="check-square"></i> Tasks</a>
+    <a href="/mail" class="sidebar-link"><i data-lucide="mail"></i> Mail</a>
+    <a href="/calendar" class="sidebar-link"><i data-lucide="calendar"></i> Calendar</a>
+    <a href="/social-ops" class="sidebar-link"><i data-lucide="megaphone"></i> Social Ops</a>
+    <a href="/nexus" class="sidebar-link active"><i data-lucide="cpu"></i> Nexus</a>
+    <a href="/marketplace" class="sidebar-link"><i data-lucide="store"></i> Marketplace</a>
+  </nav>
+  <div class="p-3 border-t border-white/5 space-y-1">
+    <a href="/settings" class="sidebar-link"><i data-lucide="settings"></i> Settings</a>
+    <a href="/billing" class="sidebar-link"><i data-lucide="credit-card"></i> Billing</a>
+    <button id="theme-toggle" onclick="toggleTheme()" class="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-white/5 rounded-lg w-full transition-colors mb-1">
+      <span id="theme-icon">🌙</span>
+      <span id="theme-label">Dark</span>
+    </button>
+
+    <div class="flex items-center gap-2 px-3 py-2 mt-2">
+      <div class="w-8 h-8 rounded-full bg-[#3B82F6]/20 flex items-center justify-center text-sm font-bold text-white">AL</div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-white truncate" id="user-display-name">Alex Lopez</div>
+        <div class="text-xs text-slate-500">Starbox</div>
+      </div>
+      <button onclick="if(typeof logout==='function')logout();else location.href='/login'" 
+              class="text-slate-500 hover:text-slate-300" title="Logout">
+        <i data-lucide="log-out" style="width:16px;height:16px"></i>
+      </button>
+    </div>
+  </div>
+</aside>
+<main class="flex-1 overflow-y-auto p-8">
+<div class="flex items-center justify-between mb-6">
+<h1 class="text-2xl font-bold text-white"><i data-lucide="globe" style="width:24px;height:24px;display:inline-block;vertical-align:middle"></i> Nexus Dashboard</h1>
+<button onclick="openModal('addNodeModal')" class="px-4 py-2 bg-[#3B82F6] hover:bg-blue-600 text-white rounded-lg text-sm font-medium">+ Ajouter un node</button>
+</div>
+<!-- Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+<div class="bg-[#0f1d32] border border-[#1e293b] rounded-xl p-4"><div class="text-slate-500 text-xs mb-1">Nodes actifs</div><div class="text-2xl font-bold text-white" id="statNodes">0</div></div>
+<div class="bg-[#0f1d32] border border-[#1e293b] rounded-xl p-4"><div class="text-slate-500 text-xs mb-1">Agents déployés</div><div class="text-2xl font-bold text-white" id="statAgents">0</div></div>
+<div class="bg-[#0f1d32] border border-[#1e293b] rounded-xl p-4"><div class="text-slate-500 text-xs mb-1">Uptime</div><div class="text-2xl font-bold text-slate-500">—</div></div>
+<div class="bg-[#0f1d32] border border-[#1e293b] rounded-xl p-4"><div class="text-slate-500 text-xs mb-1">Sync status</div><div class="text-lg font-bold text-slate-500">—</div></div>
+</div>
+<!-- Nodes container (empty state or node cards) -->
+<div id="nodesContainer">
+  <div class="bg-[#0f1d32] border border-[#1e293b] rounded-xl p-12 text-center">
+    <div class="mb-4"><i data-lucide="server" style="width:48px;height:48px;display:inline-block" class="text-slate-600"></i></div>
+    <h2 class="text-xl font-semibold text-white mb-2">Aucun node connecté</h2>
+    <p class="text-slate-400 text-sm mb-6 max-w-md mx-auto">Ajoutez votre premier Nexus node pour déployer vos agents localement</p>
+    <button onclick="openModal('addNodeModal')" class="px-6 py-2.5 bg-[#3B82F6] hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition">Ajouter un node</button>
+  </div>
+</div>
+</main>
+<!-- Add Node Modal -->
+<div id="addNodeModal" class="fixed inset-0 bg-black/60 z-50 hidden items-center justify-center" onclick="if(event.target===this)closeModal('addNodeModal')">
+<div class="bg-[#0f1d32] border border-[#1e293b] rounded-2xl p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+<div class="flex justify-between items-center mb-4"><h2 class="text-lg font-bold text-white">+ Ajouter un Node</h2><button onclick="closeModal('addNodeModal')" class="text-slate-500 hover:text-white text-2xl">&times;</button></div>
+<div class="space-y-4">
+<div class="bg-[#1e293b] rounded-lg p-4">
+<h3 class="text-white text-sm font-semibold mb-3">Instructions</h3>
+<ol class="text-sm text-slate-400 space-y-3 list-decimal list-inside">
+<li>Option 1 — Docker (recommandé)
+<div class="mt-2 bg-[#0A1628] rounded-lg p-3 font-mono text-xs text-emerald-400 relative group">
+docker run -d --name nexus \<br>&nbsp;&nbsp;-e VUTLER_TOKEN=vt_xxx \<br>&nbsp;&nbsp;-v /data/nexus:/app/data \<br>&nbsp;&nbsp;vutler/nexus:latest
+<button onclick="copyCmd(this,'docker run -d --name nexus -e VUTLER_TOKEN=vt_xxx -v /data/nexus:/app/data vutler/nexus:latest')" class="absolute top-2 right-2 text-slate-500 hover:text-white text-xs opacity-0 group-hover:opacity-100 transition">📋 Copy</button>
+</div>
+<div class="mt-2 bg-[#0A1628] rounded-lg p-3 font-mono text-xs text-emerald-400 relative group">
+curl -fsSL https://get.vutler.ai/nexus/compose.yml > docker-compose.yml
+<button onclick="copyCmd(this,'curl -fsSL https://get.vutler.ai/nexus/compose.yml > docker-compose.yml')" class="absolute top-2 right-2 text-slate-500 hover:text-white text-xs opacity-0 group-hover:opacity-100 transition">📋 Copy</button>
+</div>
+</li>
+<li>Option 2 — App native (macOS / Linux / Windows)
+<div class="mt-2 bg-[#0A1628] rounded-lg p-3 font-mono text-xs text-emerald-400 relative group">
+curl -fsSL https://get.vutler.ai/nexus | sh
+<button onclick="copyCmd(this,'curl -fsSL https://get.vutler.ai/nexus | sh')" class="absolute top-2 right-2 text-slate-500 hover:text-white text-xs opacity-0 group-hover:opacity-100 transition">📋 Copy</button>
+</div>
+<div class="mt-2 bg-[#0A1628] rounded-lg p-3 font-mono text-xs text-emerald-400 relative group">
+nexus init --token vt_xxx && nexus start
+<button onclick="copyCmd(this,'nexus init --token vt_xxx && nexus start')" class="absolute top-2 right-2 text-slate-500 hover:text-white text-xs opacity-0 group-hover:opacity-100 transition">📋 Copy</button>
+</div>
+</li>
+</ol>
+</div>
+<div>
+<label class="text-sm text-slate-400 block mb-1">Votre Token</label>
+<div class="flex gap-2">
+<input type="text" readonly value="vt_a8f3k2m9x4b7c1d6e5g0h" class="flex-1 bg-[#1e293b] border border-[#2d3a4f] rounded-lg px-3 py-2 text-white font-mono text-xs">
+<button onclick="navigator.clipboard.writeText('vt_a8f3k2m9x4b7c1d6e5g0h');this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',2000)" class="px-3 py-2 bg-[#3B82F6] hover:bg-blue-600 text-white rounded-lg text-xs">Copy</button>
+</div>
+</div>
+<p class="text-xs text-slate-500">Le node apparaîtra ici automatiquement une fois connecté.</p>
+</div>
+</div>
+</div>
+<script src="/static/auth-helper-v2.js"></script><script>requireAuth();
+
+function openModal(id){document.getElementById(id).classList.remove('hidden');document.getElementById(id).classList.add('flex')}
+function closeModal(id){document.getElementById(id).classList.add('hidden');document.getElementById(id).classList.remove('flex')}
+function copyCmd(btn,txt){navigator.clipboard.writeText(txt);btn.textContent='✅ Copied';setTimeout(()=>btn.textContent='📋 Copy',2000)}
+
+// Load nodes from API if endpoint exists
+async function loadNodes() {
+  try {
+    const data = await fetchWithAuth('/nexus');
+    if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+      document.getElementById('statNodes').textContent = data.data.length;
+      const deployed = data.data.reduce((acc, n) => acc + (n.agents_count || 0), 0);
+      document.getElementById('statAgents').textContent = deployed;
+      // Render node cards
+      const container = document.getElementById('nodesContainer');
+      container.innerHTML = data.data.map(n => '<div class="bg-[#0f1d32] border border-[#1e293b] rounded-xl p-6 mb-4"><div class="flex items-center gap-3 mb-2"><h2 class="text-lg font-semibold text-white">' + (n.name||'Node') + '</h2><span class="text-emerald-400 text-sm">● Online</span></div><div class="text-sm text-slate-400"><p>IP: ' + (n.ip||'—') + '</p><p>Agents: ' + (n.agents_count||0) + '</p></div></div>').join('');
+    }
+  } catch(e) {
+    console.log('[Nexus] API:', e.message);
+    // Keep empty state
+  }
+}
+loadNodes();
+
+// Guard: prevent duplicated sidebar rendering (legacy + injected shell)
+(function dedupeSidebar() {
+  function run() {
+    const primary = document.getElementById('primary-sidebar');
+    const sidebars = Array.from(document.querySelectorAll('aside')).filter(el =>
+      el.querySelector('.sidebar-link')
+    );
+    if (sidebars.length > 1) {
+      const canonical = primary || sidebars[0];
+      sidebars.forEach(el => { if (el !== canonical) el.remove(); });
+    }
+
+    const overlays = Array.from(document.querySelectorAll('.sidebar-overlay'));
+    if (overlays.length > 1) overlays.slice(1).forEach(el => el.remove());
+  }
+
+  run();
+  window.addEventListener('load', run);
+  setTimeout(run, 300);
+  setTimeout(run, 1000);
+  const obs = new MutationObserver(run);
+  obs.observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>
+
+<script src="/static/auth-check.js"></script>
+<script>if (typeof lucide !== "undefined") lucide.createIcons();</script>
+
+<script>
+// Theme toggle functionality
+function toggleTheme() {
+  const body = document.body;
+  const isDark = !body.classList.contains('light-theme');
+  if (isDark) {
+    body.classList.add('light-theme');
+    localStorage.setItem('vutler_theme', 'light');
+    document.getElementById('theme-icon').textContent = '☀️';
+    document.getElementById('theme-label').textContent = 'Light';
+  } else {
+    body.classList.remove('light-theme');
+    localStorage.setItem('vutler_theme', 'dark');
+    document.getElementById('theme-icon').textContent = '🌙';
+    document.getElementById('theme-label').textContent = 'Dark';
+  }
+}
+
+// Apply saved theme on load
+(function() {
+  const saved = localStorage.getItem('vutler_theme');
+  if (saved === 'light') {
+    document.body.classList.add('light-theme');
+    const icon = document.getElementById('theme-icon');
+    const label = document.getElementById('theme-label');
+    if (icon) icon.textContent = '☀️';
+    if (label) label.textContent = 'Light';
+  }
+})();
+</script>
+
+<script src="/static/sidebar-template.js"></script>
+<script>window.__VUTLER_SIDEBAR_ACTIVE='nexus';if(window.__VUTLER_SIDEBAR_BOOT)window.__VUTLER_SIDEBAR_BOOT();</script>
+</body>
+</html>

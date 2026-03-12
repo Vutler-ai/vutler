@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="fr" >
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vutler — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="/static/auth-helper-v2.js"></script>
+<style>
+:root{--bg:#0a0a0f;--card:#111d33;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444}
+[data-theme=light]{--bg:#f1f5f9;--card:#fff;--border:#e2e8f0;--text:#1e293b;--muted:#64748b}
+*{margin:0;box-sizing:border-box}body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;display:flex;min-height:100vh}
+a{color:inherit;text-decoration:none}
+
+.main{flex:1;padding:28px 32px;min-width:0}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden}
+.stat-card .label{font-size:13px;color:var(--muted);margin-bottom:4px}
+.stat-card .value{font-size:32px;font-weight:700}
+.sparkline{display:flex;align-items:end;gap:3px;height:30px;margin-top:8px}
+.sparkline span{width:6px;border-radius:2px;background:var(--accent);opacity:.5;animation:grow .8s ease-out forwards}
+@keyframes grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.agents-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:28px}
+.agent-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:.2s}
+.agent-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.agent-card .top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.agent-card .dot{width:8px;height:8px;border-radius:50%}
+.dot.on{background:var(--green)}.dot.off{background:var(--muted)}
+.agent-card .name{font-weight:600;font-size:14px}
+.agent-card .status{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.activity{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:28px}
+.activity h3{font-size:15px;font-weight:600;margin-bottom:14px}
+.act-item{display:flex;align-items:start;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.act-item:last-child{border:none}
+.act-avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.act-text{font-size:13px;line-height:1.4}.act-text strong{font-weight:600}.act-time{font-size:12px;color:var(--muted)}
+.quick-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px}
+.qa-btn{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center;cursor:pointer;transition:.2s;font-size:14px}
+.qa-btn:hover{border-color:var(--accent);background:rgba(59,130,246,.1)}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:28px;max-width:420px;width:90%}
+.modal h3{font-size:18px;font-weight:700;margin-bottom:16px}
+.modal .close{float:right;cursor:pointer;font-size:20px;color:var(--muted)}
+.modal .row{display:flex;justify-content:space-between;padding:6px 0;font-size:14px;border-bottom:1px solid var(--border)}
+.modal .row:last-child{border:none}
+.modal .row .k{color:var(--muted)}
+.header-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.header-bar h1{font-size:22px;font-weight:700}
+.header-right{display:flex;align-items:center;gap:14px;font-size:13px;color:var(--muted)}
+.theme-toggle{cursor:pointer;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;color:var(--text)}
+.loading{display:flex;align-items:center;justify-content:center;padding:40px;color:var(--muted);font-size:14px}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--muted);text-align:center}
+.empty-icon{font-size:48px;margin-bottom:12px;opacity:.5}
+.error-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;color:var(--red);text-align:center}
+.stat-error{color:var(--red)!important;font-size:24px!important}
+
+/* Mobile hamburger */
+.menu-toggle { display: none; position: fixed; top: 12px; left: 12px; z-index: 60; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--text); }
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); transition: transform 0.3s ease; }
+  .sidebar.open { transform: translateX(0); }
+  .menu-toggle { display: block; }
+  .main { margin-left: 0; padding: 16px; padding-top: 56px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .agents-grid { grid-template-columns: 1fr; }
+  .quick-actions { grid-template-columns: repeat(2, 1fr); }
+  .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 45; }
+  .sidebar.open ~ .sidebar-overlay { display: block; }
+}
+
+nav .sidebar i, .sidebar [data-lucide] { width: 18px; height: 18px; stroke-width: 1.5; flex-shrink: 0; }
+.sidebar-link{display:flex;align-items:center;gap:.75rem;padding:.5rem .75rem;border-radius:.5rem;color:#94a3b8;font-size:.875rem;transition:all .15s}
+.sidebar-link:hover{background:rgba(255,255,255,.05);color:#e2e8f0}
+.sidebar-link.active{background:rgba(59,130,246,.15);color:#3B82F6}
+</style>
+<script src="https://unpkg.com/lucide@latest"></script>
+
+<style id="light-theme-styles">
+/* Light Theme Overrides */
+.light-theme {
+  background-color: #f8fafc !important;
+  color: #111827 !important;
+}
+.light-theme .sidebar,
+.light-theme nav,
+.light-theme aside,
+.light-theme [class*="bg-gray-900"],
+.light-theme [class*="bg-gray-800"],
+.light-theme [class*="bg-[#0a0a0f]"],
+.light-theme [class*="bg-navy"],
+.light-theme [class*="bg-[#111d33]"] {
+  background-color: #ffffff !important;
+  border-color: #e5e7eb !important;
+}
+.light-theme .text-white {
+  color: #111827 !important;
+}
+.light-theme .text-gray-400,
+.light-theme .text-gray-300,
+.light-theme .text-slate-400,
+.light-theme .text-slate-300,
+.light-theme .text-slate-500 {
+  color: #6b7280 !important;
+}
+.light-theme [class*="bg-white/5"],
+.light-theme [class*="bg-white/10"],
+.light-theme [class*="rgba(255,255,255,0.05)"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+}
+.light-theme [class*="border-gray-700"],
+.light-theme [class*="border-gray-600"],
+.light-theme [class*="border-white/5"],
+.light-theme [class*="border-white/10"] {
+  border-color: #e5e7eb !important;
+}
+.light-theme input,
+.light-theme textarea,
+.light-theme select {
+  background-color: #f9fafb !important;
+  color: #111827 !important;
+  border-color: #d1d5db !important;
+}
+.light-theme .main {
+  background-color: #f8fafc !important;
+}
+.light-theme .stat-card,
+.light-theme .agent-card,
+.light-theme .activity,
+.light-theme .qa-btn,
+.light-theme .modal {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+.light-theme .sidebar-link:hover {
+  background-color: #f1f5f9 !important;
+  color: #111827 !important;
+}
+.light-theme .sidebar-link.active {
+  background-color: rgba(59,130,246,0.1) !important;
+}
+.light-theme #theme-toggle {
+  color: #6b7280 !important;
+}
+.light-theme #theme-toggle:hover {
+  background-color: #f1f5f9 !important;
+  color: #111827 !important;
+}
+</style>
+</head>
+<body>
+<button class="menu-toggle" onclick="document.querySelector('aside').classList.toggle('open');document.querySelector('.sidebar-overlay').style.display=document.querySelector('aside').classList.contains('open')?'block':'none'">
+  <i data-lucide="menu" style="width:20px;height:20px"></i>
+</button>
+<div class="sidebar-overlay" onclick="document.querySelector('aside').classList.remove('open');this.style.display='none'" style="display:none"></div>
+<aside class="w-60 bg-navy-light border-r border-white/5 flex flex-col h-screen shrink-0" style="background:#111d33">
+  <div class="p-4 border-b border-white/5">
+    <a href="/dashboard" class="flex items-center gap-2">
+      <img src="/static/vutler-logo-full-white.png" alt="Vutler" style="height:36px">
+    </a>
+  </div>
+  <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto text-sm">
+    <a href="/dashboard" class="sidebar-link active"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+    <a href="/agents" class="sidebar-link"><i data-lucide="bot"></i> Agents</a>
+    <a href="/chat" class="sidebar-link"><i data-lucide="message-square"></i> Chat</a>
+    <a href="/drive" class="sidebar-link"><i data-lucide="folder"></i> Drive</a>
+    <a href="/integrations" class="sidebar-link"><i data-lucide="plug"></i> Integrations</a>
+    <a href="/tasks" class="sidebar-link"><i data-lucide="check-square"></i> Tasks</a>
+    <a href="/mail" class="sidebar-link"><i data-lucide="mail"></i> Mail</a>
+    <a href="/calendar" class="sidebar-link"><i data-lucide="calendar"></i> Calendar</a>
+    <a href="/social-ops" class="sidebar-link"><i data-lucide="megaphone"></i> Social Ops</a>
+    <a href="/nexus" class="sidebar-link"><i data-lucide="cpu"></i> Nexus</a>
+    <a href="/marketplace" class="sidebar-link"><i data-lucide="store"></i> Marketplace</a>
+  </nav>
+  <div class="p-3 border-t border-white/5 space-y-1">
+    <a href="/settings" class="sidebar-link"><i data-lucide="settings"></i> Settings</a>
+    <a href="/billing" class="sidebar-link"><i data-lucide="credit-card"></i> Billing</a>
+    <button id="theme-toggle" onclick="toggleTheme()" class="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-white/5 rounded-lg w-full transition-colors mb-1">
+      <span id="theme-icon">🌙</span>
+      <span id="theme-label">Dark</span>
+    </button>
+
+    <div class="flex items-center gap-2 px-3 py-2 mt-2">
+      <div class="w-8 h-8 rounded-full bg-[#3B82F6]/20 flex items-center justify-center text-sm font-bold text-white">AL</div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-white truncate" id="user-display-name">Alex Lopez</div>
+        <div class="text-xs text-slate-500">Starbox</div>
+      </div>
+      <button onclick="if(typeof logout==='function')logout();else location.href='/login'" 
+              class="text-slate-500 hover:text-slate-300" title="Logout">
+        <i data-lucide="log-out" style="width:16px;height:16px"></i>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="header-bar">
+    <h1>Dashboard</h1>
+    <div class="header-right">
+      <span id="user-name"></span>
+      <span id="clock"></span>
+      
+    </div>
+  </div>
+  
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Agents actifs</div>
+      <div class="value" id="stat-agents">—</div>
+      <div class="sparkline">
+        <span style="height:40%"></span><span style="height:60%"></span><span style="height:45%"></span>
+        <span style="height:80%"></span><span style="height:70%"></span><span style="height:90%"></span><span style="height:95%"></span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Messages</div>
+      <div class="value" id="stat-messages">—</div>
+      <div class="sparkline">
+        <span style="height:30%"></span><span style="height:50%"></span><span style="height:55%"></span>
+        <span style="height:65%"></span><span style="height:60%"></span><span style="height:85%"></span><span style="height:90%"></span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Intégrations</div>
+      <div class="value" id="stat-integrations">—</div>
+      <div class="sparkline">
+        <span style="height:50%"></span><span style="height:50%"></span><span style="height:60%"></span>
+        <span style="height:60%"></span><span style="height:70%"></span><span style="height:80%"></span><span style="height:80%"></span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Tasks</div>
+      <div class="value" id="stat-tasks">—</div>
+      <div class="sparkline">
+        <span style="height:20%"></span><span style="height:35%"></span><span style="height:50%"></span>
+        <span style="height:45%"></span><span style="height:70%"></span><span style="height:80%"></span><span style="height:95%"></span>
+      </div>
+    </div>
+  </div>
+  
+  <div class="agents-grid" id="agentsGrid">
+    <div class="loading" style="grid-column: 1 / -1;">
+      <i data-lucide="loader" style="width:20px;height:20px;margin-right:8px;animation:spin 1s linear infinite"></i>
+      Chargement des agents...
+    </div>
+  </div>
+  
+  <div class="quick-actions">
+    <div class="qa-btn" onclick="location.href='/chat'">
+      <i data-lucide="message-square" style="width:16px;height:16px;margin-bottom:4px"></i><br>Chat avec agents
+    </div>
+    <div class="qa-btn" onclick="location.href='/agents'">
+      <i data-lucide="plus" style="width:16px;height:16px;margin-bottom:4px"></i><br>Nouvel agent
+    </div>
+    <div class="qa-btn" onclick="location.href='/tasks'">
+      <i data-lucide="clipboard-list" style="width:16px;height:16px;margin-bottom:4px"></i><br>Voir les tasks
+    </div>
+    <div class="qa-btn" onclick="location.href='/integrations'">
+      <i data-lucide="link" style="width:16px;height:16px;margin-bottom:4px"></i><br>Intégrations
+    </div>
+  </div>
+  
+  <div class="activity">
+    <h3>
+      <i data-lucide="activity" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:8px"></i>
+      Activité récente
+    </h3>
+    <div id="activityFeed">
+      <div class="loading">
+        <i data-lucide="loader" style="width:16px;height:16px;margin-right:8px;animation:spin 1s linear infinite"></i>
+        Chargement de l'activité...
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="agentModal">
+  <div class="modal">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<style>
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+// Require authentication
+requireAuth();
+
+let agentsData = [];
+let channelsData = [];
+let tasksData = [];
+
+// Display user name
+const user = getUser();
+if (user) {
+  const displayName = user.name || user.email || 'User';
+  document.getElementById('user-name').textContent = displayName;
+  document.getElementById('user-display-name').textContent = displayName.split(' ')[0];
+}
+
+// Load dashboard data - ENHANCED: Load all real data
+async function loadDashboard() {
+  console.log('[Dashboard] Loading dashboard data...');
+  
+  try {
+    // Load all data in parallel
+    const [agentsResponse, tasksResponse, channelsResponse] = await Promise.all([
+      fetchWithAuth('/agents'),
+      fetchWithAuth('/tasks'),
+      fetchWithAuth('/chat/channels')
+    ]);
+    
+    // Process agents
+    if (agentsResponse.agents && Array.isArray(agentsResponse.agents)) {
+      agentsData = agentsResponse.agents;
+      console.log('[Dashboard] Loaded agents:', agentsData.length);
+      
+      // Compute agent stats
+      const onlineAgents = agentsData.filter(a => 
+        a.status === 'online' || a.status === 'active' || a.online === true
+      ).length;
+      
+      const uniqueProviders = new Set(
+        agentsData
+          .map(a => a.provider || a.effective_provider)
+          .filter(p => p && p !== 'Unknown' && p !== null)
+      );
+      
+      animateCounter('stat-agents', onlineAgents);
+      animateCounter('stat-integrations', uniqueProviders.size);
+      
+      renderAgents(agentsData);
+    } else {
+      console.log('[Dashboard] No agents found');
+      renderEmptyAgents();
+      animateCounter('stat-agents', 0);
+      animateCounter('stat-integrations', 0);
+    }
+    
+    // Process tasks - FIXED: Use real task count
+    if (tasksResponse.count !== undefined) {
+      tasksData = tasksResponse.tasks || [];
+      console.log('[Dashboard] Loaded tasks:', tasksResponse.count);
+      animateCounter('stat-tasks', tasksResponse.count);
+    } else {
+      console.log('[Dashboard] No tasks data available');
+      animateCounter('stat-tasks', 0);
+    }
+    
+    // Process channels for message count - ENHANCED: Get real message counts
+    if (channelsResponse.data && Array.isArray(channelsResponse.data)) {
+      channelsData = channelsResponse.data;
+      const totalMessages = channelsData.reduce((sum, ch) => {
+        return sum + parseInt(ch.message_count || 0);
+      }, 0);
+      console.log('[Dashboard] Total messages across channels:', totalMessages);
+      animateCounter('stat-messages', totalMessages);
+    } else {
+      console.log('[Dashboard] No channels data available');
+      animateCounter('stat-messages', 0);
+    }
+    
+    // Show real activity based on recent tasks
+    renderRecentActivity();
+    
+  } catch (error) {
+    console.error('[Dashboard] Load error:', error);
+    showDashboardError(error);
+  }
+}
+
+// Set stat value (including error states)
+function setStat(elementId, value) {
+  const el = document.getElementById(elementId);
+  if (el) {
+    el.textContent = value;
+    if (value === 'Err') {
+      el.classList.add('stat-error');
+    }
+  }
+}
+
+// Render agents with real data
+function renderAgents(agents) {
+  const grid = document.getElementById('agentsGrid');
+  
+  if (!agents || agents.length === 0) {
+    renderEmptyAgents();
+    return;
+  }
+  
+  grid.innerHTML = '';
+  
+  // Show up to 6 agents in the dashboard
+  const displayAgents = agents.slice(0, 6);
+  
+  displayAgents.forEach((agent, i) => {
+    const isOnline = agent.status === 'online' || agent.status === 'active' || agent.online === true;
+    
+    // Use real role, status and avatar data
+    const role = agent.role || agent.description || 'AI Agent';
+    const statusText = isOnline ? 'En ligne' : 'Hors ligne';
+    
+    // Real avatar handling with fallback
+    const avatarUrl = agent.avatar && (agent.avatar.startsWith('http') || agent.avatar.startsWith('/'))
+      ? agent.avatar 
+      : `/static/avatars/${(agent.username || agent.name || 'default').toLowerCase()}.png`;
+    
+    const avatarHtml = avatarUrl ? 
+      `<img src="${avatarUrl}" style="width:28px;height:28px;border-radius:50%;object-fit:cover" 
+             onerror="this.style.display='none';this.nextElementSibling.style.display='inline'"
+             alt="${agent.name}">` : '';
+    
+    grid.innerHTML += `
+      <div class="agent-card" onclick="showAgent(${i})">
+        <div class="top">
+          <span class="dot ${isOnline ? 'on' : 'off'}"></span>
+          ${avatarHtml}<span style="font-size:18px;${avatarUrl ? 'display:none' : ''}">🤖</span>
+          <span class="name">${agent.name || 'Unnamed Agent'}</span>
+        </div>
+        <div class="status">${role} • ${statusText}</div>
+      </div>
+    `;
+  });
+  
+  // Add "View all" link if more agents exist
+  if (agents.length > 6) {
+    grid.innerHTML += `
+      <div class="agent-card" onclick="location.href='/agents'" style="border-style:dashed;opacity:0.7">
+        <div style="text-align:center;padding:20px 0">
+          <div style="font-size:24px;margin-bottom:8px">+${agents.length - 6}</div>
+          <div style="font-size:12px;color:var(--muted)">Voir tous les agents</div>
+        </div>
+      </div>
+    `;
+  }
+  
+  // Re-render icons
+  if (typeof lucide !== "undefined") lucide.createIcons();
+}
+
+// Render empty agents state
+function renderEmptyAgents() {
+  document.getElementById('agentsGrid').innerHTML = `
+    <div class="empty" style="grid-column: 1 / -1;">
+      <div class="empty-icon">🤖</div>
+      <div>Aucun agent configuré</div>
+      <div style="margin-top:16px">
+        <button onclick="location.href='/agents'" 
+                style="background:var(--accent);color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">
+          Créer votre premier agent
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// ENHANCED: Render recent activity from real tasks
+function renderRecentActivity() {
+  const activityEl = document.getElementById('activityFeed');
+  
+  // Show recent tasks if available
+  if (tasksData && tasksData.length > 0) {
+    const recentTasks = tasksData
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+      .slice(0, 5); // Show 5 most recent
+    
+    activityEl.innerHTML = recentTasks.map(task => {
+      const timeAgo = formatTimeAgo(task.updatedAt);
+      const statusIcon = task.status === 'done' ? '✅' : 
+                        task.status === 'in_progress' ? '🔄' : '📋';
+      const priorityColor = task.priority > 90 ? 'var(--red)' : 
+                           task.priority > 70 ? '#f59e0b' : 'var(--muted)';
+      
+      return `
+        <div class="act-item">
+          <div class="act-avatar" style="background:${priorityColor}">${statusIcon}</div>
+          <div style="flex:1">
+            <div class="act-text">
+              <strong>Task:</strong> ${task.title.substring(0, 60)}${task.title.length > 60 ? '...' : ''}
+            </div>
+            <div class="act-time">${timeAgo} • Priorité ${task.priority}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } else {
+    renderEmptyActivity();
+  }
+}
+
+// Show empty activity state as per requirements
+function renderEmptyActivity() {
+  document.getElementById('activityFeed').innerHTML = `
+    <div class="empty">
+      <div class="empty-icon">
+        <i data-lucide="activity" style="width:48px;height:48px;display:inline-block;opacity:0.3"></i>
+      </div>
+      <div>Aucune activité récente</div>
+    </div>
+  `;
+  if (typeof lucide !== "undefined") lucide.createIcons();
+}
+
+// Format time ago
+function formatTimeAgo(timestamp) {
+  try {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    
+    if (diffDays > 0) return `il y a ${diffDays}j`;
+    if (diffHours > 0) return `il y a ${diffHours}h`;
+    if (diffMins > 0) return `il y a ${diffMins}m`;
+    return 'à l\'instant';
+  } catch (e) {
+    return '';
+  }
+}
+
+// Show dashboard error
+function showDashboardError(error) {
+  document.getElementById('agentsGrid').innerHTML = `
+    <div class="error-state" style="grid-column: 1 / -1;">
+      <div style="font-size:48px;margin-bottom:12px">⚠️</div>
+      <div>Erreur de chargement du dashboard</div>
+      <div style="font-size:12px;margin-top:8px;color:var(--muted)">${error.message}</div>
+      <button onclick="loadDashboard()" 
+              style="margin-top:16px;background:var(--accent);color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">
+        Réessayer
+      </button>
+    </div>
+  `;
+}
+
+// Show agent detail modal
+function showAgent(index) {
+  if (!agentsData[index]) return;
+  
+  const agent = agentsData[index];
+  
+  document.getElementById('modalTitle').innerHTML = `🤖 ${agent.name}`;
+  document.getElementById('modalBody').innerHTML = `
+    <div class="row">
+      <span class="k">Rôle</span>
+      <span>${agent.role || agent.description || '—'}</span>
+    </div>
+    <div class="row">
+      <span class="k">Model</span>
+      <span>${agent.model || agent.effective_model || '—'}</span>
+    </div>
+    <div class="row">
+      <span class="k">Provider</span>
+      <span>${agent.provider || agent.effective_provider || '—'}</span>
+    </div>
+    <div class="row">
+      <span class="k">Status</span>
+      <span>${(agent.status === 'online' || agent.status === 'active' || agent.online) ? '🟢 Online' : '🔴 Offline'}</span>
+    </div>
+    <div class="row">
+      <span class="k">Email</span>
+      <span>${agent.email || `${agent.username || 'agent'}@vutler.ai`}</span>
+    </div>
+    <div class="row">
+      <span class="k">Créé</span>
+      <span>${agent.createdAt ? new Date(agent.createdAt).toLocaleDateString('fr-FR') : '—'}</span>
+    </div>
+  `;
+  document.getElementById('agentModal').classList.add('show');
+  
+  // Re-render icons in modal
+  if (typeof lucide !== "undefined") lucide.createIcons();
+}
+
+// Close modal
+function closeModal() {
+  document.getElementById('agentModal').classList.remove('show');
+}
+
+// Animate counter
+function animateCounter(elementId, target) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  
+  // Ensure target is a number
+  target = parseInt(target) || 0;
+  
+  let start = 0;
+  const duration = target > 0 ? 1200 : 100;
+  const step = Math.max(duration / Math.max(target, 1), 10);
+  
+  const timer = setInterval(() => {
+    start++;
+    el.textContent = start;
+    if (start >= target) {
+      clearInterval(timer);
+      el.textContent = target;
+    }
+  }, step);
+}
+
+// Clock
+function updateClock() {
+  const d = new Date();
+  document.getElementById('clock').textContent = d.toLocaleTimeString('fr-CH', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+
+if (savedTheme) {
+  document.documentElement.dataset.theme = savedTheme;
+}
+
+// Click outside modal to close
+document.getElementById('agentModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// Initialize
+updateClock();
+setInterval(updateClock, 60000);
+
+// Load dashboard on page load
+loadDashboard();
+</script>
+
+<script>if (typeof lucide !== "undefined") lucide.createIcons();</script>
+
+<script>
+// Theme toggle functionality
+function toggleTheme() {
+  const body = document.body;
+  const isDark = !body.classList.contains('light-theme');
+  if (isDark) {
+    body.classList.add('light-theme');
+    localStorage.setItem('vutler_theme', 'light');
+    document.getElementById('theme-icon').textContent = '☀️';
+    document.getElementById('theme-label').textContent = 'Light';
+  } else {
+    body.classList.remove('light-theme');
+    localStorage.setItem('vutler_theme', 'dark');
+    document.getElementById('theme-icon').textContent = '🌙';
+    document.getElementById('theme-label').textContent = 'Dark';
+  }
+}
+
+// Apply saved theme on load
+(function() {
+  const saved = localStorage.getItem('vutler_theme');
+  if (saved === 'light') {
+    document.body.classList.add('light-theme');
+    const icon = document.getElementById('theme-icon');
+    const label = document.getElementById('theme-label');
+    if (icon) icon.textContent = '☀️';
+    if (label) label.textContent = 'Light';
+  }
+})();
+</script>
+
+<script src="/static/sidebar-template.js"></script>
+<script>window.__VUTLER_SIDEBAR_ACTIVE='dashboard';if(window.__VUTLER_SIDEBAR_BOOT)window.__VUTLER_SIDEBAR_BOOT();</script>
+</body>
+</html>

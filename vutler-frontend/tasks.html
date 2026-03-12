@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Tasks — Vutler</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="/static/auth-helper-v2.js"></script>
+<script>
+requireAuth();
+tailwind.config={theme:{extend:{colors:{navy:'#0A1628','navy-light':'#111d33','navy-lighter':'#182740',accent:'#3B82F6','accent-hover':'#2563EB'},fontFamily:{sans:['Inter','sans-serif']}}}}
+</script>
+<style>
+body{font-family:'Inter',sans-serif;background:#0A1628;color:#e2e8f0}
+.sidebar-link{display:flex;align-items:center;gap:.75rem;padding:.5rem .75rem;border-radius:.5rem;color:#94a3b8;font-size:.875rem;transition:all .15s}
+.sidebar-link:hover{background:rgba(255,255,255,.05);color:#e2e8f0}
+.sidebar-link.active{background:rgba(59,130,246,.15);color:#3B82F6}
+.menu-toggle{display:none;position:fixed;top:12px;left:12px;z-index:60;background:#111d33;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;cursor:pointer;color:#e2e8f0}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:45}
+@media(max-width:768px){
+  aside{position:fixed!important;z-index:50!important;height:100vh!important;transform:translateX(-100%);transition:transform .3s ease}
+  aside.open{transform:translateX(0)}
+  .menu-toggle{display:block}
+  main,.main-content{margin-left:0!important;padding-top:56px!important}
+}
+.task-card{cursor:pointer;transition:transform .15s,box-shadow .15s}
+.task-card:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(0,0,0,.3)}
+.filter-seg{display:inline-flex;background:#111d33;border-radius:8px;padding:2px;gap:1px}
+.filter-seg button{padding:6px 14px;border-radius:6px;font-size:13px;color:#94a3b8;transition:all .15s;white-space:nowrap}
+.filter-seg button:hover{color:#e2e8f0}
+.filter-seg button.active{background:#3B82F6;color:#fff}
+.loading-spinner{animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@media(max-width:768px){
+  .board-kanban{flex-direction:column!important}
+  .board-kanban>div{min-width:0!important}
+  .task-header{flex-wrap:wrap;gap:8px!important}
+  .task-header .search-box{width:100%!important;order:10}
+}
+</style>
+<script src="https://unpkg.com/lucide@latest"></script>
+
+<style id="light-theme-styles">
+/* Light Theme Overrides */
+.light-theme {
+  background-color: #f8fafc !important;
+  color: #111827 !important;
+}
+.light-theme .sidebar,
+.light-theme nav,
+.light-theme aside,
+.light-theme [class*="bg-gray-900"],
+.light-theme [class*="bg-gray-800"],
+.light-theme [class*="bg-[#0a0a0f]"],
+.light-theme [class*="bg-navy"],
+.light-theme [class*="bg-[#111d33]"] {
+  background-color: #ffffff !important;
+  border-color: #e5e7eb !important;
+}
+.light-theme .text-white {
+  color: #111827 !important;
+}
+.light-theme .text-gray-400,
+.light-theme .text-gray-300,
+.light-theme .text-slate-400,
+.light-theme .text-slate-300,
+.light-theme .text-slate-500 {
+  color: #6b7280 !important;
+}
+.light-theme [class*="bg-white/5"],
+.light-theme [class*="bg-white/10"],
+.light-theme [class*="rgba(255,255,255,0.05)"] {
+  background-color: #ffffff !important;
+  border: 1px solid #e5e7eb !important;
+}
+.light-theme [class*="border-gray-700"],
+.light-theme [class*="border-gray-600"],
+.light-theme [class*="border-white/5"],
+.light-theme [class*="border-white/10"] {
+  border-color: #e5e7eb !important;
+}
+.light-theme input,
+.light-theme textarea,
+.light-theme select {
+  background-color: #f9fafb !important;
+  color: #111827 !important;
+  border-color: #d1d5db !important;
+}
+.light-theme .main {
+  background-color: #f8fafc !important;
+}
+.light-theme .stat-card,
+.light-theme .agent-card,
+.light-theme .activity,
+.light-theme .qa-btn,
+.light-theme .modal {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+.light-theme .sidebar-link:hover {
+  background-color: #f1f5f9 !important;
+  color: #111827 !important;
+}
+.light-theme .sidebar-link.active {
+  background-color: rgba(59,130,246,0.1) !important;
+}
+.light-theme #theme-toggle {
+  color: #6b7280 !important;
+}
+.light-theme #theme-toggle:hover {
+  background-color: #f1f5f9 !important;
+  color: #111827 !important;
+}
+</style>
+
+
+
+
+
+
+<style id="sidebar-size-parity-nexus">
+/* Force exact Nexus-like sidebar typography/icon sizing */
+#primary-sidebar .sidebar-link,
+aside.sidebar .sidebar-link,
+aside .sidebar-link {
+  font-size: 14px !important;
+  line-height: 20px !important;
+  font-weight: 500 !important;
+}
+#primary-sidebar .sidebar-link i,
+#primary-sidebar .sidebar-link [data-lucide],
+aside.sidebar .sidebar-link i,
+aside.sidebar .sidebar-link [data-lucide],
+aside .sidebar-link i,
+aside .sidebar-link [data-lucide] {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  stroke-width: 1.75 !important;
+}
+</style>
+
+<style id="sidebar-spacing-parity-nexus">
+/* Force exact Nexus-like vertical spacing */
+#primary-sidebar nav,
+aside.sidebar nav,
+aside nav {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+#primary-sidebar nav .sidebar-link,
+aside.sidebar nav .sidebar-link,
+aside nav .sidebar-link {
+  margin-bottom: 2px !important;
+}
+#primary-sidebar .p-3.border-t.border-white\/5,
+aside.sidebar .p-3.border-t.border-white\/5,
+aside .p-3.border-t.border-white\/5 {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
+}
+#primary-sidebar .p-3.border-t.border-white\/5 .sidebar-link,
+aside.sidebar .p-3.border-t.border-white\/5 .sidebar-link,
+aside .p-3.border-t.border-white\/5 .sidebar-link {
+  margin-bottom: 2px !important;
+}
+</style>
+
+</head>
+<body class="h-full text-gray-200 flex">
+<!-- Sidebar -->
+<button class="menu-toggle" onclick="document.querySelector('aside').classList.toggle('open');document.querySelector('.sidebar-overlay').style.display=document.querySelector('aside').classList.contains('open')?'block':'none'">
+  <i data-lucide="menu" style="width:20px;height:20px"></i>
+</button>
+<div class="sidebar-overlay" onclick="document.querySelector('aside').classList.remove('open');this.style.display='none'" style="display:none"></div>
+<aside class="w-60 bg-navy-light border-r border-white/5 flex flex-col h-screen shrink-0" style="background:#111d33">
+  <div class="p-4 border-b border-white/5">
+    <a href="/dashboard" class="flex items-center gap-2">
+      <img src="/static/vutler-logo-full-white.png" alt="Vutler" style="height:36px">
+    </a>
+  </div>
+  <nav class="flex-1 p-3 space-y-0.5 overflow-y-auto text-sm">
+    <a href="/dashboard" class="sidebar-link"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+    <a href="/agents" class="sidebar-link"><i data-lucide="bot"></i> Agents</a>
+    <a href="/chat" class="sidebar-link"><i data-lucide="message-square"></i> Chat</a>
+    <a href="/drive" class="sidebar-link"><i data-lucide="folder"></i> Drive</a>
+    <a href="/integrations" class="sidebar-link"><i data-lucide="plug"></i> Integrations</a>
+    <a href="/tasks" class="sidebar-link active"><i data-lucide="check-square"></i> Tasks</a>
+    <a href="/mail" class="sidebar-link"><i data-lucide="mail"></i> Mail</a>
+    <a href="/calendar" class="sidebar-link"><i data-lucide="calendar"></i> Calendar</a>
+    <a href="/social-ops" class="sidebar-link"><i data-lucide="megaphone"></i> Social Ops</a>
+    <a href="/nexus" class="sidebar-link"><i data-lucide="cpu"></i> Nexus</a>
+    <a href="/marketplace" class="sidebar-link"><i data-lucide="store"></i> Marketplace</a>
+  </nav>
+  <div class="p-3 border-t border-white/5 space-y-1">
+    <a href="/settings" class="sidebar-link"><i data-lucide="settings"></i> Settings</a>
+    <a href="/billing" class="sidebar-link"><i data-lucide="credit-card"></i> Billing</a>
+    <button id="theme-toggle" onclick="toggleTheme()" class="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-white/5 rounded-lg w-full transition-colors mb-1">
+      <span id="theme-icon">🌙</span>
+      <span id="theme-label">Dark</span>
+    </button>
+
+    <div class="flex items-center gap-2 px-3 py-2 mt-2">
+      <div class="w-8 h-8 rounded-full bg-[#3B82F6]/20 flex items-center justify-center text-sm font-bold text-white">AL</div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-white truncate" id="user-display-name">Alex Lopez</div>
+        <div class="text-xs text-slate-500">Starbox</div>
+      </div>
+      <button onclick="if(typeof logout==='function')logout();else location.href='/login'" 
+              class="text-slate-500 hover:text-slate-300" title="Logout">
+        <i data-lucide="log-out" style="width:16px;height:16px"></i>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<!-- Main -->
+<main class="flex-1 flex flex-col h-screen overflow-hidden">
+  <header class="px-6 py-4 border-b border-white/5 shrink-0">
+    <div class="flex items-center gap-3 task-header">
+      <h1 class="text-xl font-bold text-white flex items-center gap-2">
+        <i data-lucide="check-square" style="width:20px;height:20px"></i>
+        Tasks
+      </h1>
+      <button onclick="openNewTask()" 
+              class="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-1.5">
+        <i data-lucide="plus" style="width:16px;height:16px"></i> 
+        Nouvelle task
+      </button>
+      <div class="filter-seg" id="filters">
+        <button onclick="setFilter('all')" class="active" data-f="all">Toutes</button>
+        <button onclick="setFilter('pending')" data-f="pending">À faire</button>
+        <button onclick="setFilter('in_progress')" data-f="in_progress">En cours</button>
+        <button onclick="setFilter('done')" data-f="done">Terminées</button>
+      </div>
+      <div class="filter-seg">
+        <button onclick="setView('kanban')" class="active" id="vk" data-view="kanban">
+          <i data-lucide="columns" style="width:14px;height:14px"></i>
+        </button>
+        <button onclick="setView('list')" id="vl" data-view="list">
+          <i data-lucide="list" style="width:14px;height:14px"></i>
+        </button>
+      </div>
+      <div class="relative search-box">
+        <input type="text" 
+               placeholder="Rechercher..." 
+               onkeyup="searchTasks(this.value)" 
+               class="bg-navy-light border border-white/10 rounded-lg pl-8 pr-3 py-1.5 text-sm text-white placeholder-slate-500 w-48 focus:border-accent outline-none">
+        <i data-lucide="search" class="absolute left-2.5 top-2 text-slate-500" style="width:14px;height:14px"></i>
+      </div>
+    </div>
+  </header>
+  
+  <!-- Error Banner -->
+  <div id="error-banner" class="hidden mx-6 mt-4 bg-red-500/10 border border-red-500/50 rounded-lg p-3">
+    <div class="flex items-center gap-2 text-red-400 text-sm">
+      <i data-lucide="alert-circle" style="width:16px;height:16px"></i>
+      <span id="error-message">Erreur de chargement</span>
+      <button onclick="loadTasks()" class="ml-auto text-sm underline">Réessayer</button>
+    </div>
+  </div>
+  
+  <div class="flex-1 p-6 overflow-hidden">
+    <div id="board-container" class="h-full">
+      <div class="text-center py-12 text-slate-500">
+        <i data-lucide="loader" class="loading-spinner mx-auto mb-3" style="width:24px;height:24px"></i>
+        <div>Chargement des tasks...</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Task Detail Modal -->
+<div id="taskModal" class="fixed inset-0 bg-black/60 z-50 hidden items-center justify-center" onclick="if(event.target===this)closeModal()">
+  <div class="bg-navy-light border border-white/10 rounded-2xl p-6 w-full max-w-lg mx-4">
+    <div class="flex items-center justify-between mb-4">
+      <h2 id="md-title" class="text-lg font-bold text-white"></h2>
+      <button onclick="closeModal()" class="text-slate-500 hover:text-white text-2xl">&times;</button>
+    </div>
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Status</label>
+          <div id="md-status" class="text-sm font-medium"></div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Priorité</label>
+          <div id="md-priority" class="text-sm"></div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Assigné à</label>
+          <div id="md-assignee" class="text-sm text-slate-300"></div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Échéance</label>
+          <div id="md-due" class="text-sm text-slate-300"></div>
+        </div>
+      </div>
+      <div>
+        <label class="text-xs text-slate-400 block mb-1">Description</label>
+        <div id="md-desc" class="text-sm text-slate-300 bg-white/5 rounded-lg p-3 min-h-[60px]"></div>
+      </div>
+      <div class="flex gap-2 pt-2">
+        <button class="flex-1 bg-accent hover:bg-accent-hover text-white py-2 rounded-lg text-sm">
+          Modifier
+        </button>
+        <button class="px-4 bg-red-500/20 hover:bg-red-500/30 text-red-400 py-2 rounded-lg text-sm">
+          Supprimer
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- New Task Modal -->
+<div id="newModal" class="fixed inset-0 bg-black/60 z-50 hidden items-center justify-center" onclick="if(event.target===this)closeNew()">
+  <div class="bg-navy-light border border-white/10 rounded-2xl p-6 w-full max-w-lg mx-4">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-bold text-white">Nouvelle Task</h2>
+      <button onclick="closeNew()" class="text-slate-500 hover:text-white text-2xl">&times;</button>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="text-sm text-slate-400 block mb-1">Titre *</label>
+        <input type="text" 
+               id="new-title" 
+               placeholder="Titre de la task..."
+               class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-accent outline-none">
+      </div>
+      <div>
+        <label class="text-sm text-slate-400 block mb-1">Description</label>
+        <textarea id="new-desc" 
+                  placeholder="Description optionnelle..."
+                  class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm h-20 resize-none focus:border-accent outline-none"></textarea>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="text-sm text-slate-400 block mb-1">Priorité</label>
+          <select id="new-priority" 
+                  class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-accent outline-none">
+            <option value="90">Critical</option>
+            <option value="70">High</option>
+            <option value="50" selected>Medium</option>
+            <option value="30">Low</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-sm text-slate-400 block mb-1">Échéance</label>
+          <input type="date" 
+                 id="new-due" 
+                 class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:border-accent outline-none">
+        </div>
+      </div>
+      <div class="bg-blue-500/10 border border-blue-500/50 rounded-lg p-3 text-sm text-blue-400">
+        <i data-lucide="info" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:8px"></i>
+        Fonctionnalité disponible bientôt
+      </div>
+      <div class="flex gap-2">
+        <button onclick="createTask()" 
+                disabled
+                class="flex-1 bg-slate-600 text-slate-300 py-2 rounded-lg text-sm cursor-not-allowed">
+          Créer la task
+        </button>
+        <button onclick="closeNew()" 
+                class="px-4 bg-white/5 hover:bg-white/10 text-white py-2 rounded-lg text-sm">
+          Annuler
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let tasks = [];
+const priorityColors = {98:'bg-red-500',80:'bg-orange-500',50:'bg-yellow-500',20:'bg-green-500'};
+const statusLabels = {pending:'À faire',in_progress:'En cours',active:'En cours',running:'En cours',done:'Terminé',completed:'Terminé',cancelled:'Annulé'};
+const statusColors = {pending:'text-yellow-400',in_progress:'text-blue-400',active:'text-blue-400',running:'text-blue-400',done:'text-green-400',completed:'text-green-400',cancelled:'text-slate-400'};
+let currentView='kanban', currentFilter='all', searchQ='';
+
+function priorityLabel(p) {
+  if (p >= 90) return 'Critical';
+  if (p >= 70) return 'High';
+  if (p >= 40) return 'Medium';
+  return 'Low';
+}
+
+function priorityDot(p) {
+  const color = p >= 90 ? 'bg-red-500' : p >= 70 ? 'bg-orange-500' : p >= 40 ? 'bg-yellow-500' : 'bg-green-500';
+  return '<span class="w-2 h-2 rounded-full ' + color + ' inline-block"></span>';
+}
+
+function canonicalStatus(s) {
+  const x = String(s || '').toLowerCase();
+  if (['in_progress','active','running','claimed'].includes(x)) return 'in_progress';
+  if (['done','completed'].includes(x)) return 'done';
+  if (['pending','todo'].includes(x)) return 'pending';
+  return x;
+}
+
+function normalizedTitle(t) {
+  return String(t?.title || '')
+    .toLowerCase()
+    .replace(/^\[p\d+\]\s*/, '')
+    .replace(/^\[backlog\]\s*/, '')
+    .replace(/^backlog\s+/, '')
+    .replace(/^\[[^\]]+\]\s*/, '')
+    .replace(/\(demain\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function filtered() {
+  // Kanban should reflect active operational backlog by default:
+  // include pending/in_progress/done(completed), hide failed/cancelled from active views.
+  let base = tasks
+    .map(t => ({ ...t, _cstatus: canonicalStatus(t.status) }))
+    .filter(t => ['pending','in_progress','done'].includes(t._cstatus));
+
+  // For active views (all/pending/in_progress), collapse duplicates by normalized title.
+  if (['all','pending','in_progress'].includes(currentFilter)) {
+    const grouped = new Map();
+    for (const t of base) {
+      if (currentFilter !== 'all' && t._cstatus !== currentFilter) continue;
+      const key = normalizedTitle(t) || (t.id + '');
+      const prev = grouped.get(key);
+      if (!prev) {
+        grouped.set(key, t);
+        continue;
+      }
+      const prevScore = (prev.priority || 0) * 1_000_000 + Date.parse(prev.updatedAt || prev.createdAt || 0);
+      const curScore = (t.priority || 0) * 1_000_000 + Date.parse(t.updatedAt || t.createdAt || 0);
+      if (curScore > prevScore) grouped.set(key, t);
+    }
+    base = Array.from(grouped.values());
+  } else if (currentFilter !== 'all') {
+    base = base.filter(t => t._cstatus === currentFilter);
+  }
+
+  if (searchQ) {
+    const q = searchQ.toLowerCase();
+    base = base.filter(t => String(t.title || '').toLowerCase().includes(q));
+  }
+
+  return base;
+}
+
+function renderKanban() {
+  const cols = [
+    ['pending','À faire','border-yellow-500'],
+    ['in_progress','En cours','border-blue-500'],
+    ['done','Terminé','border-green-500']
+  ];
+  let h = '<div class="flex gap-6 h-full board-kanban">';
+  
+  for (const [status, label, bc] of cols) {
+    const items = filtered().filter(t => (t._cstatus || canonicalStatus(t.status)) === status);
+    
+    h += '<div class="flex-1 min-w-[280px] flex flex-col">';
+    h += '<div class="flex items-center gap-2 mb-4 pb-2 border-b-2 ' + bc + '">';
+    h += '<h3 class="font-semibold text-white">' + label + '</h3>';
+    h += '<span class="bg-white/5 px-2 py-0.5 rounded-full text-xs text-slate-400">' + items.length + '</span>';
+    h += '</div>';
+    h += '<div class="space-y-3 overflow-y-auto flex-1 pr-1">';
+    
+    for (const t of items) {
+      h += '<div class="task-card bg-navy-lighter border border-white/5 rounded-xl p-4" onclick="openTask(\''+t.id+'\')">'; 
+      h += '<div class="flex items-center gap-2 mb-2">' + priorityDot(t.priority) + '<span class="text-sm font-medium text-white flex-1 line-clamp-2">' + escHtml(t.title) + '</span></div>';
+      if (t.description) h += '<p class="text-xs text-slate-500 mb-3 line-clamp-2">' + escHtml(t.description.substring(0,120)) + (t.description.length > 120 ? '...' : '') + '</p>';
+      h += '<div class="flex items-center gap-2 flex-wrap text-xs text-slate-500">';
+      if (t.assignee) h += '<span><i data-lucide="user" style="width:12px;height:12px;display:inline-block;vertical-align:middle;margin-right:2px"></i>' + escHtml(t.assignee) + '</span>';
+      if (t.dueDate) h += '<span class="ml-auto"><i data-lucide="calendar" style="width:12px;height:12px;display:inline-block;vertical-align:middle;margin-right:2px"></i>' + formatDate(t.dueDate) + '</span>';
+      h += '</div></div>';
+    }
+    
+    if (items.length === 0) {
+      h += '<div class="text-center py-8 text-slate-600 text-sm">Aucune task</div>';
+    }
+    h += '</div></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderList() {
+  const items = filtered();
+  if (items.length === 0) {
+    return `
+      <div class="text-center py-12 text-slate-500">
+        <i data-lucide="check-square" style="width:48px;height:48px;display:block;margin:0 auto 12px;opacity:.3"></i>
+        <div>Aucune task trouvée</div>
+        <button onclick="openNewTask()" class="mt-4 bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg text-sm">
+          Créer votre première task
+        </button>
+      </div>
+    `;
+  }
+  
+  let h = '<div class="bg-navy-light rounded-xl border border-white/5 overflow-hidden">';
+  h += '<table class="w-full text-sm">';
+  h += '<thead><tr class="border-b border-white/5 text-left text-slate-500">';
+  h += '<th class="p-3">Titre</th>';
+  h += '<th class="p-3 hidden sm:table-cell">Status</th>';
+  h += '<th class="p-3 hidden md:table-cell">Priorité</th>';
+  h += '<th class="p-3 hidden lg:table-cell">Assigné</th>';
+  h += '<th class="p-3 hidden lg:table-cell">Échéance</th>';
+  h += '</tr></thead><tbody>';
+  
+  for (const t of items) {
+    h += '<tr class="border-b border-white/5 hover:bg-white/5 cursor-pointer" onclick="openTask(\''+t.id+'\')">';
+    h += '<td class="p-3 text-white font-medium">' + escHtml(t.title) + '</td>';
+    const s = t._cstatus || canonicalStatus(t.status);
+    h += '<td class="p-3 hidden sm:table-cell ' + (statusColors[s]||'text-slate-400') + '">' + (statusLabels[s]||s) + '</td>';
+    h += '<td class="p-3 hidden md:table-cell">' + priorityDot(t.priority) + ' <span class="text-slate-400 ml-1">' + priorityLabel(t.priority) + '</span></td>';
+    h += '<td class="p-3 hidden lg:table-cell text-slate-400">' + escHtml(t.assignee||'—') + '</td>';
+    h += '<td class="p-3 hidden lg:table-cell text-slate-500">' + (t.dueDate ? formatDate(t.dueDate) : '—') + '</td>';
+    h += '</tr>';
+  }
+  h += '</tbody></table></div>';
+  return h;
+}
+
+function render() {
+  document.getElementById('board-container').innerHTML = currentView === 'kanban' ? renderKanban() : renderList();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('#filters button').forEach(b => {
+    b.className = b.dataset.f === f ? 'active' : '';
+  });
+  render();
+}
+
+function setView(v) {
+  currentView = v;
+  document.getElementById('vk').className = v === 'kanban' ? 'active' : '';
+  document.getElementById('vl').className = v === 'list' ? 'active' : '';
+  render();
+}
+
+function searchTasks(q) { 
+  searchQ = q; 
+  render(); 
+}
+
+function openTask(id) {
+  const t = tasks.find(x => x.id == id);
+  if (!t) return;
+  
+  document.getElementById('md-title').textContent = t.title;
+  const s = t._cstatus || canonicalStatus(t.status);
+  document.getElementById('md-status').innerHTML = '<span class="' + (statusColors[s]||'text-slate-400') + '">' + (statusLabels[s]||s) + '</span>';
+  document.getElementById('md-priority').innerHTML = priorityDot(t.priority) + ' ' + priorityLabel(t.priority);
+  document.getElementById('md-assignee').textContent = t.assignee || '—';
+  document.getElementById('md-due').textContent = t.dueDate ? formatDate(t.dueDate) : '—';
+  document.getElementById('md-desc').textContent = t.description || 'Aucune description.';
+  
+  document.getElementById('taskModal').classList.remove('hidden');
+  document.getElementById('taskModal').classList.add('flex');
+}
+
+function closeModal() { 
+  document.getElementById('taskModal').classList.add('hidden'); 
+  document.getElementById('taskModal').classList.remove('flex'); 
+}
+
+function openNewTask() { 
+  document.getElementById('newModal').classList.remove('hidden'); 
+  document.getElementById('newModal').classList.add('flex'); 
+}
+
+function closeNew() { 
+  document.getElementById('newModal').classList.add('hidden'); 
+  document.getElementById('newModal').classList.remove('flex'); 
+}
+
+async function createTask() {
+  const title = document.getElementById('new-title').value.trim();
+  if (!title) {
+    alert('Titre requis');
+    return;
+  }
+  
+  try {
+    const taskData = {
+      title,
+      description: document.getElementById('new-desc').value,
+      priority: parseInt(document.getElementById('new-priority').value),
+      dueDate: document.getElementById('new-due').value || null,
+      status: 'pending'
+    };
+    
+    console.log('[Tasks] Creating task:', taskData);
+    
+    const response = await fetchWithAuth('/tasks', {
+      method: 'POST',
+      body: JSON.stringify(taskData)
+    });
+    
+    console.log('[Tasks] Create response:', response);
+    
+    closeNew();
+    await loadTasks();
+    
+    // Clear form
+    document.getElementById('new-title').value = '';
+    document.getElementById('new-desc').value = '';
+    document.getElementById('new-priority').value = '50';
+    document.getElementById('new-due').value = '';
+    
+  } catch(e) { 
+    console.error('[Tasks] Create error:', e);
+    alert('Erreur lors de la création: ' + e.message); 
+  }
+}
+
+function escHtml(s) { 
+  if (!s) return ''; 
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); 
+}
+
+function formatDate(d) { 
+  if (!d) return ''; 
+  try { 
+    return new Date(d).toLocaleDateString('fr-FR',{day:'numeric',month:'short'}); 
+  } catch(e) { 
+    return d; 
+  } 
+}
+
+function showError(message) {
+  const banner = document.getElementById('error-banner');
+  document.getElementById('error-message').textContent = message;
+  banner.classList.remove('hidden');
+}
+
+function hideError() {
+  document.getElementById('error-banner').classList.add('hidden');
+}
+
+function showEmptyState() {
+  document.getElementById('board-container').innerHTML = `
+    <div class="text-center py-12 text-slate-500">
+      <i data-lucide="check-square" style="width:48px;height:48px;display:block;margin:0 auto 12px;opacity:.3"></i>
+      <div class="text-lg font-medium mb-2">Aucune task configurée</div>
+      <div class="text-sm mb-4">Créez votre première task pour commencer</div>
+      <button onclick="openNewTask()" 
+              class="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg text-sm">
+        <i data-lucide="plus" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:4px"></i>
+        Nouvelle task
+      </button>
+    </div>
+  `;
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+async function loadTasks() {
+  console.log('[Tasks] Loading tasks...');
+  
+  try {
+    hideError();
+    
+    const data = await fetchWithAuth('/tasks');
+    console.log('[Tasks] API response:', data);
+    
+    if (data.tasks && Array.isArray(data.tasks)) {
+      tasks = data.tasks.map(t => ({
+        id: t.id || t._id,
+        title: t.title || t.name || 'Sans titre',
+        description: t.description || t.desc || '',
+        status: normalizeStatus(t.status),
+        priority: t.priority || 50,
+        assignee: t.assignee || t.assigned_to || null,
+        dueDate: t.dueDate || t.due_date || t.deadline || null,
+        createdAt: t.created_at || t.createdAt || new Date().toISOString(),
+        updatedAt: t.updated_at || t.updatedAt || new Date().toISOString()
+      }));
+      
+      console.log('[Tasks] Processed tasks:', tasks.length);
+      
+      if (tasks.length > 0) {
+        render();
+      } else {
+        showEmptyState();
+      }
+      
+    } else if (data.success === false) {
+      throw new Error(data.error || 'Invalid response format');
+    } else {
+      console.log('[Tasks] No tasks found');
+      tasks = [];
+      showEmptyState();
+    }
+    
+  } catch(e) {
+    console.error('[Tasks] Load error:', e);
+    showError('Erreur de chargement: ' + e.message);
+    
+    // Show error state in main container
+    document.getElementById('board-container').innerHTML = `
+      <div class="text-center py-12 text-red-400">
+        <i data-lucide="alert-circle" style="width:48px;height:48px;display:block;margin:0 auto 12px"></i>
+        <div class="text-lg font-medium mb-2">Erreur de chargement</div>
+        <div class="text-sm text-slate-500 mb-4">${e.message}</div>
+        <button onclick="loadTasks()" 
+                class="bg-accent hover:bg-accent-hover text-white px-4 py-2 rounded-lg text-sm">
+          <i data-lucide="refresh-cw" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:4px"></i>
+          Réessayer
+        </button>
+      </div>
+    `;
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  }
+}
+
+function normalizeStatus(status) {
+  if (!status) return 'pending';
+  
+  // Normalize different status variations
+  const statusMap = {
+    'todo': 'pending',
+    'pending': 'pending',
+    'active': 'in_progress',
+    'in_progress': 'in_progress',
+    'running': 'in_progress',
+    'working': 'in_progress',
+    'done': 'done',
+    'completed': 'done',
+    'finished': 'done',
+    'cancelled': 'cancelled',
+    'canceled': 'cancelled'
+  };
+  
+  return statusMap[status.toLowerCase()] || status;
+}
+
+// Initialize
+loadTasks();
+</script>
+
+<script>if (typeof lucide !== "undefined") lucide.createIcons();</script>
+
+<script>
+// Theme toggle functionality
+function toggleTheme() {
+  const body = document.body;
+  const isDark = !body.classList.contains('light-theme');
+  if (isDark) {
+    body.classList.add('light-theme');
+    localStorage.setItem('vutler_theme', 'light');
+    document.getElementById('theme-icon').textContent = '☀️';
+    document.getElementById('theme-label').textContent = 'Light';
+  } else {
+    body.classList.remove('light-theme');
+    localStorage.setItem('vutler_theme', 'dark');
+    document.getElementById('theme-icon').textContent = '🌙';
+    document.getElementById('theme-label').textContent = 'Dark';
+  }
+}
+
+// Apply saved theme on load
+(function() {
+  const saved = localStorage.getItem('vutler_theme');
+  if (saved === 'light') {
+    document.body.classList.add('light-theme');
+    const icon = document.getElementById('theme-icon');
+    const label = document.getElementById('theme-label');
+    if (icon) icon.textContent = '☀️';
+    if (label) label.textContent = 'Light';
+  }
+})();
+</script>
+
+<script src="/static/sidebar-template.js"></script>
+<script>window.__VUTLER_SIDEBAR_ACTIVE='tasks';if(window.__VUTLER_SIDEBAR_BOOT)window.__VUTLER_SIDEBAR_BOOT();</script>
+</body>
+</html>
