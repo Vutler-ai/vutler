@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publish markdown/docs files into Vutler Drive path used by all users:
-#   /data/drive/Workspace/starbox/documentation
+# Publish markdown/docs files into the canonical Vutler Drive tenant path:
+#   /data/drive/Workspace/tenants/starbox/documentation
 #
-# Hardcoded target by request: every document published with this helper
-# lands under starbox/documentation.
+# Keeps backward-compatibility copies in legacy folders for visibility.
 
 SSH_KEY="${SSH_KEY:-/Users/lopez/.openclaw/workspace/.secrets/vps-ssh-key.pem}"
 VPS_HOST="${VPS_HOST:-ubuntu@83.228.222.180}"
 VPS_CONTAINER="${VPS_CONTAINER:-vutler-api}"
-VUTLER_DRIVE_DIR="${VUTLER_DRIVE_DIR:-/data/drive/Workspace/starbox/documentation}"
+VUTLER_DRIVE_DIR="${VUTLER_DRIVE_DIR:-/data/drive/Workspace/tenants/starbox/documentation}"
 
 ALIAS_DIRS=(
+  "/data/drive/Workspace/tenants/starbox/documentation"
   "/data/drive/Workspace/starbox/documentation"
   "/data/drive/Workspace/starbox/docs"
   "/data/drive/Workspace/starbox/documenation"
@@ -53,7 +53,7 @@ TMP_FILE="/tmp/$BASENAME"
 scp -i "$SSH_KEY" "$SRC_FILE" "$VPS_HOST:$TMP_FILE"
 
 for DIR in "${ALIAS_DIRS[@]}"; do
-  ssh -i "$SSH_KEY" "$VPS_HOST" "docker exec $VPS_CONTAINER sh -lc 'mkdir -p $DIR && chown -R 1000:1000 /data/drive/Workspace/starbox || true'"
+  ssh -i "$SSH_KEY" "$VPS_HOST" "docker exec $VPS_CONTAINER sh -lc 'mkdir -p $DIR && chown -R 1000:1000 /data/drive/Workspace || true'"
   ssh -i "$SSH_KEY" "$VPS_HOST" "docker cp $TMP_FILE $VPS_CONTAINER:$DIR/$BASENAME"
   ssh -i "$SSH_KEY" "$VPS_HOST" "docker exec $VPS_CONTAINER sh -lc \"chown 1000:1000 '$DIR/$BASENAME'\""
 done
