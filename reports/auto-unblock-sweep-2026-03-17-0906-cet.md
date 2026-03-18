@@ -1,0 +1,21 @@
+# Auto-Unblock Sweep — 2026-03-17 09:06 CET
+
+- **Swarm:** `cmmfe0cq90008o1cohufkls68`
+- **Run mode:** conservative + idempotent
+- **Source:** `rlm_htask_tree` (`max_depth=8`, `include_completed=true`)
+
+## Delta summary
+
+- Mutations applied: **0**
+- WIP cap (N3 <=3/owner): compliant
+- Stale IN_PROGRESS >24h: 0
+- Ownership normalization `nora -> nora-local`: no mutation required
+- Critical FAILED recovery (`P0/P1`): 0
+- Legacy duplicate active noise: 0 actionable cluster(s)
+- Tenant isolation gate chain (`audit -> tests -> remediations`): compliant
+
+## Post-state (IN_PROGRESS N3 by owner)
+- `andrea-local`: 1
+- `michael-local`: 3
+- `mike-local`: 3
+- `philip-local`: 3

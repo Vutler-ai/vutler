@@ -1,14 +1,14 @@
-**Health Check Report:**
+# Health Check Report
 
-**Score: 100/100**
+## Score: 60/100
 
-**No issues found.**
+### Issues Found:
+1. **Docker API Check**: Failed to connect to the Docker API.
+2. **Memory Check**: Command `free -m` not found.
+3. **SSH Check**: SSH connection successful.
+4. **Disk Usage Check**: Disk usage is at 3%. (OK)
+5. **SSL Certificate Expiry Check**: Certificate expires on Jun 9th, 2026. (Next expiry to monitor)
+6. **Local API Process Check**: Unable to retrieve logs from the `vutler-api`. 
 
-**Details:**
-1. Docker containers: OK
-2. API health: OK (200)
-3. Disk usage: 79%
-4. Memory available: 7623MB / 11960MB
-5. SSL expires: May 18 10:15:03 2026 GMT
-
-*Last check: 2026-03-09 23:05 UTC*
+### Warnings:
+- HTTP endpoints requiring auth were not checked due to lack of configuration.

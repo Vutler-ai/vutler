@@ -10,18 +10,35 @@
 
 set -euo pipefail
 
+# Load workspace env by default to avoid auth drift in detached runs
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$(cd "$SCRIPT_DIR/.." && pwd)/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
 # ── API Keys ──────────────────────────────────────────────────
-TEAM_KEY="${SNIPARA_TEAM_KEY:-rlm_b1ea0cb9c7a09928d0dfdc5f13f926cffe336d91a7a1c84fdfec653a3c6c0ce9}"
+# 3-key routing policy:
+# - SNIPARA_PROJECT_KEY: Vutler project MCP endpoint
+# - SNIPARA_TEAM_KEY: Team MCP endpoint
+# - SNIPARA_INTEGRATOR_KEY: provisioning/integrator flows only
+TEAM_KEY="${SNIPARA_TEAM_KEY:-}"
+PROJECT_KEY="${SNIPARA_PROJECT_KEY:-${SNIPARA_VUTLER_KEY:-${SNIPARA_API_KEY:-}}}"
+INTEGRATOR_KEY="${SNIPARA_INTEGRATOR_KEY:-}"
 MOLTBOT_KEY="${SNIPARA_MOLTBOT_KEY:-$TEAM_KEY}"
-VUTLER_KEY="${SNIPARA_VUTLER_KEY:-rlm_f16069fff6267c8cb7e889d4deecdefa7dbc0ec9dccd44065bdac50b58b8dc45}"
+VUTLER_KEY="$PROJECT_KEY"
+VUTLER_BEARER="$PROJECT_KEY"
+VUTLER_PROJECT_ID_RUNTIME="${SNIPARA_PROJECT_ID:-cmmfdy2up0002o1colc66rxs2}"
 
 # ── Endpoints ─────────────────────────────────────────────────
-TEAM_URL="https://api.snipara.com/mcp/team/alopez-nevicom-1769121450132"
+TEAM_URL="${SNIPARA_TEAM_MCP_URL:-https://api.snipara.com/mcp/team/alopez-nevicom-1769121450132}"
 MOLTBOT_PROJECT_ID="cmjolyiqq0001uw0jyv3nblr9"
-VUTLER_PROJECT_ID="cmlphjm4z0001uwy7ybptfrhx"
+VUTLER_PROJECT_ID="${SNIPARA_PROJECT_ID:-cmmfdy2up0002o1colc66rxs2}"
 
-# ── Default project ──────────────────────────────────────────
-PROJECT_SLUG="moltbot"
+# ── Default project (hardened for Vutler ops) ────────────────
+PROJECT_SLUG="vutler"
 
 # Parse --project flag
 while [[ "${1:-}" == -* ]]; do
@@ -35,10 +52,38 @@ done
 case "$PROJECT_SLUG" in
   moltbot) API_KEY="$MOLTBOT_KEY" ;;
   vutler)  API_KEY="$VUTLER_KEY" ;;
-  *)       API_KEY="$TEAM_KEY" ;;
+  team)    API_KEY="$TEAM_KEY" ;;
+  *)
+    echo "ERROR: Unknown project '$PROJECT_SLUG'. Allowed: vutler|team|moltbot" >&2
+    exit 1
+    ;;
 esac
 
-PROJECT_URL="https://api.snipara.com/mcp/${PROJECT_SLUG}"
+if [[ -z "${API_KEY:-}" ]]; then
+  echo "ERROR: Missing Snipara API key for project '$PROJECT_SLUG'. Set SNIPARA_API_KEY (or project-specific env vars)." >&2
+  exit 1
+fi
+
+# Explicit endpoint routing only (prevents accidental /mcp/vutler usage)
+AUTH_MODE="x-api-key"
+case "$PROJECT_SLUG" in
+  vutler)
+    PROJECT_URL="${SNIPARA_PROJECT_MCP_URL:-https://api.snipara.com/mcp/test-workspace-api-vutler}"
+    AUTH_MODE="bearer"
+    ;;
+  team)
+    PROJECT_URL="$TEAM_URL"
+    AUTH_MODE="x-api-key"
+    ;;
+  moltbot)
+    PROJECT_URL="https://api.snipara.com/mcp/moltbot"
+    AUTH_MODE="x-api-key"
+    ;;
+  *)
+    echo "ERROR: Unknown project '$PROJECT_SLUG'. Refusing implicit endpoint resolution." >&2
+    exit 1
+    ;;
+esac
 
 TOOL="${1:-help}"
 shift 2>/dev/null || true
@@ -251,10 +296,17 @@ PAYLOAD=$(cat <<EOF
 EOF
 )
 
-RESPONSE=$(curl -s -X POST "$BASE_URL" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $API_KEY" \
-  -d "$PAYLOAD" 2>&1)
+if [[ "$AUTH_MODE" == "bearer" && "$BASE_URL" == "$PROJECT_URL" ]]; then
+  RESPONSE=$(curl -s -X POST "$BASE_URL" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $VUTLER_BEARER" \
+    -d "$PAYLOAD" 2>&1)
+else
+  RESPONSE=$(curl -s -X POST "$BASE_URL" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    -d "$PAYLOAD" 2>&1)
+fi
 
 # ── Check for rate limit and fallback to team endpoint ────────
 RATE_LIMITED=$(echo "$RESPONSE" | python3 -c "

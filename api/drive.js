@@ -7,17 +7,34 @@ const fsp = fs.promises;
 const path = require('path');
 const multer = require('multer');
 const crypto = require('crypto');
+const driveIndex = require('../services/drive-index');
 
 const DRIVE_ROOT = process.env.VUTLER_DRIVE_ROOT || process.env.VUTLER_DRIVE_DIR || '/data/drive/Workspace';
+const DRIVE_TENANT = sanitizeTenantSlug(process.env.VUTLER_DRIVE_TENANT || 'starbox') || 'starbox';
 
 function normalizeRequestPath(input) {
   const raw = String(input || '/').replace(/\\/g, '/');
   const clean = path.posix.normalize(raw.startsWith('/') ? raw : `/${raw}`);
+  if (clean === `/${DRIVE_TENANT}` || clean.startsWith(`/${DRIVE_TENANT}/`)) {
+    return clean.replace(`/${DRIVE_TENANT}`, `/tenants/${DRIVE_TENANT}`);
+  }
   return clean;
 }
 
 function resolveSafePath(requestPath) {
-  const rel = normalizeRequestPath(requestPath).replace(/^\//, '');
+  let rel = normalizeRequestPath(requestPath).replace(/^\//, '');
+  const tenantBase = `tenants/${DRIVE_TENANT}`;
+
+  // UX rule: root maps directly to client filesystem root.
+  if (!rel) {
+    rel = tenantBase;
+  } else if (!(rel === tenantBase || rel.startsWith(`${tenantBase}/`))) {
+    if (rel === 'tenants' || rel.startsWith('tenants/')) {
+      throw new Error('Tenant scope denied');
+    }
+    rel = `${tenantBase}/${rel}`;
+  }
+
   const full = path.resolve(DRIVE_ROOT, rel);
   const root = path.resolve(DRIVE_ROOT);
   if (full !== root && !full.startsWith(`${root}${path.sep}`)) {
@@ -60,6 +77,31 @@ async function copyFileSafe(src, dest) {
   await fsp.copyFile(src, dest);
 }
 
+function hashPathId(inputPath) {
+  const normalized = inputPath.startsWith('/') ? inputPath : `/${inputPath}`;
+  return crypto.createHash('sha1').update(normalized).digest('hex').slice(0, 24);
+}
+
+async function findFileByIdRecursive(startDir, targetId, publicBase = '/') {
+  const entries = await fsp.readdir(startDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(startDir, entry.name);
+    const publicPath = path.posix.join(publicBase === '/' ? '' : publicBase, entry.name) || '/';
+
+    if (entry.isDirectory()) {
+      const nested = await findFileByIdRecursive(fullPath, targetId, publicPath);
+      if (nested) return nested;
+      continue;
+    }
+
+    const internalPath = `/${path.relative(path.resolve(DRIVE_ROOT), fullPath).replace(/\\/g, '/')}`;
+    if (hashPathId(publicPath) === targetId || hashPathId(internalPath) === targetId) {
+      return { fullPath, name: entry.name, publicPath };
+    }
+  }
+  return null;
+}
+
 function toFileDto(parentReqPath, dirent, stats) {
   const parent = normalizeRequestPath(parentReqPath);
   const childPath = path.posix.join(parent === '/' ? '' : parent, dirent.name) || '/';
@@ -94,6 +136,12 @@ router.get('/files', async (req, res) => {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+
+    try {
+      await driveIndex.onListTouch(req, reqPath, files);
+    } catch (e) {
+      console.warn('[DRIVE][DB] list_touch sync skipped:', e.message);
+    }
 
     return res.json({
       success: true,
@@ -142,17 +190,25 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     await fsp.writeFile(output, req.file.buffer);
     const st = await fsp.stat(output);
 
+    const file = {
+      id: crypto.createHash('sha1').update(output).digest('hex').slice(0, 24),
+      name: finalName,
+      type: 'file',
+      size: st.size,
+      modified: st.mtime.toISOString(),
+      mime_type: req.file.mimetype || 'application/octet-stream',
+      path: path.posix.join(reqPath === '/' ? '' : reqPath, finalName),
+    };
+
+    try {
+      await driveIndex.onUpload(req, file);
+    } catch (e) {
+      console.warn('[DRIVE][DB] upload sync skipped:', e.message);
+    }
+
     return res.json({
       success: true,
-      file: {
-        id: crypto.createHash('sha1').update(output).digest('hex').slice(0, 24),
-        name: finalName,
-        type: 'file',
-        size: st.size,
-        modified: st.mtime.toISOString(),
-        mime_type: req.file.mimetype || 'application/octet-stream',
-        path: path.posix.join(reqPath === '/' ? '' : reqPath, finalName),
-      },
+      file,
     });
   } catch (err) {
     const status = /traversal/i.test(err.message) ? 400 : 500;
@@ -255,14 +311,21 @@ router.post('/folders', async (req, res) => {
     }
 
     const reqPath = normalizeRequestPath(req.body?.path || '/');
-    const { full } = resolveSafePath(path.posix.join(reqPath, name));
+    const folderPath = path.posix.join(reqPath === '/' ? '' : reqPath, name);
+    const { full } = resolveSafePath(folderPath);
     await fsp.mkdir(full, { recursive: true });
+
+    try {
+      await driveIndex.onCreateFolder(req, folderPath);
+    } catch (e) {
+      console.warn('[DRIVE][DB] folder sync skipped:', e.message);
+    }
 
     return res.json({
       success: true,
       folder: {
         name,
-        path: path.posix.join(reqPath === '/' ? '' : reqPath, name),
+        path: folderPath,
       },
     });
   } catch (err) {
@@ -328,10 +391,79 @@ router.post('/move', async (req, res) => {
     await fsp.rename(from, dest);
 
     const rel = `/${path.relative(path.resolve(DRIVE_ROOT), dest).replace(/\\/g, '/')}`;
+
+    try {
+      await driveIndex.onMove(req, fromPath, rel);
+    } catch (e) {
+      console.warn('[DRIVE][DB] move sync skipped:', e.message);
+    }
+
     return res.json({ success: true, moved: { from: fromPath, to: rel } });
   } catch (err) {
     const status = /ENOENT|Invalid|traversal/i.test(err.message) ? 400 : 500;
     return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/delete', async (req, res) => {
+  try {
+    await ensureRoot();
+    const targetPath = normalizeRequestPath(req.body?.path || '');
+
+    if (!targetPath || targetPath === '/') {
+      return res.status(400).json({ success: false, error: 'Invalid target path' });
+    }
+
+    const { full } = resolveSafePath(targetPath);
+    const st = await fsp.stat(full);
+    if (st.isDirectory()) await fsp.rm(full, { recursive: true, force: true });
+    else await fsp.unlink(full);
+
+    try {
+      await driveIndex.onDelete(req, targetPath);
+    } catch (e) {
+      console.warn('[DRIVE][DB] delete sync skipped:', e.message);
+    }
+
+    return res.json({ success: true, deleted: { path: targetPath } });
+  } catch (err) {
+    const status = /ENOENT|Invalid|traversal/i.test(err.message) ? 400 : 500;
+    return res.status(status).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) {
+      return res.status(400).json({ success: false, error: 'Missing query parameter: q' });
+    }
+
+    const pathPrefix = normalizeRequestPath(req.query.path || '/');
+    const includeContent = String(req.query.includeContent || 'false').toLowerCase() === 'true';
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
+
+    const results = await driveIndex.search(req, {
+      q,
+      pathPrefix,
+      limit,
+      includeContent,
+    });
+
+    return res.json({
+      success: true,
+      q,
+      path: pathPrefix,
+      includeContent,
+      count: results.length,
+      results,
+      note: includeContent
+        ? 'Content field is searched only when extraction has produced real content_text (content_extracted_at IS NOT NULL).'
+        : 'Searching name/path fields only. Pass includeContent=true to additionally search extracted content_text when available.',
+    });
+  } catch (err) {
+    console.error('[DRIVE] Search error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -340,24 +472,35 @@ router.get('/preview/:id', async (req, res) => {
     const reqPath = normalizeRequestPath(req.query.path || '/');
     const { full } = resolveSafePath(reqPath);
     const entries = await fsp.readdir(full, { withFileTypes: true });
-    const match = entries.find((e) => {
+
+    let match = entries.find((e) => {
       if (e.isDirectory()) return false;
       const p = path.posix.join(reqPath === '/' ? '' : reqPath, e.name) || '/';
-      const id = crypto.createHash('sha1').update(p.startsWith('/') ? p : `/${p}`).digest('hex').slice(0, 24);
-      return id === req.params.id;
+      return hashPathId(p) === req.params.id;
     });
-    if (!match) return res.status(404).json({ success: false, error: 'File not found' });
 
-    const file = path.join(full, match.name);
+    let file;
+    let fileName;
+    if (match) {
+      file = path.join(full, match.name);
+      fileName = match.name;
+    } else {
+      const tenantRoot = path.join(path.resolve(DRIVE_ROOT), 'tenants', DRIVE_TENANT);
+      const found = await findFileByIdRecursive(tenantRoot, req.params.id, '/');
+      if (!found) return res.status(404).json({ success: false, error: 'File not found' });
+      file = found.fullPath;
+      fileName = found.name;
+    }
+
     const st = await fsp.stat(file);
-    const ext = path.extname(match.name).toLowerCase();
+    const ext = path.extname(fileName).toLowerCase();
 
     if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.pdf'].includes(ext)) {
-      return res.json({ success: true, type: 'binary', url: `/api/v1/drive/download/${req.params.id}?path=${encodeURIComponent(reqPath)}`, name: match.name, modified: st.mtime.toISOString() });
+      return res.json({ success: true, type: 'binary', url: `/api/v1/drive/download/${req.params.id}?path=${encodeURIComponent(reqPath)}`, name: fileName, modified: st.mtime.toISOString() });
     }
 
     const raw = await fsp.readFile(file, 'utf8');
-    return res.json({ success: true, type: 'text', name: match.name, modified: st.mtime.toISOString(), content: raw.slice(0, 250000) });
+    return res.json({ success: true, type: 'text', name: fileName, modified: st.mtime.toISOString(), content: raw.slice(0, 250000) });
   } catch (err) {
     return res.status(404).json({ success: false, error: 'File not found' });
   }
@@ -374,22 +517,28 @@ router.get('/download/:id', async (req, res) => {
     try {
       st = await fsp.stat(targetFile);
     } catch {
-      return res.status(404).json({ success: false, error: 'File not found' });
+      const tenantRoot = path.join(path.resolve(DRIVE_ROOT), 'tenants', DRIVE_TENANT);
+      const found = await findFileByIdRecursive(tenantRoot, req.params.id, '/');
+      if (!found) return res.status(404).json({ success: false, error: 'File not found' });
+      targetFile = found.fullPath;
+      st = await fsp.stat(targetFile);
     }
 
     if (st.isDirectory()) {
-      // Fallback: if a directory was passed, try to locate the file by ID in this directory
       const entries = await fsp.readdir(targetFile, { withFileTypes: true });
       const match = entries.find((e) => {
         if (e.isDirectory()) return false;
         const p = path.posix.join(reqPath === '/' ? '' : reqPath, e.name) || '/';
-        const id = crypto.createHash('sha1').update(p.startsWith('/') ? p : `/${p}`).digest('hex').slice(0, 24);
-        return id === req.params.id;
+        return hashPathId(p) === req.params.id;
       });
       if (!match) {
-        return res.status(404).json({ success: false, error: 'File not found' });
+        const tenantRoot = path.join(path.resolve(DRIVE_ROOT), 'tenants', DRIVE_TENANT);
+        const found = await findFileByIdRecursive(tenantRoot, req.params.id, '/');
+        if (!found) return res.status(404).json({ success: false, error: 'File not found' });
+        targetFile = found.fullPath;
+      } else {
+        targetFile = path.join(targetFile, match.name);
       }
-      targetFile = path.join(targetFile, match.name);
     }
 
     const fileName = path.basename(targetFile);
