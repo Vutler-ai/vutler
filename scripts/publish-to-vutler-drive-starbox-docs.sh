@@ -2,15 +2,15 @@
 set -euo pipefail
 
 # Publish markdown/docs files into Vutler Drive path used by all users:
-#   /data/drive/Workspace/starbox/documenation
+#   /data/drive/Workspace/starbox/documentation
 #
 # Hardcoded target by request: every document published with this helper
-# lands under starbox/documenation.
+# lands under starbox/documentation.
 
 SSH_KEY="${SSH_KEY:-/Users/lopez/.openclaw/workspace/.secrets/vps-ssh-key.pem}"
 VPS_HOST="${VPS_HOST:-ubuntu@83.228.222.180}"
 VPS_CONTAINER="${VPS_CONTAINER:-vutler-api}"
-VUTLER_DRIVE_DIR="${VUTLER_DRIVE_DIR:-/data/drive/Workspace/starbox/documenation}"
+VUTLER_DRIVE_DIR="${VUTLER_DRIVE_DIR:-/data/drive/Workspace/starbox/documentation}"
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <source-file>
