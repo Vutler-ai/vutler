@@ -32,3 +32,13 @@ node_modules/
 *.bak.*
 *.backup*
 *.orig
+
+# Local embedded repos to keep isolated (managed separately):
+projects/snipara-webapp/
+projects/vaultbrix/
+projects/vaultbrix-dashboard/
+projects/vutler/
+skills/ui-ux-pro-max/
+nexus-prototype/
+reports/prod-executor-cycle-2026-03-18-0912-cet.md
+reports/prod-executor-cycle-2026-03-18-1006-cet.md
