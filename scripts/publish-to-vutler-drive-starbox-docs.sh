@@ -11,6 +11,13 @@ SSH_KEY="${SSH_KEY:-/Users/lopez/.openclaw/workspace/.secrets/vps-ssh-key.pem}"
 VPS_HOST="${VPS_HOST:-ubuntu@83.228.222.180}"
 VPS_CONTAINER="${VPS_CONTAINER:-vutler-api}"
 VUTLER_DRIVE_DIR="${VUTLER_DRIVE_DIR:-/data/drive/Workspace/starbox/documentation}"
+
+ALIAS_DIRS=(
+  "/data/drive/Workspace/starbox/documentation"
+  "/data/drive/Workspace/starbox/docs"
+  "/data/drive/Workspace/starbox/documenation"
+)
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") <source-file>
@@ -42,13 +49,22 @@ fi
 BASENAME="$(basename "$SRC_FILE")"
 TMP_FILE="/tmp/$BASENAME"
 
-# Ensure destination folder exists and copy file in one atomic chain.
+# Copy locally to VPS temp.
 scp -i "$SSH_KEY" "$SRC_FILE" "$VPS_HOST:$TMP_FILE"
-ssh -i "$SSH_KEY" "$VPS_HOST" \
-  "docker exec $VPS_CONTAINER sh -lc 'mkdir -p $VUTLER_DRIVE_DIR && chown -R 1000:1000 $(dirname "$VUTLER_DRIVE_DIR") || true' && \
-   docker cp $TMP_FILE $VPS_CONTAINER:$VUTLER_DRIVE_DIR/$BASENAME && \
-   docker exec $VPS_CONTAINER sh -lc \"chown 1000:1000 '$VUTLER_DRIVE_DIR/$BASENAME'\" && \
-   docker exec $VPS_CONTAINER sh -lc \"ls -l '$VUTLER_DRIVE_DIR/$BASENAME'\" && \
-   rm -f $TMP_FILE"
 
-echo "[publish-drive] ✅ published $BASENAME to ${VPS_HOST}:${VUTLER_DRIVE_DIR}/${BASENAME}"
+for DIR in "${ALIAS_DIRS[@]}"; do
+  ssh -i "$SSH_KEY" "$VPS_HOST" "docker exec $VPS_CONTAINER sh -lc 'mkdir -p $DIR && chown -R 1000:1000 /data/drive/Workspace/starbox || true'"
+  ssh -i "$SSH_KEY" "$VPS_HOST" "docker cp $TMP_FILE $VPS_CONTAINER:$DIR/$BASENAME"
+  ssh -i "$SSH_KEY" "$VPS_HOST" "docker exec $VPS_CONTAINER sh -lc \"chown 1000:1000 '$DIR/$BASENAME'\""
+done
+
+for DIR in "${ALIAS_DIRS[@]}"; do
+  ssh -i "$SSH_KEY" "$VPS_HOST" "docker exec $VPS_CONTAINER sh -lc \"ls -l '$DIR/$BASENAME'\""
+done
+
+ssh -i "$SSH_KEY" "$VPS_HOST" "rm -f $TMP_FILE"
+
+echo "[publish-drive] ✅ published $BASENAME to ${VPS_HOST} in:"
+for DIR in "${ALIAS_DIRS[@]}"; do
+  echo "  - $DIR"
+done
