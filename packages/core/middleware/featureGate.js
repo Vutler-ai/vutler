@@ -186,18 +186,38 @@ function getNexusLimits(planId) {
  *   router.get('/agents', gateFeature('agents'), handler);
  */
 function gateFeature(featureName) {
-  return (req, res, next) => {
-    const planId = req.workspacePlan || 'free';
+  return async (req, res, next) => {
+    try {
+      // Load plan inline if not already set (avoids global async middleware)
+      if (!req.workspacePlan) {
+        const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+        try {
+          const { queryWithWorkspace } = require('../../../services/pg');
+          const { rows } = await queryWithWorkspace(
+            workspaceId,
+            'SELECT value FROM workspace_settings WHERE workspace_id = $1 AND key = $2',
+            [workspaceId, 'billing_plan']
+          );
+          req.workspacePlan = rows[0]?.value?.plan || 'free';
+        } catch (_) {
+          req.workspacePlan = 'full'; // Default to full in dev/error
+        }
+      }
 
-    if (hasFeature(planId, featureName)) {
-      return next();
+      const planId = req.workspacePlan;
+
+      if (hasFeature(planId, featureName)) {
+        return next();
+      }
+
+      return res.status(403).json({
+        error: 'feature_not_available',
+        message: `Feature "${featureName}" is not available on your "${planId}" plan.`,
+        upgrade_url: '/settings/billing',
+      });
+    } catch (err) {
+      next(); // On any error, let the request through
     }
-
-    return res.status(403).json({
-      error: 'feature_not_available',
-      message: `Feature "${featureName}" is not available on your "${planId}" plan.`,
-      upgrade_url: '/settings/billing',
-    });
   };
 }
 
