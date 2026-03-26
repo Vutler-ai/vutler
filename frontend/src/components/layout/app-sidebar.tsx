@@ -252,12 +252,12 @@ export default function AppSidebar({
 
   const initials =
     user.initials ||
-    user.name
+    (user.name || 'U')
       .split(' ')
-      .map((n) => n[0])
+      .map((n: string) => n[0] || '')
       .join('')
       .toUpperCase()
-      .slice(0, 2);
+      .slice(0, 2) || 'U';
 
   const sidebarWidth = collapsed ? 'w-16' : 'w-64';
 
