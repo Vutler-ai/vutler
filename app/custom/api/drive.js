@@ -370,7 +370,7 @@ router.post('/drive/upload', authenticateAgent, requireCorePermission('drive.upl
     const bucket = await getWorkspaceBucket(workspaceId);
     
     // Upload to S3
-    await s3Driver.upload(bucket, s3Key, req.file.buffer, req.file.mimetype);
+    await s3Driver.upload(bucket, s3Driver.prefixKey(s3Key), req.file.buffer, req.file.mimetype);
     
     // Save metadata to database
     const itemPath = normalized === '/' ? `/${cleanName}` : `${normalized}/${cleanName}`;
@@ -460,7 +460,7 @@ router.get('/drive/download/:id', authenticateAgent, requireCorePermission('driv
     const bucket = await getWorkspaceBucket(workspaceId);
 
     // Download from S3
-    const s3Result = await s3Driver.download(bucket, fileRecord.s3_key);
+    const s3Result = await s3Driver.download(bucket, s3Driver.prefixKey(fileRecord.s3_key));
 
     // Set response headers
     res.setHeader('Content-Type', fileRecord.mime_type || 'application/octet-stream');
@@ -519,7 +519,7 @@ router.delete('/drive/files/:id', authenticateAgent, requireCorePermission('driv
     // Delete from S3 if it's a file (not a folder)
     if (fileRecord.mime_type !== 'inode/directory' && fileRecord.s3_key) {
       const bucket = await getWorkspaceBucket(workspaceId);
-      await s3Driver.remove(bucket, fileRecord.s3_key);
+      await s3Driver.remove(bucket, s3Driver.prefixKey(fileRecord.s3_key));
     }
     
     // Soft delete from database
@@ -578,7 +578,7 @@ router.delete('/files', authenticateAgent, requireCorePermission('drive.delete')
     // Delete from S3 if it's a file
     if (fileRecord.mime_type !== 'inode/directory' && fileRecord.s3_key) {
       const bucket = await getWorkspaceBucket(workspaceId);
-      await s3Driver.remove(bucket, fileRecord.s3_key);
+      await s3Driver.remove(bucket, s3Driver.prefixKey(fileRecord.s3_key));
     }
     
     // Soft delete from database

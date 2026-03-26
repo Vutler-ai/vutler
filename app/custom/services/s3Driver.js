@@ -10,8 +10,12 @@ const s3 = new S3Client({
     accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || ''
   },
-  forcePathStyle: true
+  forcePathStyle: process.env.S3_FORCE_PATH_STYLE === 'true'
 });
+
+// Vaultbrix multi-tenant: all files stored under tenant prefix
+const S3_BUCKET = process.env.S3_BUCKET || 'vaultbrix-storage';
+const S3_PREFIX = process.env.S3_BUCKET_PREFIX || '';
 
 /**
  * Ensure a bucket exists, create if not
@@ -115,11 +119,24 @@ async function move(bucket, oldKey, newKey) {
  * Get bucket name for a workspace
  */
 function getBucketName(workspaceSlug) {
-  return `drive-${workspaceSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+  return S3_BUCKET; // single shared bucket, tenant isolation via prefix
+}
+
+/**
+ * Get the tenant-prefixed key for a file path
+ */
+function prefixKey(key) {
+  if (!S3_PREFIX) return key;
+  const prefix = S3_PREFIX.endsWith('/') ? S3_PREFIX : S3_PREFIX + '/';
+  // Don't double-prefix
+  if (key.startsWith(prefix)) return key;
+  return prefix + key;
 }
 
 module.exports = {
   s3,
+  S3_BUCKET,
+  S3_PREFIX,
   ensureBucket,
   createBucket,
   upload,
@@ -128,5 +145,6 @@ module.exports = {
   remove,
   move,
   getPresignedDownloadUrl,
-  getBucketName
+  getBucketName,
+  prefixKey
 };
