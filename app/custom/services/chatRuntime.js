@@ -23,6 +23,15 @@ let agentCache = null;
 let agentCacheTime = 0;
 const CACHE_TTL = 60000;
 
+// Poll error tracking
+let pollInterval = POLL_INTERVAL;
+let consecutiveErrors = 0;
+let lastErrorMessage = null;
+let lastErrorLogTime = 0;
+const MAX_POLL_INTERVAL = 60000;
+const ERROR_LOG_THROTTLE = 30000;
+const MAX_CONSECUTIVE_ERRORS = 10;
+
 // Soul cache per agent (TTL 5 min)
 const soulCache = new Map();
 const SOUL_CACHE_TTL = 300000;
@@ -361,8 +370,35 @@ async function pollOnce() {
       const arr = [...processedIds];
       arr.slice(0, arr.length - 500).forEach(id => processedIds.delete(id));
     }
+
+    // Success: reset error state and interval
+    if (consecutiveErrors > 0) {
+      console.log('[ChatRuntime] DB connection restored — resuming normal polling');
+    }
+    consecutiveErrors = 0;
+    lastErrorMessage = null;
+    lastErrorLogTime = 0;
+    pollInterval = POLL_INTERVAL;
   } catch (err) {
-    console.error('[ChatRuntime] Poll error:', err.message);
+    consecutiveErrors++;
+    const now = Date.now();
+    const sameError = err.message === lastErrorMessage;
+    const throttled = sameError && (now - lastErrorLogTime) < ERROR_LOG_THROTTLE;
+
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      pollInterval = MAX_POLL_INTERVAL;
+      if (!throttled) {
+        console.error(`[ChatRuntime] Disabled — DB unavailable (will retry in 60s): ${err.message}`);
+        lastErrorMessage = err.message;
+        lastErrorLogTime = now;
+      }
+    } else if (!throttled) {
+      console.error('[ChatRuntime] Poll error:', err.message);
+      lastErrorMessage = err.message;
+      lastErrorLogTime = now;
+      // Exponential backoff: double interval up to max
+      pollInterval = Math.min(pollInterval * 2, MAX_POLL_INTERVAL);
+    }
   }
 }
 
@@ -374,7 +410,7 @@ function start() {
   const tick = async () => {
     if (!running) return;
     await pollOnce();
-    setTimeout(tick, POLL_INTERVAL);
+    setTimeout(tick, pollInterval);
   };
 
   setTimeout(tick, 5000);
