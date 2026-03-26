@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 const TABS = [
   { label: 'Config', path: 'config' },
   { label: 'Executions', path: 'executions' },
+  { label: 'Memory', path: 'memory' },
   { label: 'Integrations', path: 'integrations' },
   { label: 'Publish', path: 'publish' },
 ] as const;

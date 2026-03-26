@@ -77,10 +77,20 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  status: 'todo' | 'in_progress' | 'done';
+  status: 'todo' | 'in_progress' | 'done' | 'pending' | 'completed';
   priority: 'low' | 'medium' | 'high';
   assignee: string;
   due_date: string;
+  // htasks (hierarchical)
+  parent_id?: string | null;
+  subtask_count?: number;
+  subtask_completed_count?: number;
+  // Snipara sync
+  snipara_task_id?: string | null;
+  swarm_task_id?: string | null;
+  source?: string | null;
+  // Agent
+  assigned_agent?: string | null;
 }
 
 export interface CreateTaskPayload {
@@ -90,6 +100,13 @@ export interface CreateTaskPayload {
   priority: Task['priority'];
   assignee: string;
   due_date: string;
+  parent_id?: string | null;
+}
+
+export interface SyncTasksResponse {
+  synced: number;
+  errors: number;
+  total: number;
 }
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
@@ -443,4 +460,32 @@ export interface ApiError {
 
 export interface SuccessResponse {
   success: boolean;
+}
+
+// ─── Memory ───────────────────────────────────────────────────────────────────
+
+export interface Memory {
+  id: string;
+  text: string;
+  type: 'fact' | 'learning' | 'decision' | 'preference';
+  importance: number;
+  scope: 'agent' | 'template' | 'global';
+  category?: string;
+  created_at: string;
+  agent_id?: string;
+}
+
+export interface AgentContext {
+  memories: Memory[];
+  context: string;
+  soul?: string;
+  template_count: number;
+  instance_count: number;
+  role: string;
+}
+
+export interface RememberPayload {
+  text: string;
+  type: Memory['type'];
+  importance: number;
 }

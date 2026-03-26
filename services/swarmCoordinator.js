@@ -368,6 +368,61 @@ class SwarmCoordinator {
     return data;
   }
 
+  /**
+   * Pull all tasks from Snipara and upsert into PG, preserving hierarchy
+   * via parent_id. Returns { synced, errors }.
+   */
+  async syncFromSnipara() {
+    const data = await this.sniparaCall("rlm_tasks", { swarm_id: this.swarmId });
+    const arr = Array.isArray(data?.tasks) ? data.tasks : (Array.isArray(data) ? data : []);
+
+    let synced = 0;
+    let errors = 0;
+
+    // First pass: upsert all tasks without parent_id resolution
+    const idMap = {}; // sniparaId -> pgUUID
+    for (const t of arr) {
+      const sniparaId = t.id || t.task_id;
+      if (!sniparaId) continue;
+      try {
+        const pgId = await this.syncPgTask({
+          sniparaTaskId: sniparaId,
+          title: t.title,
+          description: t.description,
+          priority: t.priority,
+          status: t.status,
+          assignedTo: t.assigned_to || t.for_agent_id || t.agent_id,
+          source: "snipara-sync"
+        });
+        idMap[sniparaId] = pgId;
+        synced++;
+      } catch (e) {
+        console.error("[SwarmCoordinator] syncFromSnipara upsert error:", e.message);
+        errors++;
+      }
+    }
+
+    // Second pass: wire parent_id relationships for tasks that have a parent
+    for (const t of arr) {
+      const sniparaId = t.id || t.task_id;
+      const parentSniparaId = t.parent_id || t.parent_task_id;
+      if (!sniparaId || !parentSniparaId) continue;
+      const pgId = idMap[sniparaId];
+      const pgParentId = idMap[parentSniparaId];
+      if (!pgId || !pgParentId) continue;
+      try {
+        await pool.query(
+          `UPDATE ${SCHEMA}.tasks SET parent_id = $1 WHERE id = $2 AND (parent_id IS NULL OR parent_id != $1)`,
+          [pgParentId, pgId]
+        );
+      } catch (e) {
+        console.error("[SwarmCoordinator] syncFromSnipara parent_id wire error:", e.message);
+      }
+    }
+
+    return { synced, errors, total: arr.length };
+  }
+
   async claimTask(taskId, agentId) {
     const out = await this.sniparaCall("rlm_task_claim", { swarm_id: this.swarmId, task_id: taskId, agent_id: agentId });
     await this.syncPgTask({ sniparaTaskId: taskId, assignedTo: agentId, status: "in_progress", source: "snipara-claim" });

@@ -75,6 +75,8 @@ mount('/automation-logs', 'automations', '../../api/automation-logs-routes');
 mount('/knowledge',       'knowledge',   '../../api/knowledge');
 
 // ── Memory ──────────────────────────────────────────────────────────────────
+// api/memory.js handles /agents/:agentId/memories and /memory/promote
+mount('/',                'agents',      '../../api/memory');
 mount('/memory',          'agents',      '../../app/custom/api/memory');
 
 // ── Snipara ─────────────────────────────────────────────────────────────────
