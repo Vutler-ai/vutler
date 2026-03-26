@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const https = require('https');
 const http = require('http');
+const { createDashboardServer } = require('./dashboard/server');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -38,6 +39,8 @@ class NexusNode {
       this.providers.av = new AVControlProvider(perms.av || { subnets: perms.network?.subnets });
     }
     this.reconnectInterval = 5000;
+    this.recentTasks = [];
+    this.logBuffer = [];
   }
 
   async connect() {
@@ -70,8 +73,8 @@ class NexusNode {
     // 3. Start polling for tasks
     this._startTaskPoll();
     
-    // 4. Start local HTTP server for health checks
-    this._startHealthServer();
+    // 4. Start local dashboard server
+    this._startDashboardServer();
     
     console.log(`[Nexus] Node "${this.name}" online. Listening on port ${this.port}`);
     return this;
@@ -117,7 +120,12 @@ class NexusNode {
   }
 
   async _executeTask(task) {
-    console.log(`[NEXUS] Executing task: ${task.title} (${task.id})`);
+    this.log(`[NEXUS] Executing task: ${task.title} (${task.id})`);
+
+    // Track in recentTasks
+    const tracked = { ...task, status: 'in_progress', startedAt: new Date().toISOString() };
+    this.recentTasks.push(tracked);
+    if (this.recentTasks.length > 20) this.recentTasks.shift();
 
     // Mark as in_progress
     await this._updateTaskStatus(task.id, 'in_progress');
@@ -142,13 +150,24 @@ class NexusNode {
         }
       }
 
-      const outputStr = typeof output === 'object' ? JSON.stringify(output) : String(output || '')
+      const outputStr = typeof output === 'object' ? JSON.stringify(output) : String(output || '');
+      tracked.status = 'completed';
+      tracked.completedAt = new Date().toISOString();
       await this._updateTaskStatus(task.id, 'completed', { output: outputStr });
-      console.log(`[NEXUS] Task completed: ${task.title}`);
+      this.log(`[NEXUS] Task completed: ${task.title}`);
     } catch (error) {
+      tracked.status = 'failed';
+      tracked.completedAt = new Date().toISOString();
       await this._updateTaskStatus(task.id, 'failed', { error: error.message });
-      console.error(`[NEXUS] Task failed: ${task.title}`, error.message);
+      this.log(`[NEXUS] Task failed: ${task.title} — ${error.message}`);
     }
+  }
+
+  log(message) {
+    const line = `[${new Date().toISOString()}] ${message}`;
+    console.log(line);
+    this.logBuffer.push(line);
+    if (this.logBuffer.length > 100) this.logBuffer.shift();
   }
 
   async _updateTaskStatus(taskId, status, data = {}) {
@@ -162,23 +181,8 @@ class NexusNode {
     }
   }
 
-  _startHealthServer() {
-    this.healthServer = http.createServer((req, res) => {
-      if (req.url === '/health') {
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify({
-          status: 'online',
-          nodeId: this.nodeId,
-          name: this.name,
-          agents: this.agents.length,
-          uptime: process.uptime(),
-          memory: process.memoryUsage()
-        }));
-      } else {
-        res.writeHead(404);
-        res.end('Not found');
-      }
-    });
+  _startDashboardServer() {
+    this.healthServer = createDashboardServer(this);
     this.healthServer.listen(this.port);
   }
 

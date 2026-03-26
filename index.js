@@ -324,6 +324,128 @@ app.post('/api/v1/nexus/:nodeId/connect', async (req, res) => {
   } catch (_) { res.json({ success: true }); }
 });
 
+app.get('/api/v1/nexus/:nodeId/memory/recall', async (req, res) => {
+  try {
+    const pg = app.locals.pg;
+    const { q, scope, limit } = req.query;
+    if (!q) return res.status(400).json({ error: 'q parameter required' });
+
+    // Look up node to get snipara_instance_id
+    let instanceId = null;
+    if (pg) {
+      const node = await pg.query('SELECT snipara_instance_id, mode, role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
+      if (node.rows[0]) instanceId = node.rows[0].snipara_instance_id;
+    }
+
+    // Call Snipara via swarmCoordinator
+    const coordinator = req.app.locals.swarmCoordinator;
+    if (!coordinator?.sniparaCall) return res.json({ memories: [] });
+
+    const result = await coordinator.sniparaCall('rlm_recall', {
+      query: q,
+      agent_id: instanceId,
+      scope: scope || 'instance',
+      limit: parseInt(limit) || 5
+    });
+
+    res.json({ success: true, memories: result || [] });
+  } catch (err) {
+    res.json({ success: true, memories: [] });
+  }
+});
+
+app.post('/api/v1/nexus/:nodeId/memory/remember', async (req, res) => {
+  try {
+    const { content, type, tags, importance } = req.body;
+    if (!content) return res.status(400).json({ error: 'content required' });
+
+    const pg = app.locals.pg;
+    let instanceId = null, role = 'general';
+    if (pg) {
+      const node = await pg.query('SELECT snipara_instance_id, role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
+      if (node.rows[0]) { instanceId = node.rows[0].snipara_instance_id; role = node.rows[0].role; }
+    }
+
+    const coordinator = req.app.locals.swarmCoordinator;
+    if (!coordinator?.sniparaCall) return res.json({ success: false, error: 'Snipara not available' });
+
+    // Store in instance scope
+    await coordinator.sniparaCall('rlm_remember', {
+      text: content,
+      type: type || 'learning',
+      importance: importance || 0.5,
+      scope: 'instance',
+      category: instanceId || req.params.nodeId,
+      tags: tags || [],
+      metadata: { source: 'nexus', node_id: req.params.nodeId, role }
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Promotes a learning from instance → template scope (shared with all agents of same role)
+app.post('/api/v1/nexus/:nodeId/memory/promote', async (req, res) => {
+  try {
+    const { content, role: overrideRole } = req.body;
+    if (!content) return res.status(400).json({ error: 'content required' });
+
+    const pg = app.locals.pg;
+    let role = overrideRole || 'general';
+    if (pg) {
+      const node = await pg.query('SELECT role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
+      if (node.rows[0]) role = node.rows[0].role || role;
+    }
+
+    const coordinator = req.app.locals.swarmCoordinator;
+    if (!coordinator?.sniparaCall) return res.json({ success: false, error: 'Snipara not available' });
+
+    // Store in template scope — accessible by all agents with same role
+    await coordinator.sniparaCall('rlm_remember', {
+      text: content,
+      type: 'learning',
+      importance: 0.7,
+      scope: 'project',
+      category: 'template-' + role,
+      tags: ['promoted', 'nexus', role],
+      metadata: { source: 'nexus-promote', node_id: req.params.nodeId, role }
+    });
+
+    res.json({ success: true, promoted_to: 'template-' + role });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Returns the shared context docs (SOUL.md, MEMORY.md, USER.md) + template memories for this role
+app.get('/api/v1/nexus/:nodeId/memory/context', async (req, res) => {
+  try {
+    const pg = app.locals.pg;
+    let role = 'general', instanceId = null;
+    if (pg) {
+      const node = await pg.query('SELECT snipara_instance_id, role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
+      if (node.rows[0]) { instanceId = node.rows[0].snipara_instance_id; role = node.rows[0].role; }
+    }
+
+    const coordinator = req.app.locals.swarmCoordinator;
+    if (!coordinator?.sniparaCall) return res.json({ soul: '', memory: '', user: '', template: [] });
+
+    // Load shared docs + template memories in parallel
+    const [soul, memory, user, template] = await Promise.all([
+      coordinator.sniparaCall('rlm_load_document', { path: 'agents/SOUL.md' }).catch(() => ''),
+      coordinator.sniparaCall('rlm_load_document', { path: 'agents/MEMORY.md' }).catch(() => ''),
+      coordinator.sniparaCall('rlm_load_document', { path: 'agents/USER.md' }).catch(() => ''),
+      coordinator.sniparaCall('rlm_recall', { query: role + ' knowledge best practices', scope: 'project', category: 'template-' + role, limit: 10 }).catch(() => []),
+    ]);
+
+    res.json({ success: true, soul, memory, user, template, role });
+  } catch (err) {
+    res.json({ success: true, soul: '', memory: '', user: '', template: [] });
+  }
+});
+
 // Auth (with brute-force protection)
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
