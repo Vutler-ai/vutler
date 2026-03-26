@@ -1,10 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { useApi } from '@/hooks/use-api';
-import { getAgents } from '@/lib/api/endpoints/agents';
+import { getAgents, createAgent } from '@/lib/api/endpoints/agents';
+import { getTemplates } from '@/lib/api/endpoints/marketplace';
 import { getTasks } from '@/lib/api/endpoints/tasks';
-import type { Agent, Task } from '@/lib/api/types';
+import type { Agent, Task, MarketplaceTemplate } from '@/lib/api/types';
 import {
   Card,
   CardContent,
@@ -12,15 +15,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
 // ─── Dashboard endpoint types ────────────────────────────────────────────────
 
@@ -49,7 +43,100 @@ interface AuditLogsResponse {
   logs?: AuditLog[];
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Avatar constants ─────────────────────────────────────────────────────────
+
+const KNOWN_AVATAR_SLUGS = new Set([
+  'accounting-assistant',
+  'appointment-scheduler',
+  'av-engineer',
+  'bi-agent',
+  'competitor-monitor',
+  'compliance-monitor',
+  'contract-manager',
+  'customer-success',
+  'document-processor',
+  'ecommerce-manager',
+  'feedback-analyzer',
+  'hr-assistant',
+  'inventory-optimizer',
+  'invoice-manager',
+  'knowledge-base',
+  'lead-gen',
+  'marketing-campaign',
+  'personal-assistant',
+  'pricing-optimizer',
+  'procurement',
+  'project-coordinator',
+  'proposal-generator',
+  'research-analyst',
+  'social-media-manager',
+  'translator',
+  'workflow-automation',
+]);
+
+const FALLBACK_AVATAR = '/static/avatars/personal-assistant.png';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getAgentAvatarUrl(agent: Agent): string | null {
+  const source = agent.platform ?? agent.name ?? '';
+  const slug = source
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '');
+  if (KNOWN_AVATAR_SLUGS.has(slug)) {
+    return `/static/avatars/${slug}.png`;
+  }
+  // Try the agent name as a slug
+  const nameSlug = agent.name
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '');
+  if (KNOWN_AVATAR_SLUGS.has(nameSlug)) {
+    return `/static/avatars/${nameSlug}.png`;
+  }
+  return null;
+}
+
+/** Map a template category to the best matching avatar PNG. */
+function getTemplateAvatarUrl(template: MarketplaceTemplate): string {
+  const category = template.category.toLowerCase();
+  const name = template.name.toLowerCase();
+
+  const CATEGORY_MAP: Record<string, string> = {
+    marketing: 'marketing-campaign',
+    sales: 'lead-gen',
+    hr: 'hr-assistant',
+    finance: 'accounting-assistant',
+    accounting: 'accounting-assistant',
+    legal: 'compliance-monitor',
+    compliance: 'compliance-monitor',
+    research: 'research-analyst',
+    analytics: 'bi-agent',
+    support: 'customer-success',
+    customer: 'customer-success',
+    social: 'social-media-manager',
+    content: 'marketing-campaign',
+    productivity: 'workflow-automation',
+    automation: 'workflow-automation',
+    scheduling: 'appointment-scheduler',
+    procurement: 'procurement',
+    inventory: 'inventory-optimizer',
+    ecommerce: 'ecommerce-manager',
+    documents: 'document-processor',
+    translation: 'translator',
+    project: 'project-coordinator',
+    proposals: 'proposal-generator',
+    knowledge: 'knowledge-base',
+  };
+
+  for (const [key, slug] of Object.entries(CATEGORY_MAP)) {
+    if (category.includes(key) || name.includes(key)) {
+      return `/static/avatars/${slug}.png`;
+    }
+  }
+  return FALLBACK_AVATAR;
+}
 
 function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -64,22 +151,13 @@ function formatRelativeTime(dateStr: string): string {
   return `${Math.floor(diffHr / 24)}d ago`;
 }
 
-function statusDot(status: Agent['status']) {
+function statusDotClass(status: Agent['status']): string {
   const map: Record<string, string> = {
-    active: 'bg-[#22c55e]',
+    active: 'bg-[#22c55e] shadow-[0_0_6px_#22c55e]',
     inactive: 'bg-[#6b7280]',
     error: 'bg-[#ef4444]',
   };
   return map[status] ?? 'bg-[#6b7280]';
-}
-
-function statusLabel(status: Agent['status']) {
-  const map: Record<string, string> = {
-    active: 'Active',
-    inactive: 'Inactive',
-    error: 'Error',
-  };
-  return map[status] ?? status;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -88,10 +166,7 @@ function StatsSkeleton() {
   return (
     <>
       {[1, 2, 3, 4].map((i) => (
-        <Card
-          key={i}
-          className="bg-[#14151f] border-[rgba(255,255,255,0.07)] gap-3"
-        >
+        <Card key={i} className="bg-[#14151f] border-[rgba(255,255,255,0.07)] gap-3">
           <CardHeader className="pb-0">
             <Skeleton className="h-4 w-28 bg-[#1a1b2e]" />
           </CardHeader>
@@ -118,9 +193,7 @@ function StatCardItem({ label, value, subtitle, icon, iconBg }: StatCardItemProp
     <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-colors gap-3">
       <CardHeader className="pb-0">
         <div className="flex items-start justify-between">
-          <CardTitle className="text-sm font-medium text-[#9ca3af]">
-            {label}
-          </CardTitle>
+          <CardTitle className="text-sm font-medium text-[#9ca3af]">{label}</CardTitle>
           <div
             className={`w-10 h-10 rounded-lg flex items-center justify-center text-white flex-shrink-0 ${iconBg}`}
             aria-hidden="true"
@@ -134,6 +207,312 @@ function StatCardItem({ label, value, subtitle, icon, iconBg }: StatCardItemProp
         <p className="text-xs text-[#6b7280]">{subtitle}</p>
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Agent Avatar (with image + initials fallback) ────────────────────────────
+
+function AgentAvatarImage({ agent }: { agent: Agent }) {
+  const [failed, setFailed] = useState(false);
+  const avatarUrl = failed ? null : getAgentAvatarUrl(agent);
+
+  if (avatarUrl) {
+    return (
+      <div className="w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 bg-[#0e0f1a]">
+        <Image
+          src={avatarUrl}
+          alt={agent.name}
+          width={56}
+          height={56}
+          className="w-full h-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      </div>
+    );
+  }
+
+  const initials = agent.name
+    .split(' ')
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+
+  return (
+    <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-[#3b82f6] to-[#a855f7] flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+      {initials || '?'}
+    </div>
+  );
+}
+
+// ─── Agent Card ───────────────────────────────────────────────────────────────
+
+function AgentCard({ agent, onClick }: { agent: Agent; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col gap-3 p-4 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl hover:border-[rgba(255,255,255,0.2)] hover:bg-[#1a1b2e] transition-all cursor-pointer text-left focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#08090f] min-w-[180px] max-w-[200px] flex-shrink-0 group"
+      aria-label={`Open agent ${agent.name}`}
+    >
+      <div className="relative">
+        <AgentAvatarImage agent={agent} />
+        <span
+          className={`absolute bottom-0.5 right-0.5 w-3 h-3 rounded-full border-2 border-[#14151f] ${statusDotClass(agent.status)}`}
+          aria-label={agent.status}
+        />
+      </div>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-white truncate group-hover:text-[#3b82f6] transition-colors">
+          {agent.name}
+        </p>
+        {agent.platform && (
+          <p className="text-xs text-[#6b7280] truncate mt-0.5">{agent.platform}</p>
+        )}
+        {agent.lastActive && (
+          <p className="text-[10px] text-[#4b5563] mt-1">
+            {formatRelativeTime(agent.lastActive)}
+          </p>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ─── Agent Cards Section ──────────────────────────────────────────────────────
+
+function AgentCardsSection({
+  agents,
+  isLoading,
+  isError,
+  onNewAgent,
+  onViewAll,
+  onAgentClick,
+}: {
+  agents: Agent[];
+  isLoading: boolean;
+  isError: boolean;
+  onNewAgent: () => void;
+  onViewAll: () => void;
+  onAgentClick: (agent: Agent) => void;
+}) {
+  return (
+    <section aria-labelledby="agents-heading" className="mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h2 id="agents-heading" className="text-lg font-semibold text-white">
+          My Agents
+        </h2>
+        <button
+          onClick={onViewAll}
+          className="text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] rounded px-2 py-1"
+        >
+          View all →
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="flex gap-4 overflow-x-auto pb-2">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div
+              key={i}
+              className="min-w-[180px] max-w-[200px] flex-shrink-0 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col gap-3"
+            >
+              <Skeleton className="w-14 h-14 rounded-xl bg-[#1a1b2e]" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-28 bg-[#1a1b2e]" />
+                <Skeleton className="h-3 w-20 bg-[#1a1b2e]" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : isError ? (
+        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 text-center text-sm text-[#ef4444]">
+          Failed to load agents.
+        </div>
+      ) : agents.length === 0 ? (
+        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-10 text-center">
+          <svg className="w-12 h-12 mx-auto text-[#6b7280] mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+          </svg>
+          <p className="text-sm text-[#9ca3af] mb-4">No agents yet</p>
+          <button
+            onClick={onNewAgent}
+            className="text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+          >
+            Create your first agent →
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-[#1a1b2e] scrollbar-track-transparent">
+          {agents.map((agent) => (
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              onClick={() => onAgentClick(agent)}
+            />
+          ))}
+          {/* Add agent CTA card */}
+          <button
+            onClick={onNewAgent}
+            className="flex flex-col items-center justify-center gap-2 p-4 bg-[#0e0f1a] border border-dashed border-[rgba(255,255,255,0.1)] rounded-xl hover:border-[#3b82f6] hover:bg-[#14151f] transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#08090f] min-w-[180px] max-w-[200px] flex-shrink-0"
+            aria-label="Create new agent"
+          >
+            <div className="w-14 h-14 rounded-xl bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-[#6b7280] hover:text-[#3b82f6] transition-colors">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </div>
+            <span className="text-xs text-[#6b7280] font-medium">New Agent</span>
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ─── Template Avatar Image ────────────────────────────────────────────────────
+
+function TemplateAvatarImage({ template }: { template: MarketplaceTemplate }) {
+  const [failed, setFailed] = useState(false);
+  const avatarUrl = failed ? FALLBACK_AVATAR : getTemplateAvatarUrl(template);
+
+  return (
+    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-[#0e0f1a]">
+      <Image
+        src={avatarUrl}
+        alt={template.name}
+        width={48}
+        height={48}
+        className="w-full h-full object-cover"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
+// ─── Popular Templates Section ────────────────────────────────────────────────
+
+function PopularTemplatesSection({
+  onViewAll,
+}: {
+  onViewAll: () => void;
+}) {
+  const [installing, setInstalling] = useState<string | null>(null);
+  const router = useRouter();
+
+  const { data, isLoading, error } = useApi(
+    '/api/v1/marketplace/templates?limit=6',
+    () => getTemplates({ limit: 6 }),
+  );
+
+  const templates = data?.templates ?? [];
+
+  const handleUseTemplate = async (template: MarketplaceTemplate) => {
+    setInstalling(template.id);
+    try {
+      const agent = await createAgent({
+        name: template.name,
+        platform: 'cloud',
+        config: {
+          model: template.config.model,
+          temperature: template.config.temperature,
+          system_prompt: template.config.system_prompt,
+          avatar: template.config.icon,
+        },
+      } as Parameters<typeof createAgent>[0]);
+      router.push(`/agents/${agent.id}/config`);
+    } catch {
+      // silently ignore, user stays on dashboard
+    } finally {
+      setInstalling(null);
+    }
+  };
+
+  return (
+    <section aria-labelledby="templates-heading" className="mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h2 id="templates-heading" className="text-lg font-semibold text-white">
+          Popular Templates
+        </h2>
+        <button
+          onClick={onViewAll}
+          className="text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] rounded px-2 py-1"
+        >
+          View all →
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex items-start gap-3"
+            >
+              <Skeleton className="w-12 h-12 rounded-xl bg-[#1a1b2e] flex-shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-3/4 bg-[#1a1b2e]" />
+                <Skeleton className="h-3 w-1/2 bg-[#1a1b2e]" />
+                <Skeleton className="h-3 w-full bg-[#1a1b2e]" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && !isLoading && (
+        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 text-center text-sm text-[#ef4444]">
+          Failed to load templates.
+        </div>
+      )}
+
+      {!isLoading && !error && templates.length === 0 && (
+        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 text-center text-sm text-[#6b7280]">
+          No templates available.
+        </div>
+      )}
+
+      {!isLoading && !error && templates.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {templates.map((template) => (
+            <div
+              key={template.id}
+              className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col hover:border-[rgba(255,255,255,0.15)] transition-colors"
+            >
+              <div className="flex items-start gap-3 mb-3">
+                <TemplateAvatarImage template={template} />
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-white truncate">
+                    {template.name}
+                  </h3>
+                  <span className="inline-block text-[10px] px-2 py-0.5 rounded-full bg-[rgba(59,130,246,0.12)] text-[#60a5fa] border border-[rgba(59,130,246,0.2)] mt-1">
+                    {template.category}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-[#9ca3af] line-clamp-2 flex-1 mb-4">
+                {template.description}
+              </p>
+
+              <button
+                onClick={() => handleUseTemplate(template)}
+                disabled={installing === template.id}
+                className="w-full h-8 rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-60 text-white text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f] flex items-center justify-center gap-2"
+              >
+                {installing === template.id ? (
+                  <>
+                    <span className="w-3 h-3 rounded-full border-b border-white animate-spin" aria-hidden="true" />
+                    Creating...
+                  </>
+                ) : (
+                  'Use Template'
+                )}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -164,7 +543,7 @@ export default function DashboardPage() {
     isLoading: auditLoading,
   } = useApi<AuditLogsResponse>('/api/v1/audit-logs?limit=10');
 
-  // Resolve stats — prefer dashboard endpoint, fall back to derived counts
+  // Resolve stats
   const stats = dashboardData?.stats;
   const agents = agentsData ?? dashboardData?.agents ?? [];
   const tasks = tasksData ?? [];
@@ -258,191 +637,32 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Quick Actions */}
-      <section
-        className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 mb-8"
-        aria-labelledby="quick-actions-heading"
-      >
-        <h2 id="quick-actions-heading" className="text-lg font-semibold text-white mb-4">
-          Quick Actions
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <button
-            onClick={() => router.push('/builder')}
-            className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
-          >
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#3b82f6] to-[#2563eb] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-            </div>
-            <span className="text-sm font-medium text-white group-hover:text-[#3b82f6] transition-colors">
-              New Agent
-            </span>
-          </button>
+      {/* My Agents - horizontal card row */}
+      <AgentCardsSection
+        agents={agents}
+        isLoading={agentsLoading}
+        isError={!!agentsError}
+        onNewAgent={() => router.push('/builder')}
+        onViewAll={() => router.push('/agents')}
+        onAgentClick={(agent) => router.push(`/agents/${agent.id}/config`)}
+      />
 
-          <button
-            onClick={() => router.push('/tasks')}
-            className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
-          >
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#a855f7] to-[#9333ea] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-            </div>
-            <span className="text-sm font-medium text-white group-hover:text-[#a855f7] transition-colors">
-              Create Task
-            </span>
-          </button>
+      {/* Popular Templates */}
+      <PopularTemplatesSection
+        onViewAll={() => router.push('/agents?tab=templates')}
+      />
 
-          <button
-            onClick={() => router.push('/channel/general')}
-            className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
-          >
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#22c55e] to-[#16a34a] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <span className="text-sm font-medium text-white group-hover:text-[#22c55e] transition-colors">
-              Send Message
-            </span>
-          </button>
-        </div>
-      </section>
-
-      {/* Main content grid: Agents table + Activity feed */}
+      {/* Bottom grid: activity feed + quick actions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Agents Overview */}
-        <section className="lg:col-span-2" aria-labelledby="agents-heading">
-          <div className="flex items-center justify-between mb-4">
-            <h2 id="agents-heading" className="text-lg font-semibold text-white">
-              Agents Overview
-            </h2>
-            <a
-              href="/agents"
-              className="text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] rounded px-2 py-1"
-            >
-              View all →
-            </a>
-          </div>
-
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
-            {agentsLoading ? (
-              <div className="p-6 space-y-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="flex items-center space-x-4">
-                    <Skeleton className="w-10 h-10 rounded-lg bg-[#1a1b2e]" />
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-4 w-32 bg-[#1a1b2e]" />
-                      <Skeleton className="h-3 w-20 bg-[#1a1b2e]" />
-                    </div>
-                    <Skeleton className="h-6 w-16 rounded-full bg-[#1a1b2e]" />
-                  </div>
-                ))}
-              </div>
-            ) : agentsError ? (
-              <div className="p-8 text-center text-sm text-[#ef4444]">
-                Failed to load agents.
-              </div>
-            ) : agents.length === 0 ? (
-              <div className="p-12 text-center">
-                <svg className="w-12 h-12 mx-auto text-[#6b7280] mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                </svg>
-                <p className="text-sm text-[#9ca3af] mb-4">No agents yet</p>
-                <button
-                  onClick={() => router.push('/builder')}
-                  className="text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
-                >
-                  Create your first agent →
-                </button>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader className="bg-[#0e0f1a] [&_tr]:border-b-[rgba(255,255,255,0.07)]">
-                  <TableRow className="border-b-[rgba(255,255,255,0.07)] hover:bg-transparent">
-                    <TableHead className="text-[#9ca3af] text-xs font-semibold uppercase tracking-wider px-6 py-4">
-                      Name
-                    </TableHead>
-                    <TableHead className="text-[#9ca3af] text-xs font-semibold uppercase tracking-wider px-6 py-4 hidden sm:table-cell">
-                      Platform
-                    </TableHead>
-                    <TableHead className="text-[#9ca3af] text-xs font-semibold uppercase tracking-wider px-6 py-4">
-                      Status
-                    </TableHead>
-                    <TableHead className="text-[#9ca3af] text-xs font-semibold uppercase tracking-wider px-6 py-4 hidden md:table-cell">
-                      Last Active
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody className="[&_tr:last-child]:border-0 [&_tr]:border-b-[rgba(255,255,255,0.07)]">
-                  {agents.slice(0, 8).map((agent) => (
-                    <TableRow
-                      key={agent.id}
-                      className="border-b-[rgba(255,255,255,0.07)] hover:bg-[#0e0f1a] cursor-pointer transition-colors"
-                      onClick={() => router.push(`/agents/${agent.id}`)}
-                      tabIndex={0}
-                      role="button"
-                      onKeyDown={(e) => e.key === 'Enter' && router.push(`/agents/${agent.id}`)}
-                      aria-label={`View agent ${agent.name}`}
-                    >
-                      <TableCell className="px-6 py-4">
-                        <div className="flex items-center space-x-3">
-                          <div
-                            className="w-9 h-9 rounded-lg bg-gradient-to-br from-[#3b82f6] to-[#a855f7] flex items-center justify-center text-white font-semibold text-xs flex-shrink-0"
-                            aria-hidden="true"
-                          >
-                            {agent.name.substring(0, 2).toUpperCase()}
-                          </div>
-                          <span className="text-sm font-medium text-white truncate max-w-[120px]">
-                            {agent.name}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-6 py-4 hidden sm:table-cell">
-                        <span className="text-sm text-[#9ca3af]">
-                          {agent.platform ?? '—'}
-                        </span>
-                      </TableCell>
-                      <TableCell className="px-6 py-4">
-                        <div className="flex items-center space-x-2">
-                          <span
-                            className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot(agent.status)}`}
-                            aria-hidden="true"
-                          />
-                          <Badge
-                            variant="outline"
-                            className="text-xs border-[rgba(255,255,255,0.1)] text-[#9ca3af]"
-                          >
-                            {statusLabel(agent.status)}
-                          </Badge>
-                        </div>
-                      </TableCell>
-                      <TableCell className="px-6 py-4 hidden md:table-cell">
-                        <span className="text-sm text-[#6b7280]">
-                          {agent.lastActive
-                            ? formatRelativeTime(agent.lastActive)
-                            : '—'}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </div>
-        </section>
-
-        {/* Activity Feed */}
-        <section aria-labelledby="activity-heading">
+        {/* Recent Activity */}
+        <section className="lg:col-span-2" aria-labelledby="activity-heading">
           <div className="flex items-center justify-between mb-4">
             <h2 id="activity-heading" className="text-lg font-semibold text-white">
               Recent Activity
             </h2>
           </div>
 
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 h-full">
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
             {auditLoading ? (
               <div className="space-y-5">
                 {[1, 2, 3, 4, 5].map((i) => (
@@ -456,7 +676,7 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : auditLogs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full min-h-[200px] text-center">
+              <div className="flex flex-col items-center justify-center min-h-[200px] text-center">
                 <svg className="w-10 h-10 text-[#6b7280] mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -485,6 +705,73 @@ export default function DashboardPage() {
                 ))}
               </ol>
             )}
+          </div>
+        </section>
+
+        {/* Quick Actions */}
+        <section aria-labelledby="quick-actions-heading">
+          <div className="flex items-center justify-between mb-4">
+            <h2 id="quick-actions-heading" className="text-lg font-semibold text-white">
+              Quick Actions
+            </h2>
+          </div>
+
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 flex flex-col gap-3">
+            <button
+              onClick={() => router.push('/builder')}
+              className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
+            >
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#3b82f6] to-[#2563eb] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+              <span className="text-sm font-medium text-white group-hover:text-[#3b82f6] transition-colors">
+                New Agent
+              </span>
+            </button>
+
+            <button
+              onClick={() => router.push('/tasks')}
+              className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
+            >
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#a855f7] to-[#9333ea] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <span className="text-sm font-medium text-white group-hover:text-[#a855f7] transition-colors">
+                Create Task
+              </span>
+            </button>
+
+            <button
+              onClick={() => router.push('/channel/general')}
+              className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
+            >
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#22c55e] to-[#16a34a] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </div>
+              <span className="text-sm font-medium text-white group-hover:text-[#22c55e] transition-colors">
+                Send Message
+              </span>
+            </button>
+
+            <button
+              onClick={() => router.push('/agents?tab=templates')}
+              className="flex items-center space-x-3 p-4 rounded-lg bg-[#0e0f1a] hover:bg-[#1a1b2e] border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-all group cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#14151f]"
+            >
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#f59e0b] to-[#d97706] flex items-center justify-center text-white flex-shrink-0" aria-hidden="true">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                </svg>
+              </div>
+              <span className="text-sm font-medium text-white group-hover:text-[#f59e0b] transition-colors">
+                Browse Templates
+              </span>
+            </button>
           </div>
         </section>
       </div>

@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
+import { getSkills } from '@/lib/api/endpoints/marketplace';
+import type { AgentSkill } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -24,6 +26,7 @@ interface AgentConfig {
   };
   secrets: { key: string; value: string }[];
   system_prompt: string;
+  skills?: string[];
 }
 
 interface LLMModel {
@@ -75,7 +78,159 @@ const DEFAULT_CONFIG: AgentConfig = {
   },
   secrets: [],
   system_prompt: '',
+  skills: [],
 };
+
+// ─── Skill category labels ─────────────────────────────────────────────────────
+
+const SKILL_CATEGORY_LABELS: Record<string, string> = {
+  sales: 'Sales',
+  marketing: 'Marketing',
+  operations: 'Operations',
+  finance: 'Finance',
+  technical: 'Technical',
+  support: 'Support',
+  content: 'Content',
+  analytics: 'Analytics',
+  integration: 'Integration',
+  other: 'Other',
+};
+
+// ─── Skills Section ────────────────────────────────────────────────────────────
+
+function SkillsSection({
+  selectedSkills,
+  onChange,
+}: {
+  selectedSkills: string[];
+  onChange: (skills: string[]) => void;
+}) {
+  const [allSkills, setAllSkills] = useState<AgentSkill[]>([]);
+  const [grouped, setGrouped] = useState<Record<string, AgentSkill[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    getSkills()
+      .then(res => {
+        setAllSkills(res.skills ?? []);
+        setGrouped(res.grouped ?? {});
+      })
+      .catch(() => {/* skills unavailable — silent */})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const toggle = (key: string) => {
+    onChange(
+      selectedSkills.includes(key)
+        ? selectedSkills.filter(s => s !== key)
+        : [...selectedSkills, key]
+    );
+  };
+
+  const filteredGrouped = search.trim()
+    ? Object.entries(grouped).reduce((acc, [cat, skills]) => {
+        const q = search.toLowerCase();
+        const matched = skills.filter(
+          s =>
+            s.name.toLowerCase().includes(q) ||
+            s.description.toLowerCase().includes(q)
+        );
+        if (matched.length > 0) acc[cat] = matched;
+        return acc;
+      }, {} as Record<string, AgentSkill[]>)
+    : grouped;
+
+  if (loading) {
+    return (
+      <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+        <Skeleton className="h-5 w-24 mb-4" />
+        <div className="grid grid-cols-2 gap-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 rounded-lg" />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (allSkills.length === 0) return null;
+
+  const selectedCount = selectedSkills.length;
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-base font-semibold text-white">Skills</h3>
+          <p className="text-xs text-[#6b7280] mt-0.5">
+            Select capabilities for this agent
+          </p>
+        </div>
+        {selectedCount > 0 && (
+          <span className="text-xs text-blue-400 font-medium">
+            {selectedCount} selected
+          </span>
+        )}
+      </div>
+
+      {/* Search */}
+      <input
+        type="text"
+        placeholder="Search skills..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        className="w-full mb-4 px-3 py-2 text-sm bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder:text-[#4b5563] focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+
+      <div className="space-y-5">
+        {Object.entries(filteredGrouped).map(([cat, skills]) => (
+          <div key={cat}>
+            <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
+              {SKILL_CATEGORY_LABELS[cat] ?? cat}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {skills.map(skill => {
+                const isSelected = selectedSkills.includes(skill.key);
+                return (
+                  <label
+                    key={skill.key}
+                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'border-blue-500/40 bg-blue-500/10'
+                        : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggle(skill.key)}
+                      className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-white leading-tight">
+                        {skill.name}
+                      </div>
+                      <div className="text-xs text-[#6b7280] mt-0.5 leading-snug line-clamp-2">
+                        {skill.description}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        {Object.keys(filteredGrouped).length === 0 && (
+          <p className="text-sm text-[#6b7280] text-center py-4">
+            No skills match your search.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -388,6 +543,12 @@ export default function AgentConfigPage() {
             className="bg-[#0e0f1a] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#4b5563] font-mono text-sm leading-relaxed resize-y"
           />
         </section>
+
+        {/* Skills */}
+        <SkillsSection
+          selectedSkills={config.skills ?? []}
+          onChange={skills => setConfig(prev => ({ ...prev, skills }))}
+        />
       </div>
     </div>
   );

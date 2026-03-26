@@ -3,6 +3,7 @@ import type {
   MarketplaceTemplate,
   MarketplaceListParams,
   MarketplaceListResponse,
+  AgentSkillsResponse,
   SuccessResponse,
 } from '../types';
 
@@ -36,4 +37,9 @@ export async function install(id: string): Promise<SuccessResponse> {
     `/api/v1/marketplace/templates/${id}/install`,
     { method: 'POST' }
   );
+}
+
+export async function getSkills(category?: string): Promise<AgentSkillsResponse> {
+  const url = `/api/v1/marketplace/skills${category ? `?category=${encodeURIComponent(category)}` : ''}`;
+  return apiFetch<AgentSkillsResponse>(url);
 }
