@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { authFetch } from '@/lib/authFetch';
 import { getAuthToken } from '@/lib/api';
-import Topbar, { TopbarButton } from '@/components/topbar';
+import PageHeader from '@/components/layout/page-header';
 import AgentsTable from '@/components/agents-table';
 
 interface ExecuteState {
@@ -149,12 +149,22 @@ export default function AgentsPage() {
 
   return (
     <>
-      <Topbar title="Agents" subtitle="Manage your AI agents" actions={
+      <PageHeader title="Agents" description="Manage your AI agents">
         <div className="flex gap-2">
-          <TopbarButton variant="primary" onClick={() => window.location.href = '/marketplace'}>+ Deploy from Marketplace</TopbarButton>
-          <TopbarButton variant="primary" onClick={() => window.location.href = '/agents/new'}>+ New Agent</TopbarButton>
+          <button
+            onClick={() => (window.location.href = '/marketplace')}
+            className="flex items-center px-4 py-2 rounded-lg font-medium text-sm bg-[#3b82f6] hover:bg-[#2563eb] text-white transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+          >
+            + Deploy from Marketplace
+          </button>
+          <button
+            onClick={() => (window.location.href = '/agents/new')}
+            className="flex items-center px-4 py-2 rounded-lg font-medium text-sm bg-[#3b82f6] hover:bg-[#2563eb] text-white transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+          >
+            + New Agent
+          </button>
         </div>
-      } />
+      </PageHeader>
       <main className="flex-1 p-6">
         <AgentsTable agents={agents} onAgentClick={(agent) => openExecute(agent)} />
 
