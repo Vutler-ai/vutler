@@ -269,6 +269,20 @@ export interface PortalResponse {
 
 // ─── Nexus ────────────────────────────────────────────────────────────────────
 
+export interface NexusAgentStatus {
+  id: string;
+  name: string;
+  model: string;
+  status: 'idle' | 'busy' | 'stopped';
+  tasksCompleted: number;
+}
+
+export interface NexusSeatsInfo {
+  max: number;
+  used: number;
+  available: number;
+}
+
 export interface NexusNode {
   id: string;
   name: string;
@@ -278,6 +292,8 @@ export interface NexusNode {
   mode?: 'local' | 'enterprise' | 'standard';
   clientName?: string;
   clientId?: string;
+  agents?: NexusAgentStatus[];
+  seats?: NexusSeatsInfo;
 }
 
 export interface NexusStats {
@@ -293,13 +309,24 @@ export interface NexusStatusResponse {
 }
 
 export interface DeployLocalPayload {
-  agentId: string;
+  agentIds: string[];
+  routingRules?: Array<{ pattern: string; agentId: string }>;
   ollamaEndpoint?: string;
+}
+
+export interface AutoSpawnRule {
+  triggerPattern: string;
+  agentName: string;
 }
 
 export interface DeployEnterprisePayload {
   name: string;
   clientName: string;
+  seats: number;
+  primaryAgentId: string;
+  poolAgentIds: string[];
+  allowCreatingNewAgents: boolean;
+  autoSpawnRules?: AutoSpawnRule[];
   role: string;
   filesystemRoot: string;
   offlineMode: boolean;

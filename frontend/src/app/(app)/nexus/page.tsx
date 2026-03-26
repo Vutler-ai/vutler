@@ -5,7 +5,14 @@ import Link from 'next/link';
 import { getNodes, deployLocal, deployEnterprise } from '@/lib/api/endpoints/nexus';
 import { getClients, createClient, updateClient, deleteClient } from '@/lib/api/endpoints/clients';
 import { getAgents } from '@/lib/api/endpoints/agents';
-import type { NexusNode, NexusStats, Agent, Client, CreateClientPayload } from '@/lib/api/types';
+import type {
+  NexusNode,
+  NexusStats,
+  Agent,
+  Client,
+  CreateClientPayload,
+  AutoSpawnRule,
+} from '@/lib/api/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -53,10 +60,37 @@ function Toggle({ on, onToggle, color = '#3b82f6' }: { on: boolean; onToggle: ()
   );
 }
 
-// ─── Deploy Modal ─────────────────────────────────────────────────────────────
+// ─── Agent Avatar ─────────────────────────────────────────────────────────────
 
-type DeployStep = 'select' | 'form' | 'token';
+function AgentAvatar({ agent, size = 8 }: { agent: Agent; size?: number }) {
+  const initials = agent.name.slice(0, 2).toUpperCase();
+  if (agent.avatar) {
+    return (
+      <img
+        src={agent.avatar}
+        alt={agent.name}
+        className={`w-${size} h-${size} rounded-full object-cover shrink-0`}
+      />
+    );
+  }
+  return (
+    <div
+      className={`w-${size} h-${size} rounded-full bg-[#1e293b] border border-[rgba(255,255,255,0.1)] flex items-center justify-center text-xs font-semibold text-[#9ca3af] shrink-0`}
+    >
+      {initials}
+    </div>
+  );
+}
+
+// ─── Deploy Modal (multi-step) ────────────────────────────────────────────────
+
+type DeployStep = 'select' | 'local-agents' | 'local-routing' | 'local-token' | 'ent-basics' | 'ent-primary' | 'ent-pool' | 'ent-spawn-rules' | 'ent-token';
 type DeployMode = 'local' | 'enterprise';
+
+interface RoutingRule {
+  pattern: string;
+  agentId: string;
+}
 
 function DeployModal({
   onClose,
@@ -67,67 +101,89 @@ function DeployModal({
   initialMode?: DeployMode;
   initialClientName?: string;
 }) {
-  const [step, setStep] = useState<DeployStep>(initialMode ? 'form' : 'select');
+  const [step, setStep] = useState<DeployStep>(initialMode === 'local' ? 'local-agents' : initialMode === 'enterprise' ? 'ent-basics' : 'select');
   const [mode, setMode] = useState<DeployMode>(initialMode ?? 'local');
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Local fields
+  // Workspace agents
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState('');
-  const [ollamaEnabled, setOllamaEnabled] = useState(false);
-  const [ollamaEndpoint, setOllamaEndpoint] = useState('');
+  const [agentsLoading, setAgentsLoading] = useState(false);
 
-  // Enterprise fields
+  // Local: step 1 — multi-select agents
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  // Local: step 2 — routing rules (pattern → agentId)
+  const [routingRules, setRoutingRules] = useState<RoutingRule[]>([]);
+
+  // Enterprise: step 1 — basics
   const [nodeName, setNodeName] = useState('');
   const [clientName, setClientName] = useState(initialClientName ?? '');
-  const [role, setRole] = useState('general');
-  const [fsRoot, setFsRoot] = useState('');
-  const [offlineMode, setOfflineMode] = useState(false);
+  const [seats, setSeats] = useState(5);
+  // Enterprise: step 2 — primary agent
+  const [primaryAgentId, setPrimaryAgentId] = useState('');
+  // Enterprise: step 3 — pool agents + allow creating
+  const [poolAgentIds, setPoolAgentIds] = useState<string[]>([]);
+  const [allowCreatingNewAgents, setAllowCreatingNewAgents] = useState(false);
+  // Enterprise: step 4 — auto-spawn rules
+  const [autoSpawnRules, setAutoSpawnRules] = useState<AutoSpawnRule[]>([]);
+  const [newSpawnPattern, setNewSpawnPattern] = useState('');
+  const [newSpawnAgentName, setNewSpawnAgentName] = useState('');
 
   useEffect(() => {
-    if (step === 'form' && mode === 'local') {
-      getAgents().then(setAgents).catch(() => {});
+    const needsAgents = ['local-agents', 'local-routing', 'ent-primary', 'ent-pool'].includes(step);
+    if (needsAgents && agents.length === 0 && !agentsLoading) {
+      setAgentsLoading(true);
+      getAgents()
+        .then(setAgents)
+        .catch(() => {})
+        .finally(() => setAgentsLoading(false));
     }
-  }, [step, mode]);
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (clientName && !fsRoot) {
-      setFsRoot(`/opt/${clientName.toLowerCase().replace(/\s+/g, '-')}/`);
-    }
-  }, [clientName]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-generate routing rules when moving from agent selection to routing step
+  const goToLocalRouting = () => {
+    const generated = selectedAgentIds.map((id) => {
+      const a = agents.find((ag) => ag.id === id);
+      return { pattern: a?.name?.toLowerCase().replace(/\s+/g, '-') ?? id, agentId: id };
+    });
+    setRoutingRules(generated);
+    setStep('local-routing');
+  };
+
+  const toggleAgentId = (id: string, ids: string[], setIds: (v: string[]) => void) => {
+    setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  };
 
   const handleGenerate = async () => {
     setError('');
-    if (mode === 'local' && !selectedAgent) {
-      setError('Please select an agent');
-      return;
-    }
-    if (mode === 'enterprise' && (!nodeName.trim() || !clientName.trim())) {
-      setError('Node name and client name are required');
-      return;
-    }
     setLoading(true);
     try {
       let result: { token: string };
       if (mode === 'local') {
         result = await deployLocal({
-          agentId: selectedAgent,
-          ollamaEndpoint: ollamaEnabled ? ollamaEndpoint : undefined,
+          agentIds: selectedAgentIds,
+          routingRules,
         });
+        setToken(result.token);
+        setStep('local-token');
       } else {
         result = await deployEnterprise({
           name: nodeName.trim(),
           clientName: clientName.trim(),
-          role,
-          filesystemRoot: fsRoot,
-          offlineMode,
+          seats,
+          primaryAgentId,
+          poolAgentIds,
+          allowCreatingNewAgents,
+          autoSpawnRules: autoSpawnRules.length > 0 ? autoSpawnRules : undefined,
+          role: 'general',
+          filesystemRoot: `/opt/${clientName.toLowerCase().replace(/\s+/g, '-')}/`,
+          offlineMode: false,
         });
+        setToken(result.token);
+        setStep('ent-token');
       }
-      setToken(result.token);
-      setStep('token');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not generate token. Please try again.');
     } finally {
@@ -143,18 +199,38 @@ function DeployModal({
 
   const cliInstructions = `npm install -g @vutler/nexus\nvutler-nexus init ${token || '<token>'}\nvutler-nexus start`;
 
+  const isTokenStep = step === 'local-token' || step === 'ent-token';
+
+  const stepLabel: Record<DeployStep, string> = {
+    select: 'Choose type',
+    'local-agents': '1 of 3 — Select agents',
+    'local-routing': '2 of 3 — Routing rules',
+    'local-token': '3 of 3 — Token',
+    'ent-basics': '1 of 5 — Basics',
+    'ent-primary': '2 of 5 — Primary agent',
+    'ent-pool': '3 of 5 — Agent pool',
+    'ent-spawn-rules': '4 of 5 — Auto-spawn rules',
+    'ent-token': '5 of 5 — Token',
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl w-full max-w-lg mx-4 p-6 space-y-5">
+        {/* Header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-white font-semibold text-lg">Deploy New Nexus</h2>
+          <div>
+            <h2 className="text-white font-semibold text-lg">Deploy New Nexus</h2>
+            {step !== 'select' && (
+              <p className="text-xs text-[#6b7280] mt-0.5">{stepLabel[step]}</p>
+            )}
+          </div>
           <button onClick={onClose} className="text-[#6b7280] hover:text-white transition-colors text-2xl leading-none" aria-label="Close">×</button>
         </div>
 
-        {/* Step 1 – Mode */}
+        {/* ── Step: select mode ── */}
         {step === 'select' && (
           <div className="space-y-4">
             <p className="text-[#9ca3af] text-sm">Choose a deployment type to get started.</p>
@@ -165,7 +241,7 @@ function DeployModal({
                   icon: '💻',
                   label: 'Clone Agent',
                   badge: 'Local',
-                  desc: 'Run an existing agent on your local machine. Shared memory and personality.',
+                  desc: 'Run existing agents on your local machine. Shared memory and personality.',
                   badgeCls: MODE_BADGE.local,
                   borderHover: 'hover:border-blue-500/50',
                   bgHover: 'hover:bg-blue-900/5',
@@ -176,7 +252,7 @@ function DeployModal({
                   icon: '🏢',
                   label: 'Enterprise Node',
                   badge: 'Enterprise',
-                  desc: 'Deploy a new agent at a client site. Own memory, filesystem access.',
+                  desc: 'Deploy a multi-agent node at a client site with seat management.',
                   badgeCls: MODE_BADGE.enterprise,
                   borderHover: 'hover:border-emerald-500/50',
                   bgHover: 'hover:bg-emerald-900/5',
@@ -185,7 +261,7 @@ function DeployModal({
               ] as const).map(({ m, icon, label, badge, desc, badgeCls, borderHover, bgHover, textHover }) => (
                 <button
                   key={m}
-                  onClick={() => { setMode(m); setStep('form'); }}
+                  onClick={() => { setMode(m); setStep(m === 'local' ? 'local-agents' : 'ent-basics'); }}
                   className={`flex flex-col items-start gap-2 p-4 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] ${borderHover} ${bgHover} rounded-xl text-left transition-all group`}
                 >
                   <span className="text-2xl">{icon}</span>
@@ -198,76 +274,96 @@ function DeployModal({
           </div>
         )}
 
-        {/* Step 2 – Form */}
-        {step === 'form' && (
+        {/* ── LOCAL: Step 1 — multi-select agents ── */}
+        {step === 'local-agents' && (
           <div className="space-y-4">
             {!initialMode && (
               <button onClick={() => setStep('select')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
             )}
+            <p className="text-[#9ca3af] text-sm">Select one or more agents to deploy to this local node.</p>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {agentsLoading && (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-12 bg-[#0a0b14] rounded-lg animate-pulse" />
+                  ))}
+                </div>
+              )}
+              {!agentsLoading && agents.map((agent) => {
+                const checked = selectedAgentIds.includes(agent.id);
+                return (
+                  <label
+                    key={agent.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      checked
+                        ? 'border-[#3b82f6]/60 bg-[#3b82f6]/5'
+                        : 'border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-[rgba(255,255,255,0.14)]'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleAgentId(agent.id, selectedAgentIds, setSelectedAgentIds)}
+                      className="w-4 h-4 accent-[#3b82f6] shrink-0"
+                    />
+                    <AgentAvatar agent={agent} size={8} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">{agent.name}</p>
+                      {agent.model && <p className="text-xs text-[#6b7280] truncate">{agent.model}</p>}
+                    </div>
+                  </label>
+                );
+              })}
+              {!agentsLoading && agents.length === 0 && (
+                <p className="text-sm text-[#6b7280] text-center py-6">No agents found in your workspace.</p>
+              )}
+            </div>
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button
+              onClick={() => {
+                if (selectedAgentIds.length === 0) { setError('Select at least one agent'); return; }
+                setError('');
+                goToLocalRouting();
+              }}
+              className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
 
-            {mode === 'local' ? (
-              <>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Agent</label>
-                  <select value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} className={inputCls}>
-                    <option value="">Select an agent…</option>
-                    {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-[#9ca3af]">LLM Fallback (Ollama)</span>
-                  <Toggle on={ollamaEnabled} onToggle={() => setOllamaEnabled(!ollamaEnabled)} />
-                </div>
-                {ollamaEnabled && (
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Ollama Endpoint</label>
+        {/* ── LOCAL: Step 2 — routing rules ── */}
+        {step === 'local-routing' && (
+          <div className="space-y-4">
+            <button onClick={() => setStep('local-agents')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
+            <p className="text-[#9ca3af] text-sm">Review auto-generated routing rules. Edit patterns as needed.</p>
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {routingRules.map((rule, idx) => {
+                const agentName = agents.find((a) => a.id === rule.agentId)?.name ?? rule.agentId;
+                return (
+                  <div key={idx} className="flex items-center gap-2 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2">
                     <input
                       type="text"
-                      value={ollamaEndpoint}
-                      onChange={(e) => setOllamaEndpoint(e.target.value)}
-                      placeholder="http://localhost:11434"
-                      className={inputCls}
+                      value={rule.pattern}
+                      onChange={(e) => {
+                        const updated = [...routingRules];
+                        updated[idx] = { ...updated[idx], pattern: e.target.value };
+                        setRoutingRules(updated);
+                      }}
+                      placeholder="pattern"
+                      className="flex-1 bg-transparent text-white text-xs placeholder-[#4b5563] focus:outline-none"
                     />
+                    <span className="text-[#4b5563] text-xs shrink-0">→</span>
+                    <span className="text-[#9ca3af] text-xs truncate max-w-[120px] shrink-0">{agentName}</span>
                   </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Node Name</label>
-                    <input type="text" value={nodeName} onChange={(e) => setNodeName(e.target.value)} placeholder="e.g. Studio Paris" className={inputCls} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Client Name</label>
-                    <input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="e.g. Acme Corp" className={inputCls} />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Role</label>
-                  <select value={role} onChange={(e) => setRole(e.target.value)} className={inputCls}>
-                    {['av-technician', 'engineer', 'support', 'general'].map((r) => (
-                      <option key={r} value={r}>{r.replace('-', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Filesystem Root</label>
-                  <input type="text" value={fsRoot} onChange={(e) => setFsRoot(e.target.value)} placeholder="/opt/client/" className={inputCls} />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-[#9ca3af]">Offline Mode</span>
-                  <Toggle on={offlineMode} onToggle={() => setOfflineMode(!offlineMode)} color="#10b981" />
-                </div>
-              </>
-            )}
-
+                );
+              })}
+            </div>
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button
               onClick={handleGenerate}
               disabled={loading}
-              style={{ backgroundColor: mode === 'local' ? '#3b82f6' : '#10b981' }}
-              className="w-full py-2.5 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-opacity hover:opacity-90 flex items-center justify-center gap-2"
+              className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
               {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
               {loading ? 'Generating…' : 'Generate Token'}
@@ -275,8 +371,226 @@ function DeployModal({
           </div>
         )}
 
-        {/* Step 3 – Token */}
-        {step === 'token' && (
+        {/* ── ENTERPRISE: Step 1 — basics ── */}
+        {step === 'ent-basics' && (
+          <div className="space-y-4">
+            {!initialMode && (
+              <button onClick={() => setStep('select')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Node Name</label>
+                <input type="text" value={nodeName} onChange={(e) => setNodeName(e.target.value)} placeholder="e.g. Studio Paris" className={inputCls} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Client Name</label>
+                <input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="e.g. Acme Corp" className={inputCls} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Seats (concurrent agents)</label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={seats}
+                onChange={(e) => setSeats(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className={inputCls}
+              />
+              <p className="text-xs text-[#6b7280]">How many agents can run concurrently on this node.</p>
+            </div>
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button
+              onClick={() => {
+                if (!nodeName.trim() || !clientName.trim()) { setError('Node name and client name are required'); return; }
+                setError('');
+                setStep('ent-primary');
+              }}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+
+        {/* ── ENTERPRISE: Step 2 — primary agent ── */}
+        {step === 'ent-primary' && (
+          <div className="space-y-4">
+            <button onClick={() => setStep('ent-basics')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
+            <p className="text-[#9ca3af] text-sm">Select the primary agent that handles requests by default.</p>
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {agentsLoading && (
+                <div className="space-y-2">
+                  {[1, 2, 3].map((i) => <div key={i} className="h-12 bg-[#0a0b14] rounded-lg animate-pulse" />)}
+                </div>
+              )}
+              {!agentsLoading && agents.map((agent) => {
+                const selected = primaryAgentId === agent.id;
+                return (
+                  <label
+                    key={agent.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      selected
+                        ? 'border-emerald-500/60 bg-emerald-500/5'
+                        : 'border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-[rgba(255,255,255,0.14)]'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="primaryAgent"
+                      checked={selected}
+                      onChange={() => setPrimaryAgentId(agent.id)}
+                      className="w-4 h-4 accent-emerald-500 shrink-0"
+                    />
+                    <AgentAvatar agent={agent} size={8} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">{agent.name}</p>
+                      {agent.model && <p className="text-xs text-[#6b7280] truncate">{agent.model}</p>}
+                    </div>
+                    {selected && <span className="text-xs text-emerald-400 shrink-0">Primary</span>}
+                  </label>
+                );
+              })}
+            </div>
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button
+              onClick={() => {
+                if (!primaryAgentId) { setError('Please select a primary agent'); return; }
+                setError('');
+                setStep('ent-pool');
+              }}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+
+        {/* ── ENTERPRISE: Step 3 — pool agents ── */}
+        {step === 'ent-pool' && (
+          <div className="space-y-4">
+            <button onClick={() => setStep('ent-primary')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
+            <p className="text-[#9ca3af] text-sm">Select agents available in the pool (can be spawned on demand).</p>
+            <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+              {agents.filter((a) => a.id !== primaryAgentId).map((agent) => {
+                const checked = poolAgentIds.includes(agent.id);
+                return (
+                  <label
+                    key={agent.id}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      checked
+                        ? 'border-emerald-500/60 bg-emerald-500/5'
+                        : 'border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-[rgba(255,255,255,0.14)]'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleAgentId(agent.id, poolAgentIds, setPoolAgentIds)}
+                      className="w-4 h-4 accent-emerald-500 shrink-0"
+                    />
+                    <AgentAvatar agent={agent} size={8} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">{agent.name}</p>
+                      {agent.model && <p className="text-xs text-[#6b7280] truncate">{agent.model}</p>}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between py-1">
+              <span className="text-sm text-[#9ca3af]">Allow creating new agents from node</span>
+              <Toggle on={allowCreatingNewAgents} onToggle={() => setAllowCreatingNewAgents(!allowCreatingNewAgents)} color="#10b981" />
+            </div>
+            <button
+              onClick={() => setStep('ent-spawn-rules')}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        )}
+
+        {/* ── ENTERPRISE: Step 4 — auto-spawn rules ── */}
+        {step === 'ent-spawn-rules' && (
+          <div className="space-y-4">
+            <button onClick={() => setStep('ent-pool')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
+            <p className="text-[#9ca3af] text-sm">Optional: define rules that auto-spawn agents when a trigger pattern is matched.</p>
+
+            {/* Rules table */}
+            {autoSpawnRules.length > 0 && (
+              <div className="rounded-lg border border-[rgba(255,255,255,0.07)] overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-[rgba(255,255,255,0.07)] bg-[#0a0b14]">
+                      <th className="text-left px-3 py-2 text-[#6b7280] uppercase tracking-wide">Trigger pattern</th>
+                      <th className="text-left px-3 py-2 text-[#6b7280] uppercase tracking-wide">Agent name</th>
+                      <th className="w-8" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {autoSpawnRules.map((rule, idx) => (
+                      <tr key={idx} className="border-b border-[rgba(255,255,255,0.04)] last:border-0">
+                        <td className="px-3 py-2 text-white font-mono">{rule.triggerPattern}</td>
+                        <td className="px-3 py-2 text-[#9ca3af]">{rule.agentName}</td>
+                        <td className="px-3 py-2">
+                          <button
+                            onClick={() => setAutoSpawnRules(autoSpawnRules.filter((_, i) => i !== idx))}
+                            className="text-[#6b7280] hover:text-red-400 transition-colors"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Add rule */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newSpawnPattern}
+                onChange={(e) => setNewSpawnPattern(e.target.value)}
+                placeholder="trigger-pattern"
+                className="flex-1 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-xs placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors"
+              />
+              <input
+                type="text"
+                value={newSpawnAgentName}
+                onChange={(e) => setNewSpawnAgentName(e.target.value)}
+                placeholder="agent name"
+                className="flex-1 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-xs placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors"
+              />
+              <button
+                onClick={() => {
+                  if (!newSpawnPattern.trim() || !newSpawnAgentName.trim()) return;
+                  setAutoSpawnRules([...autoSpawnRules, { triggerPattern: newSpawnPattern.trim(), agentName: newSpawnAgentName.trim() }]);
+                  setNewSpawnPattern('');
+                  setNewSpawnAgentName('');
+                }}
+                className="px-3 py-2 bg-[#1e293b] hover:bg-[#334155] text-white rounded-lg text-xs transition-colors shrink-0"
+              >
+                + Add
+              </button>
+            </div>
+
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button
+              onClick={handleGenerate}
+              disabled={loading}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              {loading ? 'Generating…' : 'Generate Token'}
+            </button>
+          </div>
+        )}
+
+        {/* ── Token step (shared) ── */}
+        {isTokenStep && (
           <div className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Token</label>
@@ -503,6 +817,9 @@ function NodeCard({ node }: { node: NexusNode }) {
       {node.clientName && <p className="text-xs text-[#6b7280] mb-1">{node.clientName}</p>}
       <div className="mt-auto pt-4 space-y-1 text-xs text-[#6b7280]">
         <p>{node.agentCount === 0 ? 'No agents' : `${node.agentCount} agent${node.agentCount !== 1 ? 's' : ''}`}</p>
+        {node.seats && (
+          <p className="text-[#3b82f6]">{node.seats.used}/{node.seats.max} seats used</p>
+        )}
         <p>Last: {relativeTime(node.lastHeartbeat)}</p>
       </div>
       <div className="mt-4 pt-4 border-t border-[rgba(255,255,255,0.05)]">
@@ -562,10 +879,8 @@ function MyNodesTab({
 
   return (
     <div className="space-y-6">
-      {/* Stats */}
       {!loading && stats && <StatsBar stats={stats} />}
 
-      {/* Error */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
           <span>{error}</span>
@@ -573,14 +888,12 @@ function MyNodesTab({
         </div>
       )}
 
-      {/* Loading */}
       {loading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <NodeSkeleton key={i} />)}
         </div>
       )}
 
-      {/* Empty */}
       {!loading && localNodes.length === 0 && !error && (
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-[#14151f] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-3xl">
@@ -597,7 +910,6 @@ function MyNodesTab({
         </div>
       )}
 
-      {/* Grid */}
       {!loading && localNodes.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {localNodes.map((node) => <NodeCard key={node.id} node={node} />)}
@@ -630,7 +942,6 @@ function ClientCard({
 
   return (
     <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl overflow-hidden transition-all duration-200 hover:border-[rgba(255,255,255,0.12)]">
-      {/* Card header */}
       <div className="p-5">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex-1 min-w-0">
@@ -659,7 +970,6 @@ function ClientCard({
           </div>
         </div>
 
-        {/* Stats row */}
         <div className="flex items-center gap-3 text-xs text-[#6b7280]">
           <span>
             <span className="text-white font-medium">{clientNodes.length}</span> node{clientNodes.length !== 1 ? 's' : ''}
@@ -672,7 +982,6 @@ function ClientCard({
           )}
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-2 mt-4">
           <button
             onClick={() => onDeploy(client.name)}
@@ -685,13 +994,12 @@ function ClientCard({
               onClick={() => setExpanded(!expanded)}
               className="flex-1 py-1.5 bg-[#0a0b14] hover:bg-[rgba(255,255,255,0.03)] text-[#9ca3af] border border-[rgba(255,255,255,0.07)] rounded-lg text-xs font-medium transition-colors"
             >
-              {expanded ? 'Hide Nodes ▲' : `View Nodes ▼`}
+              {expanded ? 'Hide Nodes ▲' : 'View Nodes ▼'}
             </button>
           )}
         </div>
       </div>
 
-      {/* Expanded nodes */}
       {expanded && clientNodes.length > 0 && (
         <div className="border-t border-[rgba(255,255,255,0.07)] bg-[#0e0f1a]">
           {clientNodes.map((node, idx) => (
@@ -751,7 +1059,6 @@ function EnterpriseTab({
 }) {
   return (
     <div className="space-y-6">
-      {/* Toolbar */}
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-[#6b7280]">
           {clients.length > 0
@@ -774,7 +1081,6 @@ function EnterpriseTab({
         </div>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
           <span>{error}</span>
@@ -782,14 +1088,12 @@ function EnterpriseTab({
         </div>
       )}
 
-      {/* Loading */}
       {loading && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <ClientSkeleton key={i} />)}
         </div>
       )}
 
-      {/* Empty */}
       {!loading && clients.length === 0 && !error && (
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
           <div className="w-16 h-16 rounded-2xl bg-[#14151f] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-3xl">
@@ -806,7 +1110,6 @@ function EnterpriseTab({
         </div>
       )}
 
-      {/* Grid */}
       {!loading && clients.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {clients.map((client) => (
@@ -832,18 +1135,15 @@ type ActiveTab = 'my-nodes' | 'enterprise';
 export default function NexusPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('my-nodes');
 
-  // Nodes state
   const [nodes, setNodes] = useState<NexusNode[]>([]);
   const [stats, setStats] = useState<NexusStats | null>(null);
   const [nodesLoading, setNodesLoading] = useState(true);
   const [nodesError, setNodesError] = useState('');
 
-  // Clients state
   const [clients, setClients] = useState<Client[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsError, setClientsError] = useState('');
 
-  // Modals
   const [deployOpen, setDeployOpen] = useState(false);
   const [deployMode, setDeployMode] = useState<'local' | 'enterprise' | undefined>(undefined);
   const [deployClientName, setDeployClientName] = useState<string | undefined>(undefined);
@@ -880,11 +1180,8 @@ export default function NexusPage() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchNodes();
-  }, [fetchNodes]);
+  useEffect(() => { fetchNodes(); }, [fetchNodes]);
 
-  // Lazy-load clients when enterprise tab is first visited
   useEffect(() => {
     if (activeTab === 'enterprise' && clients.length === 0 && !clientsLoading) {
       fetchClients();
@@ -941,7 +1238,6 @@ export default function NexusPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white">Nexus</h1>
@@ -957,7 +1253,6 @@ export default function NexusPage() {
         )}
       </div>
 
-      {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-[rgba(255,255,255,0.07)] pb-0">
         {tabs.map((tab) => (
           <button
@@ -977,7 +1272,6 @@ export default function NexusPage() {
         ))}
       </div>
 
-      {/* Tab content */}
       {activeTab === 'my-nodes' && (
         <MyNodesTab
           nodes={nodes}
@@ -1003,7 +1297,6 @@ export default function NexusPage() {
         />
       )}
 
-      {/* Deploy modal */}
       {deployOpen && (
         <DeployModal
           initialMode={deployMode}
@@ -1012,7 +1305,6 @@ export default function NexusPage() {
         />
       )}
 
-      {/* Client form modal */}
       {clientFormOpen && (
         <ClientFormModal
           client={editingClient}
@@ -1021,7 +1313,6 @@ export default function NexusPage() {
         />
       )}
 
-      {/* Delete confirm */}
       {deletingClient && (
         <DeleteConfirmModal
           label={deletingClient.name}

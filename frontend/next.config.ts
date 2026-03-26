@@ -7,9 +7,15 @@ const nextConfig: NextConfig = {
   // Disable telemetry
   productionBrowserSourceMaps: false,
 
-  // Optimize images
+  // Optimize images — allow static avatar proxy
   images: {
     formats: ['image/avif', 'image/webp'],
+    remotePatterns: [
+      { protocol: 'http', hostname: 'localhost', port: '3001', pathname: '/static/**' },
+      { protocol: 'http', hostname: 'localhost', port: '3099', pathname: '/static/**' },
+      { protocol: 'https', hostname: 'app.vutler.ai', pathname: '/static/**' },
+    ],
+    unoptimized: process.env.NODE_ENV !== 'production',
   },
 
   // Proxy API, WebSocket, and static asset requests to the Express backend
