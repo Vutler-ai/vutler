@@ -316,6 +316,7 @@ export interface MarketplaceTemplateConfig {
   tags?: string[];
   model: string;
   temperature: number;
+  max_tokens?: number;
   system_prompt: string;
 }
 
@@ -324,13 +325,33 @@ export interface MarketplaceTemplate {
   name: string;
   description: string;
   category: string;
+  avatar?: string | null;
+  skills?: string[];
+  tags?: string[];
   author?: string;
   rating?: number;
+  avg_rating?: number;
   review_count?: number;
+  install_count?: number;
   installs?: number;
   price?: number;
-  created_at: string;
+  created_at?: string;
   config: MarketplaceTemplateConfig;
+}
+
+export interface AgentSkill {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  icon: string;
+}
+
+export interface AgentSkillsResponse {
+  success: boolean;
+  skills: AgentSkill[];
+  grouped: Record<string, AgentSkill[]>;
+  total: number;
 }
 
 export interface MarketplaceListParams {

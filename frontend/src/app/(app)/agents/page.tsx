@@ -168,10 +168,86 @@ function DeleteAgentDialog({
   );
 }
 
+// ─── Category definitions ──────────────────────────────────────────────────────
+
+const TEMPLATE_CATEGORIES = [
+  { key: 'All', label: 'All' },
+  { key: 'sales', label: 'Sales & Marketing' },
+  { key: 'operations', label: 'Operations' },
+  { key: 'technical', label: 'Technical' },
+  { key: 'customer_success', label: 'Customer Success' },
+  { key: 'finance', label: 'Finance' },
+] as const;
+
+type TemplateCategory = typeof TEMPLATE_CATEGORIES[number]['key'];
+
+// ─── Template Avatar ───────────────────────────────────────────────────────────
+
+function TemplateAvatar({
+  avatar,
+  name,
+}: {
+  avatar?: string | null;
+  name: string;
+}) {
+  const [imgError, setImgError] = useState(false);
+
+  if (avatar && !imgError) {
+    return (
+      <img
+        src={`/static/avatars/${avatar}.png`}
+        alt={name}
+        className="size-12 rounded-xl object-cover shrink-0"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  // Fallback: initials
+  const initials = name
+    .split(' ')
+    .map(w => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+
+  return (
+    <div className="size-12 rounded-xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-sm font-bold text-blue-400 shrink-0">
+      {initials || '?'}
+    </div>
+  );
+}
+
+// ─── Category badge ────────────────────────────────────────────────────────────
+
+function CategoryBadge({ category }: { category: string }) {
+  const colorMap: Record<string, string> = {
+    sales: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
+    operations: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
+    technical: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
+    customer_success: 'bg-orange-500/15 text-orange-400 border-orange-500/20',
+    finance: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',
+  };
+  const colors = colorMap[category] ?? 'bg-[rgba(255,255,255,0.05)] text-[#9ca3af] border-[rgba(255,255,255,0.1)]';
+  const labelMap: Record<string, string> = {
+    sales: 'Sales',
+    operations: 'Operations',
+    technical: 'Technical',
+    customer_success: 'Customer Success',
+    finance: 'Finance',
+  };
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${colors}`}>
+      {labelMap[category] ?? category}
+    </span>
+  );
+}
+
 // ─── Templates Tab ────────────────────────────────────────────────────────────
 
 function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
   const [search, setSearch] = useState('');
+  const [activeCategory, setActiveCategory] = useState<TemplateCategory>('All');
   const [installing, setInstalling] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
 
@@ -183,15 +259,28 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
   const templates = data?.templates ?? [];
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return templates;
-    const q = search.toLowerCase();
-    return templates.filter(
-      t =>
-        t.name.toLowerCase().includes(q) ||
-        t.description.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q),
-    );
-  }, [templates, search]);
+    let result = templates;
+
+    // Category filter
+    if (activeCategory !== 'All') {
+      result = result.filter(t => t.category === activeCategory);
+    }
+
+    // Search filter
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        t =>
+          t.name.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q) ||
+          t.category.toLowerCase().includes(q) ||
+          (t.tags ?? []).some(tag => tag.toLowerCase().includes(q)) ||
+          (t.skills ?? []).some(s => s.toLowerCase().includes(q)),
+      );
+    }
+
+    return result;
+  }, [templates, search, activeCategory]);
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
     setInstalling(template.id);
@@ -204,7 +293,7 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
           model: template.config.model,
           temperature: template.config.temperature,
           system_prompt: template.config.system_prompt,
-          avatar: template.config.icon,
+          avatar: template.avatar ?? template.config.icon,
         },
       } as any);
       onCreated(agent.id);
@@ -217,13 +306,30 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
 
   return (
     <div>
-      <div className="mb-5 flex items-center gap-3">
+      {/* Search + category filters */}
+      <div className="mb-5 space-y-3">
         <Input
           placeholder="Search templates..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="max-w-sm bg-[#14151f] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#6b7280]"
         />
+
+        <div className="flex items-center gap-1 flex-wrap">
+          {TEMPLATE_CATEGORIES.map(cat => (
+            <button
+              key={cat.key}
+              onClick={() => setActiveCategory(cat.key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                activeCategory === cat.key
+                  ? 'bg-blue-600/20 border-blue-500/40 text-blue-400'
+                  : 'bg-transparent border-[rgba(255,255,255,0.07)] text-[#6b7280] hover:text-white hover:border-[rgba(255,255,255,0.15)]'
+              }`}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {installError && (
@@ -243,14 +349,19 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
               <div className="flex items-start gap-3 mb-3">
-                <Skeleton className="size-10 rounded-lg" />
+                <Skeleton className="size-12 rounded-xl" />
                 <div className="space-y-1.5 flex-1">
                   <Skeleton className="h-4 w-3/4" />
                   <Skeleton className="h-3 w-1/3" />
                 </div>
               </div>
               <Skeleton className="h-3 w-full mb-1" />
-              <Skeleton className="h-3 w-4/5 mb-4" />
+              <Skeleton className="h-3 w-4/5 mb-3" />
+              <div className="flex gap-1.5 mb-4">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-14 rounded-full" />
+              </div>
               <Skeleton className="h-8 w-full rounded-lg" />
             </div>
           ))}
@@ -261,7 +372,9 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
         <>
           {filtered.length === 0 ? (
             <div className="text-center py-16 text-[#6b7280]">
-              {search ? 'No templates match your search.' : 'No templates available.'}
+              {search || activeCategory !== 'All'
+                ? 'No templates match your filters.'
+                : 'No templates available.'}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -272,31 +385,38 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
                 >
                   {/* Card header */}
                   <div className="flex items-start gap-3 mb-3">
-                    <div className="size-10 rounded-lg bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-xl shrink-0">
-                      {template.config.icon || '🤖'}
-                    </div>
+                    <TemplateAvatar avatar={template.avatar} name={template.name} />
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-semibold text-white truncate">{template.name}</h3>
-                      <span className="text-xs text-[#6b7280]">{template.category}</span>
+                      <h3 className="text-sm font-semibold text-white truncate leading-tight mb-1">
+                        {template.name}
+                      </h3>
+                      <CategoryBadge category={template.category} />
                     </div>
                   </div>
 
                   {/* Description */}
-                  <p className="text-xs text-[#9ca3af] line-clamp-2 flex-1 mb-4">
+                  <p className="text-xs text-[#9ca3af] line-clamp-2 flex-1 mb-3">
                     {template.description}
                   </p>
 
-                  {/* Meta */}
-                  <div className="flex items-center gap-2 mb-4 flex-wrap">
-                    {template.config.tags?.slice(0, 3).map(tag => (
-                      <span
-                        key={tag}
-                        className="text-[10px] px-2 py-0.5 rounded-full bg-[rgba(255,255,255,0.05)] text-[#9ca3af] border border-[rgba(255,255,255,0.07)]"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
+                  {/* Skills pills */}
+                  {(template.skills ?? []).length > 0 && (
+                    <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                      {(template.skills ?? []).slice(0, 3).map(skill => (
+                        <span
+                          key={skill}
+                          className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                        >
+                          {skill.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                      {(template.skills ?? []).length > 3 && (
+                        <span className="text-[10px] text-[#6b7280]">
+                          +{(template.skills ?? []).length - 3} more
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Model info */}
                   <p className="text-xs text-[#6b7280] mb-4 truncate">
