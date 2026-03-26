@@ -1,0 +1,22 @@
+{
+  "name": "@vutler/mcp-office",
+  "version": "1.0.0",
+  "description": "MCP server exposing Vutler Office tools to AI agents (Claude, Nexus, etc.)",
+  "main": "index.js",
+  "bin": {
+    "vutler-mcp-office": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": ["mcp", "vutler", "office", "ai", "claude", "nexus"],
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -36,7 +36,7 @@ function checkStorageQuota(req, res, next) {
 function checkQuota(resource) {
   return async (req, res, next) => {
     try {
-      const workspaceId = req.workspaceId || 'default';
+      const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
       // Get workspace plan - for now default to 'free', later get from workspace settings
       const plan = req.workspacePlan || 'free'; // TODO: get from workspace_settings
       
@@ -106,7 +106,7 @@ function checkQuota(resource) {
  */
 async function addWorkspacePlan(req, res, next) {
   try {
-    const workspaceId = req.workspaceId || 'default';
+    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
     const { queryWithWorkspace } = require('./services/pg');
     
     const { rows } = await queryWithWorkspace(
