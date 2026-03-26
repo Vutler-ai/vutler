@@ -540,24 +540,23 @@ app.get('/api/v1/ws/stats', (req, res) => res.json({ success: true, ws: wsGetSta
 // 7. PRODUCT MODULES
 // ---------------------------------------------------------------------------
 
-// Rate limiters for specific route groups
-app.use('/api/v1/chat/send', llmLimiter);
-app.use('/api/v1/llm', llmLimiter);
-app.use('/api/v1', apiLimiter);
-
 // Office routes (chat, drive, email, tasks, calendar, integrations)
 try { app.use('/api/v1', require('./packages/office/routes')); } catch (e) { console.warn('[BOOT] Office routes failed:', e.message); }
 
 // Agents routes (agents, nexus, marketplace, sandbox, swarm, llm, tools)
 try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { console.warn('[BOOT] Agents routes failed:', e.message); }
 
-// Direct fallback mounts (in case package routers fail)
+// Direct fallback mounts
 try { app.use('/api/v1/tasks', require('./app/custom/api/tasks-v2')); } catch (_) {}
 try { app.use('/api/v1/agents', require('./app/custom/api/agents')); } catch (_) {}
 try { app.use('/api/v1/chat', require('./app/custom/api/chat')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
 try { app.use('/api/v1/email', require('./app/custom/api/email-vaultbrix')); } catch (_) {}
 try { app.use('/api/v1/drive', require('./app/custom/api/drive')); } catch (_) {}
+
+// Rate limiters AFTER route mounts (won't block route matching)
+app.use('/api/v1/chat/send', llmLimiter);
+app.use('/api/v1/llm', llmLimiter);
 
 // ---------------------------------------------------------------------------
 // 8. LANDING & REDIRECTS
