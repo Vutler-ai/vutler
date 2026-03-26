@@ -28,7 +28,7 @@ function mountRoot(gate, modulePath, label) {
     console.warn(`[AGENTS] Skip ${label}: ${e.message}`);
   }
 }
-mountRoot('agents', '../../app/custom/api/agents', 'agents');
+mount('/agents', 'agents', '../../api/agents');
 mount('/agent-runtime',   'agents',      '../../app/custom/api/runtime');
 mount('/agent-sync',      'agents',      '../../api/agent-sync');
 

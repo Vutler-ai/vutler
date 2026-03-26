@@ -546,13 +546,12 @@ try { app.use('/api/v1', require('./packages/office/routes')); } catch (e) { con
 // Agents routes (agents, nexus, marketplace, sandbox, swarm, llm, tools)
 try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { console.warn('[BOOT] Agents routes failed:', e.message); }
 
-// Direct fallback mounts (full-path modules at /api/v1, relative at prefix)
-try { app.use('/api/v1', require('./app/custom/api/tasks-v2')); } catch (_) {}
-try { app.use('/api/v1', require('./app/custom/api/agents')); } catch (_) {}
-try { app.use('/api/v1', require('./app/custom/api/chat')); } catch (_) {}
+// Direct mounts — api/ modules with relative paths (/, /:id)
+try { app.use('/api/v1/tasks', require('./api/tasks')); } catch (_) {}
+try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
-try { app.use('/api/v1', require('./app/custom/api/email')); } catch (_) {}
-try { app.use('/api/v1', require('./app/custom/api/drive')); } catch (_) {}
+try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}
+try { app.use('/api/v1/email', require('./api/email-vaultbrix')); } catch (_) {}
 
 // Rate limiters AFTER route mounts (won't block route matching)
 app.use('/api/v1/chat/send', llmLimiter);
