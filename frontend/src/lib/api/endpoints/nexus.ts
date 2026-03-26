@@ -2,6 +2,7 @@ import { apiFetch } from '../client';
 import type {
   NexusStatusResponse,
   NexusNode,
+  NexusAgentStatus,
   DeployLocalPayload,
   DeployEnterprisePayload,
   NexusTokenResponse,
@@ -43,4 +44,51 @@ export async function dispatch(
     method: 'POST',
     body: JSON.stringify({ command, args }),
   });
+}
+
+export async function getAgentConfigs(nodeId: string): Promise<NexusAgentStatus[]> {
+  const data = await apiFetch<{ agents?: NexusAgentStatus[] } | NexusAgentStatus[]>(
+    `/api/v1/nexus/nodes/${nodeId}/agents`
+  );
+  return Array.isArray(data) ? data : (data.agents ?? []);
+}
+
+export async function spawnAgent(
+  nodeId: string,
+  agentId: string
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/nexus/nodes/${nodeId}/agents/spawn`, {
+    method: 'POST',
+    body: JSON.stringify({ agentId }),
+  });
+}
+
+export interface CreateNodeAgentDefinition {
+  name: string;
+  role: string;
+  description: string;
+  system_prompt: string;
+  model: string;
+  skills: string[];
+  tools: string[];
+}
+
+export async function createNodeAgent(
+  nodeId: string,
+  definition: CreateNodeAgentDefinition
+): Promise<NexusAgentStatus> {
+  return apiFetch<NexusAgentStatus>(`/api/v1/nexus/nodes/${nodeId}/agents`, {
+    method: 'POST',
+    body: JSON.stringify(definition),
+  });
+}
+
+export async function stopNodeAgent(
+  nodeId: string,
+  agentId: string
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    `/api/v1/nexus/nodes/${nodeId}/agents/${agentId}/stop`,
+    { method: 'POST' }
+  );
 }

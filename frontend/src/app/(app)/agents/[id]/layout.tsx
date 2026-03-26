@@ -53,9 +53,9 @@ function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
       </div>
     );
   }
-  const initials = agent.name
+  const initials = (agent.name || (agent as any).username || 'A')
     .split(' ')
-    .map(w => w[0])
+    .map((w: string) => w[0] || '')
     .join('')
     .toUpperCase()
     .slice(0, 2);

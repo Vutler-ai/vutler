@@ -410,4 +410,261 @@ program.command('test')
     console.log('\nDone.');
   });
 
+// ─── agents ──────────────────────────────────────────────────────────────────
+
+program.command('agents')
+  .description('List running agents on this node')
+  .option('--port <port>', 'Local health check port', '3100')
+  .action(async (opts) => {
+    const http = require('http');
+
+    const config = readConfig();
+    if (!config) {
+      console.log('No config found. Run `vutler-nexus init <token>` first.');
+      process.exit(1);
+    }
+
+    const port = parseInt(opts.port);
+
+    // Try to read agents from local health endpoint
+    await new Promise((resolve) => {
+      const req = http.get({ hostname: 'localhost', port, path: '/agents' }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const body = JSON.parse(data);
+            const agents = body.agents || [];
+
+            if (!agents.length) {
+              console.log('No agents running on this node.');
+              return resolve();
+            }
+
+            // Determine column widths
+            const nameW = Math.max(4, ...agents.map(a => (a.name || '').length));
+            const modelW = Math.max(5, ...agents.map(a => (a.model || '').length));
+            const statusW = Math.max(6, ...agents.map(a => (a.status || '').length));
+            const tasksW = Math.max(5, ...agents.map(a => String(a.tasks ?? 0).length));
+
+            const pad = (s, w) => String(s || '').padEnd(w);
+            const line = (ch) => ch.repeat(nameW + modelW + statusW + tasksW + 13);
+
+            console.log('┌' + '─'.repeat(nameW + 2) + '┬' + '─'.repeat(modelW + 2) + '┬' + '─'.repeat(statusW + 2) + '┬' + '─'.repeat(tasksW + 2) + '┐');
+            console.log('│ ' + pad('Name', nameW) + ' │ ' + pad('Model', modelW) + ' │ ' + pad('Status', statusW) + ' │ ' + pad('Tasks', tasksW) + ' │');
+            console.log('├' + '─'.repeat(nameW + 2) + '┼' + '─'.repeat(modelW + 2) + '┼' + '─'.repeat(statusW + 2) + '┼' + '─'.repeat(tasksW + 2) + '┤');
+            for (const a of agents) {
+              console.log('│ ' + pad(a.name, nameW) + ' │ ' + pad(a.model, modelW) + ' │ ' + pad(a.status, statusW) + ' │ ' + pad(a.tasks ?? 0, tasksW) + ' │');
+            }
+            console.log('└' + '─'.repeat(nameW + 2) + '┴' + '─'.repeat(modelW + 2) + '┴' + '─'.repeat(statusW + 2) + '┴' + '─'.repeat(tasksW + 2) + '┘');
+
+            const maxSeats = body.max_seats || null;
+            const seatInfo = maxSeats !== null ? `${agents.length}/${maxSeats}` : `${agents.length}`;
+            console.log('Seats: ' + seatInfo + ' used');
+          } catch (e) {
+            console.error('Error: Could not parse agent list from local runtime —', e.message);
+          }
+          resolve();
+        });
+      });
+      req.on('error', () => {
+        // Fall back to token payload
+        try {
+          const payload = decodeDeployToken(config.deploy_token);
+          const agentIds = payload.agents || (payload.primary_agent ? [payload.primary_agent] : []);
+          if (!agentIds.length) {
+            console.log('Node is offline and no agent info found in token.');
+          } else {
+            console.log('[offline] Agents in token: ' + agentIds.join(', '));
+            const seats = payload.seats || agentIds.length;
+            const maxSeats = payload.max_seats || null;
+            console.log('Seats: ' + seats + (maxSeats ? '/' + maxSeats : '') + ' used (from token)');
+          }
+        } catch (_) {
+          console.log('Node is offline (http://localhost:' + port + '/agents unreachable).');
+        }
+        resolve();
+      });
+      req.setTimeout(3000, () => { req.destroy(); });
+    });
+  });
+
+// ─── spawn <agent-name> ───────────────────────────────────────────────────────
+
+program.command('spawn <agent-name>')
+  .description('Enterprise: spawn an agent from the available pool')
+  .option('--port <port>', 'Local health check port', '3100')
+  .action(async (agentName, opts) => {
+    const http = require('http');
+
+    const config = readConfig();
+    if (!config) {
+      console.log('No config found. Run `vutler-nexus init <token>` first.');
+      process.exit(1);
+    }
+
+    let payload;
+    try {
+      payload = decodeDeployToken(config.deploy_token);
+    } catch (e) {
+      console.error('Error: Failed to decode token —', e.message);
+      process.exit(1);
+    }
+
+    if (payload.mode !== 'enterprise') {
+      console.error('Error: `spawn` is only available in enterprise mode.');
+      process.exit(1);
+    }
+
+    const pool = payload.available_pool || [];
+    if (!pool.length) {
+      console.error('Error: No available_pool found in token. Re-issue the deploy token with poolAgentIds.');
+      process.exit(1);
+    }
+
+    console.log('[Nexus] Spawning agent "' + agentName + '" from available pool...');
+
+    const port = parseInt(opts.port);
+    const spawnBody = JSON.stringify({ agentName });
+
+    await new Promise((resolve) => {
+      const req = http.request({
+        hostname: 'localhost',
+        port,
+        path: '/agents/spawn',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(spawnBody) },
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const body = JSON.parse(data);
+            if (body.success === false) {
+              console.error('[Nexus] Spawn failed:', body.error || 'unknown error');
+              return resolve();
+            }
+            const agent = body.agent || {};
+            console.log('[Nexus] Agent "' + (agent.name || agentName) + '" loaded (' + (agent.model || 'unknown model') + ')');
+            const seats = body.seats || {};
+            if (seats.used !== undefined) {
+              console.log('[Nexus] Seats: ' + seats.used + (seats.max ? '/' + seats.max : '') + ' used');
+            }
+          } catch (e) {
+            console.error('[Nexus] Unexpected response:', e.message);
+          }
+          resolve();
+        });
+      });
+      req.on('error', (e) => {
+        console.error('[Nexus] Could not reach local runtime (http://localhost:' + port + ') —', e.message);
+        console.log('[Nexus] Make sure the node is running with `vutler-nexus start`.');
+        resolve();
+      });
+      req.setTimeout(5000, () => { req.destroy(); });
+      req.write(spawnBody);
+      req.end();
+    });
+  });
+
+// ─── create-agent ─────────────────────────────────────────────────────────────
+
+program.command('create-agent')
+  .description('Enterprise: interactive wizard to create a new agent on this node')
+  .option('--server <url>', 'Override server URL')
+  .action(async (opts) => {
+    const readline = require('readline');
+    const https = require('https');
+    const http = require('http');
+
+    const config = readConfig();
+    if (!config) {
+      console.log('No config found. Run `vutler-nexus init <token>` first.');
+      process.exit(1);
+    }
+
+    let payload;
+    try {
+      payload = decodeDeployToken(config.deploy_token);
+    } catch (e) {
+      console.error('Error: Failed to decode token —', e.message);
+      process.exit(1);
+    }
+
+    if (payload.mode !== 'enterprise') {
+      console.error('Error: `create-agent` is only available in enterprise mode.');
+      process.exit(1);
+    }
+
+    if (payload.allow_create === false) {
+      console.error('Error: This token does not permit agent creation (allow_create is false).');
+      process.exit(1);
+    }
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+
+    const name = (await ask('Agent name: ')).trim();
+    if (!name) { console.error('Error: Agent name is required.'); rl.close(); process.exit(1); }
+
+    const role = (await ask('Role: ')).trim() || 'general';
+    const description = (await ask('Description: ')).trim();
+    const modelInput = (await ask('Model [gpt-4o]: ')).trim();
+    const model = modelInput || 'gpt-4o';
+    const system_prompt = (await ask('System prompt: ')).trim();
+    rl.close();
+
+    const nodeId = payload.node_id;
+    const server = opts.server || config.server || 'https://app.vutler.ai';
+    const apiKey = config.deploy_token;
+
+    console.log('[Nexus] Creating agent "' + name + '"...');
+
+    const body = JSON.stringify({ name, role, description, model, system_prompt });
+    const parsed = new URL(`/api/v1/nexus/${nodeId}/agents/create`, server);
+    const lib = parsed.protocol === 'https:' ? https : http;
+
+    await new Promise((resolve) => {
+      const req = lib.request({
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: parsed.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'Authorization': 'Bearer ' + apiKey,
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+          try {
+            const resp = JSON.parse(data);
+            if (!resp.success) {
+              console.error('[Nexus] Error:', resp.error || 'Agent creation failed');
+              return resolve();
+            }
+            const agent = resp.agent || {};
+            console.log('[Nexus] Agent created (id: ' + agent.id + ')');
+            const seats = resp.seats || {};
+            if (seats.used !== undefined) {
+              console.log('[Nexus] Seats: ' + seats.used + (seats.max ? '/' + seats.max : '') + ' used');
+            }
+          } catch (e) {
+            console.error('[Nexus] Unexpected response:', e.message);
+          }
+          resolve();
+        });
+      });
+      req.on('error', (e) => {
+        console.error('[Nexus] Request failed —', e.message);
+        resolve();
+      });
+      req.setTimeout(10000, () => { req.destroy(); console.error('[Nexus] Request timed out.'); resolve(); });
+      req.write(body);
+      req.end();
+    });
+  });
+
 program.parse();

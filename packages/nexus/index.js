@@ -2,6 +2,7 @@ const WebSocket = require('ws');
 const https = require('https');
 const http = require('http');
 const { createDashboardServer } = require('./dashboard/server');
+const AgentManager = require('./lib/agent-manager');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -18,7 +19,6 @@ class NexusNode {
     this.deployToken = opts.deploy_token || null;
     this.nodeId = null;
     this.ws = null;
-    this.agents = [];
 
     // Load providers
     this.providers = {};
@@ -29,7 +29,7 @@ class NexusNode {
       const { NetworkProvider } = require('./lib/providers/network');
       const { LLMProvider } = require('./lib/providers/llm');
       const { AVControlProvider } = require('./lib/providers/av-control');
-      
+
       const perms = opts.permissions || {};
       this.providers.fs = new FilesystemProvider(perms.filesystem || {});
       this.providers.shell = new ShellProvider(perms.shell || {});
@@ -38,6 +38,18 @@ class NexusNode {
       this.providers.llm = new LLMProvider(opts.llm || {});
       this.providers.av = new AVControlProvider(perms.av || { subnets: perms.network?.subnets });
     }
+
+    this.agentManager = new AgentManager({
+      seats: opts.seats || 1,
+      primary_agent: opts.primary_agent || opts.agents?.[0],
+      routing_rules: opts.routing_rules || [],
+      auto_spawn_rules: opts.auto_spawn_rules || [],
+      available_pool: opts.available_pool || [],
+      allow_create: opts.allow_create || false,
+      server: opts.server || process.env.VUTLER_SERVER || 'https://app.vutler.ai',
+      key: opts.key || process.env.VUTLER_KEY,
+    }, this.providers, null); // sniparaClient set after connect()
+
     this.reconnectInterval = 5000;
     this.recentTasks = [];
     this.logBuffer = [];
@@ -72,6 +84,18 @@ class NexusNode {
       // Initialize Snipara client for memory operations
       const { SniparaClient } = require('./lib/snipara-client');
       this.snipara = new SniparaClient(this.server, this.nodeId, this.key);
+      // Wire AgentManager with nodeId and sniparaClient
+      this.agentManager.nodeId = this.nodeId;
+      this.agentManager.sniparaClient = this.snipara;
+      // Fetch and load agent configs from cloud
+      try {
+        const configRes = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/agent-configs`);
+        if (configRes?.agents) {
+          await this.agentManager.loadAgents(configRes.agents);
+        }
+      } catch (e) {
+        console.log('[Nexus] Could not load agent configs from cloud, using local config');
+      }
     } else {
       console.error('[Nexus] Registration failed:', regResult.error || 'unknown');
       throw new Error('Registration failed');
@@ -108,7 +132,8 @@ class NexusNode {
       try {
         await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/connect`, {
           status: 'online',
-          agents: this.agents.map(a => a.name),
+          agents: this.agentManager.getStatus(),
+          seats: this.agentManager.seatsInfo,
           memory: process.memoryUsage(),
           uptime: process.uptime()
         });
@@ -145,30 +170,47 @@ class NexusNode {
     await this._updateTaskStatus(task.id, 'in_progress');
 
     try {
-      let output;
+      const route = this.agentManager.routeTask(task);
 
-      // Route to appropriate provider based on task description/metadata
-      if (task.metadata?.provider === 'shell' || task.description?.startsWith('shell:')) {
-        const cmd = task.metadata?.command || task.description.replace('shell:', '').trim();
-        output = await this.providers.shell?.exec(cmd);
-      } else if (task.metadata?.provider === 'filesystem') {
-        output = await this.providers.filesystem?.read(task.metadata.path);
-      } else if (task.metadata?.provider === 'llm') {
-        output = await this.providers.llm?.ask(task.description);
-      } else {
-        // Default: use LLM provider to interpret and execute
-        if (this.providers.llm) {
-          output = await this.providers.llm.ask(`Execute this task: ${task.title}\n${task.description || ''}`);
+      // Handle auto-spawn
+      if (route && route.needsSpawn) {
+        this.log(`[NEXUS] Auto-spawning agent ${route.agentId} for task`);
+        const worker = await this.agentManager.spawnAgent(route.agentId);
+        const result = await worker.execute(task);
+        tracked.status = result.success ? 'completed' : 'failed';
+        tracked.completedAt = new Date().toISOString();
+        if (result.success) {
+          const outputStr = typeof result.output === 'object' ? JSON.stringify(result.output) : String(result.output || '');
+          await this._updateTaskStatus(task.id, 'completed', { output: outputStr });
+          this.log(`[NEXUS] Task completed: ${task.title} by ${worker.name}`);
         } else {
-          output = `Task received but no LLM provider configured. Task: ${task.title}`;
+          await this._updateTaskStatus(task.id, 'failed', { error: result.error });
+          this.log(`[NEXUS] Task failed: ${task.title} - ${result.error}`);
         }
+        return;
       }
 
-      const outputStr = typeof output === 'object' ? JSON.stringify(output) : String(output || '');
-      tracked.status = 'completed';
+      if (!route) {
+        this.log(`[NEXUS] No agent available for task: ${task.title}`);
+        tracked.status = 'failed';
+        tracked.completedAt = new Date().toISOString();
+        await this._updateTaskStatus(task.id, 'failed', { error: 'No agent available' });
+        return;
+      }
+
+      this.log(`[NEXUS] Routing to agent: ${route.name}`);
+      const result = await route.execute(task);
+
+      tracked.status = result.success ? 'completed' : 'failed';
       tracked.completedAt = new Date().toISOString();
-      await this._updateTaskStatus(task.id, 'completed', { output: outputStr });
-      this.log(`[NEXUS] Task completed: ${task.title}`);
+      if (result.success) {
+        const outputStr = typeof result.output === 'object' ? JSON.stringify(result.output) : String(result.output || '');
+        this.log(`[NEXUS] Task completed: ${task.title} by ${route.name}`);
+        await this._updateTaskStatus(task.id, 'completed', { output: outputStr });
+      } else {
+        this.log(`[NEXUS] Task failed: ${task.title} - ${result.error}`);
+        await this._updateTaskStatus(task.id, 'failed', { error: result.error });
+      }
     } catch (error) {
       tracked.status = 'failed';
       tracked.completedAt = new Date().toISOString();

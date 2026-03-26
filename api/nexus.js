@@ -904,4 +904,189 @@ router.post('/:nodeId/tasks/:taskId/status', async (req, res) => {
   }
 });
 
+// ── Multi-agent endpoints ─────────────────────────────────────────────────────
+
+/**
+ * GET /:nodeId/agent-configs
+ * Returns full config for each agent assigned to this node.
+ */
+router.get('/:nodeId/agent-configs', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const node = nodeRes.rows[0];
+    const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
+    const agentIds = agentsDeployed.map(a => (typeof a === 'string' ? a : a.id)).filter(Boolean);
+
+    if (!agentIds.length) {
+      return res.json({ agents: [] });
+    }
+
+    const agentsRes = await pool.query(
+      `SELECT id, username, name, role, system_prompt, model, temperature, max_tokens, skills, avatar
+       FROM ${SCHEMA}.agents
+       WHERE id = ANY($1::uuid[]) AND workspace_id = $2`,
+      [agentIds, workspaceId]
+    );
+
+    const isEnterprise = (node.config?.mode || node.type) === 'enterprise';
+    const clientName = node.config?.client_name || node.config?.clientName || 'client';
+
+    const agents = agentsRes.rows.map(agent => {
+      const sniparaInstanceId = isEnterprise
+        ? `nexus-${clientName}-${agent.id}`.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+        : agent.id;
+      return { ...agent, snipara_instance_id: sniparaInstanceId };
+    });
+
+    res.json({ agents });
+  } catch (err) {
+    console.error('[NEXUS] Get agent-configs error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /:nodeId/agent-configs/:agentId
+ * Returns config for a single agent on this node (used by spawn).
+ */
+router.get('/:nodeId/agent-configs/:agentId', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId, agentId } = req.params;
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const node = nodeRes.rows[0];
+    const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
+    const isDeployed = agentsDeployed.some(a => (typeof a === 'string' ? a : a.id) === agentId);
+    if (!isDeployed) {
+      return res.status(404).json({ success: false, error: 'Agent not deployed on this node' });
+    }
+
+    const agentRes = await pool.query(
+      `SELECT id, username, name, role, system_prompt, model, temperature, max_tokens, skills, avatar
+       FROM ${SCHEMA}.agents
+       WHERE id = $1::uuid AND workspace_id = $2
+       LIMIT 1`,
+      [agentId, workspaceId]
+    );
+    if (!agentRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    const agent = agentRes.rows[0];
+    const isEnterprise = (node.config?.mode || node.type) === 'enterprise';
+    const clientName = node.config?.client_name || node.config?.clientName || 'client';
+    const sniparaInstanceId = isEnterprise
+      ? `nexus-${clientName}-${agent.id}`.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+      : agent.id;
+
+    res.json({ agent: { ...agent, snipara_instance_id: sniparaInstanceId } });
+  } catch (err) {
+    console.error('[NEXUS] Get agent-config error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /:nodeId/agents/create
+ * Enterprise only — create a new agent from scratch on a node.
+ */
+router.post('/:nodeId/agents/create', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const node = nodeRes.rows[0];
+    const isEnterprise = (node.config?.mode || node.type) === 'enterprise';
+    if (!isEnterprise) {
+      return res.status(403).json({ success: false, error: 'agent creation is only available in enterprise mode' });
+    }
+
+    const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
+    const maxSeats = node.config?.max_seats || null;
+    if (maxSeats !== null && agentsDeployed.length >= maxSeats) {
+      return res.status(400).json({ success: false, error: `Node is at capacity (${maxSeats} seats)` });
+    }
+
+    const {
+      name, username, role = 'general', system_prompt, model = 'gpt-4o',
+      temperature = 0.7, max_tokens = 4096, skills = [], avatar = null,
+    } = req.body || {};
+
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'name is required' });
+    }
+
+    const insertAgent = await pool.query(
+      `INSERT INTO ${SCHEMA}.agents (workspace_id, name, username, role, system_prompt, model, temperature, max_tokens, skills, avatar)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+       RETURNING id, username, name, role, system_prompt, model, temperature, max_tokens, skills, avatar`,
+      [
+        workspaceId,
+        name,
+        username || name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+        role,
+        system_prompt || null,
+        model,
+        temperature,
+        max_tokens,
+        JSON.stringify(skills),
+        avatar,
+      ]
+    );
+
+    const agent = insertAgent.rows[0];
+    const clientName = node.config?.client_name || node.config?.clientName || 'client';
+    const sniparaInstanceId = `nexus-${clientName}-${agent.id}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    const entry = { id: agent.id, name: agent.name, deployedAt: new Date().toISOString() };
+    agentsDeployed.push(entry);
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.nexus_nodes SET agents_deployed = $3::jsonb, updated_at = NOW()
+       WHERE id::text = $1 AND workspace_id = $2`,
+      [nodeId, workspaceId, JSON.stringify(agentsDeployed)]
+    );
+
+    const seatsUsed = agentsDeployed.length;
+
+    res.status(201).json({
+      success: true,
+      agent: { ...agent, snipara_instance_id: sniparaInstanceId },
+      seats: { used: seatsUsed, max: maxSeats },
+    });
+  } catch (err) {
+    console.error('[NEXUS] Create agent error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

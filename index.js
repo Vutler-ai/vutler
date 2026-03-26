@@ -98,6 +98,13 @@ app.use((req, res, next) => {
 // 4. RATE LIMITING
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// 5. STATIC ASSETS (BEFORE auth — public files)
+// ---------------------------------------------------------------------------
+
+app.use('/static', express.static(path.join(__dirname, 'public/static')));
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
 const { globalLimiter, apiLimiter, llmLimiter, authLimiter } = require('./lib/rateLimiter');
 
 app.use(globalLimiter);
@@ -107,13 +114,6 @@ app.use(require('./api/middleware/auth'));
 
 // Workspace plan — loaded inline by gateFeature, NOT global middleware
 // (global async middleware was silently hanging on DB pool exhaustion)
-
-// ---------------------------------------------------------------------------
-// 5. STATIC ASSETS
-// ---------------------------------------------------------------------------
-
-app.use('/static', express.static(path.join(__dirname, 'public/static')));
-app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 // ---------------------------------------------------------------------------
 // 6. CORE ROUTES (shared across all plans)
