@@ -493,9 +493,6 @@ router.get('/status', async (req, res) => {
 
 router.post('/register', async (req, res) => {
   try {
-    await ensureApiKeysTable();
-    await ensureNexusNodesTable();
-
     // Extract API key from Authorization header or body
     const authHeader = req.headers['authorization'] || '';
     const secret = authHeader.startsWith('Bearer ')
@@ -506,32 +503,50 @@ router.post('/register', async (req, res) => {
       return res.status(401).json({ success: false, error: 'API key is required' });
     }
 
-    // Validate key: SHA-256 hash lookup + last_used_at update
-    const keyRecord = await resolveApiKey(secret);
-    if (!keyRecord) {
-      return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
-    }
-
-    const workspaceId = keyRecord.workspace_id;
     const { name, type = 'local', host = null, port = null, config = {} } = req.body || {};
     const nodeName = name || require('os').hostname();
 
-    // Create or find a nexus node for this registration
-    const insert = await pool.query(
-      `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
-       VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
-       RETURNING id`,
-      [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
-    );
+    // Try DB-backed registration first
+    let workspaceId = DEFAULT_WORKSPACE;
+    let nodeId;
+    let authMethod = 'api_key';
 
-    const nodeId = insert.rows[0].id;
+    try {
+      await ensureApiKeysTable();
+      await ensureNexusNodesTable();
+
+      const keyRecord = await resolveApiKey(secret);
+      if (!keyRecord) {
+        // DB is up but key is invalid
+        return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
+      }
+
+      workspaceId = keyRecord.workspace_id;
+
+      const insert = await pool.query(
+        `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+         VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+         RETURNING id`,
+        [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+      );
+      nodeId = insert.rows[0].id;
+    } catch (dbErr) {
+      // DB unavailable — fallback to dev mode if NODE_ENV !== production
+      if (process.env.NODE_ENV === 'production') throw dbErr;
+
+      console.warn('[NEXUS] DB unavailable — dev mode registration (key accepted without validation)');
+      nodeId = require('crypto').randomUUID();
+      authMethod = 'dev_mode';
+    }
+
+    console.log(`[NEXUS] Node registered: ${nodeName} (${nodeId}) [${authMethod}]`);
 
     res.json({
       success: true,
       message: 'Registered',
       nodeId,
       workspaceId,
-      auth: 'api_key',
+      auth: authMethod,
     });
   } catch (err) {
     console.error('[NEXUS] Register error:', err.message);
