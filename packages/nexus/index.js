@@ -128,7 +128,8 @@ class NexusNode {
         }
       }
 
-      await this._updateTaskStatus(task.id, 'completed', { output: String(output || '') });
+      const outputStr = typeof output === 'object' ? JSON.stringify(output) : String(output || '')
+      await this._updateTaskStatus(task.id, 'completed', { output: outputStr });
       console.log(`[NEXUS] Task completed: ${task.title}`);
     } catch (error) {
       await this._updateTaskStatus(task.id, 'failed', { error: error.message });
