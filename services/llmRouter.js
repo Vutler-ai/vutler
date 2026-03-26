@@ -21,7 +21,7 @@ const PROVIDERS = {
     baseURL: 'https://openrouter.ai/api/v1',
     path: '/chat/completions',
     format: 'openai',
-    defaultModel: 'openai/gpt-4o',
+    defaultModel: 'openrouter/auto',
     defaultHeaders: {
       'HTTP-Referer': 'https://app.vutler.ai',
       'X-Title': 'Vutler',
@@ -44,13 +44,14 @@ const PROVIDERS = {
 };
 
 function detectProvider(model) {
-  if (!model) return 'anthropic';
+  if (!model) return 'openrouter'; // default to OpenRouter auto
   const m = String(model).toLowerCase();
   if (m.includes('claude') || m.includes('sonnet') || m.includes('haiku') || m.includes('opus')) return 'anthropic';
   if (m.includes('/')) return 'openrouter';
   if (m.includes('mistral')) return 'mistral';
   if (m.includes('llama') || m.includes('mixtral') || m.includes('groq')) return 'groq';
-  return 'openai';
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3')) return 'openai';
+  return 'openrouter'; // fallback to OpenRouter auto for unknown models
 }
 
 function parseUrl(baseURL) {

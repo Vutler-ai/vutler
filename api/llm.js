@@ -18,9 +18,12 @@ const MODEL_CATALOG = {
     { id: "claude-3-5-haiku-latest", name: "Claude 3.5 Haiku", tier: "budget", context: 200000 }
   ],
   openrouter: [
+    { id: "openrouter/auto", name: "Auto (best model per prompt)", tier: "auto", context: 200000 },
     { id: "openai/gpt-4o", name: "GPT-4o (OpenRouter)", tier: "premium", context: 128000 },
     { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4 (OpenRouter)", tier: "standard", context: 200000 },
-    { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B (OpenRouter)", tier: "budget", context: 131072 }
+    { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B (OpenRouter)", tier: "budget", context: 131072 },
+    { id: "google/gemini-2.5-pro-preview", name: "Gemini 2.5 Pro (OpenRouter)", tier: "premium", context: 1000000 },
+    { id: "mistralai/mixtral-8x22b-instruct", name: "Mixtral 8x22B (OpenRouter)", tier: "standard", context: 65536 }
   ],
   mistral: [
     { id: "mistral-large-latest", name: "Mistral Large", tier: "premium", context: 128000 },

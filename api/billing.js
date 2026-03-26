@@ -28,11 +28,13 @@ const ADDONS = [
 router.get('/billing/plans', (req, res) => {
   const grouped = { office: [], agents: [], full: [], addons: ADDONS };
   for (const [id, plan] of Object.entries(PLANS)) {
-    if (!plan.price || (plan.price.monthly === 0 && plan.price.yearly === 0)) continue;
+    // Skip enterprise/beta (custom pricing, not shown in self-serve grid)
+    // but always include 'free' regardless of price
+    if (id !== 'free' && plan.price && plan.price.monthly === 0 && plan.price.yearly === 0) continue;
     const entry = { id, label: plan.label, price: plan.price, features: plan.features, limits: plan.limits };
-    if (plan.tier === 'office')       grouped.office.push(entry);
-    else if (plan.tier === 'agents')  grouped.agents.push(entry);
-    else if (plan.tier === 'full')    grouped.full.push(entry);
+    if (plan.tier === 'free' || plan.tier === 'office') grouped.office.push(entry);
+    else if (plan.tier === 'agents') grouped.agents.push(entry);
+    else if (plan.tier === 'full')   grouped.full.push(entry);
   }
   res.json({ success: true, data: grouped });
 });
@@ -42,34 +44,112 @@ router.get('/billing/subscription', async (req, res) => {
     const workspaceId = req.workspaceId;
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
-    const subRow = pool
-      ? (await pool.query(
+    // ── Fetch subscription row (may not exist for free-tier workspaces) ──────
+    let subRow = null;
+    if (pool) {
+      try {
+        subRow = (await pool.query(
           `SELECT * FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 AND status = 'active' LIMIT 1`,
           [workspaceId]
-        )).rows[0]
-      : null;
-
-    if (!subRow) {
-      return res.json({ success: true, data: { plan: 'free', status: 'active', subscription: null } });
+        )).rows[0] || null;
+      } catch (_) { /* table may not exist yet — treat as free */ }
     }
 
-    const planDef = PLANS[subRow.plan_id] || PLANS.free;
-    let usage = null;
+    // If no subscription record, try reading plan from workspace_settings
+    let planId = subRow ? subRow.plan_id : 'free';
+    if (!subRow && pool) {
+      try {
+        const settingsRow = (await pool.query(
+          `SELECT value FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'billing_plan' LIMIT 1`,
+          [workspaceId]
+        )).rows[0];
+        if (settingsRow?.value) {
+          const parsed = typeof settingsRow.value === 'string' ? JSON.parse(settingsRow.value) : settingsRow.value;
+          planId = parsed.plan || parsed || 'free';
+        }
+      } catch (_) { /* no settings table — stay on free */ }
+    }
+
+    const planDef = PLANS[planId] || PLANS.free;
+
+    // ── Gather real usage data ────────────────────────────────────────────────
+    let agentCount = 0;
+    let tokenUsed  = 0;
+    let storageBytesUsed = 0;
+
     if (pool) {
-      const usageRes = await pool.query(
-        `SELECT metric, value FROM ${SCHEMA}.usage_records WHERE workspace_id = $1`,
-        [workspaceId]
-      );
-      usage = Object.fromEntries(usageRes.rows.map(r => [r.metric, r.value]));
+      // Agent count
+      try {
+        const agentRes = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.agents WHERE workspace_id = $1`,
+          [workspaceId]
+        );
+        agentCount = parseInt(agentRes.rows[0]?.cnt || 0, 10);
+      } catch (_) {}
+
+      // Token usage from usage_logs (most common table name in Vutler)
+      const TOKEN_QUERIES = [
+        `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM ${SCHEMA}.usage_logs WHERE workspace_id = $1`,
+        `SELECT COALESCE(SUM(tokens_used), 0) AS total FROM ${SCHEMA}.agent_executions WHERE workspace_id = $1`,
+        `SELECT COALESCE(SUM(value::bigint), 0) AS total FROM ${SCHEMA}.usage_records WHERE workspace_id = $1 AND metric = 'tokens_month'`,
+      ];
+      for (const q of TOKEN_QUERIES) {
+        try {
+          const r = await pool.query(q, [workspaceId]);
+          tokenUsed = parseInt(r.rows[0]?.total || 0, 10);
+          if (tokenUsed > 0) break; // found real data
+        } catch (_) {}
+      }
+
+      // Storage (drive files) — best-effort
+      try {
+        const storageRes = await pool.query(
+          `SELECT COALESCE(SUM(size), 0) AS total FROM ${SCHEMA}.drive_files WHERE workspace_id = $1`,
+          [workspaceId]
+        );
+        storageBytesUsed = parseInt(storageRes.rows[0]?.total || 0, 10);
+      } catch (_) {}
+    }
+
+    const storageGbUsed = parseFloat((storageBytesUsed / (1024 ** 3)).toFixed(3));
+
+    const usage = {
+      agents:     { used: agentCount,    limit: planDef.limits.agents     ?? 1 },
+      tokens:     { used: tokenUsed,     limit: planDef.limits.tokens_month ?? planDef.limits.tokens ?? 50000 },
+      storage_gb: { used: storageGbUsed, limit: planDef.limits.storage_gb ?? 1 },
+    };
+
+    if (!subRow) {
+      // Free / settings-only plan — return minimal payload so billing page renders
+      return res.json({
+        success: true,
+        data: {
+          plan: planId,
+          planId,
+          label: planDef.label,
+          status: 'active',
+          interval: null,
+          current_period_end: null,
+          currentPeriodStart: null,
+          currentPeriodEnd: null,
+          cancelAtPeriodEnd: false,
+          stripeSubscriptionId: null,
+          stripeCustomerId: null,
+          limits: planDef.limits,
+          usage,
+        },
+      });
     }
 
     res.json({
       success: true,
       data: {
         plan: subRow.plan_id,
+        planId: subRow.plan_id,
         label: planDef.label,
         status: subRow.status,
         interval: subRow.interval,
+        current_period_end: subRow.current_period_end,
         currentPeriodStart: subRow.current_period_start,
         currentPeriodEnd: subRow.current_period_end,
         cancelAtPeriodEnd: subRow.cancel_at_period_end,
@@ -93,7 +173,13 @@ router.post('/billing/checkout', async (req, res) => {
     if (!['monthly', 'yearly'].includes(interval)) return res.status(400).json({ success: false, error: 'interval must be monthly or yearly' });
 
     const priceId = getStripePriceId(planId, interval);
-    if (!priceId) return res.status(400).json({ success: false, error: `No Stripe price configured for ${planId}/${interval}` });
+
+    // ── Mock checkout when Stripe is not yet configured ───────────────────────
+    if (!priceId || !process.env.STRIPE_SECRET_KEY) {
+      console.warn(`[Billing] Stripe not configured — returning mock checkout URL for ${planId}/${interval}`);
+      const mockUrl = `https://checkout.stripe.com/mock?plan=${planId}&interval=${interval}`;
+      return res.json({ success: true, data: { url: mockUrl } });
+    }
 
     const stripe = getStripe();
     const email = req.userEmail || req.user?.email;
@@ -133,23 +219,32 @@ router.post('/billing/portal', async (req, res) => {
     let customerId;
 
     if (pool && workspaceId) {
-      const row = (await pool.query(
-        `SELECT stripe_customer_id FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 AND status = 'active' LIMIT 1`,
-        [workspaceId]
-      )).rows[0];
-      customerId = row?.stripe_customer_id;
+      try {
+        const row = (await pool.query(
+          `SELECT stripe_customer_id FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 AND status = 'active' LIMIT 1`,
+          [workspaceId]
+        )).rows[0];
+        customerId = row?.stripe_customer_id;
+      } catch (_) {}
     }
 
+    // ── Mock portal when Stripe is not yet configured ─────────────────────────
+    if (!customerId || !process.env.STRIPE_SECRET_KEY) {
+      console.warn('[Billing] Stripe not configured or no customer — returning mock portal URL');
+      return res.json({ success: true, data: { url: 'https://billing.stripe.com/mock/portal' } });
+    }
+
+    const stripe = getStripe();
+
+    // If no customerId from DB, try to find by email
     if (!customerId) {
       const email = req.userEmail || req.user?.email;
       if (!email) return res.status(404).json({ success: false, error: 'No billing account found' });
-      const stripe = getStripe();
       const list = await stripe.customers.list({ email, limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
       if (!list.data.length) return res.status(404).json({ success: false, error: 'No billing account found. Subscribe to a plan first.' });
       customerId = list.data[0].id;
     }
 
-    const stripe = getStripe();
     const session = await stripe.billingPortal.sessions.create(
       { customer: customerId, return_url: req.body.returnUrl || 'https://app.vutler.ai/billing' },
       { stripeAccount: STRIPE_ACCOUNT_ID }
