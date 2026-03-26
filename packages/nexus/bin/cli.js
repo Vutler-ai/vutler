@@ -19,16 +19,18 @@ program.command('start')
   .option('--name <name>', 'Node name')
   .option('--port <port>', 'Health check port', '3100')
   .option('--type <type>', 'Node type (local|docker|kubernetes)', 'local')
+  .option('--server <url>', 'Server URL', 'https://app.vutler.ai')
+  .option('--url <url>', 'Server URL (alias for --server)')
   .action(async (opts) => {
     let config = {};
     try { config = JSON.parse(require('fs').readFileSync('.vutler-nexus.json', 'utf8')); } catch(e) {}
-    
+
     const node = new NexusNode({
       key: opts.key || config.key,
       name: opts.name || config.name,
       port: parseInt(opts.port),
       type: opts.type,
-      server: config.server
+      server: opts.url || opts.server || config.server || 'https://app.vutler.ai'
     });
     
     await node.connect();
@@ -41,14 +43,17 @@ program.command('start')
 
 program.command('dev')
   .option('--key <key>', 'Workspace API key')
+  .option('--server <url>', 'Server URL', 'http://localhost:3001')
+  .option('--url <url>', 'Server URL (alias for --server)')
   .action(async (opts) => {
     let config = {};
     try { config = JSON.parse(require('fs').readFileSync('.vutler-nexus.json', 'utf8')); } catch(e) {}
-    
+
     const node = new NexusNode({
       key: opts.key || config.key,
       type: 'local',
-      name: require('os').hostname() + '-dev'
+      name: require('os').hostname() + '-dev',
+      server: opts.url || opts.server || 'http://localhost:3001'
     });
     
     console.log('[Nexus Dev] Starting in development mode...');

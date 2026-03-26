@@ -8,6 +8,7 @@ const {
   createApiKey,
   listApiKeys,
   revokeApiKey,
+  resolveApiKey,
   ensureApiKeysTable,
 } = require('../services/apiKeys');
 
@@ -491,7 +492,51 @@ router.get('/status', async (req, res) => {
 });
 
 router.post('/register', async (req, res) => {
-  res.json({ success: true, message: 'Registered', workspaceId: req.workspaceId || DEFAULT_WORKSPACE, auth: req.authType || 'jwt' });
+  try {
+    await ensureApiKeysTable();
+    await ensureNexusNodesTable();
+
+    // Extract API key from Authorization header or body
+    const authHeader = req.headers['authorization'] || '';
+    const secret = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : req.body?.apiKey || req.body?.key || null;
+
+    if (!secret) {
+      return res.status(401).json({ success: false, error: 'API key is required' });
+    }
+
+    // Validate key: SHA-256 hash lookup + last_used_at update
+    const keyRecord = await resolveApiKey(secret);
+    if (!keyRecord) {
+      return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
+    }
+
+    const workspaceId = keyRecord.workspace_id;
+    const { name, type = 'local', host = null, port = null, config = {} } = req.body || {};
+    const nodeName = name || require('os').hostname();
+
+    // Create or find a nexus node for this registration
+    const insert = await pool.query(
+      `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+       VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+       RETURNING id`,
+      [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+    );
+
+    const nodeId = insert.rows[0].id;
+
+    res.json({
+      success: true,
+      message: 'Registered',
+      nodeId,
+      workspaceId,
+      auth: 'api_key',
+    });
+  } catch (err) {
+    console.error('[NEXUS] Register error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 

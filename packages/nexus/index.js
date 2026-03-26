@@ -37,13 +37,14 @@ class NexusNode {
   async connect() {
     // 1. Register node via REST API
     console.log(`[Nexus] Connecting to ${this.server}...`);
-    const regResult = await this._apiCall('POST', '/api/v1/nexus', {
+    const regResult = await this._apiCall('POST', '/api/v1/nexus/register', {
       name: this.name, type: this.type, host: require('os').hostname(), port: this.port
     });
-    
-    if (regResult.success && regResult.data) {
-      this.nodeId = regResult.data.id;
-      console.log(`[Nexus] Registered as node ${this.nodeId}`);
+
+    if (regResult.success && regResult.nodeId) {
+      this.nodeId = regResult.nodeId;
+      this.workspaceId = regResult.workspaceId;
+      console.log(`[Nexus] Registered as node ${this.nodeId} (workspace ${this.workspaceId})`);
     } else {
       console.error('[Nexus] Registration failed:', regResult.error || 'unknown');
       throw new Error('Registration failed');
