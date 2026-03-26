@@ -26,10 +26,12 @@ import {
   addChannelMember as apiAddChannelMember,
   removeChannelMember as apiRemoveChannelMember,
   uploadAttachment,
+  getChatAgents,
+  createAgentDmChannel,
 } from "@/lib/api/endpoints/chat";
 import { ChatWebSocket } from "@/lib/websocket";
 import { useApi } from "@/hooks/use-api";
-import type { Channel, Message, ChannelMember } from "@/lib/api/types";
+import type { Agent, Channel, Message, ChannelMember } from "@/lib/api/types";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -363,6 +365,46 @@ export default function ChatPage() {
   const [newChannelDesc, setNewChannelDesc] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
+  // ── new DM with agent dialog ──
+  const [showNewDm, setShowNewDm] = useState(false);
+  const [dmAgents, setDmAgents] = useState<Agent[]>([]);
+  const [dmAgentsLoading, setDmAgentsLoading] = useState(false);
+  const [selectedDmAgent, setSelectedDmAgent] = useState<Agent | null>(null);
+  const [isCreatingDm, setIsCreatingDm] = useState(false);
+
+  const openNewDm = useCallback(async () => {
+    setShowNewDm(true);
+    setSelectedDmAgent(null);
+    setDmAgentsLoading(true);
+    try {
+      const agents = await getChatAgents();
+      setDmAgents(agents);
+    } catch {
+      setDmAgents([]);
+    } finally {
+      setDmAgentsLoading(false);
+    }
+  }, []);
+
+  const handleCreateDm = useCallback(async () => {
+    if (!selectedDmAgent || isCreatingDm) return;
+    setIsCreatingDm(true);
+    try {
+      const ch = await createAgentDmChannel(
+        String(selectedDmAgent.id),
+        selectedDmAgent.name
+      );
+      await mutateChannels();
+      setSelectedChannel(ch);
+      setShowNewDm(false);
+      setSelectedDmAgent(null);
+    } catch {
+      // silently ignore — user can retry
+    } finally {
+      setIsCreatingDm(false);
+    }
+  }, [selectedDmAgent, isCreatingDm, mutateChannels]);
+
   const handleCreateChannel = async () => {
     if (!newChannelName.trim() || isCreating) return;
     setIsCreating(true);
@@ -484,15 +526,27 @@ export default function ChatPage() {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07]">
           <h2 className="text-sm font-semibold text-white">Chat</h2>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0 text-gray-400 hover:text-white"
-            onClick={() => setShowNewChannel(true)}
-            title="New channel"
-          >
-            <PlusIcon className="w-4 h-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 gap-1 text-xs text-gray-400 hover:text-white"
+              onClick={openNewDm}
+              title="New DM with Agent"
+            >
+              <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Agent DM</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-gray-400 hover:text-white"
+              onClick={() => setShowNewChannel(true)}
+              title="New channel"
+            >
+              <PlusIcon className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
 
         {/* Search */}
@@ -951,6 +1005,75 @@ export default function ChatPage() {
               className="bg-blue-600 hover:bg-blue-500"
             >
               {isCreating ? "Creating…" : "Create Channel"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── New DM with Agent Dialog ── */}
+      <Dialog open={showNewDm} onOpenChange={setShowNewDm}>
+        <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New Chat with Agent</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {dmAgentsLoading ? (
+              <div className="space-y-2">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-12 w-full bg-white/5 rounded-lg" />
+                ))}
+              </div>
+            ) : dmAgents.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-500">
+                No agents available. Create an agent first.
+              </p>
+            ) : (
+              <div className="max-h-72 overflow-y-auto space-y-1.5">
+                {dmAgents.map((agent) => (
+                  <button
+                    key={agent.id}
+                    onClick={() => setSelectedDmAgent(agent)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                      selectedDmAgent?.id === agent.id
+                        ? "bg-blue-600/20 border border-blue-500/30 text-white"
+                        : "hover:bg-white/5 text-gray-300 border border-transparent"
+                    }`}
+                  >
+                    <Avatar className="size-8 shrink-0">
+                      <AvatarFallback className="bg-white/10 text-gray-300 text-xs">
+                        {getInitials(agent.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{agent.name}</p>
+                      {agent.model && (
+                        <p className="truncate text-xs text-gray-500">{agent.model}</p>
+                      )}
+                    </div>
+                    {selectedDmAgent?.id === agent.id && (
+                      <div className="ml-auto shrink-0 w-2 h-2 rounded-full bg-blue-400" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setShowNewDm(false)}
+              className="text-gray-400"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateDm}
+              disabled={!selectedDmAgent || isCreatingDm}
+              className="bg-blue-600 hover:bg-blue-500"
+            >
+              {isCreatingDm ? "Starting…" : "Start Chat"}
             </Button>
           </DialogFooter>
         </DialogContent>

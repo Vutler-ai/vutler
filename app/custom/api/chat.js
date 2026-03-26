@@ -1,232 +1,561 @@
 /**
- * Vutler Chat API
- * Allows agents to post messages to chat channels
- * MongoDB refs removed - using PostgreSQL or stubs
+ * Vutler Chat API — PostgreSQL-backed (v3)
+ *
+ * Routes are mounted at /api/v1 via packages/office/routes.js (mountRoot),
+ * so each path here is prefixed: /chat/channels → /api/v1/chat/channels.
+ *
+ * URL contract matches frontend endpoints (chat.ts):
+ *   GET    /chat/channels
+ *   POST   /chat/channels
+ *   DELETE /chat/channels/:id
+ *   GET    /chat/channels/:id/messages
+ *   POST   /chat/channels/:id/messages
+ *   GET    /chat/channels/:id/members
+ *   POST   /chat/channels/:id/members
+ *   DELETE /chat/channels/:id/members/:memberId
+ *   POST   /chat/channels/:id/attachments  (stub, returns 501)
+ *   GET    /chat/agents
+ *   POST   /chat/jarvis/bootstrap          (legacy compat)
+ *   POST   /chat/send                      (legacy compat)
  */
 
-const express = require('express');
-const { authenticateAgent } = require('../lib/auth');
-const { validateSendChatMessage, validatePagination } = require('../lib/validation');
-const { requireCorePermission } = require('../lib/core-permissions');
+'use strict';
 
+const express = require('express');
 const router = express.Router();
 
-const JARVIS_USER_CANDIDATES = (process.env.VUTLER_JARVIS_IDENTIFIERS || 'jarvis,jarvis@vutler.com,jarvis@vutler.ai')
-  .split(',')
-  .map((x) => x.trim().toLowerCase())
-  .filter(Boolean);
+const SCHEMA = 'tenant_vutler';
+const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
-function buildDirectRoomName(a, b) {
-  return [String(a), String(b)].sort().join('__');
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function getPool(req) {
+  return req.app.locals.pg;
 }
 
-async function ensureJarvisDirectRoom(pg, senderUser) {
-  // Stub implementation - no MongoDB
-  // In a real implementation, this would query PostgreSQL
-  const roomId = 'dm_' + buildDirectRoomName(senderUser.id || 'user', 'jarvis');
+function wsId(req) {
+  return req.headers['x-workspace-id'] || req.workspaceId || DEFAULT_WORKSPACE;
+}
+
+/**
+ * Normalise a channel row from DB to the shape the frontend expects.
+ * DB uses type='dm', frontend expects type='direct'.
+ */
+function normaliseChannel(row) {
   return {
-    _id: roomId,
-    t: 'd',
-    name: buildDirectRoomName(senderUser.id || 'user', 'jarvis'),
-    fname: `DM ${senderUser.username || 'user'} ↔ Jarvis`
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
+    type: row.type === 'dm' ? 'direct' : row.type,
+    members: row.members || [],
+    message_count: row.message_count ? parseInt(row.message_count) : 0,
+    member_count: row.member_count ? parseInt(row.member_count) : 0,
+    created_at: row.created_at,
   };
 }
 
 /**
- * POST /api/v1/chat/jarvis/bootstrap
- * Ensure Jarvis DM room exists for current user
+ * Normalise a message row from DB to the shape the frontend expects.
  */
-router.post('/chat/jarvis/bootstrap', authenticateAgent, requireCorePermission('chat.jarvisDm.bootstrap'), async (req, res) => {
-  try {
-    const pg = req.app.locals.pg;
-    const sender = { id: req.agent.id, username: req.agent.name?.toLowerCase().replace(/\s+/g, '_') || 'user' };
-
-    const room = await ensureJarvisDirectRoom(pg, sender);
-
-    return res.json({
-      success: true,
-      room: {
-        id: room._id,
-        name: room.name,
-        type: room.t
-      }
-    });
-  } catch (error) {
-    const status = error.code === 'JARVIS_USER_NOT_FOUND' ? 404 : 500;
-    return res.status(status).json({
-      success: false,
-      error: status === 404 ? 'Jarvis user not found' : 'Failed to bootstrap Jarvis DM',
-      details: error.message
-    });
-  }
-});
-
-/**
- * POST /api/v1/chat/send
- * Send a chat message as an agent
- */
-router.post('/chat/send', authenticateAgent, requireCorePermission('chat.jarvisDm.send'), validateSendChatMessage, async (req, res) => {
-  try {
-    const { channel_id, text, agent_id, attachments, emoji } = req.body;
-    const agent = req.agent;
-    
-    // Verify agent_id matches authenticated agent (or is not specified)
-    const sendingAgentId = agent_id || agent.id;
-    if (sendingAgentId !== agent.id && !agent.roles?.includes('admin')) {
-      return res.status(403).json({
-        success: false,
-        error: 'Forbidden',
-        details: 'You can only send messages as yourself'
-      });
-    }
-    
-    // Find the sending agent
-    const sendingAgent = {
-      _id: agent.id,
-      name: agent.name,
-      username: agent.name?.toLowerCase().replace(/\s+/g, '_') || 'agent'
-    };
-    
-    // Find the channel/room (supports Jarvis DM bootstrap shortcut)
-    let room;
-    if (String(channel_id).toLowerCase() === 'jarvis' || String(channel_id).toLowerCase() === 'jarvis_dm') {
-      room = await ensureJarvisDirectRoom(req.app.locals.pg, sendingAgent);
-    } else {
-      room = { _id: channel_id, name: channel_id };
-    }
-
-    // Create message document
-    const message = {
-      _id: generateMessageId(),
-      rid: room._id,
-      msg: text,
-      ts: new Date(),
-      u: {
-        _id: sendingAgent._id,
-        username: sendingAgent.username,
-        name: sendingAgent.name
-      },
-      _updatedAt: new Date(),
-      mentions: [],
-      channels: [],
-      unread: false
-    };
-    
-    // Add attachments if provided
-    if (attachments && Array.isArray(attachments)) {
-      message.attachments = attachments;
-    }
-    
-    // Add emoji if provided
-    if (emoji) {
-      message.emoji = emoji;
-    }
-    
-    // Note: Message is not persisted - MongoDB removed
-    // In production, this should be stored in PostgreSQL
-    
-    res.status(201).json({
-      success: true,
-      message: {
-        id: message._id,
-        channel_id: room._id,
-        channel_name: room.name,
-        text: message.msg,
-        agent: {
-          id: sendingAgent._id,
-          name: sendingAgent.name,
-          username: sendingAgent.username
-        },
-        timestamp: message.ts
-      }
-    });
-    
-  } catch (error) {
-    console.error('Error sending chat message:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to send message',
-      message: error.message
-    });
-  }
-});
-
-/**
- * GET /api/v1/chat/channels
- * List available channels
- */
-router.get('/chat/channels', authenticateAgent, validatePagination, async (req, res) => {
-  try {
-    // Return empty list - no MongoDB
-    // In production, this should query PostgreSQL
-    
-    res.json({
-      success: true,
-      channels: [],
-      count: 0,
-      note: 'MongoDB removed - channels not available'
-    });
-    
-  } catch (error) {
-    console.error('Error fetching channels:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch channels',
-      message: error.message
-    });
-  }
-});
-
-/**
- * GET /api/v1/chat/messages
- * Get recent messages from a channel
- */
-router.get('/chat/messages', authenticateAgent, validatePagination, async (req, res) => {
-  try {
-    const { channel_id } = req.query;
-    const limit = parseInt(req.query.limit || '50');
-    const skip = parseInt(req.query.skip || '0');
-    
-    if (!channel_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'channel_id is required'
-      });
-    }
-    
-    // Return empty messages - no MongoDB
-    // In production, this should query PostgreSQL
-    
-    res.json({
-      success: true,
-      channel: {
-        id: channel_id,
-        name: channel_id
-      },
-      messages: [],
-      count: 0,
-      skip,
-      limit,
-      note: 'MongoDB removed - messages not available'
-    });
-    
-  } catch (error) {
-    console.error('Error fetching messages:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch messages',
-      message: error.message
-    });
-  }
-});
-
-/**
- * Generate a unique message ID
- */
-function generateMessageId() {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 15);
-  return timestamp + random;
+function normaliseMessage(row) {
+  return {
+    id: row.id,
+    channel_id: row.channel_id,
+    content: row.content,
+    sender_id: row.sender_id,
+    sender_name: row.sender_name,
+    message_type: row.message_type || 'text',
+    parent_id: row.parent_id || null,
+    client_message_id: row.client_message_id || null,
+    attachments: row.attachments || [],
+    created_at: row.created_at,
+  };
 }
+
+// ── Agent auto-response helper (async, non-blocking) ─────────────────────────
+
+async function triggerAgentResponse(req, channelId, workspaceId) {
+  const pg = getPool(req);
+  if (!pg) return;
+
+  try {
+    const agentResult = await pg.query(
+      `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens
+       FROM ${SCHEMA}.chat_channel_members cm
+       JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id
+       WHERE cm.channel_id = $1
+       LIMIT 1`,
+      [channelId]
+    );
+
+    if (agentResult.rows.length === 0) return;
+
+    const agent = agentResult.rows[0];
+
+    const historyResult = await pg.query(
+      `SELECT sender_id, sender_name, content, created_at
+       FROM ${SCHEMA}.chat_messages
+       WHERE channel_id = $1
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [channelId]
+    );
+
+    const messages = historyResult.rows.reverse().map((m) => ({
+      role: m.sender_id === agent.id.toString() ? 'assistant' : 'user',
+      content:
+        m.sender_name && m.sender_id !== agent.id.toString()
+          ? `[${m.sender_name}]: ${m.content}`
+          : m.content,
+    }));
+
+    let llmResult;
+    try {
+      if (
+        req.app.locals.chatRuntime &&
+        typeof req.app.locals.chatRuntime.processMessage === 'function'
+      ) {
+        llmResult = await req.app.locals.chatRuntime.processMessage(agent, messages);
+      } else {
+        throw new Error('chatRuntime not available');
+      }
+    } catch (_crErr) {
+      const llmRouter = require('../../../services/llmRouter');
+      llmResult = await llmRouter.chat(
+        {
+          model: agent.model || 'claude-sonnet-4-20250514',
+          provider: agent.provider || undefined,
+          system_prompt:
+            agent.system_prompt ||
+            `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
+          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
+          max_tokens: agent.max_tokens || 4096,
+        },
+        messages
+      );
+    }
+
+    await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id)
+       VALUES ($1, $2, $3, $4, 'text', $5)`,
+      [channelId, agent.id.toString(), agent.name, llmResult.content, workspaceId]
+    );
+
+    console.log(`[Chat] Agent ${agent.name} responded in channel ${channelId}`);
+  } catch (err) {
+    console.error('[Chat] Agent response error:', err.message);
+  }
+}
+
+// ── GET /chat/channels ────────────────────────────────────────────────────────
+
+router.get('/chat/channels', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const ws = wsId(req);
+    const result = await pg.query(
+      `SELECT c.*,
+          (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) AS message_count,
+          (SELECT COUNT(*) FROM ${SCHEMA}.chat_channel_members cm WHERE cm.channel_id = c.id) AS member_count
+       FROM ${SCHEMA}.chat_channels c
+       WHERE c.workspace_id = $1
+       ORDER BY c.created_at ASC`,
+      [ws]
+    );
+
+    const channels = result.rows.map(normaliseChannel);
+    // Return in the shape getChannels() in chat.ts expects:
+    // apiFetch returns the full body; chat.ts does: Array.isArray(data) ? data : (data.channels ?? [])
+    res.json({ success: true, channels });
+  } catch (err) {
+    console.error('[Chat] GET /channels error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /chat/channels ───────────────────────────────────────────────────────
+
+router.post('/chat/channels', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const { name, description, type = 'channel', agentId } = req.body;
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'name is required' });
+    }
+
+    const ws = wsId(req);
+    const createdBy = req.headers['x-user-id'] || req.user?.id || req.agent?.id || 'system';
+
+    // Normalise incoming type: frontend sends 'direct', DB uses 'dm'
+    const dbType = type === 'direct' ? 'dm' : type;
+
+    // For DM channels, return existing if found
+    if (dbType === 'dm' && agentId) {
+      const existing = await pg.query(
+        `SELECT * FROM ${SCHEMA}.chat_channels WHERE name = $1 AND workspace_id = $2 LIMIT 1`,
+        [name, ws]
+      );
+      if (existing.rows.length > 0) {
+        return res.json({ success: true, ...normaliseChannel(existing.rows[0]) });
+      }
+    }
+
+    const result = await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [name, description || '', dbType, ws, createdBy]
+    );
+
+    const channel = result.rows[0];
+
+    // Auto-add agent as member for DM channels
+    if (dbType === 'dm' && agentId) {
+      await pg.query(
+        `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
+         VALUES ($1, $2, 'agent')
+         ON CONFLICT DO NOTHING`,
+        [channel.id, agentId.toString()]
+      );
+    }
+
+    res.status(201).json({ success: true, ...normaliseChannel(channel) });
+  } catch (err) {
+    console.error('[Chat] POST /channels error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── DELETE /chat/channels/:id ─────────────────────────────────────────────────
+
+router.delete('/chat/channels/:id', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    await pg.query(`DELETE FROM ${SCHEMA}.chat_messages WHERE channel_id = $1`, [req.params.id]);
+    await pg.query(`DELETE FROM ${SCHEMA}.chat_channel_members WHERE channel_id = $1`, [req.params.id]);
+    await pg.query(`DELETE FROM ${SCHEMA}.chat_channels WHERE id = $1`, [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Chat] DELETE /channels/:id error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /chat/channels/:id/messages ──────────────────────────────────────────
+
+router.get('/chat/channels/:id/messages', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const channelId = req.params.id;
+    const limit = Math.min(parseInt(req.query.limit || '50') || 50, 200);
+    const before = req.query.before;
+    const after = req.query.after;
+
+    let query = `SELECT * FROM ${SCHEMA}.chat_messages WHERE channel_id = $1`;
+    const params = [channelId];
+    let idx = 2;
+
+    if (before) { query += ` AND created_at < $${idx}`; params.push(before); idx++; }
+    if (after)  { query += ` AND created_at > $${idx}`; params.push(after);  idx++; }
+
+    query += ` ORDER BY created_at ASC LIMIT $${idx}`;
+    params.push(limit);
+
+    const result = await pg.query(query, params);
+    const messages = result.rows.map(normaliseMessage);
+
+    // Return in the shape getMessages() in chat.ts expects:
+    // apiFetch returns full body; chat.ts does: Array.isArray(data) ? data : (data.messages ?? [])
+    res.json({ success: true, messages });
+  } catch (err) {
+    console.error('[Chat] GET /channels/:id/messages error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /chat/channels/:id/messages ─────────────────────────────────────────
+
+router.post('/chat/channels/:id/messages', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const channelId = req.params.id;
+    const { content, client_message_id, message_type = 'text', parent_id } = req.body;
+
+    if (!content && !req.body.text) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+
+    const text = content || req.body.text;
+    const ws = wsId(req);
+    const senderId =
+      req.headers['x-user-id'] ||
+      req.user?.id ||
+      req.agent?.id ||
+      'user';
+    const senderName =
+      req.headers['x-user-name'] ||
+      req.user?.name ||
+      req.agent?.name ||
+      'User';
+
+    // Try with client_message_id column first; fall back without it (column may not exist yet)
+    let saved;
+    try {
+      const result = await pg.query(
+        `INSERT INTO ${SCHEMA}.chat_messages
+           (channel_id, sender_id, sender_name, content, message_type, parent_id, client_message_id, workspace_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [channelId, senderId, senderName, text, message_type, parent_id || null, client_message_id || null, ws]
+      );
+      saved = normaliseMessage(result.rows[0]);
+    } catch (colErr) {
+      if (colErr.message && colErr.message.includes('client_message_id')) {
+        const result = await pg.query(
+          `INSERT INTO ${SCHEMA}.chat_messages
+             (channel_id, sender_id, sender_name, content, message_type, parent_id, workspace_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING *`,
+          [channelId, senderId, senderName, text, message_type, parent_id || null, ws]
+        );
+        saved = { ...normaliseMessage(result.rows[0]), client_message_id: client_message_id || null };
+      } else {
+        throw colErr;
+      }
+    }
+
+    // Respond immediately, then trigger agent response async
+    res.status(201).json({ success: true, ...saved });
+
+    // Check sender is not an agent to avoid infinite loops
+    const isAgent = await pg.query(
+      `SELECT id FROM ${SCHEMA}.agents WHERE id::text = $1 OR username = $2 LIMIT 1`,
+      [senderId, senderName.toLowerCase()]
+    );
+    if (isAgent.rows.length === 0) {
+      triggerAgentResponse(req, channelId, ws);
+    }
+  } catch (err) {
+    console.error('[Chat] POST /channels/:id/messages error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /chat/channels/:id/attachments (stub) ───────────────────────────────
+
+router.post('/chat/channels/:id/attachments', async (_req, res) => {
+  res.status(501).json({ success: false, error: 'File uploads not yet supported' });
+});
+
+// ── GET /chat/channels/:id/members ───────────────────────────────────────────
+
+router.get('/chat/channels/:id/members', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    // Join with agents table to enrich member data
+    const result = await pg.query(
+      `SELECT cm.user_id AS id, cm.role,
+              COALESCE(a.name, cm.user_id) AS name,
+              CASE WHEN a.id IS NOT NULL THEN 'agent' ELSE 'user' END AS type,
+              a.avatar, a.username
+       FROM ${SCHEMA}.chat_channel_members cm
+       LEFT JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id
+       WHERE cm.channel_id = $1
+       ORDER BY cm.joined_at ASC`,
+      [req.params.id]
+    );
+
+    // Return in the shape getChannelMembers() in chat.ts expects:
+    // apiFetch returns full body; chat.ts does: Array.isArray(data) ? data : (data.members ?? [])
+    res.json({ success: true, members: result.rows });
+  } catch (err) {
+    console.error('[Chat] GET /channels/:id/members error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /chat/channels/:id/members ──────────────────────────────────────────
+
+router.post('/chat/channels/:id/members', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const { id: userId, type: memberType = 'user', name } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, error: 'id is required' });
+    }
+
+    const role = memberType === 'agent' ? 'agent' : 'member';
+
+    await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
+       VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [req.params.id, userId.toString(), role]
+    );
+
+    res.status(201).json({ success: true });
+  } catch (err) {
+    console.error('[Chat] POST /channels/:id/members error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── DELETE /chat/channels/:id/members/:memberId ───────────────────────────────
+
+router.delete('/chat/channels/:id/members/:memberId', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    await pg.query(
+      `DELETE FROM ${SCHEMA}.chat_channel_members WHERE channel_id = $1 AND user_id = $2`,
+      [req.params.id, req.params.memberId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Chat] DELETE /channels/:id/members/:memberId error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /chat/agents ──────────────────────────────────────────────────────────
+
+router.get('/chat/agents', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const ws = wsId(req);
+    const result = await pg.query(
+      `SELECT id, name, username, status, avatar, role, description, model, provider
+       FROM ${SCHEMA}.agents
+       WHERE workspace_id = $1
+       ORDER BY name ASC`,
+      [ws]
+    );
+    res.json({ success: true, agents: result.rows });
+  } catch (err) {
+    console.error('[Chat] GET /agents error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /chat/send (legacy compat) ──────────────────────────────────────────
+// Kept so any external agents still using this endpoint continue to work.
+
+router.post('/chat/send', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const { channel_id, content, text, sender_id, sender_name, message_type = 'text', parent_id } = req.body;
+    const body = content || text;
+    if (!channel_id || !body) {
+      return res.status(400).json({ success: false, error: 'channel_id and content are required' });
+    }
+
+    const ws = wsId(req);
+    const sId = sender_id || req.headers['x-user-id'] || req.agent?.id || 'user';
+    const sName = sender_name || req.headers['x-user-name'] || req.agent?.name || 'User';
+
+    const result = await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, parent_id, workspace_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [channel_id, sId, sName, body, message_type, parent_id || null, ws]
+    );
+
+    const saved = normaliseMessage(result.rows[0]);
+    res.json({ success: true, data: saved });
+
+    const isAgent = await pg.query(
+      `SELECT id FROM ${SCHEMA}.agents WHERE id::text = $1 OR username = $2 LIMIT 1`,
+      [sId, sName.toLowerCase()]
+    );
+    if (isAgent.rows.length === 0) {
+      triggerAgentResponse(req, channel_id, ws);
+    }
+  } catch (err) {
+    console.error('[Chat] POST /send error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /chat/jarvis/bootstrap (legacy compat) ───────────────────────────────
+
+router.post('/chat/jarvis/bootstrap', async (req, res) => {
+  const pg = getPool(req);
+
+  try {
+    const userId = req.agent?.id || req.user?.id || 'user';
+    const userName = req.agent?.name || req.user?.name || 'user';
+    const ws = wsId(req);
+
+    // Find Jarvis agent
+    let jarvis = null;
+    if (pg) {
+      const r = await pg.query(
+        `SELECT id, name FROM ${SCHEMA}.agents
+         WHERE workspace_id = $1 AND LOWER(name) = 'jarvis'
+         LIMIT 1`,
+        [ws]
+      );
+      jarvis = r.rows[0] || null;
+    }
+
+    const dmName = jarvis
+      ? [userId, jarvis.id.toString()].sort().join('__')
+      : `dm_${userId}_jarvis`;
+
+    // Create or return existing channel
+    if (pg) {
+      const existing = await pg.query(
+        `SELECT * FROM ${SCHEMA}.chat_channels WHERE name = $1 AND workspace_id = $2 LIMIT 1`,
+        [dmName, ws]
+      );
+
+      if (existing.rows.length > 0) {
+        return res.json({ success: true, room: normaliseChannel(existing.rows[0]) });
+      }
+
+      const created = await pg.query(
+        `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
+         VALUES ($1, $2, 'dm', $3, $4)
+         RETURNING *`,
+        [dmName, `DM ${userName} ↔ Jarvis`, ws, userId]
+      );
+
+      if (jarvis) {
+        await pg.query(
+          `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
+           VALUES ($1, $2, 'agent') ON CONFLICT DO NOTHING`,
+          [created.rows[0].id, jarvis.id.toString()]
+        );
+      }
+
+      return res.json({ success: true, room: normaliseChannel(created.rows[0]) });
+    }
+
+    // Fallback if no DB
+    res.json({ success: true, room: { id: dmName, name: dmName, type: 'direct', members: [] } });
+  } catch (err) {
+    console.error('[Chat] POST /jarvis/bootstrap error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 module.exports = router;

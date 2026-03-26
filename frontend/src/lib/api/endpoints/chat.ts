@@ -1,5 +1,6 @@
 import { apiFetch, authFetch } from '../client';
 import type {
+  Agent,
   Channel,
   ChannelMember,
   Message,
@@ -90,6 +91,30 @@ export async function removeChannelMember(
     `/api/v1/chat/channels/${channelId}/members/${encodeURIComponent(memberId)}`,
     { method: 'DELETE' }
   );
+}
+
+/**
+ * List agents available for chat (from /api/v1/chat/agents).
+ */
+export async function getChatAgents(): Promise<Agent[]> {
+  const data = await apiFetch<{ agents?: Agent[] } | Agent[]>('/api/v1/chat/agents');
+  return Array.isArray(data) ? data : (data.agents ?? []);
+}
+
+/**
+ * Create a direct-message channel with an agent.
+ */
+export async function createAgentDmChannel(agentId: string, agentName: string): Promise<Channel> {
+  const dmName = `dm-${agentName.toLowerCase().replace(/\s+/g, '-')}-${agentId.slice(0, 8)}`;
+  return apiFetch<Channel>('/api/v1/chat/channels', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: dmName,
+      description: `Direct message with ${agentName}`,
+      type: 'direct',
+      agentId,
+    }),
+  });
 }
 
 /**
