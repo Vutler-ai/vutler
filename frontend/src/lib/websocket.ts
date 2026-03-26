@@ -21,7 +21,7 @@ export class ChatWebSocket {
   constructor(token: string) {
     this.token = token;
     const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    this.url = `${wsProto}//${window.location.host}/ws/chat-pro?token=${encodeURIComponent(token)}`;
+    this.url = `${wsProto}//${window.location.host}/ws/chat?token=${encodeURIComponent(token)}`;
   }
 
   get connected() { return this._connected; }
