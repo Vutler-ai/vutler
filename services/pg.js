@@ -45,7 +45,13 @@ async function transactionWithWorkspace(workspaceId, fn) {
  */
 async function queryWithWorkspace(workspaceId, text, params) {
   const pool = getPool();
-  return pool.query(text, params);
+  const client = await pool.connect();
+  try {
+    await client.query('SET search_path TO tenant_vutler, public');
+    return await client.query(text, params);
+  } finally {
+    client.release();
+  }
 }
 
 /**
