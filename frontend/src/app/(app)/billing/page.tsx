@@ -9,6 +9,128 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
+// ─── Static plan definitions (mirrored from featureGate.js) ──────────────────
+// These are shown when the API is unavailable and serve as the source of truth
+// for plan metadata. Prices are in cents. Limits: -1 = unlimited.
+
+const FALLBACK_PLANS: PlansResponse = {
+  office: [
+    {
+      id: "free",
+      label: "Free",
+      price: { monthly: 0, yearly: 0 },
+      features: [],
+      limits: { agents: 1, tokens: 50000, storage: "1 GB" },
+    },
+    {
+      id: "office_starter",
+      label: "Office Starter",
+      price: { monthly: 2900, yearly: 29000 },
+      features: [
+        "Chat & messaging",
+        "Drive file storage",
+        "Email integration",
+        "Tasks & calendar",
+        "Integrations",
+        "WhatsApp",
+        "Dashboard",
+        "Goals & CRM",
+        "Pixel Office",
+      ],
+      limits: { tokens: 100000, storage: "10 GB" },
+    },
+    {
+      id: "office_team",
+      label: "Office Team",
+      price: { monthly: 7900, yearly: 79000 },
+      features: [
+        "Chat & messaging",
+        "Drive file storage",
+        "Email integration",
+        "Tasks & calendar",
+        "Integrations",
+        "WhatsApp",
+        "Dashboard",
+        "Goals & CRM",
+        "Pixel Office",
+      ],
+      limits: { tokens: 500000, storage: "100 GB" },
+    },
+  ],
+  agents: [
+    {
+      id: "agents_starter",
+      label: "Agents Starter",
+      price: { monthly: 2900, yearly: 29000 },
+      features: [
+        "Up to 25 agents",
+        "Nexus orchestration",
+        "Marketplace access",
+        "Sandbox & builder",
+        "Swarm & automations",
+        "LLM settings",
+        "Tools & runtime",
+        "Deployments & templates",
+        "Knowledge base",
+        "Providers & dashboard",
+      ],
+      limits: { agents: 25, nexusNodes: 2, tokens: 250000, storage: "10 GB" },
+    },
+    {
+      id: "agents_pro",
+      label: "Agents Pro",
+      price: { monthly: 7900, yearly: 79000 },
+      features: [
+        "Up to 100 agents",
+        "Nexus orchestration",
+        "Marketplace access",
+        "Sandbox & builder",
+        "Swarm & automations",
+        "LLM settings",
+        "Tools & runtime",
+        "Deployments & templates",
+        "Knowledge base",
+        "Providers & dashboard",
+        "3 enterprise Nexus nodes",
+      ],
+      limits: { agents: 100, nexusNodes: 10, tokens: 1000000, storage: "100 GB" },
+    },
+  ],
+  full: [
+    {
+      id: "full",
+      label: "Full Platform",
+      price: { monthly: 12900, yearly: 129000 },
+      features: [
+        "Everything in Office + Agents",
+        "Up to 100 agents",
+        "Nexus orchestration",
+        "All integrations",
+        "Priority support",
+        "Unlimited features",
+        "5 enterprise Nexus nodes",
+      ],
+      limits: { agents: 100, nexusNodes: 10, tokens: 1000000, storage: "100 GB" },
+    },
+    {
+      id: "enterprise",
+      label: "Enterprise",
+      price: { monthly: 0, yearly: 0 },
+      features: [
+        "Unlimited agents",
+        "Unlimited tokens",
+        "Unlimited storage",
+        "Unlimited Nexus nodes",
+        "Custom SLAs",
+        "White-labelling",
+        "Dedicated support",
+        "Custom integrations",
+      ],
+      limits: {},
+    },
+  ],
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatPrice(cents: number): string {
@@ -166,14 +288,27 @@ function PlanCard({
   loadingId: string | null;
 }) {
   const isCurrent = plan.id === currentPlanId;
+  const isEnterprise = plan.id === "enterprise";
+  const isFree = plan.id === "free";
   const price = interval === "yearly" ? plan.price.yearly : plan.price.monthly;
   const isLoading = loadingId === plan.id;
+
+  // For -1 limits (enterprise unlimited), display "Unlimited"
+  function formatLimit(val: number | undefined): string {
+    if (val === undefined) return "—";
+    if (val === -1) return "Unlimited";
+    if (val >= 1_000_000) return `${val / 1_000_000}M`;
+    if (val >= 1_000) return `${(val / 1_000).toFixed(0)}K`;
+    return String(val);
+  }
 
   return (
     <div
       className={`flex flex-col bg-[#14151f] border rounded-2xl p-6 transition-all duration-200 ${
         isCurrent
           ? "border-[#3b82f6] shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
+          : isEnterprise
+          ? "border-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.2)]"
           : "border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.14)]"
       }`}
     >
@@ -182,8 +317,16 @@ function PlanCard({
         <div>
           <p className="text-white font-semibold text-lg">{plan.label}</p>
           <div className="flex items-baseline gap-1 mt-1">
-            <span className="text-2xl font-bold text-white">${formatPrice(price)}</span>
-            <span className="text-[#6b7280] text-sm">/{interval === "yearly" ? "yr" : "mo"}</span>
+            {isEnterprise ? (
+              <span className="text-2xl font-bold text-white">Custom</span>
+            ) : isFree ? (
+              <span className="text-2xl font-bold text-white">$0</span>
+            ) : (
+              <>
+                <span className="text-2xl font-bold text-white">${formatPrice(price)}</span>
+                <span className="text-[#6b7280] text-sm">/{interval === "yearly" ? "yr" : "mo"}</span>
+              </>
+            )}
           </div>
         </div>
         {isCurrent && (
@@ -197,36 +340,34 @@ function PlanCard({
       </div>
 
       {/* Limits */}
-      <div className="grid grid-cols-2 gap-2 mb-5">
-        {plan.limits.agents !== undefined && (
-          <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-            <p className="text-white font-semibold text-sm">{plan.limits.agents}</p>
-            <p className="text-[#6b7280] text-xs">Agents</p>
-          </div>
-        )}
-        {plan.limits.nexusNodes !== undefined && (
-          <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-            <p className="text-white font-semibold text-sm">{plan.limits.nexusNodes}</p>
-            <p className="text-[#6b7280] text-xs">Nexus Nodes</p>
-          </div>
-        )}
-        {plan.limits.tokens !== undefined && (
-          <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-            <p className="text-white font-semibold text-sm">
-              {plan.limits.tokens >= 1_000_000
-                ? `${plan.limits.tokens / 1_000_000}M`
-                : `${plan.limits.tokens / 1_000}K`}
-            </p>
-            <p className="text-[#6b7280] text-xs">Tokens</p>
-          </div>
-        )}
-        {plan.limits.storage && (
-          <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-            <p className="text-white font-semibold text-sm">{plan.limits.storage}</p>
-            <p className="text-[#6b7280] text-xs">Storage</p>
-          </div>
-        )}
-      </div>
+      {Object.keys(plan.limits).length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {plan.limits.agents !== undefined && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{formatLimit(plan.limits.agents)}</p>
+              <p className="text-[#6b7280] text-xs">Agents</p>
+            </div>
+          )}
+          {plan.limits.nexusNodes !== undefined && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{formatLimit(plan.limits.nexusNodes)}</p>
+              <p className="text-[#6b7280] text-xs">Nexus Nodes</p>
+            </div>
+          )}
+          {plan.limits.tokens !== undefined && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{formatLimit(plan.limits.tokens)}</p>
+              <p className="text-[#6b7280] text-xs">Tokens/mo</p>
+            </div>
+          )}
+          {plan.limits.storage && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{plan.limits.storage}</p>
+              <p className="text-[#6b7280] text-xs">Storage</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Features */}
       <ul className="flex-1 space-y-2 mb-6">
@@ -249,7 +390,18 @@ function PlanCard({
       {/* CTA */}
       {isCurrent ? (
         <div className="py-2.5 text-center text-sm text-[#6b7280] border border-[rgba(255,255,255,0.07)] rounded-lg">
-          Active
+          Current Plan
+        </div>
+      ) : isEnterprise ? (
+        <Button
+          asChild
+          className="w-full bg-[#1f2028] hover:bg-[#2a2d3a] text-white border border-[rgba(255,255,255,0.1)]"
+        >
+          <a href="mailto:enterprise@vutler.com">Contact Sales</a>
+        </Button>
+      ) : isFree ? (
+        <div className="py-2.5 text-center text-sm text-[#6b7280] border border-[rgba(255,255,255,0.07)] rounded-lg">
+          Free forever
         </div>
       ) : (
         <Button
@@ -289,7 +441,9 @@ export default function BillingPage() {
   const [actionError, setActionError] = useState("");
 
   const isLoading = plansLoading || subLoading;
-  const currentPlans: Plan[] = plans?.[activeTab] ?? [];
+  // Use API plans if available; fall back to static definitions from featureGate.js
+  const resolvedPlans: PlansResponse = plans ?? FALLBACK_PLANS;
+  const currentPlans: Plan[] = resolvedPlans[activeTab] ?? [];
 
   const handleCheckout = useCallback(
     async (planId: string) => {
@@ -416,13 +570,20 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* Enterprise */}
+      {/* Enterprise footer note */}
       <div className="border-t border-[rgba(255,255,255,0.07)] pt-6 text-center">
         <p className="text-[#6b7280] text-sm">
-          Need custom limits, SLAs, or white-labelling?{" "}
+          Need custom limits, SLAs, or white-labelling? See the{" "}
+          <button
+            onClick={() => setActiveTab("full")}
+            className="text-[#3b82f6] hover:underline"
+          >
+            Full Platform tab
+          </button>{" "}
+          or{" "}
           <a href="mailto:enterprise@vutler.com" className="text-[#3b82f6] hover:underline">
-            Contact us for Enterprise
-          </a>
+            contact us for Enterprise
+          </a>.
         </p>
       </div>
     </div>
