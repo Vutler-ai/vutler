@@ -421,4 +421,4 @@ function stop() {
   console.log('[ChatRuntime] Stopped');
 }
 
-module.exports = { start, stop, getMemoryScope };
+module.exports = { start, stop, getMemoryScope, processMessage };

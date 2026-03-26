@@ -12,8 +12,8 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECKPOINT_FILE="$PROJECT_DIR/.claude/.session-context"
 API_KEY="${SNIPARA_API_KEY:-REDACTED_SNIPARA_KEY_1}"
-SETTINGS_URL="https://rlm.dev/api/projects/test-workspace-api-vutler/automation/memory-settings"
-MCP_ENDPOINT="https://rlm.dev/api/mcp/test-workspace-api-vutler"
+SETTINGS_URL="https://api.snipara.com/api/projects/test-workspace-api-vutler/automation/memory-settings"
+MCP_ENDPOINT="https://api.snipara.com/mcp/test-workspace-api-vutler"
 
 # Initialize context parts
 CHECKPOINT_CONTEXT=""

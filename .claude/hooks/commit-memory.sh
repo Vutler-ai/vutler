@@ -11,7 +11,7 @@ if ! echo "${TOOL_INPUT:-}" | grep -qE "git commit"; then
 fi
 
 API_KEY="${SNIPARA_API_KEY:-REDACTED_SNIPARA_KEY_1}"
-MCP_ENDPOINT="https://rlm.dev/api/mcp/test-workspace-api-vutler"
+MCP_ENDPOINT="https://api.snipara.com/mcp/test-workspace-api-vutler"
 
 # Exit if no API key
 if [ -z "$API_KEY" ] || [ "$API_KEY" = "YOUR_API_KEY" ]; then

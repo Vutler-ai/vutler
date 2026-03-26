@@ -8,7 +8,8 @@ const DEFAULT_CORE_PERMISSIONS = Object.freeze({
     list: true,
     upload: true,
     createFolder: true,
-    download: true
+    download: true,
+    delete: true,
   }),
   calendar: Object.freeze({
     read: true,
