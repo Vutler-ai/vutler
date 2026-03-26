@@ -13,16 +13,16 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 
   const shellUser = user
     ? {
-        name: user.display_name || user.email,
-        email: user.email,
+        name: user.display_name || user.email || 'User',
+        email: user.email || '',
         initials: user.display_name
           ? user.display_name
               .split(' ')
-              .map((n) => n[0])
+              .map((n: string) => n[0] || '')
               .join('')
               .toUpperCase()
-              .slice(0, 2)
-          : user.email.slice(0, 2).toUpperCase(),
+              .slice(0, 2) || 'U'
+          : (user.email || 'U').slice(0, 2).toUpperCase(),
       }
     : { name: 'User', email: '', initials: 'U' };
 
