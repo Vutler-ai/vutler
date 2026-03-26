@@ -41,6 +41,13 @@ class NexusNode {
     this.reconnectInterval = 5000;
     this.recentTasks = [];
     this.logBuffer = [];
+
+    // Offline monitor (enterprise only)
+    this.offlineConfig = opts.offline_config || {};
+    if (this.mode === 'enterprise' && this.offlineConfig.enabled) {
+      const { OfflineMonitor } = require('./lib/offline-monitor');
+      this.offlineMonitor = new OfflineMonitor(this, this.offlineConfig);
+    }
   }
 
   async connect() {
@@ -67,6 +74,8 @@ class NexusNode {
       throw new Error('Registration failed');
     }
 
+    if (this.offlineMonitor) this.offlineMonitor.start();
+
     // 2. Start heartbeat
     this._startHeartbeat();
     
@@ -84,6 +93,7 @@ class NexusNode {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.healthServer) this.healthServer.close();
+    if (this.offlineMonitor) this.offlineMonitor.stop();
     if (this.nodeId) {
       await this._apiCall('DELETE', `/api/v1/nexus/${this.nodeId}`);
     }
@@ -99,6 +109,7 @@ class NexusNode {
           memory: process.memoryUsage(),
           uptime: process.uptime()
         });
+        if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
       } catch (e) {
         console.warn('[Nexus] Heartbeat failed:', e.message);
       }
@@ -171,6 +182,10 @@ class NexusNode {
   }
 
   async _updateTaskStatus(taskId, status, data = {}) {
+    if (this.offlineMonitor?.isOffline) {
+      await this.offlineMonitor.enqueue(taskId, 'status_update', { status, ...data });
+      return;
+    }
     try {
       await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/tasks/${taskId}/status`, {
         status,

@@ -48,7 +48,7 @@ const PLANS = {
     tier: 'agents',
     products: ['agents'],
     features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
-    limits: { agents: 25, tokens_month: 250000, storage_gb: 10, nexus_nodes: 2 },
+    limits: { agents: 25, tokens_month: 250000, storage_gb: 10, nexus_nodes: 2, nexus_local: 2, nexus_enterprise: 0 },
     snipara: ['context', 'memory'],
     price: { monthly: 2900, yearly: 29000 },
   },
@@ -57,7 +57,7 @@ const PLANS = {
     tier: 'agents',
     products: ['agents'],
     features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
-    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10 },
+    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 3 },
     snipara: ['context', 'memory'],
     price: { monthly: 7900, yearly: 79000 },
   },
@@ -66,7 +66,7 @@ const PLANS = {
     tier: 'full',
     products: ['office', 'agents'],
     features: ['*'],
-    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10 },
+    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 5 },
     snipara: ['context', 'memory'],
     price: { monthly: 12900, yearly: 129000 },
   },
@@ -75,7 +75,7 @@ const PLANS = {
     tier: 'full',
     products: ['office', 'agents'],
     features: ['*'],
-    limits: { agents: -1, tokens_month: -1, storage_gb: -1, nexus_nodes: -1 },
+    limits: { agents: -1, tokens_month: -1, storage_gb: -1, nexus_nodes: -1, nexus_local: -1, nexus_enterprise: -1 },
     snipara: ['context', 'memory'],
     price: { monthly: 0, yearly: 0 }, // custom pricing
   },
@@ -84,7 +84,7 @@ const PLANS = {
     tier: 'full',
     products: ['office', 'agents'],
     features: ['*'],
-    limits: { agents: 50, tokens_month: 500000, storage_gb: 50, nexus_nodes: 5 },
+    limits: { agents: 50, tokens_month: 500000, storage_gb: 50, nexus_nodes: 5, nexus_local: 5, nexus_enterprise: 1 },
     snipara: ['context', 'memory'],
     price: { monthly: 0, yearly: 0 },
   },
@@ -156,6 +156,21 @@ function hasProduct(planId, product) {
   return getPlan(planId).products.includes(product);
 }
 
+/**
+ * Returns the nexus node limits (local, enterprise, total) for a plan.
+ * Falls back gracefully for plans that predate the split limits.
+ * @param {string} planId
+ * @returns {{ local: number, enterprise: number, total: number }}
+ */
+function getNexusLimits(planId) {
+  const plan = getPlan(planId);
+  return {
+    local: plan.limits.nexus_local ?? plan.limits.nexus_nodes ?? 0,
+    enterprise: plan.limits.nexus_enterprise ?? 0,
+    total: plan.limits.nexus_nodes ?? 0,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Express middleware
 // ---------------------------------------------------------------------------
@@ -200,4 +215,5 @@ module.exports = {
   hasSniparaCapability,
   hasProduct,
   gateFeature,
+  getNexusLimits,
 };
