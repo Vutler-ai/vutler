@@ -22,7 +22,7 @@
 
   function build(active) {
     return `
-<aside id="primary-sidebar" class="w-60 bg-navy-light border-r border-white/5 flex flex-col h-screen shrink-0" style="background:#111d33">
+<aside id="primary-sidebar" class="w-60 bg-navy-light border-r border-white/5 flex flex-col h-screen shrink-0" style="background:#0e0f1a">
   <div class="p-4 border-b border-white/5">
     <a href="/dashboard" class="flex items-center gap-2"><img src="/static/vutler-logo-full-white.png" alt="Vutler" style="height:36px"></a>
   </div>

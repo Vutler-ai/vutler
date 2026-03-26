@@ -69,7 +69,7 @@ AUTH_MODE="x-api-key"
 case "$PROJECT_SLUG" in
   vutler)
     PROJECT_URL="${SNIPARA_PROJECT_MCP_URL:-https://api.snipara.com/mcp/test-workspace-api-vutler}"
-    AUTH_MODE="bearer"
+    AUTH_MODE="x-api-key"
     ;;
   team)
     PROJECT_URL="$TEAM_URL"
