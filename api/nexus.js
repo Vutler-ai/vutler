@@ -18,61 +18,81 @@ const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const HEARTBEAT_ONLINE_SECONDS = 90;
 
 async function ensureNexusTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      created_by_user_id UUID NULL,
-      agent_id TEXT NOT NULL,
-      mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
-      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
-      api_key_id UUID NULL,
-      client_company TEXT NULL,
-      command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
-      last_heartbeat_at TIMESTAMPTZ NULL,
-      last_heartbeat_payload JSONB NULL,
-      runtime_version TEXT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
-      id BIGSERIAL PRIMARY KEY,
-      deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
-      workspace_id UUID NOT NULL,
-      runtime_id TEXT NULL,
-      runtime_version TEXT NULL,
-      status TEXT NOT NULL DEFAULT 'online',
-      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  try {
+    const check1 = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_deployments'`
+    );
+    if (check1.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          created_by_user_id UUID NULL,
+          agent_id TEXT NOT NULL,
+          mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
+          status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
+          api_key_id UUID NULL,
+          client_company TEXT NULL,
+          command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+          last_heartbeat_at TIMESTAMPTZ NULL,
+          last_heartbeat_payload JSONB NULL,
+          runtime_version TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    }
+    const check2 = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_runtime_heartbeats'`
+    );
+    if (check2.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
+          id BIGSERIAL PRIMARY KEY,
+          deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
+          workspace_id UUID NOT NULL,
+          runtime_id TEXT NULL,
+          runtime_version TEXT NULL,
+          status TEXT NOT NULL DEFAULT 'online',
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    }
+  } catch (err) {
+    console.warn('[NEXUS] ensureNexusTables warning (tables may already exist):', err.message);
+  }
 }
 
 
 async function ensureNexusNodesTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_nodes (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      name TEXT NOT NULL,
-      type TEXT DEFAULT 'vps',
-      status TEXT DEFAULT 'offline',
-      host TEXT,
-      port INTEGER,
-      api_key TEXT,
-      config JSONB DEFAULT '{}'::jsonb,
-      last_heartbeat TIMESTAMPTZ,
-      agents_deployed JSONB DEFAULT '[]'::jsonb,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Columns are migrated on Vaultbrix by SQL migration; avoid ALTER here to prevent owner conflicts.
-
+  try {
+    const check = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_nodes'`
+    );
+    if (check.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_nodes (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          name TEXT NOT NULL,
+          type TEXT DEFAULT 'vps',
+          status TEXT DEFAULT 'offline',
+          host TEXT,
+          port INTEGER,
+          api_key TEXT,
+          config JSONB DEFAULT '{}'::jsonb,
+          last_heartbeat TIMESTAMPTZ,
+          agents_deployed JSONB DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+    }
+    // Columns are migrated on Vaultbrix by SQL migration; avoid ALTER here to prevent owner conflicts.
+  } catch (err) {
+    console.warn('[NEXUS] ensureNexusNodesTable warning (table may already exist):', err.message);
+  }
 }
 
 function mapNode(row) {

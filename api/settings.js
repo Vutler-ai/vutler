@@ -14,31 +14,45 @@ const WS_ID = '00000000-0000-0000-0000-000000000001';
 const SCHEMA = 'tenant_vutler';
 
 async function ensureTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_settings (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID DEFAULT '${WS_ID}',
-      name TEXT DEFAULT 'My Workspace',
-      timezone TEXT DEFAULT 'Europe/Zurich',
-      language TEXT DEFAULT 'fr',
-      logo_url TEXT,
-      llm_providers JSONB DEFAULT '{}',
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_api_keys (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID DEFAULT '${WS_ID}',
-      name TEXT NOT NULL,
-      key_hash TEXT NOT NULL,
-      key_prefix TEXT NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      revoked_at TIMESTAMPTZ
-    )
-  `);
+  try {
+    const check1 = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_settings'`
+    );
+    if (check1.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_settings (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID DEFAULT '${WS_ID}',
+          name TEXT DEFAULT 'My Workspace',
+          timezone TEXT DEFAULT 'Europe/Zurich',
+          language TEXT DEFAULT 'fr',
+          logo_url TEXT,
+          llm_providers JSONB DEFAULT '{}',
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+    }
+    const check2 = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_api_keys'`
+    );
+    if (check2.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_api_keys (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID DEFAULT '${WS_ID}',
+          name TEXT NOT NULL,
+          key_hash TEXT NOT NULL,
+          key_prefix TEXT NOT NULL,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          revoked_at TIMESTAMPTZ
+        )
+      `);
+    }
+  } catch (err) {
+    console.warn('[SETTINGS] ensureTables warning (tables may already exist):', err.message);
+  }
 }
-ensureTables().catch(err => console.error('[SETTINGS] ensureTables error:', err.message));
+ensureTables().catch(err => console.warn('[SETTINGS] ensureTables warning:', err.message));
 
 function maskKey(key) {
   if (!key || key.length < 8) return '••••••••';

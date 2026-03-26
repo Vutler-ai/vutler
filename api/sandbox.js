@@ -8,18 +8,27 @@ const { execSync } = require('child_process');
 const SCHEMA = 'tenant_vutler';
 
 async function ensureSandboxTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.sandbox_executions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      agent_name TEXT,
-      task_type TEXT,
-      title TEXT,
-      status TEXT DEFAULT 'pending',
-      duration_ms INT,
-      output TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+  try {
+    const check = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='sandbox_executions'`
+    );
+    if (check.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.sandbox_executions (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          agent_name TEXT,
+          task_type TEXT,
+          title TEXT,
+          status TEXT DEFAULT 'pending',
+          duration_ms INT,
+          output TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+    }
+  } catch (err) {
+    console.warn('[Sandbox] ensureSandboxTable warning (table may already exist):', err.message);
+  }
 }
 
 // GET /api/v1/sandbox/executions

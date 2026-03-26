@@ -93,67 +93,91 @@ const INTERNAL_CATALOG = [
 async function ensureReady() {
   if (!initPromise) {
     initPromise = (async () => {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.integrations_catalog (
-          provider TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          description TEXT,
-          icon TEXT,
-          category TEXT,
-          source TEXT NOT NULL DEFAULT 'internal',
-          actions JSONB NOT NULL DEFAULT '[]'::jsonb,
-          default_scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
-          is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      try {
+        const check1 = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='integrations_catalog'`
         );
-      `);
+        if (check1.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.integrations_catalog (
+              provider TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              description TEXT,
+              icon TEXT,
+              category TEXT,
+              source TEXT NOT NULL DEFAULT 'internal',
+              actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+              default_scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+              is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+          `);
+        }
 
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integrations (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID NOT NULL,
-          provider TEXT NOT NULL,
-          source TEXT NOT NULL DEFAULT 'internal',
-          connected BOOLEAN NOT NULL DEFAULT FALSE,
-          status TEXT NOT NULL DEFAULT 'disconnected',
-          config JSONB NOT NULL DEFAULT '{}'::jsonb,
-          scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
-          credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
-          connected_at TIMESTAMPTZ,
-          disconnected_at TIMESTAMPTZ,
-          connected_by TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          UNIQUE(workspace_id, provider)
+        const check2 = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_integrations'`
         );
-      `);
+        if (check2.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integrations (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id UUID NOT NULL,
+              provider TEXT NOT NULL,
+              source TEXT NOT NULL DEFAULT 'internal',
+              connected BOOLEAN NOT NULL DEFAULT FALSE,
+              status TEXT NOT NULL DEFAULT 'disconnected',
+              config JSONB NOT NULL DEFAULT '{}'::jsonb,
+              scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+              credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
+              connected_at TIMESTAMPTZ,
+              disconnected_at TIMESTAMPTZ,
+              connected_by TEXT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              UNIQUE(workspace_id, provider)
+            );
+          `);
+        }
 
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integration_logs (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID NOT NULL,
-          provider TEXT NOT NULL,
-          action TEXT NOT NULL,
-          status TEXT NOT NULL,
-          duration_ms INTEGER,
-          error_message TEXT,
-          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        const check3 = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_integration_logs'`
         );
-      `);
+        if (check3.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integration_logs (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id UUID NOT NULL,
+              provider TEXT NOT NULL,
+              action TEXT NOT NULL,
+              status TEXT NOT NULL,
+              duration_ms INTEGER,
+              error_message TEXT,
+              payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+          `);
+        }
 
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integration_agents (
-          workspace_id UUID NOT NULL,
-          provider TEXT NOT NULL,
-          agent_id UUID NOT NULL,
-          has_access BOOLEAN NOT NULL DEFAULT TRUE,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY(workspace_id, provider, agent_id)
+        const check4 = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_integration_agents'`
         );
-      `);
+        if (check4.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integration_agents (
+              workspace_id UUID NOT NULL,
+              provider TEXT NOT NULL,
+              agent_id UUID NOT NULL,
+              has_access BOOLEAN NOT NULL DEFAULT TRUE,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              PRIMARY KEY(workspace_id, provider, agent_id)
+            );
+          `);
+        }
+      } catch (err) {
+        console.warn('[INTEGRATIONS] ensureReady warning (tables may already exist):', err.message);
+      }
 
       for (const integration of INTERNAL_CATALOG) {
         await pool.query(

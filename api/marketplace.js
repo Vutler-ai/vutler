@@ -9,44 +9,53 @@ const SCHEMA = "tenant_vutler";
 // Auto-init tables
 (async () => {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.marketplace_templates (
-        id SERIAL PRIMARY KEY,
-        workspace_id INT NOT NULL,
-        agent_id INT NOT NULL,
-        name VARCHAR(200) NOT NULL,
-        description TEXT,
-        category VARCHAR(50) DEFAULT 'custom',
-        pricing VARCHAR(10) DEFAULT 'free',
-        price DECIMAL(10,2) DEFAULT 0,
-        model VARCHAR(100),
-        system_prompt TEXT,
-        tools JSONB DEFAULT '[]',
-        permissions JSONB DEFAULT '{}',
-        install_count INT DEFAULT 0,
-        avg_rating DECIMAL(3,2) DEFAULT 0,
-        review_count INT DEFAULT 0,
-        published BOOLEAN DEFAULT true,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        verified BOOLEAN DEFAULT false
-      );
-      CREATE INDEX IF NOT EXISTS idx_marketplace_category ON ${SCHEMA}.marketplace_templates(category, published);
-      CREATE INDEX IF NOT EXISTS idx_marketplace_rating ON ${SCHEMA}.marketplace_templates(avg_rating DESC);
+    const checkTemplates = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='marketplace_templates'`
+    );
+    if (checkTemplates.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.marketplace_templates (
+          id SERIAL PRIMARY KEY,
+          workspace_id INT NOT NULL,
+          agent_id INT NOT NULL,
+          name VARCHAR(200) NOT NULL,
+          description TEXT,
+          category VARCHAR(50) DEFAULT 'custom',
+          pricing VARCHAR(10) DEFAULT 'free',
+          price DECIMAL(10,2) DEFAULT 0,
+          model VARCHAR(100),
+          system_prompt TEXT,
+          tools JSONB DEFAULT '[]',
+          permissions JSONB DEFAULT '{}',
+          install_count INT DEFAULT 0,
+          avg_rating DECIMAL(3,2) DEFAULT 0,
+          review_count INT DEFAULT 0,
+          published BOOLEAN DEFAULT true,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW(),
+          verified BOOLEAN DEFAULT false
+        );
+        CREATE INDEX IF NOT EXISTS idx_marketplace_category ON ${SCHEMA}.marketplace_templates(category, published);
+        CREATE INDEX IF NOT EXISTS idx_marketplace_rating ON ${SCHEMA}.marketplace_templates(avg_rating DESC);
 
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.marketplace_reviews (
-        id SERIAL PRIMARY KEY,
-        template_id INT NOT NULL REFERENCES ${SCHEMA}.marketplace_templates(id) ON DELETE CASCADE,
-        workspace_id INT NOT NULL,
-        user_id INT,
-        rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
-        comment TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_review_unique ON ${SCHEMA}.marketplace_reviews(template_id, workspace_id);
-    `);
-    await pool.query(`ALTER TABLE ${SCHEMA}.marketplace_templates ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false`);
-    console.log("[MARKETPLACE] Tables ensured");
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.marketplace_reviews (
+          id SERIAL PRIMARY KEY,
+          template_id INT NOT NULL REFERENCES ${SCHEMA}.marketplace_templates(id) ON DELETE CASCADE,
+          workspace_id INT NOT NULL,
+          user_id INT,
+          rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+          comment TEXT,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_review_unique ON ${SCHEMA}.marketplace_reviews(template_id, workspace_id);
+      `);
+      console.log("[MARKETPLACE] Tables ensured");
+    }
+    try {
+      await pool.query(`ALTER TABLE ${SCHEMA}.marketplace_templates ADD COLUMN IF NOT EXISTS verified BOOLEAN DEFAULT false`);
+    } catch (alterErr) {
+      console.warn("[MARKETPLACE] ALTER TABLE warning:", alterErr.message);
+    }
 
     // Seed starter templates if empty
     const count = await pool.query(`SELECT COUNT(*) FROM ${SCHEMA}.marketplace_templates`);

@@ -78,25 +78,30 @@ function notifyAdminDraftRequired(draft) {
 // ── Ensure DB table exists ──
 setTimeout(async () => {
   try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS tenant_vutler.email_messages (
-        id SERIAL PRIMARY KEY,
-        postal_id INTEGER,
-        message_id TEXT,
-        token TEXT,
-        rcpt_to TEXT,
-        mail_from TEXT,
-        subject TEXT,
-        plain_body TEXT,
-        html_body TEXT,
-        direction TEXT DEFAULT 'incoming',
-        processed BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-    console.log('[Mail] email_messages table ensured');
+    const check = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='email_messages'`
+    );
+    if (check.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS tenant_vutler.email_messages (
+          id SERIAL PRIMARY KEY,
+          postal_id INTEGER,
+          message_id TEXT,
+          token TEXT,
+          rcpt_to TEXT,
+          mail_from TEXT,
+          subject TEXT,
+          plain_body TEXT,
+          html_body TEXT,
+          direction TEXT DEFAULT 'incoming',
+          processed BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      console.log('[Mail] email_messages table ensured');
+    }
   } catch (err) {
-    console.error('[Mail] Failed to ensure email_messages table:', err.message);
+    console.warn('[Mail] email_messages table check warning (table may already exist):', err.message);
   }
 }, 5000);
 
