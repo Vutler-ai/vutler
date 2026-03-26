@@ -7,7 +7,7 @@ const router = express.Router();
 /**
  * POST /api/v1/whatsapp/mirror
  * Mirrors inbound/outbound WhatsApp messages into Vutler chat room.
- * Note: MongoDB removed - service returns stub response
+ * Service is currently disabled; returns stub response.
  */
 router.post('/whatsapp/mirror', authenticateAgent, async (req, res) => {
   try {
@@ -42,12 +42,11 @@ router.post('/whatsapp/mirror', authenticateAgent, async (req, res) => {
       });
     }
 
-    // MongoDB removed - return stub response
+    // Service disabled - return stub response
     return res.status(200).json({
       success: true,
       mirrored: false,
-      reason: 'mongodb_removed',
-      message: 'WhatsApp mirror service is disabled - MongoDB dependency removed'
+      reason: 'disabled'
     });
   } catch (error) {
     console.error('whatsapp mirror endpoint error:', error);
