@@ -49,6 +49,8 @@ const PUBLIC_FULL_PATHS = [
   '/api/v1/mail',
   '/api/v1/sandbox',
   '/api/v1/drive/download',
+  '/api/v1/nexus/register',
+  '/api/v1/nexus/cli/tokens',
 ];
 
 function isPublicPath(fullPath) {
