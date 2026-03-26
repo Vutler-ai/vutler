@@ -1,7 +1,7 @@
 /**
  * WhatsApp Mirror Service
  * Mirrors WhatsApp messages to a Rocket.Chat channel
- * MongoDB refs removed - service disabled for now
+ * Service is currently disabled
  */
 
 const crypto = require('crypto');
@@ -69,9 +69,9 @@ async function mirrorWhatsAppMessage(db, payload, logger = console) {
     return { mirrored: false, skipped: true, reason: 'disabled' };
   }
 
-  // Service disabled - MongoDB removed
-  logger.warn('WhatsApp mirror service is disabled (MongoDB removed)');
-  return { mirrored: false, skipped: true, reason: 'service_disabled_mongodb_removed' };
+  // Service disabled
+  logger.warn('WhatsApp mirror service is disabled');
+  return { mirrored: false, skipped: true, reason: 'disabled' };
 }
 
 module.exports = {

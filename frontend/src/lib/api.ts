@@ -235,6 +235,59 @@ class VutlerApiClient {
       body: JSON.stringify(payload),
     });
   }
+
+  // ========== Billing ==========
+
+  /**
+   * GET /api/v1/billing/plans
+   * Fetch available billing plans
+   */
+  async fetchPlans(): Promise<unknown> {
+    return this.request('/api/v1/billing/plans');
+  }
+
+  /**
+   * GET /api/v1/billing/subscription
+   * Fetch current subscription
+   */
+  async fetchSubscription(): Promise<unknown> {
+    return this.request('/api/v1/billing/subscription');
+  }
+
+  /**
+   * POST /api/v1/billing/checkout
+   * Create a checkout session
+   */
+  async createCheckout(planId: string, interval: 'monthly' | 'yearly'): Promise<unknown> {
+    return this.request('/api/v1/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({
+        planId,
+        interval,
+        successUrl: typeof window !== 'undefined' ? window.location.href : '',
+        cancelUrl: typeof window !== 'undefined' ? window.location.href : '',
+      }),
+    });
+  }
+
+  /**
+   * POST /api/v1/billing/portal
+   * Create a customer portal session
+   */
+  async createPortalSession(): Promise<unknown> {
+    return this.request('/api/v1/billing/portal', { method: 'POST' });
+  }
+
+  /**
+   * POST /api/v1/billing/change-plan
+   * Change the current plan
+   */
+  async changePlan(planId: string): Promise<unknown> {
+    return this.request('/api/v1/billing/change-plan', {
+      method: 'POST',
+      body: JSON.stringify({ planId }),
+    });
+  }
 }
 
 // ========== Export singleton instance ==========

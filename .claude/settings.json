@@ -1,7 +1,83 @@
 {
   "permissions": {
     "allow": [
-      "mcp__snipara__rlm_shared_context"
+      "mcp__snipara__rlm_shared_context",
+      "mcp__snipara__rlm_remember",
+      "mcp__snipara__rlm_recall",
+      "mcp__snipara__rlm_context_query",
+      "Bash(.claude/hooks/context-checkpoint.sh)",
+      "Bash(.claude/hooks/commit-memory.sh)",
+      "Bash(.claude/hooks/session-restore.sh)"
+    ]
+  },
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/context-checkpoint.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/context-checkpoint.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/commit-memory.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-restore.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/session-restore.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/context-checkpoint.sh",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

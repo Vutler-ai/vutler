@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { isAuthenticated } from '@/lib/api';
 import AppShell from '@/components/app-shell';
+import { FeaturesProvider } from '@/components/features-provider';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -29,11 +30,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AppShell
-      pageTitle=""
-      user={{ name: 'Alex Lopez', email: 'alex@vutler.com', initials: 'AL' }}
-    >
-      {children}
-    </AppShell>
+    <FeaturesProvider>
+      <AppShell
+        pageTitle=""
+        user={{ name: 'Alex Lopez', email: 'alex@vutler.com', initials: 'AL' }}
+      >
+        {children}
+      </AppShell>
+    </FeaturesProvider>
   );
 }

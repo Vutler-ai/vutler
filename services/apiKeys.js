@@ -22,31 +22,36 @@ function buildPrefix(secret) {
 async function ensureApiKeysTable() {
   if (apiKeysTableEnsured) return;
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_api_keys (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      created_by_user_id UUID NULL,
-      name TEXT NOT NULL,
-      key_prefix TEXT NOT NULL,
-      key_hash TEXT NOT NULL UNIQUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      last_used_at TIMESTAMPTZ NULL,
-      revoked_at TIMESTAMPTZ NULL
-    )
-  `);
+  try {
+    // Check if table exists first (SELECT is always allowed)
+    const check = await pool.query(`
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = '${SCHEMA}' AND table_name = 'workspace_api_keys'
+    `);
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_workspace
-      ON ${SCHEMA}.workspace_api_keys (workspace_id, created_at DESC)
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_active
-      ON ${SCHEMA}.workspace_api_keys (workspace_id)
-      WHERE revoked_at IS NULL
-  `);
+    if (check.rows.length === 0) {
+      // Table doesn't exist — try to create (may fail if no DDL rights)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_api_keys (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          created_by_user_id UUID NULL,
+          name TEXT NOT NULL,
+          key_prefix TEXT NOT NULL,
+          key_hash TEXT NOT NULL UNIQUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_used_at TIMESTAMPTZ NULL,
+          revoked_at TIMESTAMPTZ NULL
+        )
+      `);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_workspace ON ${SCHEMA}.workspace_api_keys (workspace_id, created_at DESC)`);
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_active ON ${SCHEMA}.workspace_api_keys (workspace_id) WHERE revoked_at IS NULL`);
+    }
+  } catch (e) {
+    // DDL permission denied — table likely already exists, continue
+    console.warn('[API-KEYS] ensureTable skipped:', e.message);
+  }
 
   apiKeysTableEnsured = true;
 }

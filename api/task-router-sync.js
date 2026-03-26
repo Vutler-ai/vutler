@@ -7,7 +7,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../../lib/postgres');
+const { pool } = require('../lib/postgres');
 const SCHEMA = 'tenant_vutler';
 
 /**
@@ -75,6 +75,30 @@ router.post('/sync', async (req, res) => {
       );
 
       console.log('[TaskSync] Created task from swarm:', result.rows[0].id);
+
+      // Route to matching Nexus node based on agent_id / capabilities
+      try {
+        const nodeMatch = await pool.query(`
+          SELECT id, name, mode, snipara_instance_id, role
+          FROM ${SCHEMA}.nexus_nodes
+          WHERE workspace_id = $1
+            AND status = 'online'
+            AND (
+              snipara_instance_id = $2  -- matches agent_id from Snipara
+              OR role = $3              -- matches task role/capability
+              OR client_name = $4       -- matches client routing
+            )
+          ORDER BY last_heartbeat DESC
+          LIMIT 1
+        `, [workspace_id, task.agent_id || '', task.role || '', task.client_name || '']);
+
+        if (nodeMatch.rows[0]) {
+          console.log(`[TASK-SYNC] Routed to Nexus node: ${nodeMatch.rows[0].name} (${nodeMatch.rows[0].mode})`);
+        }
+      } catch (e) {
+        // Routing is best-effort — task stays in DB for any node to pick up
+      }
+
       return res.json({ success: true, data: { task: result.rows[0], action: 'created' } });
     }
 
@@ -89,6 +113,16 @@ router.post('/sync', async (req, res) => {
       );
 
       console.log('[TaskSync] Completed task from swarm:', result.rows[0].id);
+
+      // Also try to sync completion to Snipara if the task originated from a Nexus node
+      try {
+        const swarmCoordinator = require('../services/swarmCoordinator');
+        const coord = swarmCoordinator.getSwarmCoordinator?.() || swarmCoordinator;
+        if (coord?.completeTask && result.rows[0].swarm_task_id) {
+          await coord.completeTask(result.rows[0].swarm_task_id, result.rows[0].agent_id || 'nexus', result.rows[0].output || '');
+        }
+      } catch (_) {}
+
       return res.json({ success: true, data: { task: result.rows[0], action: 'completed' } });
     }
 

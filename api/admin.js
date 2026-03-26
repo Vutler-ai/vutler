@@ -10,6 +10,8 @@ const crypto = require('crypto');
 const pool = require('../lib/vaultbrix');
 const router = express.Router();
 
+const { VALID_PLAN_IDS } = require('../packages/core/middleware/featureGate');
+
 const SCHEMA = 'tenant_vutler';
 const TABLE = `${SCHEMA}.users_auth`;
 
@@ -119,17 +121,20 @@ router.use(requireAdmin);
  */
 router.get('/stats', async (req, res) => {
   try {
+    const planCountClauses = VALID_PLAN_IDS.map(planId => {
+      const condition = planId === 'free'
+        ? `plan = '${planId}' OR plan IS NULL`
+        : `plan = '${planId}'`;
+      return `COUNT(*) FILTER (WHERE ${condition}) as plan_${planId}`;
+    }).join(',\n        ');
+
     const stats = await pool.query(`
-      SELECT 
+      SELECT
         COUNT(*) as total,
         COUNT(*) FILTER (WHERE role = 'admin') as admins,
         COUNT(*) FILTER (WHERE role = 'user') as users,
         COUNT(*) FILTER (WHERE role = 'banned') as banned,
-        COUNT(*) FILTER (WHERE plan = 'free' OR plan IS NULL) as plan_free,
-        COUNT(*) FILTER (WHERE plan = 'starter') as plan_starter,
-        COUNT(*) FILTER (WHERE plan = 'team') as plan_team,
-        COUNT(*) FILTER (WHERE plan = 'enterprise') as plan_enterprise,
-        COUNT(*) FILTER (WHERE plan = 'beta') as plan_beta,
+        ${planCountClauses},
         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') as signups_7d,
         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days') as signups_30d
       FROM ${TABLE}
@@ -294,9 +299,8 @@ router.put('/users/:id/role', async (req, res) => {
 router.put('/users/:id/plan', async (req, res) => {
   try {
     const { plan, plan_expires_at, beta_code, notes } = req.body;
-    const validPlans = ['free', 'starter', 'team', 'enterprise', 'beta'];
-    if (!validPlans.includes(plan)) {
-      return res.status(400).json({ success: false, error: `Invalid plan. Must be: ${validPlans.join(', ')}` });
+    if (!VALID_PLAN_IDS.includes(plan)) {
+      return res.status(400).json({ success: false, error: `Invalid plan. Must be: ${VALID_PLAN_IDS.join(', ')}` });
     }
 
     const setClauses = ['plan = $1', 'updated_at = NOW()'];

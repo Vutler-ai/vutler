@@ -4,8 +4,8 @@
  */
 
 const request = require('supertest');
-const { getPool } = require('../lib/postgres');
-const { transactionWithWorkspace, queryWithWorkspace } = require('../services/pg');
+const { getPool } = require('./lib/postgres');
+const { transactionWithWorkspace, queryWithWorkspace } = require('./services/pg');
 
 // Test configuration
 const TEST_WORKSPACE_A = 'test_workspace_a';

@@ -9,24 +9,33 @@ const SCHEMA = 'tenant_vutler';
 const HEARTBEAT_ONLINE_SECONDS = 90;
 
 async function ensureNexusTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      created_by_user_id UUID NULL,
-      agent_id TEXT NOT NULL,
-      mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
-      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
-      api_key_id UUID NULL,
-      client_company TEXT NULL,
-      command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
-      last_heartbeat_at TIMESTAMPTZ NULL,
-      last_heartbeat_payload JSONB NULL,
-      runtime_version TEXT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  try {
+    const check = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_deployments'`
+    );
+    if (check.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          created_by_user_id UUID NULL,
+          agent_id TEXT NOT NULL,
+          mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
+          status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
+          api_key_id UUID NULL,
+          client_company TEXT NULL,
+          command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+          last_heartbeat_at TIMESTAMPTZ NULL,
+          last_heartbeat_payload JSONB NULL,
+          runtime_version TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    }
+  } catch (err) {
+    console.warn('[DEPLOYMENTS] ensureNexusTables warning (table may already exist):', err.message);
+  }
 }
 
 function mapDeployment(row) {

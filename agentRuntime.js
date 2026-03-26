@@ -1,669 +1,306 @@
-/**
- * Agent Runtime Service v2
- *
- * Production-grade agent runtime for Vutler.
- * 
- * Architecture:
- *   - Agents are provisioned in PG `agents` table with permanent PATs
- *   - Channel assignments in PG `agent_rc_channels`
- *   - Runtime loads PATs from PG at startup — no login needed
- *   - DDP WebSocket for real-time message subscription
- *   - Smart routing: @mention → specific agent, round-robin otherwise
- *   - Each agent posts as themselves (own PAT)
- *
- * RC DDP protocol:
- *   1. Connect   → {"msg":"connect","version":"1","support":["1"]}
- *   2. Login     → {"msg":"method","id":"1","method":"login","params":[...]}
- *   3. Subscribe → {"msg":"sub","id":"sub-N","name":"stream-room-messages","params":[ROOM_ID,...]}
- *   4. Messages  → {"msg":"changed","collection":"stream-room-messages","fields":{"args":[...]}}
- */
-
 'use strict';
 
-const WebSocket = require('ws');
-const { pool }  = require('./pg');
-const { LLMRouter } = require('./llmRouter');
-const AgentProvisioning = require('./agentProvisioning');
+/**
+ * Agent Runtime
+ *
+ * Responsibilities:
+ *   1. Load active agents from PostgreSQL (tenant_vutler.agents)
+ *   2. Route incoming messages to the right agent
+ *   3. Call LLM with agent's system prompt + conversation history
+ *   4. Broadcast reply via ws-chat publishMessage
+ *   5. Track agent state (active/idle/error) in PostgreSQL
+ */
 
-const RC_WS_URL        = process.env.RC_WS_URL        || 'ws://rocketchat:3000/websocket';
-const RC_ADMIN_TOKEN   = process.env.RC_ADMIN_TOKEN   || '';
-const RC_ADMIN_USER_ID = process.env.RC_ADMIN_USER_ID || '';
-const RC_API_URL       = process.env.RC_API_URL       || 'http://rocketchat:3000';
+const { LLMRouter } = require('./services/llmRouter');
 
-// Snipara Integration
+// DB: prefer vaultbrix (tenant_vutler schema), fall back to generic postgres pool
+let pg;
+try {
+  pg = require('./lib/vaultbrix');
+} catch (_) {
+  pg = require('./lib/postgres').pool;
+}
+
+// Snipara MCP integration (knowledge + memory)
 const SNIPARA_API_URL = process.env.SNIPARA_API_URL || 'https://api.snipara.com/mcp/vutler';
 const SNIPARA_API_KEY = process.env.SNIPARA_API_KEY || '';
 
-class AgentRuntime {
-  constructor(db, app, apmManager = null) {
-    this.db  = db;
-    this.app = app;
-    this.apmManager = apmManager; // Runtime v3 APM integration
-    this.ws  = null;
+// agentId → { name, systemPrompt, model, provider }
+const agentMeta = new Map();
+// agentId → current status string
+const agentStatus = new Map();
+// Set of message IDs currently being processed (dedup)
+const processing = new Set();
+// channelId → next round-robin index
+const roundRobinIndex = new Map();
+// channelId → [agentId, ...]
+const channelToAgents = new Map();
 
-    this.connected  = false;
-    this.running    = false;
-    this.loginDone  = false;
+const llmRouter = new LLMRouter(null, {});
 
-    // channelId → [agentId, ...]
-    this.channelToAgents = new Map();
-    // agentId → { name, username, systemPrompt }
-    this.agentMeta       = new Map();
-    this.sharedContext = { soul: "", memory: "", user: "", identity: "", loadedAt: 0 };
-    // agentId → { authToken, userId }
-    this.agentCredentials = new Map();
-    // subId → channelId
-    this.subscriptions   = new Map();
-    // Set of message IDs currently being processed (dedup)
-    this.processing      = new Set();
-    // channelId → next round-robin index
-    this.roundRobinIndex = new Map();
+// Shared context cache (MEMORY.md, SOUL.md, USER.md — reloaded every 30min)
+let sharedCtx = { soul: '', memory: '', user: '', loadedAt: 0 };
 
-    this.subCounter = 1;
-    this.reconnectDelay = 5_000;
-    this.reconnectTimer = null;
+// ─── Public API ───────────────────────────────────────────────────────────────
 
-    this.llmRouter = new LLMRouter(null, {});
-    this.provisioning = new AgentProvisioning(db);
+/**
+ * Load agents from DB and mark runtime as started.
+ */
+async function startRuntime() {
+  console.log('[RUNTIME] Starting…');
+  await _loadAgents();
+  console.log('[RUNTIME] Ready. Agents:', agentMeta.size, '| Channels:', channelToAgents.size);
+}
 
-    // Admin REST credentials (set after DDP login)
-    this.rcAuthToken = null;
-    this.rcUserId = RC_ADMIN_USER_ID;
-  }
+/**
+ * Clear in-memory state.
+ */
+function stopRuntime() {
+  agentMeta.clear();
+  agentStatus.clear();
+  channelToAgents.clear();
+  processing.clear();
+  console.log('[RUNTIME] Stopped.');
+}
 
-  // ─── Public API ────────────────────────────────────────────────────────────
+/**
+ * Route an incoming message to the appropriate agent and return its reply.
+ *
+ * @param {object} message - { id, channel_id, user_id, content, history? }
+ *   history: array of { role, content } for conversation context (optional)
+ * @returns {Promise<{ agentId, agentName, reply }>}
+ */
+async function processAgentMessage(message) {
+  const { id: msgId, channel_id: channelId, user_id: userId, content, history = [] } = message;
 
-  async start() {
-    if (this.running) return;
-    this.running = true;
-    console.log('[Runtime] Starting agent runtime…');
+  if (!content?.trim()) throw new Error('Empty message content');
+  if (processing.has(msgId)) throw new Error('Message already being processed');
 
-    // Step 1: Load agents from PG
-    await this._loadFromPG();
+  const agentIds = channelToAgents.get(channelId);
+  if (!agentIds?.length) throw new Error(`No agents assigned to channel ${channelId}`);
 
-    // Step 2: If no agents in PG, run auto-migration
-    if (this.agentMeta.size === 0) {
-      console.log('[Runtime] No agents in PG — running first-time migration…');
-      // Need admin REST token for provisioning
-      await this._loginREST();
-      this.provisioning.setAdminCredentials(this.rcAuthToken, this.rcUserId);
-      const result = await this.provisioning.migrateExistingAgents();
-      console.log(`[Runtime] Migration complete: ${result.migrated} agents provisioned.`);
-      // Reload after migration
-      await this._loadFromPG();
+  // Round-robin selection (mention routing can be added above this layer)
+  const idx = roundRobinIndex.get(channelId) || 0;
+  const agentId = agentIds[idx % agentIds.length];
+  roundRobinIndex.set(channelId, (idx + 1) % agentIds.length);
+
+  processing.add(msgId);
+  setTimeout(() => processing.delete(msgId), 5 * 60_000);
+
+  const meta = agentMeta.get(agentId);
+  console.log(`[RUNTIME] ${meta.name} ← "${content.slice(0, 60)}"`);
+
+  await _setStatus(agentId, 'processing');
+  const start = Date.now();
+
+  try {
+    // Enrich system prompt with shared context + knowledge + memories
+    const [knowledge, memories, shared] = await Promise.all([
+      _queryKnowledge(agentId, content).catch(() => ''),
+      _recallMemories(agentId, content).catch(() => []),
+      _loadSharedContext().catch(() => ({})),
+    ]);
+
+    let systemPrompt = meta.systemPrompt;
+    if (shared.soul)   systemPrompt += '\n\n## Soul\n'           + shared.soul;
+    if (shared.user)   systemPrompt += '\n\n## About the User\n' + shared.user;
+    if (shared.memory) systemPrompt += '\n\n## Shared Memory\n'  + shared.memory;
+    if (knowledge)     systemPrompt += '\n\nRelevant knowledge:\n' + knowledge;
+    if (memories?.length) {
+      systemPrompt += '\n\nAgent Memories:\n' + memories.map(m => `- ${m.content}`).join('\n');
     }
 
-    // Step 3: Initialize Agent Bus (Redis pub/sub) — non-blocking
-    this._initAgentBus().catch(err =>
-      console.warn('[Runtime] Agent bus init skipped:', err.message)
-    );
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...history.slice(-10),
+      { role: 'user', content },
+    ];
 
-    // Step 4: Connect DDP
-    this._connect();
-  }
-
-  async _initAgentBus() {
-    let AgentBus;
-    try { AgentBus = require('./agentBus'); } catch (_) {
-      console.warn('[Runtime] AgentBus module not available (redis not installed)');
-      return;
-    }
-    const Redis = require('redis');
-    const redisUrl = process.env.REDIS_URL || 'redis://redis:6379';
-    const pub = Redis.createClient({ url: redisUrl });
-    const sub = pub.duplicate();
-    await pub.connect();
-    await sub.connect();
-    // Subscribe system channels
-    await sub.subscribe('agents:system', (msg) => {
-      console.log('[AgentBus] system:', msg);
-    });
-    await sub.subscribe('agents:broadcast', (msg) => {
-      console.log('[AgentBus] broadcast:', msg);
-    });
-    // Register each loaded agent
-    for (const [agentId] of this.agentMeta) {
-      await sub.subscribe(`agents:direct:${agentId}`, (msg) => {
-        console.log(`[AgentBus] agent ${agentId}:`, msg);
-      });
-      await pub.set(`agent:${agentId}:status`, JSON.stringify({
-        id: agentId, status: 'online', ts: new Date().toISOString()
-      }), { EX: 3600 });
-    }
-    this._busPub = pub;
-    this._busSub = sub;
-    console.log('[Runtime] Agent bus initialized:', this.agentMeta.size, 'agents registered');
-  }
-
-  stop() {
-    this.running = false;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this.ws) {
-      try { this.ws.close(1000, 'shutdown'); } catch (_) {}
-      this.ws = null;
-    }
-    this.connected = false;
-    console.log('[Runtime] Stopped.');
-  }
-
-  async reload() {
-    await this._loadFromPG();
-    if (this.connected && this.loginDone) {
-      await this._resubscribeAll();
-    }
-    console.log('[Runtime] Reloaded.');
-  }
-
-  getStatus() {
-    return {
-      running     : this.running,
-      connected   : this.connected,
-      loginDone   : this.loginDone,
-      agents      : this.agentMeta.size,
-      channels    : this.channelToAgents.size,
-      subscriptions: this.subscriptions.size,
-    };
-  }
-
-  // ─── Data Loading (PG is source of truth) ──────────────────────────────────
-
-  async _loadFromPG() {
-    const pg = pool();
-
-    // Load agents with PATs
-    const { rows: agents } = await pg.query(`
-      SELECT id, rc_user_id, rc_username, rc_auth_token, display_name, system_prompt
-      FROM agents WHERE status = 'active' AND rc_auth_token IS NOT NULL
-    `);
-
-    // Load channel assignments
-    const { rows: channels } = await pg.query(`
-      SELECT agent_id, rc_channel_id FROM agent_rc_channels WHERE is_active = TRUE
-    `);
-
-    this.channelToAgents.clear();
-    this.agentMeta.clear();
-    this.agentCredentials.clear();
-
-    for (const a of agents) {
-      this.agentMeta.set(a.id, {
-        name: a.display_name,
-        username: a.rc_username,
-        systemPrompt: a.system_prompt || `You are ${a.display_name}. Be concise and helpful.`,
-      });
-      this.agentCredentials.set(a.id, {
-        authToken: a.rc_auth_token,
-        userId: a.rc_user_id || a.id,
-      });
-    }
-
-    // Build channel map (only for agents that exist in PG)
-    for (const ch of channels) {
-      if (!this.agentMeta.has(ch.agent_id)) continue;
-      if (!this.channelToAgents.has(ch.rc_channel_id)) {
-        this.channelToAgents.set(ch.rc_channel_id, []);
-      }
-      this.channelToAgents.get(ch.rc_channel_id).push(ch.agent_id);
-    }
-
-    console.log(`[Runtime] PG: ${agents.length} agents, ${this.channelToAgents.size} channels.`);
-  }
-
-  // ─── WebSocket / DDP ───────────────────────────────────────────────────────
-
-  _connect() {
-    if (!RC_ADMIN_TOKEN && !this.rcAuthToken) {
-      // Need at least admin token or REST login for DDP auth
-      if (!process.env.RC_ADMIN_USERNAME || !process.env.RC_ADMIN_PASSWORD) {
-        console.error('[Runtime] No RC credentials — runtime disabled.');
-        this.running = false;
-        return;
-      }
-    }
-
-    console.log(`[Runtime] Connecting DDP…`);
-    this.ws        = new WebSocket(RC_WS_URL);
-    this.loginDone = false;
-
-    this.ws.on('open', () => {
-      this._ddp({ msg: 'connect', version: '1', support: ['1'] });
+    const result = await llmRouter.chat(agentId, messages, {
+      provider: meta.provider,
+      model: meta.model,
     });
 
-    this.ws.on('message', (raw) => {
-      let m;
-      try { m = JSON.parse(raw.toString()); } catch { return; }
-      this._onDDP(m).catch(err =>
-        console.error('[Runtime] DDP error:', err.message)
-      );
-    });
+    const reply = (result.content || '').trim() || '…';
+    const latency = Date.now() - start;
 
-    this.ws.on('close', (code) => {
-      this.connected = false;
-      this.loginDone = false;
-      if (this.running) {
-        console.log(`[Runtime] WS closed (${code}). Reconnecting in ${this.reconnectDelay / 1000}s…`);
-        this.reconnectTimer = setTimeout(() => this._connect(), this.reconnectDelay);
-      }
-    });
+    await _logTokens(agentId, result, latency);
+    await _setStatus(agentId, 'active');
 
-    this.ws.on('error', (err) =>
-      console.error('[Runtime] WS error:', err.message)
-    );
-  }
+    // Store meaningful user messages and substantive replies as memories
+    _maybeStoreMemory(agentId, content, reply, meta.name);
 
-  async _onDDP(m) {
-    switch (m.msg) {
-      case 'connected':
-        // Login with admin credentials
-        this._ddp({
-          msg: 'method', id: 'login', method: 'login',
-          params: [(() => {
-            const crypto = require('crypto');
-            const pwd = process.env.RC_ADMIN_PASSWORD || '';
-            const digest = crypto.createHash('sha256').update(pwd).digest('hex');
-            return {
-              user: { username: process.env.RC_ADMIN_USERNAME || 'admin' },
-              password: { digest, algorithm: 'sha-256' }
-            };
-          })()],
-        });
-        break;
+    console.log(`[RUNTIME] ${meta.name} replied in ${latency}ms (${result.usage?.total ?? 0} tok, ${result.provider}/${result.model})`);
 
-      case 'ping':
-        this._ddp({ msg: 'pong' });
-        break;
+    return { agentId, agentName: meta.name, reply };
 
-      case 'result':
-        if (m.id === 'login') {
-          if (m.error) {
-            console.error('[Runtime] DDP login failed:', m.error);
-          } else {
-            this.connected = true;
-            this.loginDone = true;
-            console.log('[Runtime] DDP login OK.');
-            if (!this.rcAuthToken) await this._loginREST();
-            this.provisioning.setAdminCredentials(this.rcAuthToken, this.rcUserId);
-            await this._resubscribeAll();
-            await this._setAllAgentsOnline();
-          }
-        }
-        break;
-
-      case 'changed':
-        if (m.collection === 'stream-room-messages') {
-          const [msg] = m.fields?.args || [];
-          if (msg) await this._onMessage(msg);
-        }
-        break;
-
-      case 'nosub':
-        console.warn(`[Runtime] Subscription rejected: ${m.id}`);
-        break;
-    }
-  }
-
-  async _resubscribeAll() {
-    this.subscriptions.clear();
-    for (const [channelId] of this.channelToAgents) {
-      const subId = `sub-${this.subCounter++}`;
-      this.subscriptions.set(subId, channelId);
-      this._ddp({
-        msg: 'sub', id: subId,
-        name: 'stream-room-messages',
-        params: [channelId, { useCollection: false, args: [] }],
-      });
-    }
-    console.log(`[Runtime] Subscribed to ${this.channelToAgents.size} channel(s).`);
-  }
-
-  _ddp(obj) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(obj));
-    }
-  }
-
-  // ─── Message Routing ───────────────────────────────────────────────────────
-
-  async _onMessage(message) {
-    const channelId = message.rid;
-    const msgId     = message._id;
-    const senderId  = message.u?._id;
-    const text      = (message.msg || '').trim();
-
-    // Skip empty, system messages, or messages from our agents
-    if (!text || message.t) return;
-    if (this.agentCredentials.has(senderId)) return;
-    if (this.processing.has(msgId)) return;
-
-    const agentIds = this.channelToAgents.get(channelId);
-    if (!agentIds?.length) return;
-
-    // TTL: skip messages older than 60s (generous for slow networks)
-    const ts = message.ts?.$date ? message.ts.$date : new Date(message.ts).getTime();
-    if (ts && !isNaN(ts) && Date.now() - ts > 60_000) return;
-
-    this.processing.add(msgId);
-    setTimeout(() => this.processing.delete(msgId), 5 * 60_000);
-
-    // Smart routing: @mention → specific agent(s), otherwise round-robin
-    const mentionedIds = (message.mentions || []).map(m => m._id);
-    const targeted = mentionedIds.length > 0
-      ? agentIds.filter(id => mentionedIds.includes(id))
-      : [];
-
-    if (targeted.length > 0) {
-      for (const agentId of targeted) {
-        this._handleForAgent(agentId, message, channelId).catch(err =>
-          console.error(`[Runtime] Agent ${agentId} error:`, err.message)
-        );
-      }
-    } else {
-      // Round-robin among valid agents
-      const idx = this.roundRobinIndex.get(channelId) || 0;
-      const agentId = agentIds[idx % agentIds.length];
-      this.roundRobinIndex.set(channelId, (idx + 1) % agentIds.length);
-      console.log(`[Runtime] ${this.agentMeta.get(agentId)?.name} ← "${text.slice(0, 60)}"`);
-      this._handleForAgent(agentId, message, channelId).catch(err =>
-        console.error(`[Runtime] Agent ${agentId} error:`, err.message)
-      );
-    }
-  }
-
-  async _handleForAgent(agentId, message, channelId) {
-    const meta = this.agentMeta.get(agentId);
-    if (!meta) return;
-
-    const start = Date.now();
-    await this._setAgentStatus(agentId, 'processing');
-    this._sendTyping(channelId, meta.username, true);
-
-    try {
-      // Fetch conversation history
-      const history = await this._fetchHistory(channelId, 10);
-
-      // Snipara: knowledge + memory (best effort)
-      const [knowledge, memories] = await Promise.all([
-        this._queryKnowledge(agentId, message.msg).catch(() => ''),
-        this._recallMemories(agentId, message.msg).catch(() => []),
-      ]);
-
-      // Load shared context (cached, refreshes every 30min)
-      const shared = await this._loadSharedContext().catch(() => ({}));
-
-      let systemPrompt = meta.systemPrompt;
-      if (shared.soul) systemPrompt += '\n\n## Soul\n' + shared.soul;
-      if (shared.user) systemPrompt += '\n\n## About the User\n' + shared.user;
-      if (shared.memory) systemPrompt += '\n\n## Shared Memory\n' + shared.memory;
-      if (knowledge) systemPrompt += `\n\nRelevant knowledge:\n${knowledge}`;
-      if (memories?.length) systemPrompt += `\n\nAgent Memories:\n${memories.map(m => `- ${m.content}`).join('\n')}`;
-
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...history.slice(-10),
-        { role: 'user', content: message.msg },
-      ];
-
-      let result;
-      let reply;
-      
-      // ===================================================================
-      // RUNTIME V3 ROUTING: Try APM first, fallback to legacy LLM router
-      // ===================================================================
-      if (this.apmManager && this.apmManager.agents.has(agentId)) {
-        console.log(`[Runtime v3] Routing ${meta.name} via APM`);
-        try {
-          // Route through APM - send message to worker agent
-          const apmResult = await this.apmManager.sendMessage(agentId, {
-            type: 'chat',
-            messages: messages,
-            context: {
-              channelId,
-              messageId: message._id,
-              senderId: message.u?._id,
-              knowledge,
-              memories
-            }
-          });
-          
-          result = {
-            content: apmResult.response || '…',
-            usage: apmResult.usage || { total: 0 },
-            provider: apmResult.provider || 'apm',
-            model: apmResult.model || 'runtime-v3'
-          };
-        } catch (apmError) {
-          console.warn(`[Runtime v3] APM routing failed for ${meta.name}, falling back to legacy: ${apmError.message}`);
-          result = await this.llmRouter.chat(agentId, messages, {});
-        }
-      } else {
-        // Legacy routing through LLM router
-        console.log(`[Runtime] ${meta.name} via legacy LLM router`);
-        result = await this.llmRouter.chat(agentId, messages, {});
-      }
-      
-      reply = (result.content || '').trim() || '…';
-      const latency = Date.now() - start;
-
-      // Post as the agent (using their PAT)
-      await this._postAsAgent(channelId, agentId, reply);
-      this._sendTyping(channelId, meta.username, false);
-
-      // Store memory (meaningful user messages only)
-      if (message.msg.length > 50) {
-        const lower = message.msg.toLowerCase();
-        if (/\b(my |i am |i'm |prefer |like |want |need )\b/.test(lower)) {
-          this._storeMemory(agentId, `User: ${message.msg}`, 'preference').catch(() => {});
-        }
-      }
-
-      // S13: Store agent reply as learning (substantive replies only)
-      if (reply && reply.length > 100 && !reply.startsWith('…')) {
-        this._storeMemory(agentId, `[${meta.name}] ${reply.slice(0, 500)}`, 'learning').catch(() => {});
-      }
-
-      // Log tokens
-      await this._logTokens(agentId, result, latency);
-      await this._setAgentStatus(agentId, 'online');
-
-      const runtimeVersion = (this.apmManager && this.apmManager.agents.has(agentId)) ? 'v3' : 'v2';
-      console.log(`[Runtime ${runtimeVersion}] ${meta.name} replied in ${latency}ms (${result.usage?.total ?? 0} tok, ${result.provider}/${result.model})`);
-
-    } catch (err) {
-      console.error(`[Runtime] LLM error for ${meta.name}:`, err.message);
-      this._sendTyping(channelId, meta.username, false);
-
-      if (/no llm config|unknown provider|api key/i.test(err.message)) {
-        await this._postAsAgent(channelId, agentId,
-          '⚠️ I\'m not fully configured yet. Please set up an LLM provider in the admin panel.');
-      }
-
-      await this._setAgentStatus(agentId, 'error');
-      setTimeout(() => this._setAgentStatus(agentId, 'online'), 10_000);
-    }
-  }
-
-  // ─── RC REST API ───────────────────────────────────────────────────────────
-
-  async _loginREST() {
-    try {
-      const res = await fetch(`${RC_API_URL}/api/v1/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user: process.env.RC_ADMIN_USERNAME,
-          password: process.env.RC_ADMIN_PASSWORD,
-        }),
-      });
-      const data = await res.json();
-      if (data.status === 'success') {
-        this.rcAuthToken = data.data.authToken;
-        this.rcUserId = data.data.userId;
-        console.log('[Runtime] REST login OK.');
-      }
-    } catch (e) {
-      console.error('[Runtime] REST login error:', e.message);
-    }
-  }
-
-  async _postAsAgent(channelId, agentId, text) {
-    const creds = this.agentCredentials.get(agentId);
-    if (!creds) throw new Error(`No credentials for agent ${agentId}`);
-
-    const res = await fetch(`${RC_API_URL}/api/v1/chat.postMessage`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Auth-Token': creds.authToken,
-        'X-User-Id': creds.userId,
-      },
-      body: JSON.stringify({ roomId: channelId, text }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`RC postMessage failed (${res.status}): ${body}`);
-    }
-  }
-
-  _sendTyping(channelId, username, typing) {
-    try {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this._ddp({
-          msg: 'method',
-          id: `typing-${Date.now()}`,
-          method: 'stream-notify-room',
-          params: [`${channelId}/typing`, username, typing],
-        });
-      }
-    } catch (_) {}
-  }
-
-  async _fetchHistory(channelId, count = 10) {
-    try {
-      const res = await fetch(`${RC_API_URL}/api/v1/channels.history?roomId=${channelId}&count=${count}`, {
-        headers: {
-          'X-Auth-Token': this.rcAuthToken || RC_ADMIN_TOKEN,
-          'X-User-Id': this.rcUserId || RC_ADMIN_USER_ID,
-        },
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.messages || [])
-        .filter(msg => msg.msg && !msg.t)
-        .reverse()
-        .map(msg => ({
-          role: this.agentCredentials.has(msg.u?._id) ? 'assistant' : 'user',
-          content: msg.msg,
-        }));
-    } catch { return []; }
-  }
-
-  // ─── Snipara Integration ───────────────────────────────────────────────────
-
-  /** Load shared agent context from Snipara (MEMORY.md, SOUL.md, USER.md) */
-  async _loadSharedContext() {
-    const now = Date.now();
-    if (this.sharedContext.loadedAt && (now - this.sharedContext.loadedAt) < 30 * 60_000) {
-      return this.sharedContext;
-    }
-    console.log('[Runtime] Loading shared context from Snipara...');
-    const docs = ['agents/MEMORY.md', 'agents/SOUL.md', 'agents/USER.md', 'agents/IDENTITY.md'];
-    const results = await Promise.all(docs.map(p =>
-      this._callSnipara('rlm_load_document', { path: p }).catch(() => null)
-    ));
-    const extract = (r) => {
-      if (!r) return '';
-      const c = r.content || r;
-      if (Array.isArray(c)) return c.map(x => x.text || '').join('\n');
-      return typeof c === 'string' ? c : (c.text || JSON.stringify(c));
-    };
-    this.sharedContext = {
-      memory: extract(results[0]).slice(0, 4000),
-      soul: extract(results[1]).slice(0, 2000),
-      user: extract(results[2]).slice(0, 1000),
-      identity: extract(results[3]).slice(0, 500),
-      loadedAt: now
-    };
-    const sizes = Object.entries(this.sharedContext).filter(([k]) => k !== 'loadedAt').map(([k,v]) => k + ':' + (v?.length || 0));
-    console.log('[Runtime] Shared context loaded:', sizes.join(', '));
-    return this.sharedContext;
-  }
-
-  async _callSnipara(method, params) {
-    if (!SNIPARA_API_KEY) return null;
-    try {
-      const res = await fetch(SNIPARA_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-API-Key': SNIPARA_API_KEY },
-        body: JSON.stringify({
-          jsonrpc: '2.0', id: Date.now(),
-          method: 'tools/call',
-          params: { name: method, arguments: params },
-        }),
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      return data.error ? null : data.result;
-    } catch { return null; }
-  }
-
-  async _queryKnowledge(agentId, query) {
-    const hasKB = await this.db.collection('agent_knowledge').findOne({ agentId, status: 'ready' });
-    if (!hasKB) return '';
-    const result = await this._callSnipara('rlm_context_query', { query, project: 'vutler' });
-    if (!result) return '';
-    const text = typeof result === 'string' ? result : (result.content || result.text || JSON.stringify(result));
-    return text.slice(0, 2000);
-  }
-
-  async _recallMemories(agentId, query) {
-    // S13: agent-scoped memory recall with tag filter
-    const result = await this._callSnipara('rlm_recall', {
-      query, limit: 5, tags: [`agentId:${agentId}`]
-    });
-    return (result?.content || result?.memories || []).slice(0, 5);
-  }
-
-  async _storeMemory(agentId, content, type = 'fact') {
-    if (content.length < 50) return;
-    const generic = ['how can i help', 'let me know', 'is there anything'];
-    if (generic.some(p => content.toLowerCase().includes(p))) return;
-    await this._callSnipara('rlm_remember', { content, type, tags: [`agentId:${agentId}`], metadata: { agent_id: agentId } });
-  }
-
-  // ─── Status & Logging ─────────────────────────────────────────────────────
-
-  async _setAgentStatus(agentId, status) {
-    try {
-      await this.db.collection('users').updateOne(
-        { _id: agentId },
-        { $set: { status, _updatedAt: new Date() } }
-      );
-      this.app?.locals?.broadcastToAll?.('agent.status', {
-        agent_id: agentId, status, timestamp: new Date().toISOString(),
-      });
-    } catch {}
-  }
-
-  async _setAllAgentsOnline() {
-    for (const [agentId] of this.agentMeta) {
-      await this._setAgentStatus(agentId, 'online');
-    }
-  }
-
-  async _logTokens(agentId, result, latencyMs) {
-    try {
-      await pool().query(
-        `INSERT INTO token_usage
-           (agent_id, provider, model, input_tokens, output_tokens, cost,
-            latency_ms, request_type, workspace_id, tier)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [agentId, result.provider || 'unknown', result.model || 'unknown',
-         result.usage?.input ?? 0, result.usage?.output ?? 0, result.cost ?? 0,
-         latencyMs, 'rc_message', 'default', result.tier || 'byokey']
-      );
-    } catch {}
+  } catch (err) {
+    await _setStatus(agentId, 'error');
+    setTimeout(() => _setStatus(agentId, 'active'), 10_000);
+    throw err;
   }
 }
 
-module.exports = AgentRuntime;
+/**
+ * Return a snapshot of currently loaded agents and their statuses.
+ * @returns {Array<{ id, name, status }>}
+ */
+function getActiveAgents() {
+  return Array.from(agentMeta.entries()).map(([id, meta]) => ({
+    id,
+    name: meta.name,
+    status: agentStatus.get(id) || 'active',
+  }));
+}
+
+// ─── Internal: Data Loading ───────────────────────────────────────────────────
+
+async function _loadAgents() {
+  const { rows: agents } = await pg.query(`
+    SELECT id, display_name, system_prompt, llm_provider, llm_model
+    FROM agents WHERE status = 'active'
+  `);
+
+  const { rows: assignments } = await pg.query(`
+    SELECT agent_id, channel_id FROM agent_channels WHERE is_active = TRUE
+  `);
+
+  agentMeta.clear();
+  channelToAgents.clear();
+
+  for (const a of agents) {
+    agentMeta.set(a.id, {
+      name:         a.display_name,
+      systemPrompt: a.system_prompt || `You are ${a.display_name}. Be concise and helpful.`,
+      provider:     a.llm_provider  || null,
+      model:        a.llm_model     || null,
+    });
+    agentStatus.set(a.id, 'active');
+  }
+
+  for (const row of assignments) {
+    if (!agentMeta.has(row.agent_id)) continue;
+    if (!channelToAgents.has(row.channel_id)) channelToAgents.set(row.channel_id, []);
+    channelToAgents.get(row.channel_id).push(row.agent_id);
+  }
+
+  console.log(`[RUNTIME] Loaded ${agents.length} agents, ${channelToAgents.size} channels.`);
+}
+
+// ─── Internal: Agent State ────────────────────────────────────────────────────
+
+async function _setStatus(agentId, status) {
+  agentStatus.set(agentId, status);
+  try {
+    await pg.query(
+      `UPDATE agents SET status = $1, updated_at = NOW() WHERE id = $2`,
+      [status, agentId]
+    );
+  } catch (err) {
+    console.warn('[RUNTIME] Could not update agent status:', err.message);
+  }
+}
+
+async function _logTokens(agentId, result, latencyMs) {
+  try {
+    await pg.query(
+      `INSERT INTO token_usage
+         (agent_id, provider, model, input_tokens, output_tokens, cost, latency_ms, request_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        agentId,
+        result.provider  || 'unknown',
+        result.model     || 'unknown',
+        result.usage?.input  ?? 0,
+        result.usage?.output ?? 0,
+        result.cost ?? 0,
+        latencyMs,
+        'chat',
+      ]
+    );
+  } catch (_) { /* non-critical */ }
+}
+
+// ─── Internal: Snipara (Knowledge + Memory) ───────────────────────────────────
+
+async function _callSnipara(method, params) {
+  if (!SNIPARA_API_KEY) return null;
+  try {
+    const res = await fetch(SNIPARA_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': SNIPARA_API_KEY },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: Date.now(),
+        method: 'tools/call',
+        params: { name: method, arguments: params },
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.error ? null : data.result;
+  } catch { return null; }
+}
+
+async function _loadSharedContext() {
+  const now = Date.now();
+  if (sharedCtx.loadedAt && (now - sharedCtx.loadedAt) < 30 * 60_000) return sharedCtx;
+
+  const docs = ['agents/MEMORY.md', 'agents/SOUL.md', 'agents/USER.md'];
+  const [memRes, soulRes, userRes] = await Promise.all(
+    docs.map(p => _callSnipara('rlm_load_document', { path: p }).catch(() => null))
+  );
+
+  const extract = (r) => {
+    if (!r) return '';
+    const c = r.content || r;
+    if (Array.isArray(c)) return c.map(x => x.text || '').join('\n');
+    return typeof c === 'string' ? c : (c.text || '');
+  };
+
+  sharedCtx = {
+    memory:   extract(memRes).slice(0, 4000),
+    soul:     extract(soulRes).slice(0, 2000),
+    user:     extract(userRes).slice(0, 1000),
+    loadedAt: now,
+  };
+  return sharedCtx;
+}
+
+async function _queryKnowledge(agentId, query) {
+  const result = await _callSnipara('rlm_context_query', { query, project: 'vutler' });
+  if (!result) return '';
+  const text = typeof result === 'string' ? result : (result.content || result.text || '');
+  return text.slice(0, 2000);
+}
+
+async function _recallMemories(agentId, query) {
+  const result = await _callSnipara('rlm_recall', {
+    query, limit: 5, tags: [`agentId:${agentId}`]
+  });
+  return (result?.content || result?.memories || []).slice(0, 5);
+}
+
+async function _storeMemory(agentId, content, type = 'fact') {
+  if (content.length < 50) return;
+  const skip = ['how can i help', 'let me know', 'is there anything'];
+  if (skip.some(p => content.toLowerCase().includes(p))) return;
+  await _callSnipara('rlm_remember', {
+    content, type, tags: [`agentId:${agentId}`], metadata: { agent_id: agentId }
+  });
+}
+
+function _maybeStoreMemory(agentId, userContent, agentReply, agentName) {
+  // User preference signals
+  if (userContent.length > 50) {
+    const lower = userContent.toLowerCase();
+    if (/\b(my |i am |i'm |prefer |like |want |need )\b/.test(lower)) {
+      _storeMemory(agentId, `User: ${userContent}`, 'preference').catch(() => {});
+    }
+  }
+  // Substantive agent replies as learnings
+  if (agentReply && agentReply.length > 100 && !agentReply.startsWith('…')) {
+    _storeMemory(agentId, `[${agentName}] ${agentReply.slice(0, 500)}`, 'learning').catch(() => {});
+  }
+}
+
+module.exports = { startRuntime, stopRuntime, processAgentMessage, getActiveAgents };

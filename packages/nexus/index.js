@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const https = require('https');
 const http = require('http');
+const { createDashboardServer } = require('./dashboard/server');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -9,6 +10,12 @@ class NexusNode {
     this.name = opts.name || process.env.NODE_NAME || require('os').hostname();
     this.type = opts.type || 'local';
     this.port = opts.port || 3100;
+    this.mode = opts.mode || 'standard';
+    this.sniparaInstanceId = opts.snipara_instance_id || null;
+    this.clientName = opts.client_name || null;
+    this.filesystemRoot = opts.filesystem_root || null;
+    this.role = opts.role || 'general';
+    this.deployToken = opts.deploy_token || null;
     this.nodeId = null;
     this.ws = null;
     this.agents = [];
@@ -32,22 +39,42 @@ class NexusNode {
       this.providers.av = new AVControlProvider(perms.av || { subnets: perms.network?.subnets });
     }
     this.reconnectInterval = 5000;
+    this.recentTasks = [];
+    this.logBuffer = [];
+
+    // Offline monitor (enterprise only)
+    this.offlineConfig = opts.offline_config || {};
+    if (this.mode === 'enterprise' && this.offlineConfig.enabled) {
+      const { OfflineMonitor } = require('./lib/offline-monitor');
+      this.offlineMonitor = new OfflineMonitor(this, this.offlineConfig);
+    }
   }
 
   async connect() {
     // 1. Register node via REST API
     console.log(`[Nexus] Connecting to ${this.server}...`);
-    const regResult = await this._apiCall('POST', '/api/v1/nexus', {
-      name: this.name, type: this.type, host: require('os').hostname(), port: this.port
+    const regResult = await this._apiCall('POST', '/api/v1/nexus/register', {
+      name: this.name,
+      type: this.type,
+      host: require('os').hostname(),
+      port: this.port,
+      mode: this.mode,
+      deploy_token: this.deployToken,
+      snipara_instance_id: this.sniparaInstanceId,
+      client_name: this.clientName,
+      role: this.role,
     });
-    
-    if (regResult.success && regResult.data) {
-      this.nodeId = regResult.data.id;
-      console.log(`[Nexus] Registered as node ${this.nodeId}`);
+
+    if (regResult.success && regResult.nodeId) {
+      this.nodeId = regResult.nodeId;
+      this.workspaceId = regResult.workspaceId;
+      console.log(`[Nexus] Registered as node ${this.nodeId} (workspace ${this.workspaceId})`);
     } else {
       console.error('[Nexus] Registration failed:', regResult.error || 'unknown');
       throw new Error('Registration failed');
     }
+
+    if (this.offlineMonitor) this.offlineMonitor.start();
 
     // 2. Start heartbeat
     this._startHeartbeat();
@@ -55,8 +82,8 @@ class NexusNode {
     // 3. Start polling for tasks
     this._startTaskPoll();
     
-    // 4. Start local HTTP server for health checks
-    this._startHealthServer();
+    // 4. Start local dashboard server
+    this._startDashboardServer();
     
     console.log(`[Nexus] Node "${this.name}" online. Listening on port ${this.port}`);
     return this;
@@ -66,6 +93,7 @@ class NexusNode {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.healthServer) this.healthServer.close();
+    if (this.offlineMonitor) this.offlineMonitor.stop();
     if (this.nodeId) {
       await this._apiCall('DELETE', `/api/v1/nexus/${this.nodeId}`);
     }
@@ -81,6 +109,7 @@ class NexusNode {
           memory: process.memoryUsage(),
           uptime: process.uptime()
         });
+        if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
       } catch (e) {
         console.warn('[Nexus] Heartbeat failed:', e.message);
       }
@@ -90,32 +119,85 @@ class NexusNode {
   _startTaskPoll() {
     this.pollTimer = setInterval(async () => {
       try {
-        // Poll for pending tasks assigned to this node
-        const tasks = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/health`);
-        // Process tasks if any
+        const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/tasks`);
+        const tasks = response?.tasks || [];
+        for (const task of tasks) {
+          await this._executeTask(task);
+        }
       } catch (e) {
-        // silent
+        // silent — will retry next poll
       }
-    }, 10000); // every 10s
+    }, this.config?.taskPollInterval || 10000);
   }
 
-  _startHealthServer() {
-    this.healthServer = http.createServer((req, res) => {
-      if (req.url === '/health') {
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify({
-          status: 'online',
-          nodeId: this.nodeId,
-          name: this.name,
-          agents: this.agents.length,
-          uptime: process.uptime(),
-          memory: process.memoryUsage()
-        }));
+  async _executeTask(task) {
+    this.log(`[NEXUS] Executing task: ${task.title} (${task.id})`);
+
+    // Track in recentTasks
+    const tracked = { ...task, status: 'in_progress', startedAt: new Date().toISOString() };
+    this.recentTasks.push(tracked);
+    if (this.recentTasks.length > 20) this.recentTasks.shift();
+
+    // Mark as in_progress
+    await this._updateTaskStatus(task.id, 'in_progress');
+
+    try {
+      let output;
+
+      // Route to appropriate provider based on task description/metadata
+      if (task.metadata?.provider === 'shell' || task.description?.startsWith('shell:')) {
+        const cmd = task.metadata?.command || task.description.replace('shell:', '').trim();
+        output = await this.providers.shell?.exec(cmd);
+      } else if (task.metadata?.provider === 'filesystem') {
+        output = await this.providers.filesystem?.read(task.metadata.path);
+      } else if (task.metadata?.provider === 'llm') {
+        output = await this.providers.llm?.ask(task.description);
       } else {
-        res.writeHead(404);
-        res.end('Not found');
+        // Default: use LLM provider to interpret and execute
+        if (this.providers.llm) {
+          output = await this.providers.llm.ask(`Execute this task: ${task.title}\n${task.description || ''}`);
+        } else {
+          output = `Task received but no LLM provider configured. Task: ${task.title}`;
+        }
       }
-    });
+
+      const outputStr = typeof output === 'object' ? JSON.stringify(output) : String(output || '');
+      tracked.status = 'completed';
+      tracked.completedAt = new Date().toISOString();
+      await this._updateTaskStatus(task.id, 'completed', { output: outputStr });
+      this.log(`[NEXUS] Task completed: ${task.title}`);
+    } catch (error) {
+      tracked.status = 'failed';
+      tracked.completedAt = new Date().toISOString();
+      await this._updateTaskStatus(task.id, 'failed', { error: error.message });
+      this.log(`[NEXUS] Task failed: ${task.title} — ${error.message}`);
+    }
+  }
+
+  log(message) {
+    const line = `[${new Date().toISOString()}] ${message}`;
+    console.log(line);
+    this.logBuffer.push(line);
+    if (this.logBuffer.length > 100) this.logBuffer.shift();
+  }
+
+  async _updateTaskStatus(taskId, status, data = {}) {
+    if (this.offlineMonitor?.isOffline) {
+      await this.offlineMonitor.enqueue(taskId, 'status_update', { status, ...data });
+      return;
+    }
+    try {
+      await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/tasks/${taskId}/status`, {
+        status,
+        ...data
+      });
+    } catch (e) {
+      console.error(`[NEXUS] Failed to update task ${taskId} status:`, e.message);
+    }
+  }
+
+  _startDashboardServer() {
+    this.healthServer = createDashboardServer(this);
     this.healthServer.listen(this.port);
   }
 

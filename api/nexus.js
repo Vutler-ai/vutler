@@ -8,6 +8,7 @@ const {
   createApiKey,
   listApiKeys,
   revokeApiKey,
+  resolveApiKey,
   ensureApiKeysTable,
 } = require('../services/apiKeys');
 
@@ -17,61 +18,81 @@ const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const HEARTBEAT_ONLINE_SECONDS = 90;
 
 async function ensureNexusTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      created_by_user_id UUID NULL,
-      agent_id TEXT NOT NULL,
-      mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
-      status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
-      api_key_id UUID NULL,
-      client_company TEXT NULL,
-      command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
-      last_heartbeat_at TIMESTAMPTZ NULL,
-      last_heartbeat_payload JSONB NULL,
-      runtime_version TEXT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
-      id BIGSERIAL PRIMARY KEY,
-      deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
-      workspace_id UUID NOT NULL,
-      runtime_id TEXT NULL,
-      runtime_version TEXT NULL,
-      status TEXT NOT NULL DEFAULT 'online',
-      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  try {
+    const check1 = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_deployments'`
+    );
+    if (check1.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          created_by_user_id UUID NULL,
+          agent_id TEXT NOT NULL,
+          mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
+          status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
+          api_key_id UUID NULL,
+          client_company TEXT NULL,
+          command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+          last_heartbeat_at TIMESTAMPTZ NULL,
+          last_heartbeat_payload JSONB NULL,
+          runtime_version TEXT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    }
+    const check2 = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_runtime_heartbeats'`
+    );
+    if (check2.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
+          id BIGSERIAL PRIMARY KEY,
+          deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
+          workspace_id UUID NOT NULL,
+          runtime_id TEXT NULL,
+          runtime_version TEXT NULL,
+          status TEXT NOT NULL DEFAULT 'online',
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    }
+  } catch (err) {
+    console.warn('[NEXUS] ensureNexusTables warning (tables may already exist):', err.message);
+  }
 }
 
 
 async function ensureNexusNodesTable() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_nodes (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      name TEXT NOT NULL,
-      type TEXT DEFAULT 'vps',
-      status TEXT DEFAULT 'offline',
-      host TEXT,
-      port INTEGER,
-      api_key TEXT,
-      config JSONB DEFAULT '{}'::jsonb,
-      last_heartbeat TIMESTAMPTZ,
-      agents_deployed JSONB DEFAULT '[]'::jsonb,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      updated_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Columns are migrated on Vaultbrix by SQL migration; avoid ALTER here to prevent owner conflicts.
-
+  try {
+    const check = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_nodes'`
+    );
+    if (check.rows.length === 0) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_nodes (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          name TEXT NOT NULL,
+          type TEXT DEFAULT 'vps',
+          status TEXT DEFAULT 'offline',
+          host TEXT,
+          port INTEGER,
+          api_key TEXT,
+          config JSONB DEFAULT '{}'::jsonb,
+          last_heartbeat TIMESTAMPTZ,
+          agents_deployed JSONB DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+    }
+    // Columns are migrated on Vaultbrix by SQL migration; avoid ALTER here to prevent owner conflicts.
+  } catch (err) {
+    console.warn('[NEXUS] ensureNexusNodesTable warning (table may already exist):', err.message);
+  }
 }
 
 function mapNode(row) {
@@ -491,7 +512,87 @@ router.get('/status', async (req, res) => {
 });
 
 router.post('/register', async (req, res) => {
-  res.json({ success: true, message: 'Registered', workspaceId: req.workspaceId || DEFAULT_WORKSPACE, auth: req.authType || 'jwt' });
+  try {
+    // Extract API key from Authorization header or body
+    const authHeader = req.headers['authorization'] || '';
+    const secret = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : req.body?.apiKey || req.body?.key || null;
+
+    if (!secret) {
+      return res.status(401).json({ success: false, error: 'API key is required' });
+    }
+
+    const { name, type = 'local', host = null, port = null, config = {} } = req.body || {};
+    const nodeName = name || require('os').hostname();
+
+    let workspaceId = DEFAULT_WORKSPACE;
+    let nodeId;
+    let authMethod;
+    const isDev = process.env.NODE_ENV !== 'production';
+
+    // In dev mode: accept any key prefixed with "vutler_" without DB validation
+    if (isDev && secret.startsWith('vutler_')) {
+      try {
+        await ensureApiKeysTable();
+        await ensureNexusNodesTable();
+        const keyRecord = await resolveApiKey(secret);
+        if (keyRecord) {
+          workspaceId = keyRecord.workspace_id;
+          authMethod = 'api_key';
+        }
+      } catch (_) { /* DB down in dev — ignore */ }
+
+      if (!authMethod) {
+        console.warn('[NEXUS] Dev mode — accepting key without DB validation');
+        authMethod = 'dev_mode';
+      }
+
+      nodeId = require('crypto').randomUUID();
+      // Try to persist to DB (best effort)
+      try {
+        const insert = await pool.query(
+          `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+           VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+           RETURNING id`,
+          [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+        );
+        nodeId = insert.rows[0].id;
+      } catch (_) { /* DB down — use random UUID */ }
+
+    } else {
+      // Production mode: strict DB validation
+      await ensureApiKeysTable();
+      await ensureNexusNodesTable();
+      const keyRecord = await resolveApiKey(secret);
+      if (!keyRecord) {
+        return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
+      }
+      workspaceId = keyRecord.workspace_id;
+      authMethod = 'api_key';
+
+      const insert = await pool.query(
+        `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+         VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+         RETURNING id`,
+        [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+      );
+      nodeId = insert.rows[0].id;
+    }
+
+    console.log(`[NEXUS] Node registered: ${nodeName} (${nodeId}) [${authMethod}]`);
+
+    res.json({
+      success: true,
+      message: 'Registered',
+      nodeId,
+      workspaceId,
+      auth: authMethod,
+    });
+  } catch (err) {
+    console.error('[NEXUS] Register error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 
@@ -716,6 +817,89 @@ router.get('/:id/logs', async (req, res) => {
     res.json({ success: true, data: logs.rows, source: 'nexus_runtime_heartbeats', note: 'Workspace-level latest runtime logs' });
   } catch (err) {
     console.error('[NEXUS] Node logs error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Task delivery endpoints for Nexus nodes
+router.get('/:nodeId/tasks', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks
+       WHERE status IN ('pending', 'assigned') AND workspace_id = $1
+       ORDER BY priority DESC, created_at ASC
+       LIMIT 10`,
+      [workspaceId]
+    );
+
+    res.json({ success: true, tasks: result.rows });
+  } catch (err) {
+    console.error('[NEXUS] Get node tasks error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/:nodeId/tasks/:taskId/status', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId, taskId } = req.params;
+    const { status, output, error: taskError } = req.body || {};
+
+    const ALLOWED_STATUSES = ['in_progress', 'completed', 'failed'];
+    if (!status || !ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `status must be one of: ${ALLOWED_STATUSES.join(', ')}`,
+      });
+    }
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET status = $1, updated_at = NOW()
+       WHERE id::text = $2 AND workspace_id = $3
+       RETURNING *`,
+      [status, taskId, workspaceId]
+    );
+
+    if (!updateResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    const task = updateResult.rows[0];
+
+    if (status === 'completed' && task.swarm_task_id) {
+      try {
+        const swarmCoordinator = require('../services/swarmCoordinator');
+        await swarmCoordinator.completeTask(task.swarm_task_id, nodeId, output || null);
+      } catch (swarmErr) {
+        console.error('[NEXUS] swarmCoordinator.completeTask error:', swarmErr.message);
+      }
+    }
+
+    res.json({ success: true, task });
+  } catch (err) {
+    console.error('[NEXUS] Update task status error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

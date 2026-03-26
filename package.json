@@ -1,7 +1,7 @@
 {
   "name": "@vutler/custom",
   "version": "1.0.0",
-  "description": "Vutler custom extensions for Rocket.Chat",
+  "description": "Vutler AI Agent Management Platform",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -28,7 +28,7 @@
   },
   "keywords": [
     "vutler",
-    "rocket.chat",
+    "office",
     "ai-agents",
     "collaboration"
   ],
@@ -41,6 +41,7 @@
     "axios": "^1.6.0",
     "chokidar": "^4.0.3",
     "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^8.3.0",
     "express-validator": "^7.3.1",
@@ -48,7 +49,6 @@
     "imap": "^0.8.19",
     "jsonwebtoken": "^9.0.3",
     "mailparser": "^3.6.5",
-    "mongodb": "^6.0.0",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^8.0.1",
     "pg": "^8.11.0",

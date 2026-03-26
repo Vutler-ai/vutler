@@ -230,14 +230,7 @@ async function handleChatMessage(connection, data, app) {
     const db = app.locals.db;
 
     // Fetch agent with LLM config
-    const { ObjectId } = require('mongodb');
-    let query;
-    try {
-      query = { _id: new ObjectId(connection.agentId) };
-    } catch {
-      query = { _id: connection.agentId };
-    }
-    const agent = await db.collection('users').findOne(query);
+    const agent = await db.collection('users').findOne({ _id: connection.agentId });
 
     // Build messages array
     const messages = [
