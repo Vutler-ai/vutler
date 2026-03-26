@@ -1,401 +1,517 @@
 "use client";
 
-import { authFetch } from '@/lib/authFetch';
-import { useState, useEffect } from "react";
+import { useState, useCallback } from "react";
+import { ChevronLeft, ChevronRight, Plus, MapPin, Clock } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useApi } from "@/hooks/use-api";
+import {
+  getEvents,
+  createEvent,
+  updateEvent,
+  deleteEvent,
+} from "@/lib/api/endpoints/calendar";
+import type { CalendarEvent, CreateEventPayload } from "@/lib/api/types";
 
-interface CalendarEvent {
-  id: string;
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const COLORS: { value: string; label: string }[] = [
+  { value: "#3b82f6", label: "Blue" },
+  { value: "#10b981", label: "Green" },
+  { value: "#ef4444", label: "Red" },
+  { value: "#8b5cf6", label: "Purple" },
+  { value: "#f59e0b", label: "Amber" },
+  { value: "#ec4899", label: "Pink" },
+];
+
+function toLocalDateTimeString(iso: string): string {
+  if (!iso) return "";
+  // If already in datetime-local format, return as-is
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso) && !iso.endsWith("Z")) {
+    return iso.slice(0, 16);
+  }
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function formatEventTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+interface EventFormState {
   title: string;
+  description: string;
   start: string;
   end: string;
-  description?: string;
+  location: string;
   color: string;
 }
 
-const COLORS = ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
+const DEFAULT_FORM: EventFormState = {
+  title: "",
+  description: "",
+  start: "",
+  end: "",
+  location: "",
+  color: COLORS[0].value,
+};
+
+function CalendarSkeleton() {
+  return (
+    <div className="grid grid-cols-7 gap-1 flex-1">
+      {Array.from({ length: 35 }).map((_, i) => (
+        <Skeleton key={i} className="h-24 rounded-lg bg-[#1a1b26]" />
+      ))}
+    </div>
+  );
+}
 
 export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [formData, setFormData] = useState({
-    title: "",
-    start: "",
-    end: "",
-    description: "",
-    color: COLORS[0],
-  });
+  const [form, setForm] = useState<EventFormState>(DEFAULT_FORM);
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const fetchEvents = async () => {
-    const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
-    
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await authFetch(
-        `/api/v1/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`
-      );
-      if (!res.ok) throw new Error("Failed to fetch events");
-      const data = await res.json();
-      const items = (data.events || data || []).map((e: any) => ({...e, start: e.start_time || e.start, end: e.end_time || e.end})); setEvents(items);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const startOfMonth = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    1
+  ).toISOString();
+  const endOfMonth = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth() + 1,
+    0,
+    23,
+    59,
+    59
+  ).toISOString();
 
-  useEffect(() => {
-    fetchEvents();
-  }, [currentDate]);
+  const {
+    data: events = [],
+    isLoading,
+    error: fetchError,
+    mutate,
+  } = useApi<CalendarEvent[]>(
+    `calendar-${startOfMonth}-${endOfMonth}`,
+    () => getEvents(startOfMonth, endOfMonth)
+  );
 
-  const handleCreateEvent = async () => {
-    if (!formData.title || !formData.start || !formData.end) return;
-    try {
-      const res = await authFetch("/api/v1/calendar/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
-      if (!res.ok) throw new Error("Failed to create event");
-      await fetchEvents();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
+  const prevMonth = () =>
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1)
+    );
+  const nextMonth = () =>
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1)
+    );
+  const goToday = () => setCurrentDate(new Date());
 
-  const handleUpdateEvent = async () => {
-    if (!editingEvent || !formData.title || !formData.start || !formData.end) return;
-    try {
-      const res = await authFetch(`/api/v1/calendar/events/${editingEvent.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
-      if (!res.ok) throw new Error("Failed to update event");
-      await fetchEvents();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const handleDeleteEvent = async (id: string) => {
-    if (!confirm("Delete this event?")) return;
-    try {
-      const res = await authFetch(`/api/v1/calendar/events/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete event");
-      await fetchEvents();
-      resetForm();
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const resetForm = () => {
-    setShowModal(false);
-    setEditingEvent(null);
-    setSelectedDate(null);
-    setFormData({
-      title: "",
-      start: "",
-      end: "",
-      description: "",
-      color: COLORS[0],
-    });
-  };
-
-  const openNewEventModal = (date: Date) => {
-    const dateStr = date.toISOString().split("T")[0];
-    setSelectedDate(date);
-    setFormData({
-      title: "",
-      start: `${dateStr}T09:00`,
-      end: `${dateStr}T10:00`,
-      description: "",
-      color: COLORS[0],
-    });
-    setShowModal(true);
-  };
-
-  const openEditEventModal = (event: CalendarEvent) => {
-    setEditingEvent(event);
-    setFormData({
-      title: event.title,
-      start: event.start,
-      end: event.end,
-      description: event.description || "",
-      color: event.color,
-    });
-    setShowModal(true);
-  };
-
-  const getDaysInMonth = () => {
+  const getDaysGrid = useCallback(() => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDayOfWeek = firstDay.getDay();
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const grid: (Date | null)[] = [];
+    for (let i = 0; i < firstDay; i++) grid.push(null);
+    for (let d = 1; d <= daysInMonth; d++) grid.push(new Date(year, month, d));
+    // Pad to complete last row
+    while (grid.length % 7 !== 0) grid.push(null);
+    return grid;
+  }, [currentDate]);
 
-    const days: (Date | null)[] = [];
-    for (let i = 0; i < startingDayOfWeek; i++) {
-      days.push(null);
+  const getEventsForDay = (date: Date) => {
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    return events.filter((e) => {
+      const eStart = e.start?.slice(0, 10);
+      return eStart === dateStr;
+    });
+  };
+
+  const openCreate = (date: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    setEditingEvent(null);
+    setForm({
+      ...DEFAULT_FORM,
+      start: `${dateStr}T09:00`,
+      end: `${dateStr}T10:00`,
+    });
+    setActionError(null);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (e: CalendarEvent, evt: React.MouseEvent) => {
+    evt.stopPropagation();
+    setEditingEvent(e);
+    setForm({
+      title: e.title,
+      description: e.description ?? "",
+      start: toLocalDateTimeString(e.start),
+      end: toLocalDateTimeString(e.end),
+      location: "",
+      color: e.color ?? COLORS[0].value,
+    });
+    setActionError(null);
+    setDialogOpen(true);
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    setEditingEvent(null);
+    setForm(DEFAULT_FORM);
+    setActionError(null);
+  };
+
+  const handleSave = async () => {
+    if (!form.title.trim() || !form.start || !form.end) return;
+    setSaving(true);
+    setActionError(null);
+    try {
+      const payload: CreateEventPayload = {
+        title: form.title.trim(),
+        start: form.start,
+        end: form.end,
+        description: form.description || undefined,
+        color: form.color,
+      };
+      if (editingEvent) {
+        await updateEvent(editingEvent.id, payload);
+      } else {
+        await createEvent(payload);
+      }
+      await mutate();
+      closeDialog();
+    } catch (err: unknown) {
+      setActionError(
+        err instanceof Error ? err.message : "Failed to save event"
+      );
+    } finally {
+      setSaving(false);
     }
-    for (let i = 1; i <= daysInMonth; i++) {
-      days.push(new Date(year, month, i));
+  };
+
+  const handleDelete = async () => {
+    if (!editingEvent) return;
+    setSaving(true);
+    setActionError(null);
+    try {
+      await deleteEvent(editingEvent.id);
+      await mutate();
+      closeDialog();
+    } catch (err: unknown) {
+      setActionError(
+        err instanceof Error ? err.message : "Failed to delete event"
+      );
+    } finally {
+      setSaving(false);
     }
-    return days;
   };
 
-  const getEventsForDay = (date: Date | null) => {
-    if (!date) return [];
-    const dateStr = date.toISOString().split("T")[0];
-    return events.filter((e) => e.start.startsWith(dateStr));
-  };
+  const upcomingEvents = [...events]
+    .filter((e) => new Date(e.start) >= new Date())
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+    .slice(0, 6);
 
-  const getUpcomingEvents = () => {
-    const now = new Date();
-    return events
-      .filter((e) => new Date(e.start) >= now)
-      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
-      .slice(0, 5);
-  };
-
-  const previousMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
-  };
-
-  const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
-  };
-
-  const days = getDaysInMonth();
-  const upcomingEvents = getUpcomingEvents();
+  const grid = getDaysGrid();
+  const today = new Date();
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col gap-6 min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between flex-shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-white">Calendar</h1>
-          <p className="text-sm text-[#9ca3af]">Manage your schedule</p>
+          <p className="text-sm text-[#9ca3af] mt-0.5">Manage your schedule</p>
         </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={previousMonth}
-            className="px-3 py-2 bg-[#14151f] border border-[rgba(255,255,255,0.07)] text-white rounded-lg hover:bg-[#1a1b26] transition"
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={goToday}
+            className="border-[rgba(255,255,255,0.07)] bg-[#14151f] text-white hover:bg-[#1a1b26] hover:text-white text-xs"
           >
-            ←
-          </button>
-          <span className="text-white font-semibold min-w-[150px] text-center">
-            {currentDate.toLocaleString("default", { month: "long", year: "numeric" })}
+            Today
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={prevMonth}
+            className="border-[rgba(255,255,255,0.07)] bg-[#14151f] text-white hover:bg-[#1a1b26] hover:text-white"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <span className="text-white font-semibold min-w-[160px] text-center text-sm">
+            {currentDate.toLocaleString("default", {
+              month: "long",
+              year: "numeric",
+            })}
           </span>
-          <button
+          <Button
+            variant="outline"
+            size="icon"
             onClick={nextMonth}
-            className="px-3 py-2 bg-[#14151f] border border-[rgba(255,255,255,0.07)] text-white rounded-lg hover:bg-[#1a1b26] transition"
+            className="border-[rgba(255,255,255,0.07)] bg-[#14151f] text-white hover:bg-[#1a1b26] hover:text-white"
           >
-            →
-          </button>
+            <ChevronRight className="size-4" />
+          </Button>
         </div>
       </div>
 
-      {error && (
-        <div className="mb-4 p-4 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400">
-          {error}
+      {fetchError && (
+        <div className="px-4 py-3 bg-red-900/20 border border-red-500/30 rounded-lg text-red-400 text-sm flex-shrink-0">
+          Failed to load events: {fetchError.message}
         </div>
       )}
 
-      <div className="flex-1 flex gap-4 overflow-hidden">
-        {/* Calendar Grid */}
-        <div className="flex-1 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
-          {loading ? (
-            <div className="flex items-center justify-center h-full text-[#9ca3af]">
-              Loading calendar...
-            </div>
-          ) : (
-            <div className="h-full flex flex-col">
-              {/* Day Headers */}
-              <div className="grid grid-cols-7 gap-2 mb-2">
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                  <div key={day} className="text-center text-sm font-semibold text-[#9ca3af] py-2">
-                    {day}
-                  </div>
-                ))}
+      <div className="flex-1 flex gap-4 min-h-0 overflow-hidden">
+        {/* Calendar grid */}
+        <div className="flex-1 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col min-h-0 overflow-auto">
+          {/* Day headers */}
+          <div className="grid grid-cols-7 gap-1 mb-1 flex-shrink-0">
+            {DAYS.map((d) => (
+              <div
+                key={d}
+                className="text-center text-xs font-semibold text-[#6b7280] py-2 uppercase tracking-wider"
+              >
+                {d}
               </div>
-              {/* Days Grid */}
-              <div className="grid grid-cols-7 gap-2 flex-1">
-                {days.map((date, idx) => {
-                  const dayEvents = getEventsForDay(date);
-                  const isToday =
-                    date &&
-                    date.toDateString() === new Date().toDateString();
-                  return (
+            ))}
+          </div>
+
+          {isLoading ? (
+            <CalendarSkeleton />
+          ) : (
+            <div className="grid grid-cols-7 gap-1 flex-1">
+              {grid.map((date, idx) => {
+                if (!date) {
+                  return <div key={`empty-${idx}`} />;
+                }
+                const dayEvents = getEventsForDay(date);
+                const isToday =
+                  date.toDateString() === today.toDateString();
+                return (
+                  <div
+                    key={date.toISOString()}
+                    onClick={() => openCreate(date)}
+                    className={`
+                      border rounded-lg p-1.5 cursor-pointer transition-colors min-h-[80px]
+                      ${isToday
+                        ? "border-[#3b82f6] bg-[#3b82f6]/5"
+                        : "border-[rgba(255,255,255,0.06)] hover:bg-[#1a1b26]"
+                      }
+                    `}
+                  >
                     <div
-                      key={idx}
-                      onClick={() => date && openNewEventModal(date)}
-                      className={`border border-[rgba(255,255,255,0.07)] rounded-lg p-2 cursor-pointer hover:bg-[#1a1b26] transition ${
-                        !date ? "bg-transparent cursor-default" : ""
-                      } ${isToday ? "border-[#3b82f6]" : ""}`}
+                      className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
+                        isToday
+                          ? "bg-[#3b82f6] text-white"
+                          : "text-[#9ca3af]"
+                      }`}
                     >
-                      {date && (
-                        <>
-                          <div
-                            className={`text-sm font-semibold mb-1 ${
-                              isToday ? "text-[#3b82f6]" : "text-white"
-                            }`}
-                          >
-                            {date.getDate()}
-                          </div>
-                          <div className="space-y-1">
-                            {dayEvents.slice(0, 3).map((event) => (
-                              <div
-                                key={event.id}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditEventModal(event);
-                                }}
-                                style={{ backgroundColor: event.color }}
-                                className="text-xs text-white px-2 py-1 rounded truncate"
-                              >
-                                {event.title}
-                              </div>
-                            ))}
-                            {dayEvents.length > 3 && (
-                              <div className="text-xs text-[#6b7280]">
-                                +{dayEvents.length - 3} more
-                              </div>
-                            )}
-                          </div>
-                        </>
+                      {date.getDate()}
+                    </div>
+                    <div className="space-y-0.5">
+                      {dayEvents.slice(0, 3).map((ev) => (
+                        <div
+                          key={ev.id}
+                          onClick={(e) => openEdit(ev, e)}
+                          style={{ backgroundColor: ev.color + "33", borderLeftColor: ev.color }}
+                          className="text-[10px] text-white px-1.5 py-0.5 rounded border-l-2 truncate hover:brightness-110 transition-all"
+                        >
+                          {ev.title}
+                        </div>
+                      ))}
+                      {dayEvents.length > 3 && (
+                        <div className="text-[10px] text-[#6b7280] pl-1">
+                          +{dayEvents.length - 3} more
+                        </div>
                       )}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Upcoming Events */}
-        <div className="w-80 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
-          <h2 className="text-lg font-semibold text-white mb-4">Upcoming</h2>
-          {upcomingEvents.length === 0 ? (
-            <div className="text-center text-[#6b7280] py-8 text-sm">
-              No upcoming events
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {upcomingEvents.map((event) => (
-                <div
-                  key={event.id}
-                  onClick={() => openEditEventModal(event)}
-                  className="bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg p-3 cursor-pointer hover:border-[#3b82f6] transition"
+        {/* Upcoming sidebar */}
+        <div className="w-72 flex-shrink-0 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex items-center justify-between mb-4 flex-shrink-0">
+            <h2 className="text-sm font-semibold text-white">Upcoming</h2>
+            <Button
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                openCreate(now);
+              }}
+              className="h-7 px-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white text-xs gap-1"
+            >
+              <Plus className="size-3" />
+              New
+            </Button>
+          </div>
+          <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+            {isLoading ? (
+              Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-16 rounded-lg bg-[#1a1b26]" />
+              ))
+            ) : upcomingEvents.length === 0 ? (
+              <div className="text-center text-[#4b5563] py-8 text-xs">
+                No upcoming events
+              </div>
+            ) : (
+              upcomingEvents.map((ev) => (
+                <button
+                  key={ev.id}
+                  onClick={(e) => openEdit(ev, e)}
+                  className="w-full text-left bg-[#08090f] border border-[rgba(255,255,255,0.06)] rounded-lg p-3 hover:border-[#3b82f6]/40 transition-colors group"
                 >
-                  <div
-                    className="w-3 h-3 rounded-full mb-2"
-                    style={{ backgroundColor: event.color }}
-                  ></div>
-                  <h3 className="text-white font-semibold mb-1">{event.title}</h3>
-                  <p className="text-xs text-[#9ca3af]">
-                    {new Date(event.start).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
+                  <div className="flex items-center gap-2 mb-1">
+                    <div
+                      className="w-2 h-2 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: ev.color }}
+                    />
+                    <span className="text-xs font-medium text-white truncate group-hover:text-[#3b82f6] transition-colors">
+                      {ev.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] text-[#6b7280]">
+                    <Clock className="size-3" />
+                    {formatEventTime(ev.start)}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Event Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 w-full max-w-lg">
-            <h2 className="text-xl font-bold text-white mb-4">
+      {/* Event Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={(open) => !open && closeDialog()}>
+        <DialogContent className="bg-[#14151f] border-[rgba(255,255,255,0.07)] text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white">
               {editingEvent ? "Edit Event" : "New Event"}
-            </h2>
-            <div className="space-y-4">
-              <input
-                type="text"
-                placeholder="Event title"
-                value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] focus:outline-none focus:border-[#3b82f6]"
-              />
-              <input
-                type="datetime-local"
-                value={formData.start}
-                onChange={(e) => setFormData({ ...formData, start: e.target.value })}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:border-[#3b82f6]"
-              />
-              <input
-                type="datetime-local"
-                value={formData.end}
-                onChange={(e) => setFormData({ ...formData, end: e.target.value })}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:border-[#3b82f6]"
-              />
-              <textarea
-                placeholder="Description (optional)"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                rows={3}
-                className="w-full px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] focus:outline-none focus:border-[#3b82f6] resize-none"
-              />
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <Input
+              placeholder="Event title *"
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+              className="bg-[#08090f] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#4b5563] focus-visible:border-[#3b82f6]"
+            />
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm text-[#9ca3af] mb-2 block">Color</label>
-                <div className="flex gap-2">
-                  {COLORS.map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => setFormData({ ...formData, color })}
-                      style={{ backgroundColor: color }}
-                      className={`w-8 h-8 rounded-full transition ${
-                        formData.color === color ? "ring-2 ring-white ring-offset-2 ring-offset-[#14151f]" : ""
-                      }`}
-                    />
-                  ))}
-                </div>
+                <label className="text-xs text-[#6b7280] mb-1 block">Start</label>
+                <Input
+                  type="datetime-local"
+                  value={form.start}
+                  onChange={(e) => setForm({ ...form, start: e.target.value })}
+                  className="bg-[#08090f] border-[rgba(255,255,255,0.1)] text-white focus-visible:border-[#3b82f6]"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-[#6b7280] mb-1 block">End</label>
+                <Input
+                  type="datetime-local"
+                  value={form.end}
+                  onChange={(e) => setForm({ ...form, end: e.target.value })}
+                  className="bg-[#08090f] border-[rgba(255,255,255,0.1)] text-white focus-visible:border-[#3b82f6]"
+                />
               </div>
             </div>
-            <div className="flex justify-between mt-6">
-              {editingEvent && (
-                <button
-                  onClick={() => handleDeleteEvent(editingEvent.id)}
-                  className="px-4 py-2 bg-red-900/20 border border-red-500/50 text-red-400 rounded-lg hover:bg-red-900/30 transition"
-                >
-                  Delete
-                </button>
-              )}
-              <div className="flex gap-3 ml-auto">
-                <button
-                  onClick={resetForm}
-                  className="px-4 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] text-white rounded-lg hover:bg-[#14151f] transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={editingEvent ? handleUpdateEvent : handleCreateEvent}
-                  disabled={!formData.title || !formData.start || !formData.end}
-                  className="px-4 py-2 bg-[#3b82f6] text-white rounded-lg hover:bg-[#2563eb] transition disabled:opacity-50"
-                >
-                  {editingEvent ? "Update" : "Create"}
-                </button>
+            <div className="relative">
+              <MapPin className="absolute left-3 top-2.5 size-3.5 text-[#4b5563]" />
+              <Input
+                placeholder="Location (optional)"
+                value={form.location}
+                onChange={(e) => setForm({ ...form, location: e.target.value })}
+                className="pl-8 bg-[#08090f] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#4b5563] focus-visible:border-[#3b82f6]"
+              />
+            </div>
+            <Textarea
+              placeholder="Description (optional)"
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              rows={3}
+              className="bg-[#08090f] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#4b5563] focus-visible:border-[#3b82f6] resize-none"
+            />
+            <div>
+              <label className="text-xs text-[#6b7280] mb-2 block">Color</label>
+              <div className="flex gap-2 flex-wrap">
+                {COLORS.map((c) => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    title={c.label}
+                    onClick={() => setForm({ ...form, color: c.value })}
+                    style={{ backgroundColor: c.value }}
+                    className={`w-7 h-7 rounded-full transition-all ${
+                      form.color === c.value
+                        ? "ring-2 ring-white ring-offset-2 ring-offset-[#14151f] scale-110"
+                        : "opacity-70 hover:opacity-100"
+                    }`}
+                  />
+                ))}
               </div>
             </div>
+
+            {actionError && (
+              <p className="text-xs text-red-400">{actionError}</p>
+            )}
           </div>
-        </div>
-      )}
+
+          <DialogFooter className="mt-2">
+            {editingEvent && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDelete}
+                disabled={saving}
+                className="mr-auto bg-red-900/30 border border-red-500/30 text-red-400 hover:bg-red-900/50 hover:text-red-300"
+              >
+                Delete
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={closeDialog}
+              disabled={saving}
+              className="border-[rgba(255,255,255,0.1)] bg-transparent text-[#9ca3af] hover:text-white hover:bg-[#1a1b26]"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={saving || !form.title.trim() || !form.start || !form.end}
+              className="bg-[#3b82f6] hover:bg-[#2563eb] text-white"
+            >
+              {saving ? "Saving…" : editingEvent ? "Update" : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

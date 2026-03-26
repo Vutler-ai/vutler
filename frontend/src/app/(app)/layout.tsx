@@ -1,42 +1,44 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '@/lib/api';
-import AppShell from '@/components/app-shell';
+import { AuthProvider, useAuth } from '@/lib/auth/auth-context';
+import { AuthGuard } from '@/lib/auth/auth-guard';
+import AppShell from '@/components/layout/app-shell';
 import { FeaturesProvider } from '@/components/features-provider';
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
-  const [authChecked, setAuthChecked] = useState(false);
-  const [authed, setAuthed] = useState(false);
+// Inner component so it can access AuthContext
+function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
 
-  useEffect(() => {
-    const ok = isAuthenticated();
-    setAuthed(ok);
-    setAuthChecked(true);
-    if (!ok) {
-      router.push('/login');
-    }
-  }, [router]);
-
-  // Show nothing until auth check completes (avoids hydration mismatch)
-  if (!authChecked) {
-    return null;
-  }
-
-  if (!authed) {
-    return null;
-  }
+  const shellUser = user
+    ? {
+        name: user.display_name || user.email,
+        email: user.email,
+        initials: user.display_name
+          ? user.display_name
+              .split(' ')
+              .map((n) => n[0])
+              .join('')
+              .toUpperCase()
+              .slice(0, 2)
+          : user.email.slice(0, 2).toUpperCase(),
+      }
+    : { name: 'User', email: '', initials: 'U' };
 
   return (
     <FeaturesProvider>
-      <AppShell
-        pageTitle=""
-        user={{ name: 'Alex Lopez', email: 'alex@vutler.com', initials: 'AL' }}
-      >
+      <AppShell pageTitle="" user={shellUser}>
         {children}
       </AppShell>
     </FeaturesProvider>
+  );
+}
+
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <AuthProvider>
+      <AuthGuard>
+        <AuthenticatedLayout>{children}</AuthenticatedLayout>
+      </AuthGuard>
+    </AuthProvider>
   );
 }

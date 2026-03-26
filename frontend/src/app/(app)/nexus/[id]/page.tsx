@@ -2,9 +2,11 @@
 
 import { use, useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { authFetch } from '@/lib/authFetch';
+import { getNode, dispatch } from '@/lib/api/endpoints/nexus';
 
-// ─── Types ─────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────────
+// NexusNode from types.ts is the list card type; the detail endpoint may return
+// a richer shape. We extend locally to stay safe.
 
 interface NodeAgent {
   id: string;
@@ -19,65 +21,54 @@ interface ActivityEvent {
   timestamp: string;
 }
 
-interface NexusNode {
+interface NodeDetail {
   id: string;
   name: string;
   status: 'online' | 'offline' | 'error';
-  connectedSince: string;
-  lastHeartbeat: string;
-  ip: string;
-  agents: NodeAgent[];
-  recentActivity: ActivityEvent[];
+  ip?: string;
+  connectedSince?: string;
+  lastHeartbeat?: string;
+  agents?: NodeAgent[];
+  recentActivity?: ActivityEvent[];
+  // nexus list shape fallback
+  agentCount?: number;
+  mode?: string;
+  clientName?: string;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function timeAgo(iso: string): string {
+function timeAgo(iso?: string): string {
+  if (!iso) return 'never';
   const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
+function formatDate(iso?: string): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// ─── Sub-components ─────────────────────────────────────────────────────────
+// ─── Status styles ────────────────────────────────────────────────────────────
 
-const NODE_STATUS: Record<string, { dot: string; label: string; badge: string }> = {
-  online: {
-    dot: 'bg-emerald-400',
-    label: 'Online',
-    badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-  },
-  offline: {
-    dot: 'bg-slate-400',
-    label: 'Offline',
-    badge: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
-  },
-  error: {
-    dot: 'bg-red-400',
-    label: 'Error',
-    badge: 'bg-red-500/10 text-red-400 border-red-500/30',
-  },
+const NODE_STATUS: Record<string, { dot: string; badge: string; label: string }> = {
+  online: { dot: 'bg-emerald-400', badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', label: 'Online' },
+  offline: { dot: 'bg-slate-400', badge: 'bg-slate-500/10 text-slate-400 border-slate-500/30', label: 'Offline' },
+  error: { dot: 'bg-red-400', badge: 'bg-red-500/10 text-red-400 border-red-500/30', label: 'Error' },
 };
 
-const AGENT_STATUS: Record<string, { dot: string; label: string; color: string }> = {
-  active: { dot: 'bg-emerald-400', label: 'active', color: 'text-emerald-400' },
-  idle: { dot: 'bg-amber-400', label: 'idle', color: 'text-amber-400' },
-  error: { dot: 'bg-red-400', label: 'error', color: 'text-red-400' },
+const AGENT_STATUS: Record<string, { dot: string; color: string; label: string }> = {
+  active: { dot: 'bg-emerald-400', color: 'text-emerald-400', label: 'active' },
+  idle: { dot: 'bg-amber-400', color: 'text-amber-400', label: 'idle' },
+  error: { dot: 'bg-red-400', color: 'text-red-400', label: 'error' },
 };
 
-function StatusBadge({ status }: { status: NexusNode['status'] }) {
+function StatusBadge({ status }: { status: string }) {
   const s = NODE_STATUS[status] ?? NODE_STATUS.offline;
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-medium ${s.badge}`}>
@@ -87,16 +78,37 @@ function StatusBadge({ status }: { status: NexusNode['status'] }) {
   );
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
+
+function Skeleton() {
+  return (
+    <div className="max-w-4xl mx-auto space-y-6 animate-pulse">
+      <div className="h-5 bg-[#14151f] rounded w-32" />
+      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5 space-y-3">
+        <div className="h-4 bg-[#1e293b] rounded w-20" />
+        <div className="grid grid-cols-2 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="space-y-1.5">
+              <div className="h-3 bg-[#1e293b] rounded w-16" />
+              <div className="h-4 bg-[#1e293b] rounded w-28" />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl h-40" />
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NexusNodePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
-  const [node, setNode] = useState<NexusNode | null>(null);
+  const [node, setNode] = useState<NodeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Send-task form
   const [taskInput, setTaskInput] = useState('');
   const [sending, setSending] = useState(false);
   const [sendFeedback, setSendFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -106,10 +118,9 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
   const fetchNode = useCallback(async () => {
     setError('');
     try {
-      const res = await authFetch(`/api/v1/nexus/${id}`);
-      if (!res.ok) throw new Error(`Failed to load node (${res.status})`);
-      const data = await res.json();
-      setNode(data.node ?? data);
+      const data = await getNode(id);
+      // The API may return { node: ... } or the node directly
+      setNode(((data as any).node ?? data) as NodeDetail);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load node');
     } finally {
@@ -117,24 +128,18 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
     }
   }, [id]);
 
-  useEffect(() => {
-    fetchNode();
-  }, [fetchNode]);
+  useEffect(() => { fetchNode(); }, [fetchNode]);
 
   const handleSendTask = async () => {
     if (!taskInput.trim()) return;
     setSending(true);
     setSendFeedback(null);
     try {
-      const res = await authFetch(`/api/v1/nexus/${id}/tasks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: taskInput.trim() }),
-      });
-      if (!res.ok) throw new Error(`Send failed (${res.status})`);
-      const data = await res.json();
-      setSendFeedback({ ok: true, msg: `Task queued — ID: ${data.taskId ?? 'N/A'}` });
+      const result = await dispatch(id, taskInput.trim());
+      setSendFeedback({ ok: true, msg: `Task dispatched successfully` });
       setTaskInput('');
+      // Refresh node to reflect new activity
+      fetchNode();
     } catch (err) {
       setSendFeedback({ ok: false, msg: err instanceof Error ? err.message : 'Failed to send task' });
     } finally {
@@ -142,17 +147,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
     }
   };
 
-  // ── Loading ────────────────────────────────────────────────────────────────
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-[#3b82f6]" />
-      </div>
-    );
-  }
-
-  // ── Node not found ─────────────────────────────────────────────────────────
+  if (loading) return <Skeleton />;
 
   if (error || !node) {
     return (
@@ -160,25 +155,20 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
         <p className="text-4xl mb-4">🔌</p>
         <h2 className="text-lg font-semibold text-white mb-2">Node not found</h2>
         <p className="text-sm text-[#9ca3af] mb-6">{error || 'This node does not exist or is unreachable.'}</p>
-        <Link href="/nexus" className="text-[#3b82f6] hover:underline text-sm">
-          ← Back to Nexus
-        </Link>
+        <Link href="/nexus" className="text-[#3b82f6] hover:underline text-sm">← Back to Nexus</Link>
       </div>
     );
   }
 
-  const nodeStatus = NODE_STATUS[node.status] ?? NODE_STATUS.offline;
+  const agents: NodeAgent[] = node.agents ?? [];
+  const activity: ActivityEvent[] = node.recentActivity ?? [];
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3 flex-wrap">
-          <Link
-            href="/nexus"
-            className="text-sm text-[#9ca3af] hover:text-white transition-colors flex items-center gap-1"
-          >
+          <Link href="/nexus" className="text-sm text-[#9ca3af] hover:text-white transition-colors flex items-center gap-1">
             ← Back to Nexus
           </Link>
           <span className="text-[#374151]">/</span>
@@ -187,22 +177,38 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
         <StatusBadge status={node.status} />
       </div>
 
-      {/* ── Info card ──────────────────────────────────────────────────────── */}
+      {/* Info card */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
-        <h2 className="text-sm font-semibold text-[#9ca3af] uppercase tracking-wider mb-4">Info</h2>
+        <h2 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider mb-4">Node Info</h2>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
           <div className="flex flex-col gap-0.5">
             <dt className="text-xs text-[#6b7280]">Node ID</dt>
             <dd className="text-sm text-white font-mono">{node.id}</dd>
           </div>
-          <div className="flex flex-col gap-0.5">
-            <dt className="text-xs text-[#6b7280]">IP Address</dt>
-            <dd className="text-sm text-white font-mono">{node.ip}</dd>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <dt className="text-xs text-[#6b7280]">Connected since</dt>
-            <dd className="text-sm text-white">{formatDate(node.connectedSince)}</dd>
-          </div>
+          {node.ip && (
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-xs text-[#6b7280]">IP Address</dt>
+              <dd className="text-sm text-white font-mono">{node.ip}</dd>
+            </div>
+          )}
+          {node.mode && (
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-xs text-[#6b7280]">Mode</dt>
+              <dd className="text-sm text-white capitalize">{node.mode}</dd>
+            </div>
+          )}
+          {node.clientName && (
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-xs text-[#6b7280]">Client</dt>
+              <dd className="text-sm text-white">{node.clientName}</dd>
+            </div>
+          )}
+          {node.connectedSince && (
+            <div className="flex flex-col gap-0.5">
+              <dt className="text-xs text-[#6b7280]">Connected since</dt>
+              <dd className="text-sm text-white">{formatDate(node.connectedSince)}</dd>
+            </div>
+          )}
           <div className="flex flex-col gap-0.5">
             <dt className="text-xs text-[#6b7280]">Last heartbeat</dt>
             <dd className="text-sm text-white">{timeAgo(node.lastHeartbeat)}</dd>
@@ -210,22 +216,16 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
         </dl>
       </section>
 
-      {/* ── Agents table ───────────────────────────────────────────────────── */}
+      {/* Agents table */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-[rgba(255,255,255,0.07)] flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white">
             Agents
-            <span className="ml-2 text-xs font-normal text-[#6b7280]">({node.agents.length})</span>
+            <span className="ml-2 text-xs font-normal text-[#6b7280]">({agents.length})</span>
           </h2>
-          <button
-            className="px-3 py-1.5 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-xs font-medium transition-colors"
-            onClick={() => alert('Add agent — not yet implemented')}
-          >
-            + Add
-          </button>
         </div>
 
-        {node.agents.length === 0 ? (
+        {agents.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-[#6b7280]">
             No agents deployed to this node yet.
           </div>
@@ -236,11 +236,11 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
                 <tr className="border-b border-[rgba(255,255,255,0.07)]">
                   <th className="text-left px-5 py-3 text-xs text-[#6b7280] uppercase tracking-wider">Agent</th>
                   <th className="text-left px-5 py-3 text-xs text-[#6b7280] uppercase tracking-wider">Status</th>
-                  <th className="text-left px-5 py-3 text-xs text-[#6b7280] uppercase tracking-wider">Tasks</th>
+                  <th className="text-left px-5 py-3 text-xs text-[#6b7280] uppercase tracking-wider">Tasks Done</th>
                 </tr>
               </thead>
               <tbody>
-                {node.agents.map((agent) => {
+                {agents.map((agent) => {
                   const s = AGENT_STATUS[agent.status] ?? AGENT_STATUS.idle;
                   return (
                     <tr
@@ -254,7 +254,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
                           {s.label}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-sm text-[#9ca3af]">{agent.tasksDone} done</td>
+                      <td className="px-5 py-3 text-sm text-[#9ca3af]">{agent.tasksDone}</td>
                     </tr>
                   );
                 })}
@@ -264,7 +264,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
         )}
       </section>
 
-      {/* ── Send task ──────────────────────────────────────────────────────── */}
+      {/* Send task */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
         <h2 className="text-sm font-semibold text-white mb-3">Send Task</h2>
         <div className="flex gap-2">
@@ -282,9 +282,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
             disabled={sending || !taskInput.trim()}
             className="px-5 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:bg-[#3b82f6]/40 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 whitespace-nowrap"
           >
-            {sending && (
-              <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            )}
+            {sending && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
             {sending ? 'Sending…' : 'Send'}
           </button>
         </div>
@@ -295,21 +293,21 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
         )}
       </section>
 
-      {/* ── Recent activity ────────────────────────────────────────────────── */}
+      {/* Recent activity */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
         <h2 className="text-sm font-semibold text-white mb-4">Recent Activity</h2>
-        {node.recentActivity.length === 0 ? (
+        {activity.length === 0 ? (
           <p className="text-sm text-[#6b7280]">No recent activity recorded.</p>
         ) : (
           <div
             ref={activityRef}
-            className="space-y-3 max-h-64 overflow-y-auto pr-1 scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[rgba(255,255,255,0.1)]"
+            className="space-y-3 max-h-64 overflow-y-auto pr-1"
           >
-            {node.recentActivity.map((event) => (
+            {activity.map((event) => (
               <div key={event.id} className="flex items-start gap-2 text-sm">
-                <span className="text-[#4b5563] mt-0.5 flex-shrink-0">•</span>
+                <span className="text-[#4b5563] mt-0.5 shrink-0">•</span>
                 <span className="text-[#d1d5db] flex-1">{event.message}</span>
-                <span className="text-xs text-[#6b7280] flex-shrink-0 ml-2 whitespace-nowrap">
+                <span className="text-xs text-[#6b7280] shrink-0 ml-2 whitespace-nowrap">
                   {timeAgo(event.timestamp)}
                 </span>
               </div>
@@ -317,7 +315,6 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
           </div>
         )}
       </section>
-
     </div>
   );
 }
