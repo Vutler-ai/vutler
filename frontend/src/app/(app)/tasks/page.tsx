@@ -92,10 +92,10 @@ function StatusBadge({ status }: { status: Task["status"] }) {
   );
 }
 
-function AssigneeAvatar({ name }: { name: string }) {
-  const initials = name
+function AssigneeAvatar({ name }: { name: string | null | undefined }) {
+  const initials = (name || 'U')
     .split(" ")
-    .map((n) => n[0])
+    .map((n) => n[0] || '')
     .join("")
     .slice(0, 2)
     .toUpperCase();

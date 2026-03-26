@@ -21,6 +21,9 @@ const app = express();
 const server = http.createServer(app);
 const port = process.env.PORT || 3001;
 
+// Trust nginx reverse proxy (fixes X-Forwarded-For + rate limiter)
+app.set('trust proxy', 1);
+
 // ---------------------------------------------------------------------------
 // 1. SECURITY MIDDLEWARE
 // ---------------------------------------------------------------------------
