@@ -2,8 +2,11 @@
 
 /**
  * Office routes bundle
- * Mounts all Office feature routers under a single Express Router.
- * Uses safe mount to prevent one broken route from crashing the server.
+ *
+ * NOTE: Some modules define routes with FULL paths (e.g. /chat/channels, /drive/files)
+ * while others use RELATIVE paths (e.g. /, /:id).
+ * Full-path modules must be mounted at '/' to avoid double-prefixing.
+ * Relative-path modules are mounted at their prefix (e.g. /calendar).
  */
 
 const { Router } = require('express');
@@ -11,6 +14,7 @@ const { gateFeature } = require('../core/middleware/featureGate');
 
 const router = Router();
 
+// Mount with prefix (for relative-path modules like /calendar → GET /)
 function mount(path, gate, modulePath) {
   try {
     router.use(path, gateFeature(gate), require(modulePath));
@@ -19,44 +23,53 @@ function mount(path, gate, modulePath) {
   }
 }
 
-// ── Chat ────────────────────────────────────────────────────────────────────
-mount('/chat',              'chat',         '../../app/custom/api/chat');
-mount('/vchat',             'chat',         '../../api/vchat');
+// Mount at root (for full-path modules like /chat/channels, /drive/files)
+function mountRoot(gate, modulePath, label) {
+  try {
+    router.use('/', gateFeature(gate), require(modulePath));
+  } catch (e) {
+    console.warn(`[OFFICE] Skip ${label}: ${e.message}`);
+  }
+}
 
-// ── Drive ───────────────────────────────────────────────────────────────────
-mount('/drive',             'drive',        '../../app/custom/api/drive');
-mount('/drive-s3',          'drive',        '../../app/custom/api/drive-s3');
-mount('/drive-chat',        'drive',        '../../api/drive-chat');
-mount('/vdrive',            'drive',        '../../api/vdrive');
+// ── Chat (full-path: /chat/channels, /chat/send, etc.) ──────────────────────
+mountRoot('chat', '../../app/custom/api/chat', 'chat');
+mount('/vchat', 'chat', '../../api/vchat');
 
-// ── Email ───────────────────────────────────────────────────────────────────
-mount('/email',             'email',        '../../app/custom/api/email');
-mount('/email/vaultbrix',   'email',        '../../api/email-vaultbrix');
-mount('/emails',            'email',        '../../api/emails');
+// ── Drive (full-path: /drive/files, /drive/upload, etc.) ────────────────────
+mountRoot('drive', '../../app/custom/api/drive', 'drive');
+mount('/drive-s3', 'drive', '../../app/custom/api/drive-s3');
+mount('/drive-chat', 'drive', '../../api/drive-chat');
+mount('/vdrive', 'drive', '../../api/vdrive');
 
-// ── Tasks ───────────────────────────────────────────────────────────────────
-mount('/tasks',             'tasks',        '../../app/custom/api/tasks-v2');
-mount('/task-router',       'tasks',        '../../api/tasks-router');
-mount('/task-router/sync',  'tasks',        '../../api/task-router-sync');
-mount('/tasks/assignment',  'tasks',        '../../api/task-assignment');
+// ── Email (full-path: /email, /email/send) ──────────────────────────────────
+mountRoot('email', '../../app/custom/api/email', 'email');
+mount('/email/vaultbrix', 'email', '../../api/email-vaultbrix');
+mount('/emails', 'email', '../../api/emails');
 
-// ── Calendar ────────────────────────────────────────────────────────────────
-mount('/calendar',          'calendar',     '../../api/calendar');
+// ── Tasks (full-path: /tasks-v2, /tasks-v2/:id) ────────────────────────────
+mountRoot('tasks', '../../app/custom/api/tasks-v2', 'tasks-v2');
+mount('/task-router', 'tasks', '../../api/tasks-router');
+mount('/task-router/sync', 'tasks', '../../api/task-router-sync');
+mount('/tasks/assignment', 'tasks', '../../api/task-assignment');
 
-// ── Integrations ────────────────────────────────────────────────────────────
-mount('/integrations',      'integrations', '../../api/integrations');
-mount('/providers',         'integrations', '../../api/providers');
+// ── Calendar (relative: /, /events, /events/:id) ───────────────────────────
+mount('/calendar', 'calendar', '../../api/calendar');
+
+// ── Integrations (relative: /) ──────────────────────────────────────────────
+mount('/integrations', 'integrations', '../../api/integrations');
+mount('/providers', 'integrations', '../../api/providers');
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
-mount('/dashboard',         'dashboard',    '../../api/dashboard');
+mount('/dashboard', 'dashboard', '../../api/dashboard');
 
 // ── WhatsApp ────────────────────────────────────────────────────────────────
-mount('/whatsapp',          'whatsapp',     '../../app/custom/api/whatsapp-mirror');
+mount('/whatsapp', 'whatsapp', '../../app/custom/api/whatsapp-mirror');
 
 // ── Goals ───────────────────────────────────────────────────────────────────
-mount('/goals',             'goals',        '../../api/goals');
+mount('/goals', 'goals', '../../api/goals');
 
 // ── UI Pack ─────────────────────────────────────────────────────────────────
-mount('/ui-pack',           'dashboard',    '../../app/custom/api/ui-pack');
+mount('/ui-pack', 'dashboard', '../../app/custom/api/ui-pack');
 
 module.exports = router;
