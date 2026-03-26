@@ -32,6 +32,19 @@ interface BetaFeatures {
   pixel_office_enabled: boolean;
 }
 
+interface SubscriptionUsage {
+  agents: { used: number; limit: number | null };
+  tokens: { used: number; limit: number | null };
+  storage_gb: { used: number; limit: number | null };
+}
+
+interface Subscription {
+  plan_name: string;
+  status: string;
+  current_period_end: string | null;
+  usage: SubscriptionUsage | null;
+}
+
 type Tab = "profile" | "account" | "workspace" | "billing" | "beta";
 
 function Toast({ message, type, onClose }: { message: string; type: "success" | "error"; onClose: () => void }) {
@@ -78,6 +91,11 @@ export default function SettingsPage() {
   const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>({
     pixel_office_enabled: false,
   });
+
+  // Billing state
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
 
   // Delete account state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -208,6 +226,39 @@ export default function SettingsPage() {
     }
   };
 
+  const fetchSubscription = async () => {
+    setBillingLoading(true);
+    try {
+      const res = await authFetch("/api/v1/billing/subscription");
+      if (res.ok) {
+        const data = await res.json();
+        setSubscription(data.subscription || data);
+      } else {
+        setSubscription(null);
+      }
+    } catch (err) {
+      console.error("Failed to load subscription", err);
+      setSubscription(null);
+    } finally {
+      setBillingLoading(false);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    setPortalLoading(true);
+    try {
+      const res = await authFetch("/api/v1/billing/portal", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to open billing portal");
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+      else throw new Error("No portal URL returned");
+    } catch (err: any) {
+      showToast(err.message || "Error opening billing portal", "error");
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await authFetch("/api/v1/auth/logout", { method: "POST" });
@@ -294,7 +345,7 @@ export default function SettingsPage() {
           Workspace
         </button>
         <button
-          onClick={() => setTab("billing")}
+          onClick={() => { setTab("billing"); fetchSubscription(); }}
           className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${
             tab === "billing" ? "bg-blue-600 text-white" : "text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
           }`}
@@ -486,45 +537,93 @@ export default function SettingsPage() {
             <p className="text-sm text-[#9ca3af] mb-6">
               Manage your subscription, payment methods, and billing history.
             </p>
-            
-            <div className="bg-[#1f2028] rounded-lg p-6 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-white font-medium">Current Plan</h3>
-                  <p className="text-sm text-[#9ca3af]">Free</p>
-                </div>
-                <span className="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-medium">Active</span>
-              </div>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between text-[#9ca3af]">
-                  <span>Agents</span>
-                  <span>1 / 1</span>
-                </div>
-                <div className="flex justify-between text-[#9ca3af]">
-                  <span>Storage</span>
-                  <span>0.1 GB / 1 GB</span>
-                </div>
-                <div className="flex justify-between text-[#9ca3af]">
-                  <span>API Calls</span>
-                  <span>Unlimited</span>
-                </div>
-              </div>
-            </div>
 
-            <div className="flex gap-3">
-              <button 
-                onClick={() => showToast("Upgrade coming soon!", "success")}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
-              >
-                Upgrade Plan
-              </button>
-              <button 
-                onClick={() => showToast("Billing portal coming soon!", "success")}
-                className="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
-              >
-                View Billing History
-              </button>
-            </div>
+            {billingLoading ? (
+              <div className="flex items-center justify-center py-10">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+              </div>
+            ) : subscription && subscription.status === "active" ? (
+              <>
+                <div className="bg-[#1f2028] rounded-lg p-6 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-white font-medium">Current Plan</h3>
+                      <p className="text-sm text-[#9ca3af] capitalize">{subscription.plan_name}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 bg-green-600/20 text-green-400 border border-green-500/30 rounded-full text-xs font-medium capitalize">
+                        {subscription.status}
+                      </span>
+                    </div>
+                  </div>
+                  {subscription.current_period_end && (
+                    <p className="text-xs text-[#6b7280] mb-4">
+                      Renews {new Date(subscription.current_period_end).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}
+                    </p>
+                  )}
+                  {subscription.usage && (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between text-[#9ca3af]">
+                        <span>Agents</span>
+                        <span>
+                          {subscription.usage.agents.used}
+                          {subscription.usage.agents.limit !== null ? ` / ${subscription.usage.agents.limit}` : " / Unlimited"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[#9ca3af]">
+                        <span>Tokens</span>
+                        <span>
+                          {subscription.usage.tokens.used.toLocaleString()}
+                          {subscription.usage.tokens.limit !== null ? ` / ${subscription.usage.tokens.limit.toLocaleString()}` : " / Unlimited"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-[#9ca3af]">
+                        <span>Storage</span>
+                        <span>
+                          {subscription.usage.storage_gb.used} GB
+                          {subscription.usage.storage_gb.limit !== null ? ` / ${subscription.usage.storage_gb.limit} GB` : " / Unlimited"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleManageSubscription}
+                    disabled={portalLoading}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  >
+                    {portalLoading ? "Opening…" : "Manage Subscription"}
+                  </button>
+                  <button
+                    onClick={() => router.push("/billing")}
+                    className="px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                  >
+                    Change Plan
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="bg-[#1f2028] rounded-lg p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 className="text-white font-medium">Current Plan</h3>
+                    <p className="text-sm text-[#9ca3af]">Free</p>
+                  </div>
+                  <span className="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-medium">Free tier</span>
+                </div>
+                <p className="text-sm text-[#9ca3af] mb-5">
+                  You're on the Free plan. Upgrade to unlock more agents, tokens, and storage.
+                </p>
+                <button
+                  onClick={() => router.push("/billing")}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                >
+                  Upgrade Plan
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
