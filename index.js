@@ -102,6 +102,10 @@ app.use(globalLimiter);
 // Auth middleware (API key + admin session)
 app.use(require('./api/middleware/auth'));
 
+// Workspace plan middleware — sets req.workspacePlan for feature gating
+const { addWorkspacePlan } = require('./quotaMiddleware');
+app.use(addWorkspacePlan);
+
 // ---------------------------------------------------------------------------
 // 5. STATIC ASSETS
 // ---------------------------------------------------------------------------
