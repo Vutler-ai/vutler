@@ -169,6 +169,71 @@ app.post('/api/v1/nexus/register', async (req, res) => {
   }
 });
 
+// ── Nexus Task + Heartbeat endpoints (before auth middleware) ────────────────
+app.get('/api/v1/nexus/:nodeId/tasks', async (req, res) => {
+  try {
+    const pg = app.locals.pg;
+    if (!pg) return res.json({ success: true, tasks: [] });
+    const result = await pg.query(
+      `SELECT id, title, description, status, priority, metadata FROM tenant_vutler.tasks
+       WHERE workspace_id = $1 AND status IN ('pending', 'assigned')
+       ORDER BY priority DESC, created_at ASC LIMIT 10`,
+      [req.query.workspace_id || '00000000-0000-0000-0000-000000000001']
+    );
+    res.json({ success: true, tasks: result.rows });
+  } catch (err) {
+    console.error('[NEXUS] Get tasks error:', err.message);
+    res.json({ success: true, tasks: [] });
+  }
+});
+
+app.post('/api/v1/nexus/:nodeId/tasks/:taskId/status', async (req, res) => {
+  try {
+    const { status, output, error: taskError } = req.body || {};
+    const pg = app.locals.pg;
+    if (!pg) return res.json({ success: true });
+
+    const meta = {};
+    if (output) meta.output = output;
+    if (taskError) meta.error = taskError;
+
+    await pg.query(
+      `UPDATE tenant_vutler.tasks SET status = $1, metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $3`,
+      [status, JSON.stringify(meta), req.params.taskId]
+    );
+
+    // If completed, try to sync back to Snipara
+    if (status === 'completed') {
+      try {
+        const task = await pg.query(`SELECT snipara_task_id, swarm_task_id, title FROM tenant_vutler.tasks WHERE id = $1`, [req.params.taskId]);
+        const row = task.rows[0];
+        if (row?.swarm_task_id && app.locals.swarmCoordinator) {
+          await app.locals.swarmCoordinator.completeTask(row.swarm_task_id, 'nexus', output || '');
+          console.log(`[NEXUS] Task synced to Snipara: ${row.title}`);
+        }
+      } catch (_) {}
+    }
+
+    res.json({ success: true, task: { id: req.params.taskId, status } });
+  } catch (err) {
+    console.error('[NEXUS] Task status update error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/v1/nexus/:nodeId/connect', async (req, res) => {
+  try {
+    const pg = app.locals.pg;
+    if (pg) {
+      await pg.query(
+        `UPDATE tenant_vutler.nexus_nodes SET status = 'online', last_heartbeat = NOW() WHERE id = $1`,
+        [req.params.nodeId]
+      ).catch(() => {});
+    }
+    res.json({ success: true });
+  } catch (_) { res.json({ success: true }); }
+});
+
 // Auth (with brute-force protection)
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
