@@ -720,4 +720,87 @@ router.get('/:id/logs', async (req, res) => {
   }
 });
 
+// Task delivery endpoints for Nexus nodes
+router.get('/:nodeId/tasks', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks
+       WHERE status IN ('pending', 'assigned') AND workspace_id = $1
+       ORDER BY priority DESC, created_at ASC
+       LIMIT 10`,
+      [workspaceId]
+    );
+
+    res.json({ success: true, tasks: result.rows });
+  } catch (err) {
+    console.error('[NEXUS] Get node tasks error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/:nodeId/tasks/:taskId/status', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId, taskId } = req.params;
+    const { status, output, error: taskError } = req.body || {};
+
+    const ALLOWED_STATUSES = ['in_progress', 'completed', 'failed'];
+    if (!status || !ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `status must be one of: ${ALLOWED_STATUSES.join(', ')}`,
+      });
+    }
+
+    const nodeRes = await pool.query(
+      `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET status = $1, updated_at = NOW()
+       WHERE id::text = $2 AND workspace_id = $3
+       RETURNING *`,
+      [status, taskId, workspaceId]
+    );
+
+    if (!updateResult.rows.length) {
+      return res.status(404).json({ success: false, error: 'Task not found' });
+    }
+
+    const task = updateResult.rows[0];
+
+    if (status === 'completed' && task.swarm_task_id) {
+      try {
+        const swarmCoordinator = require('../services/swarmCoordinator');
+        await swarmCoordinator.completeTask(task.swarm_task_id, nodeId, output || null);
+      } catch (swarmErr) {
+        console.error('[NEXUS] swarmCoordinator.completeTask error:', swarmErr.message);
+      }
+    }
+
+    res.json({ success: true, task });
+  } catch (err) {
+    console.error('[NEXUS] Update task status error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

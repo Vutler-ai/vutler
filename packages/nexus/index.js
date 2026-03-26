@@ -90,13 +90,60 @@ class NexusNode {
   _startTaskPoll() {
     this.pollTimer = setInterval(async () => {
       try {
-        // Poll for pending tasks assigned to this node
-        const tasks = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/health`);
-        // Process tasks if any
+        const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/tasks`);
+        const tasks = response?.tasks || [];
+        for (const task of tasks) {
+          await this._executeTask(task);
+        }
       } catch (e) {
-        // silent
+        // silent — will retry next poll
       }
-    }, 10000); // every 10s
+    }, this.config?.taskPollInterval || 10000);
+  }
+
+  async _executeTask(task) {
+    console.log(`[NEXUS] Executing task: ${task.title} (${task.id})`);
+
+    // Mark as in_progress
+    await this._updateTaskStatus(task.id, 'in_progress');
+
+    try {
+      let output;
+
+      // Route to appropriate provider based on task description/metadata
+      if (task.metadata?.provider === 'shell' || task.description?.startsWith('shell:')) {
+        const cmd = task.metadata?.command || task.description.replace('shell:', '').trim();
+        output = await this.providers.shell?.exec(cmd);
+      } else if (task.metadata?.provider === 'filesystem') {
+        output = await this.providers.filesystem?.read(task.metadata.path);
+      } else if (task.metadata?.provider === 'llm') {
+        output = await this.providers.llm?.ask(task.description);
+      } else {
+        // Default: use LLM provider to interpret and execute
+        if (this.providers.llm) {
+          output = await this.providers.llm.ask(`Execute this task: ${task.title}\n${task.description || ''}`);
+        } else {
+          output = `Task received but no LLM provider configured. Task: ${task.title}`;
+        }
+      }
+
+      await this._updateTaskStatus(task.id, 'completed', { output: String(output || '') });
+      console.log(`[NEXUS] Task completed: ${task.title}`);
+    } catch (error) {
+      await this._updateTaskStatus(task.id, 'failed', { error: error.message });
+      console.error(`[NEXUS] Task failed: ${task.title}`, error.message);
+    }
+  }
+
+  async _updateTaskStatus(taskId, status, data = {}) {
+    try {
+      await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/tasks/${taskId}/status`, {
+        status,
+        ...data
+      });
+    } catch (e) {
+      console.error(`[NEXUS] Failed to update task ${taskId} status:`, e.message);
+    }
   }
 
   _startHealthServer() {
