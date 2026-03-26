@@ -7,7 +7,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../../lib/postgres');
+const { pool } = require('../lib/postgres');
 const SCHEMA = 'tenant_vutler';
 
 /**

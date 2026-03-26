@@ -7,7 +7,7 @@ const crypto = require('crypto');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch(e) {
-  try { pool = require('../pg-updated'); } catch(e2) { console.error('[SETTINGS] No DB pool found'); }
+  try { pool = require('../lib/postgres').pool; } catch(e2) { console.error('[SETTINGS] No DB pool found'); }
 }
 
 const WS_ID = '00000000-0000-0000-0000-000000000001';

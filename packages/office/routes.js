@@ -3,9 +3,7 @@
 /**
  * Office routes bundle
  * Mounts all Office feature routers under a single Express Router.
- * Each route is wrapped with the featureGate middleware.
- *
- * Prefers app/custom/api/ versions (newer) over api/ where both exist.
+ * Uses safe mount to prevent one broken route from crashing the server.
  */
 
 const { Router } = require('express');
@@ -13,70 +11,52 @@ const { gateFeature } = require('../core/middleware/featureGate');
 
 const router = Router();
 
-// ── Chat ──────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/chat', gateFeature('chat'), require('../../app/custom/api/chat'));
+function mount(path, gate, modulePath) {
+  try {
+    router.use(path, gateFeature(gate), require(modulePath));
+  } catch (e) {
+    console.warn(`[OFFICE] Skip ${path}: ${e.message}`);
+  }
+}
 
-// ── Drive ─────────────────────────────────────────────────────────────────────
-// Prefer custom version (S3-backed)
-router.use('/drive', gateFeature('drive'), require('../../app/custom/api/drive'));
-router.use('/drive-s3', gateFeature('drive'), require('../../app/custom/api/drive-s3'));
+// ── Chat ────────────────────────────────────────────────────────────────────
+mount('/chat',              'chat',         '../../app/custom/api/chat');
+mount('/vchat',             'chat',         '../../api/vchat');
 
-// Drive-chat integration (legacy, no custom replacement)
-router.use('/drive-chat', gateFeature('drive'), require('../../api/drive-chat'));
+// ── Drive ───────────────────────────────────────────────────────────────────
+mount('/drive',             'drive',        '../../app/custom/api/drive');
+mount('/drive-s3',          'drive',        '../../app/custom/api/drive-s3');
+mount('/drive-chat',        'drive',        '../../api/drive-chat');
+mount('/vdrive',            'drive',        '../../api/vdrive');
 
-// ── Email ─────────────────────────────────────────────────────────────────────
-// Prefer custom version; legacy /api/email.js is a deprecated redirect stub
-router.use('/email', gateFeature('email'), require('../../app/custom/api/email'));
+// ── Email ───────────────────────────────────────────────────────────────────
+mount('/email',             'email',        '../../app/custom/api/email');
+mount('/email/vaultbrix',   'email',        '../../api/email-vaultbrix');
+mount('/emails',            'email',        '../../api/emails');
 
-// Vaultbrix email (PostgreSQL + Postal SMTP)
-router.use('/email/vaultbrix', gateFeature('email'), require('../../api/email-vaultbrix'));
+// ── Tasks ───────────────────────────────────────────────────────────────────
+mount('/tasks',             'tasks',        '../../app/custom/api/tasks-v2');
+mount('/task-router',       'tasks',        '../../api/tasks-router');
+mount('/task-router/sync',  'tasks',        '../../api/task-router-sync');
+mount('/tasks/assignment',  'tasks',        '../../api/task-assignment');
 
-// Emails list endpoint (separate route)
-router.use('/emails', gateFeature('email'), require('../../api/emails'));
+// ── Calendar ────────────────────────────────────────────────────────────────
+mount('/calendar',          'calendar',     '../../api/calendar');
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
-// Prefer custom v2
-router.use('/tasks', gateFeature('tasks'), require('../../app/custom/api/tasks-v2'));
+// ── Integrations ────────────────────────────────────────────────────────────
+mount('/integrations',      'integrations', '../../api/integrations');
+mount('/providers',         'integrations', '../../api/providers');
 
-// Legacy tasks router (Snipara-backed)
-router.use('/task-router', gateFeature('tasks'), require('../../api/tasks-router'));
+// ── Dashboard ───────────────────────────────────────────────────────────────
+mount('/dashboard',         'dashboard',    '../../api/dashboard');
 
-// Task router sync (Snipara webhook)
-router.use('/task-router/sync', gateFeature('tasks'), require('../../api/task-router-sync'));
+// ── WhatsApp ────────────────────────────────────────────────────────────────
+mount('/whatsapp',          'whatsapp',     '../../app/custom/api/whatsapp-mirror');
 
-// Task assignment
-router.use('/tasks/assignment', gateFeature('tasks'), require('../../api/task-assignment'));
+// ── Goals ───────────────────────────────────────────────────────────────────
+mount('/goals',             'goals',        '../../api/goals');
 
-// ── Calendar ──────────────────────────────────────────────────────────────────
-router.use('/calendar', gateFeature('calendar'), require('../../api/calendar'));
-
-// ── Integrations ─────────────────────────────────────────────────────────────
-router.use('/integrations', gateFeature('integrations'), require('../../api/integrations'));
-
-// ── Providers ─────────────────────────────────────────────────────────────────
-router.use('/providers', gateFeature('integrations'), require('../../api/providers'));
-
-// ── Dashboard ─────────────────────────────────────────────────────────────────
-router.use('/dashboard', gateFeature('dashboard'), require('../../api/dashboard'));
-
-// ── VDrive (encrypted drive) ──────────────────────────────────────────────────
-router.use('/vdrive', gateFeature('drive'), require('../../api/vdrive'));
-
-// ── VChat ─────────────────────────────────────────────────────────────────────
-router.use('/vchat', gateFeature('chat'), require('../../api/vchat'));
-
-// ── WhatsApp mirror ───────────────────────────────────────────────────────────
-router.use('/whatsapp', gateFeature('whatsapp'), require('../../app/custom/api/whatsapp-mirror'));
-
-// ── Goals ─────────────────────────────────────────────────────────────────────
-router.use('/goals', gateFeature('goals'), require('../../api/goals'));
-
-// ── UI pack ───────────────────────────────────────────────────────────────────
-// Note: ui-pack exports module.exports = router (with an extra _test property)
-router.use('/ui-pack', gateFeature('dashboard'), require('../../app/custom/api/ui-pack'));
-
-// ws-chat is a WebSocket utility (exports setupChatWebSocket / publishMessage),
-// not an HTTP router — mount it via your WebSocket server setup, not here.
+// ── UI Pack ─────────────────────────────────────────────────────────────────
+mount('/ui-pack',           'dashboard',    '../../app/custom/api/ui-pack');
 
 module.exports = router;

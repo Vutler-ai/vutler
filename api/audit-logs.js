@@ -4,8 +4,7 @@ const router = express.Router();
 
 function getPool() {
   try { return require('../lib/postgres'); } catch(e) {}
-  try { return require('../pg-updated'); } catch(e) {}
-  try { return require('../services/postgres'); } catch(e) {}
+  try { return require('../lib/vaultbrix'); } catch(e) {}
   return null;
 }
 

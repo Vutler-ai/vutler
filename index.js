@@ -200,9 +200,14 @@ async function start() {
     app.locals.chatRuntime = chatRuntime;
 
     // Swarm coordinator
-    const { getSwarmCoordinator } = require('./services/swarmCoordinator');
-    app.locals.swarmCoordinator = getSwarmCoordinator();
-    await app.locals.swarmCoordinator.init();
+    try {
+      const { getSwarmCoordinator } = require('./services/swarmCoordinator');
+      app.locals.swarmCoordinator = getSwarmCoordinator();
+      await app.locals.swarmCoordinator.init();
+      console.log('Swarm coordinator initialized');
+    } catch (e) {
+      console.warn('[BOOT] Swarm coordinator skipped:', e.message);
+    }
 
     // Template seeds
     const { loadTemplates } = require('./seeds/loadTemplates');

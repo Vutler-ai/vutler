@@ -5,10 +5,10 @@
 
 const express = require('express');
 const router = express.Router();
-const { transactionWithWorkspace, auditLog } = require('../services/pg');
-const { requireAdmin } = require('../lib/auth');
+const { transactionWithWorkspace, auditLog } = require('./services/pg');
+const { requireAdmin } = require('./lib/auth');
 const crypto = require('crypto');
-const s3Storage = require('../services/s3Storage');
+const s3Storage = require('./services/s3Storage');
 const { PLANS, VALID_PLAN_IDS, getPlan, getPlanLimits } = require('./packages/core/middleware/featureGate');
 
 // ============================================================================
@@ -214,7 +214,7 @@ router.post('/workspaces', requireAdmin, async (req, res) => {
 router.get('/workspaces/:id', requireAdmin, async (req, res) => {
   try {
     const { id: workspaceId } = req.params;
-    const { queryWithWorkspace } = require('../services/pg');
+    const { queryWithWorkspace } = require('./services/pg');
 
     // Get workspace settings
     const { rows: settingsRows } = await queryWithWorkspace(workspaceId, `
@@ -250,7 +250,7 @@ router.get('/workspaces/:id', requireAdmin, async (req, res) => {
     const stats = statsRows[0] || { agent_count: 0, template_count: 0, provider_count: 0 };
 
     // Get quota status
-    const { checkWorkspaceLimits } = require('../services/pg');
+    const { checkWorkspaceLimits } = require('./services/pg');
     const plan = settings.billing_plan?.plan || 'free';
     const quotaStatus = await checkWorkspaceLimits(workspaceId, plan);
 
@@ -286,7 +286,7 @@ router.put('/workspaces/:id', requireAdmin, async (req, res) => {
   try {
     const { id: workspaceId } = req.params;
     const { name, plan, config } = req.body;
-    const { queryWithWorkspace } = require('../services/pg');
+    const { queryWithWorkspace } = require('./services/pg');
 
     const updates = [];
     const auditDetails = { workspace_id: workspaceId };

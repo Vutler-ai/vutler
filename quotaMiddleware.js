@@ -5,7 +5,7 @@
 
 'use strict';
 
-const { checkWorkspaceLimits, auditLog } = require('../services/pg');
+const { checkWorkspaceLimits, auditLog } = require('./services/pg');
 const { getPlan, getPlanLimits } = require('./packages/core/middleware/featureGate');
 
 /**
@@ -107,7 +107,7 @@ function checkQuota(resource) {
 async function addWorkspacePlan(req, res, next) {
   try {
     const workspaceId = req.workspaceId || 'default';
-    const { queryWithWorkspace } = require('../services/pg');
+    const { queryWithWorkspace } = require('./services/pg');
     
     const { rows } = await queryWithWorkspace(
       workspaceId,

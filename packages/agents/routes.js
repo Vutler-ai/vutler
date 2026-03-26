@@ -4,8 +4,7 @@
  * Agents routes bundle
  * Mounts all Agents feature routers under a single Express Router.
  * Each route group is wrapped with the featureGate middleware.
- *
- * Prefers app/custom/api/ versions (newer) over api/ where both exist.
+ * Uses safe mount to prevent one broken route from crashing the server.
  */
 
 const { Router } = require('express');
@@ -13,84 +12,69 @@ const { gateFeature } = require('../core/middleware/featureGate');
 
 const router = Router();
 
-// ── Agents ────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/agents', gateFeature('agents'), require('../../app/custom/api/agents'));
+function mount(path, gate, modulePath) {
+  try {
+    router.use(path, gateFeature(gate), require(modulePath));
+  } catch (e) {
+    console.warn(`[AGENTS] Skip ${path}: ${e.message}`);
+  }
+}
 
-// Agent runtime (custom version preferred)
-router.use('/agent-runtime', gateFeature('agents'), require('../../app/custom/api/runtime'));
+// ── Agents ──────────────────────────────────────────────────────────────────
+mount('/agents',          'agents',      '../../app/custom/api/agents');
+mount('/agent-runtime',   'agents',      '../../app/custom/api/runtime');
+mount('/agent-sync',      'agents',      '../../api/agent-sync');
 
-// Agent sync (no custom replacement — legacy api/)
-router.use('/agent-sync', gateFeature('agents'), require('../../api/agent-sync'));
+// ── Runtime ─────────────────────────────────────────────────────────────────
+mount('/runtime',         'runtime',     '../../api/runtime');
 
-// ── Runtime ───────────────────────────────────────────────────────────────────
-// Prefer custom version (app/custom/api/runtime.js also covers this)
-// api/runtime.js provides additional endpoints not in custom version
-router.use('/runtime', gateFeature('runtime'), require('../../api/runtime'));
+// ── Nexus ───────────────────────────────────────────────────────────────────
+mount('/nexus',           'nexus',       '../../app/custom/api/nexus');
+mount('/nexus/routing',   'nexus',       '../../api/nexus-routing');
 
-// ── Nexus ─────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/nexus', gateFeature('nexus'), require('../../app/custom/api/nexus'));
+// ── Marketplace ─────────────────────────────────────────────────────────────
+mount('/marketplace',     'marketplace', '../../app/custom/api/marketplace');
 
-// Nexus routing (no custom replacement)
-router.use('/nexus/routing', gateFeature('nexus'), require('../../api/nexus-routing'));
+// ── Swarm ───────────────────────────────────────────────────────────────────
+mount('/swarm',           'swarm',       '../../app/custom/api/swarm');
 
-// ── Marketplace ───────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/marketplace', gateFeature('marketplace'), require('../../app/custom/api/marketplace'));
+// ── LLM ─────────────────────────────────────────────────────────────────────
+mount('/llm',             'llm',         '../../app/custom/api/llm');
+mount('/llm/router',      'llm',         '../../api/llm-router');
+mount('/llm/validate',    'llm',         '../../api/llm-validate');
 
-// ── Swarm ─────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/swarm', gateFeature('swarm'), require('../../app/custom/api/swarm'));
+// ── Tools ───────────────────────────────────────────────────────────────────
+mount('/tools',           'tools',       '../../app/custom/api/tools');
 
-// ── LLM ───────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/llm', gateFeature('llm'), require('../../app/custom/api/llm'));
+// ── Templates ───────────────────────────────────────────────────────────────
+mount('/templates',       'templates',   '../../api/templates');
 
-// LLM router (provider-level routing; no custom replacement)
-router.use('/llm/router', gateFeature('llm'), require('../../api/llm-router'));
+// ── Sandbox ─────────────────────────────────────────────────────────────────
+mount('/sandbox',         'sandbox',     '../../api/sandbox');
 
-// LLM validate (input validation; no custom replacement)
-router.use('/llm/validate', gateFeature('llm'), require('../../api/llm-validate'));
+// ── Deployments ─────────────────────────────────────────────────────────────
+mount('/deployments',     'deployments', '../../api/deployments');
+mount('/provisioning',    'deployments', '../../api/provisioning');
 
-// ── Tools ─────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/tools', gateFeature('tools'), require('../../app/custom/api/tools'));
+// ── Automations ─────────────────────────────────────────────────────────────
+mount('/automations',     'automations', '../../api/automations');
+mount('/automation-logs', 'automations', '../../api/automation-logs-routes');
 
-// ── Templates ─────────────────────────────────────────────────────────────────
-router.use('/templates', gateFeature('templates'), require('../../api/templates'));
+// ── Knowledge ───────────────────────────────────────────────────────────────
+mount('/knowledge',       'knowledge',   '../../api/knowledge');
 
-// ── Sandbox ───────────────────────────────────────────────────────────────────
-router.use('/sandbox', gateFeature('sandbox'), require('../../api/sandbox'));
+// ── Memory ──────────────────────────────────────────────────────────────────
+mount('/memory',          'agents',      '../../app/custom/api/memory');
 
-// ── Deployments ───────────────────────────────────────────────────────────────
-router.use('/deployments', gateFeature('deployments'), require('../../api/deployments'));
+// ── Snipara ─────────────────────────────────────────────────────────────────
+mount('/snipara',         'agents',      '../../api/snipara');
+mount('/snipara/admin',   'agents',      '../../api/sniparaAdmin');
+mount('/snipara/webhook', 'agents',      '../../api/sniparaWebhook');
 
-// ── Provisioning ──────────────────────────────────────────────────────────────
-router.use('/provisioning', gateFeature('deployments'), require('../../api/provisioning'));
+// ── Local Agent ─────────────────────────────────────────────────────────────
+mount('/local-agent',     'agents',      '../../api/local-agent');
 
-// ── Automations ───────────────────────────────────────────────────────────────
-router.use('/automations', gateFeature('automations'), require('../../api/automations'));
-
-// Automation logs
-router.use('/automation-logs', gateFeature('automations'), require('../../api/automation-logs-routes'));
-
-// ── Knowledge ─────────────────────────────────────────────────────────────────
-router.use('/knowledge', gateFeature('knowledge'), require('../../api/knowledge'));
-
-// ── Memory ────────────────────────────────────────────────────────────────────
-// Prefer custom version
-router.use('/memory', gateFeature('agents'), require('../../app/custom/api/memory'));
-
-// ── Snipara ───────────────────────────────────────────────────────────────────
-router.use('/snipara', gateFeature('agents'), require('../../api/snipara'));
-router.use('/snipara/admin', gateFeature('agents'), require('../../api/sniparaAdmin'));
-router.use('/snipara/webhook', gateFeature('agents'), require('../../api/sniparaWebhook'));
-
-// ── Local Agent ───────────────────────────────────────────────────────────────
-router.use('/local-agent', gateFeature('agents'), require('../../api/local-agent'));
-
-// ── VPS ───────────────────────────────────────────────────────────────────────
-router.use('/vps', gateFeature('agents'), require('../../api/vps'));
+// ── VPS ─────────────────────────────────────────────────────────────────────
+mount('/vps',             'agents',      '../../api/vps');
 
 module.exports = router;

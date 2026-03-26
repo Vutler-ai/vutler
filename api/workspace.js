@@ -6,7 +6,7 @@ const { getAllowedFeatures, PLAN_SNIPARA } = require('../packages/core/middlewar
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
-  try { pool = require('../pg-updated'); } catch (e2) { console.error('[WORKSPACE] No DB pool found'); }
+  try { pool = require('../lib/postgres').pool; } catch (e2) { console.error('[WORKSPACE] No DB pool found'); }
 }
 
 const COORDINATOR_NAME = process.env.VUTLER_COORDINATOR_NAME || 'Jarvis';

@@ -6,7 +6,7 @@ const { PLANS } = require('../packages/core/middleware/featureGate');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
-  try { pool = require('../pg-updated'); } catch (e2) { console.error('[Billing] No DB pool found'); }
+  try { pool = require('../lib/postgres').pool; } catch (e2) { console.error('[Billing] No DB pool found'); }
 }
 
 const SCHEMA = 'tenant_vutler';
