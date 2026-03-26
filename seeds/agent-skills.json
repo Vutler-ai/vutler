@@ -406,5 +406,311 @@
     "description": "Develop and evaluate discount structures analyzing impact on margin, volume, win rates, and customer lifetime value",
     "category": "finance",
     "icon": "tag"
+  },
+  "ticket_resolution": {
+    "name": "Ticket Resolution",
+    "description": "Diagnose and resolve IT support tickets including password resets, software installs, VPN issues, and peripheral troubleshooting",
+    "category": "support",
+    "icon": "life-buoy"
+  },
+  "vulnerability_scanning": {
+    "name": "Vulnerability Scanning",
+    "description": "Run automated vulnerability scans against systems and applications, triage findings by CVSS severity, and generate remediation reports",
+    "category": "security",
+    "icon": "shield"
+  },
+  "incident_response": {
+    "name": "Incident Response",
+    "description": "Coordinate security incident response: containment, evidence collection, root cause analysis, and post-incident reporting",
+    "category": "security",
+    "icon": "alert-octagon"
+  },
+  "security_audit": {
+    "name": "Security Audit",
+    "description": "Conduct systematic security audits covering access controls, configurations, patch levels, and compliance with security frameworks",
+    "category": "security",
+    "icon": "lock"
+  },
+  "cicd_automation": {
+    "name": "CI/CD Automation",
+    "description": "Design, build, and maintain continuous integration and delivery pipelines including build, test, and deployment stages",
+    "category": "devops",
+    "icon": "git-merge"
+  },
+  "infrastructure_as_code": {
+    "name": "Infrastructure as Code",
+    "description": "Write and manage infrastructure definitions using Terraform, Pulumi, or CloudFormation for reproducible, version-controlled environments",
+    "category": "devops",
+    "icon": "code"
+  },
+  "monitoring_alerting": {
+    "name": "Monitoring & Alerting",
+    "description": "Configure and manage observability stacks including metrics, logs, traces, and on-call alert policies",
+    "category": "devops",
+    "icon": "activity"
+  },
+  "firewall_management": {
+    "name": "Firewall Management",
+    "description": "Review and manage firewall rule sets, perform access control audits, and document network security policies",
+    "category": "networking",
+    "icon": "shield-off"
+  },
+  "dns_management": {
+    "name": "DNS Management",
+    "description": "Manage DNS zones, records, TTLs, and propagation — troubleshoot resolution failures and configure split-horizon DNS",
+    "category": "networking",
+    "icon": "globe"
+  },
+  "vpn_configuration": {
+    "name": "VPN Configuration",
+    "description": "Deploy and manage VPN gateways, client configurations, and access policies for secure remote connectivity",
+    "category": "networking",
+    "icon": "lock"
+  },
+  "device_management": {
+    "name": "Device Management",
+    "description": "Manage IoT device fleets: provisioning, firmware updates, health monitoring, and decommissioning workflows",
+    "category": "iot",
+    "icon": "cpu"
+  },
+  "sensor_data_analysis": {
+    "name": "Sensor Data Analysis",
+    "description": "Ingest, process, and analyze time-series sensor data to detect anomalies, trends, and threshold violations",
+    "category": "iot",
+    "icon": "radio"
+  },
+  "edge_computing": {
+    "name": "Edge Computing",
+    "description": "Design and manage edge computing deployments for low-latency data processing closer to IoT device sources",
+    "category": "iot",
+    "icon": "server"
+  },
+  "etl_pipelines": {
+    "name": "ETL Pipelines",
+    "description": "Build and maintain extract, transform, and load pipelines that move data reliably between systems at scale",
+    "category": "data",
+    "icon": "database"
+  },
+  "data_quality": {
+    "name": "Data Quality",
+    "description": "Define and enforce data quality rules including completeness, accuracy, consistency, and timeliness checks",
+    "category": "data",
+    "icon": "check-circle"
+  },
+  "schema_management": {
+    "name": "Schema Management",
+    "description": "Design, version, and evolve database schemas with backward-compatible migrations and documentation",
+    "category": "data",
+    "icon": "layers"
+  },
+  "test_automation": {
+    "name": "Test Automation",
+    "description": "Design and implement automated test suites covering unit, integration, end-to-end, and performance testing",
+    "category": "qa",
+    "icon": "play-circle"
+  },
+  "bug_tracking": {
+    "name": "Bug Tracking",
+    "description": "Capture, classify, and track bugs through the full lifecycle with reproducibility steps and severity ratings",
+    "category": "qa",
+    "icon": "bug"
+  },
+  "regression_testing": {
+    "name": "Regression Testing",
+    "description": "Execute and manage regression test suites to verify that new changes do not break existing functionality",
+    "category": "qa",
+    "icon": "rotate-ccw"
+  },
+  "contract_review": {
+    "name": "Contract Review",
+    "description": "Review contracts for risks, missing clauses, and non-standard terms — summarize key obligations and red flags",
+    "category": "legal",
+    "icon": "file-text"
+  },
+  "compliance_assessment": {
+    "name": "Compliance Assessment",
+    "description": "Assess organizational processes and controls against regulatory frameworks such as GDPR, SOC 2, ISO 27001, and HIPAA",
+    "category": "legal",
+    "icon": "clipboard-check"
+  },
+  "policy_drafting": {
+    "name": "Policy Drafting",
+    "description": "Draft and maintain internal policies including privacy notices, acceptable use, and information security policies",
+    "category": "legal",
+    "icon": "edit"
+  },
+  "data_mapping": {
+    "name": "Data Mapping",
+    "description": "Document data flows across systems identifying personal data categories, legal bases, and cross-border transfers",
+    "category": "legal",
+    "icon": "map"
+  },
+  "dpia": {
+    "name": "DPIA",
+    "description": "Conduct Data Protection Impact Assessments for high-risk processing activities in line with GDPR Article 35",
+    "category": "legal",
+    "icon": "shield"
+  },
+  "consent_management": {
+    "name": "Consent Management",
+    "description": "Manage consent records, preference centers, and withdrawal workflows to ensure lawful data processing",
+    "category": "legal",
+    "icon": "toggle-right"
+  },
+  "api_documentation": {
+    "name": "API Documentation",
+    "description": "Write clear, accurate API reference documentation including endpoints, parameters, request/response examples, and error codes",
+    "category": "content",
+    "icon": "book-open"
+  },
+  "release_notes": {
+    "name": "Release Notes",
+    "description": "Write concise release notes summarizing new features, bug fixes, breaking changes, and upgrade instructions",
+    "category": "content",
+    "icon": "tag"
+  },
+  "user_research": {
+    "name": "User Research",
+    "description": "Plan and execute user research activities including interviews, usability tests, surveys, and contextual inquiry",
+    "category": "design",
+    "icon": "users"
+  },
+  "usability_testing": {
+    "name": "Usability Testing",
+    "description": "Design and run usability test sessions, analyze task completion and error rates, and synthesize findings into design recommendations",
+    "category": "design",
+    "icon": "mouse-pointer"
+  },
+  "brand_guidelines": {
+    "name": "Brand Guidelines",
+    "description": "Enforce and evolve brand guidelines covering tone of voice, visual identity, messaging hierarchy, and usage rules",
+    "category": "content",
+    "icon": "feather"
+  },
+  "requirements_gathering": {
+    "name": "Requirements Gathering",
+    "description": "Elicit, document, and validate functional and non-functional requirements from stakeholders using structured techniques",
+    "category": "operations",
+    "icon": "clipboard"
+  },
+  "process_mapping": {
+    "name": "Process Mapping",
+    "description": "Create detailed process maps and swimlane diagrams to document current-state workflows and identify improvement opportunities",
+    "category": "operations",
+    "icon": "git-branch"
+  },
+  "user_stories": {
+    "name": "User Stories",
+    "description": "Write well-formed user stories with acceptance criteria following INVEST principles for agile development teams",
+    "category": "operations",
+    "icon": "file-text"
+  },
+  "logistics_coordination": {
+    "name": "Logistics Coordination",
+    "description": "Coordinate inbound and outbound logistics, carrier selection, shipment tracking, and customs documentation",
+    "category": "operations",
+    "icon": "truck"
+  },
+  "vendor_management": {
+    "name": "Vendor Management",
+    "description": "Manage vendor relationships including performance reviews, SLA tracking, escalations, and contract renewals",
+    "category": "operations",
+    "icon": "briefcase"
+  },
+  "event_planning": {
+    "name": "Event Planning",
+    "description": "Plan and coordinate events including venue selection, vendor booking, budget tracking, and run-of-show creation",
+    "category": "operations",
+    "icon": "map-pin"
+  },
+  "attendee_management": {
+    "name": "Attendee Management",
+    "description": "Manage event registrations, RSVPs, waitlists, communications, and on-site check-in workflows",
+    "category": "operations",
+    "icon": "user-check"
+  },
+  "social_listening": {
+    "name": "Social Listening",
+    "description": "Monitor brand mentions, competitor activity, and industry conversations across social platforms and forums",
+    "category": "marketing",
+    "icon": "radio"
+  },
+  "community_moderation": {
+    "name": "Community Moderation",
+    "description": "Enforce community guidelines, review flagged content, manage bans, and maintain a safe and constructive community environment",
+    "category": "marketing",
+    "icon": "shield"
+  },
+  "translation": {
+    "name": "Translation",
+    "description": "Translate content accurately between languages while preserving tone, intent, and cultural nuance",
+    "category": "content",
+    "icon": "globe"
+  },
+  "localization": {
+    "name": "Localization",
+    "description": "Adapt content for target markets including currency, date formats, cultural references, and regulatory language",
+    "category": "content",
+    "icon": "map-pin"
+  },
+  "training_design": {
+    "name": "Training Design",
+    "description": "Design structured training programs and learning paths with objectives, activities, assessments, and completion criteria",
+    "category": "operations",
+    "icon": "book"
+  },
+  "assessment_creation": {
+    "name": "Assessment Creation",
+    "description": "Create knowledge checks, quizzes, and practical assessments to verify learning outcomes and identify skill gaps",
+    "category": "operations",
+    "icon": "check-square"
+  },
+  "financial_modeling": {
+    "name": "Financial Modeling",
+    "description": "Build and maintain financial models for scenario analysis, valuation, budgeting, and strategic planning",
+    "category": "finance",
+    "icon": "trending-up"
+  },
+  "forecasting": {
+    "name": "Forecasting",
+    "description": "Develop revenue, expense, and cash flow forecasts using statistical models and business driver assumptions",
+    "category": "finance",
+    "icon": "bar-chart-2"
+  },
+  "investor_reporting": {
+    "name": "Investor Reporting",
+    "description": "Prepare investor updates, board decks, and financial packages with KPI dashboards and variance commentary",
+    "category": "finance",
+    "icon": "pie-chart"
+  },
+  "property_listing": {
+    "name": "Property Listing",
+    "description": "Create compelling property listings with descriptions, key features, photography guidance, and pricing rationale",
+    "category": "real-estate",
+    "icon": "home"
+  },
+  "market_valuation": {
+    "name": "Market Valuation",
+    "description": "Conduct comparative market analysis to determine property values using recent sales, market conditions, and property attributes",
+    "category": "real-estate",
+    "icon": "dollar-sign"
+  },
+  "appointment_scheduling": {
+    "name": "Appointment Scheduling",
+    "description": "Schedule property viewings, inspections, and client consultations coordinating between all parties",
+    "category": "real-estate",
+    "icon": "calendar"
+  },
+  "insurance_verification": {
+    "name": "Insurance Verification",
+    "description": "Verify patient insurance eligibility, benefits, copays, and prior authorization requirements before appointments",
+    "category": "healthcare",
+    "icon": "shield-check"
+  },
+  "patient_intake": {
+    "name": "Patient Intake",
+    "description": "Guide patients through intake forms, collect medical history, and prepare clinical notes for provider review",
+    "category": "healthcare",
+    "icon": "user-plus"
   }
 }

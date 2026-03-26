@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   Home,
   MessageSquare,
@@ -21,8 +21,11 @@ import {
   ChevronLeft,
   MoreHorizontal,
   Brain,
+  Key,
+  LogOut,
 } from 'lucide-react';
 import { useFeatures } from '@/hooks/useFeatures';
+import { useAuth } from '@/lib/auth/auth-context';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -163,13 +166,25 @@ const sections: NavSection[] = [
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AppSidebar({
-  user = { name: 'User', email: 'user@vutler.com', initials: 'U' },
+  user: userProp,
   mobileOpen = false,
   onMobileClose,
 }: AppSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const pathname = usePathname();
+  const router = useRouter();
   const { hasFeature, loading } = useFeatures();
+  const { user: authUser, logout } = useAuth();
+
+  // Resolve user from auth context or prop fallback
+  const resolvedUser = authUser
+    ? {
+        name: authUser.display_name || authUser.email || 'User',
+        email: authUser.email || '',
+      }
+    : userProp ?? { name: 'User', email: '' };
 
   // Persist collapsed state
   useEffect(() => {
@@ -182,9 +197,26 @@ export default function AppSidebar({
     window.dispatchEvent(new CustomEvent('sidebar-toggle', { detail: { collapsed } }));
   }, [collapsed]);
 
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const handleLogout = async () => {
+    setMenuOpen(false);
+    await logout();
+    router.push('/login');
+  };
+
   const initials =
-    user.initials ||
-    (user.name || 'U')
+    resolvedUser.name
       .split(' ')
       .map((n: string) => n[0] || '')
       .join('')
@@ -311,11 +343,51 @@ export default function AppSidebar({
       </nav>
 
       {/* User profile */}
-      <div className="p-3 border-t border-[rgba(255,255,255,0.07)]">
+      <div className="p-3 border-t border-[rgba(255,255,255,0.07)] relative" ref={menuRef}>
+        {/* Dropdown menu */}
+        {menuOpen && (
+          <div className="absolute bottom-full left-3 right-3 mb-2 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl shadow-xl overflow-hidden z-50">
+            <Link
+              href="/settings"
+              onClick={() => setMenuOpen(false)}
+              className="flex items-center space-x-3 px-4 py-2.5 text-sm text-[#9ca3af] hover:bg-[#1e1f2e] hover:text-white transition-colors"
+            >
+              <Settings className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span>Settings</span>
+            </Link>
+            <Link
+              href="/billing"
+              onClick={() => setMenuOpen(false)}
+              className="flex items-center space-x-3 px-4 py-2.5 text-sm text-[#9ca3af] hover:bg-[#1e1f2e] hover:text-white transition-colors"
+            >
+              <CreditCard className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span>Billing</span>
+            </Link>
+            <Link
+              href="/settings?tab=api-keys"
+              onClick={() => setMenuOpen(false)}
+              className="flex items-center space-x-3 px-4 py-2.5 text-sm text-[#9ca3af] hover:bg-[#1e1f2e] hover:text-white transition-colors"
+            >
+              <Key className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span>API Keys</span>
+            </Link>
+            <div className="border-t border-[rgba(255,255,255,0.07)] my-1" />
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center space-x-3 px-4 py-2.5 text-sm text-red-400 hover:bg-[#1e1f2e] hover:text-red-300 transition-colors"
+            >
+              <LogOut className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        )}
+
         <button
+          onClick={() => setMenuOpen((prev) => !prev)}
           className={`w-full flex items-center ${collapsed ? 'justify-center' : 'space-x-3'} px-2 py-2 rounded-lg hover:bg-[#14151f] transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]`}
           aria-label="User menu"
-          title={collapsed ? user.name : undefined}
+          aria-expanded={menuOpen}
+          title={collapsed ? resolvedUser.name : undefined}
         >
           <div
             className="w-8 h-8 rounded-full bg-gradient-to-br from-[#a855f7] to-[#3b82f6] flex items-center justify-center text-white font-semibold text-xs flex-shrink-0"
@@ -326,8 +398,8 @@ export default function AppSidebar({
           {!collapsed && (
             <>
               <div className="flex-1 min-w-0 text-left">
-                <p className="text-sm font-medium text-white truncate">{user.name}</p>
-                <p className="text-xs text-[#6b7280] truncate">{user.email}</p>
+                <p className="text-sm font-medium text-white truncate">{resolvedUser.name}</p>
+                <p className="text-xs text-[#6b7280] truncate">{resolvedUser.email}</p>
               </div>
               <MoreHorizontal className="w-4 h-4 text-[#6b7280] flex-shrink-0" aria-hidden="true" />
             </>

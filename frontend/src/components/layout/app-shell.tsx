@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import AppSidebar from './app-sidebar';
 import AppHeader from './app-header';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth/auth-context';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,14 +22,29 @@ interface AppShellProps {
 
 export default function AppShell({
   children,
-  user = { name: 'Alex Lopez', email: 'alex@vutler.com', initials: 'AL' },
+  user: userProp,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user: authUser, logout } = useAuth();
+
+  // Resolve user from auth context or prop fallback
+  const user = authUser
+    ? {
+        name: authUser.display_name || authUser.email || 'User',
+        email: authUser.email || '',
+        initials: (authUser.display_name || authUser.email || 'U')
+          .split(' ')
+          .map((n: string) => n[0] || '')
+          .join('')
+          .toUpperCase()
+          .slice(0, 2) || 'U',
+      }
+    : userProp ?? { name: 'User', email: '', initials: 'U' };
 
   const handleLogout = async () => {
     try {
-      await api.logout();
+      await logout();
     } catch {
       // best effort
     } finally {

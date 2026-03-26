@@ -200,16 +200,18 @@ export default function UsagePage() {
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Tokens Used (monitoring)" value={fmt(totalTokens)} color="from-blue-500 to-purple-600" />
-          <StatCard label="Estimated Cost" value={fmtCost(totalCost)} color="from-green-500 to-emerald-600" />
-          <StatCard label="API Calls" value={fmt(totalRequests)} color="from-yellow-500 to-orange-500" />
-          <StatCard label="Avg Latency" value={avgLatency ? `${avgLatency}ms` : "—"} color="from-pink-500 to-rose-600" />
-        </div>
-        <p className="text-xs text-[#6b7280]">
-          Token tracking is for monitoring only. LLM is BYOK (Bring Your Own Key) — no plan-based token limits.{" "}
-          <a href="/billing" className="text-[#3b82f6] hover:underline">Purchase LLM Credits</a> if you don&apos;t have your own key.
-        </p>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard label="Tokens Used (monitoring)" value={fmt(totalTokens)} color="from-blue-500 to-purple-600" />
+            <StatCard label="Estimated Cost" value={fmtCost(totalCost)} color="from-green-500 to-emerald-600" />
+            <StatCard label="API Calls" value={fmt(totalRequests)} color="from-yellow-500 to-orange-500" />
+            <StatCard label="Avg Latency" value={avgLatency ? `${avgLatency}ms` : "—"} color="from-pink-500 to-rose-600" />
+          </div>
+          <p className="text-xs text-[#6b7280] mt-2">
+            Token tracking is for monitoring only. LLM is BYOK (Bring Your Own Key) — no plan-based token limits.{" "}
+            <a href="/billing" className="text-[#3b82f6] hover:underline">Purchase LLM Credits</a> if you do not have your own key.
+          </p>
+        </>
       )}
 
       {/* Table */}
