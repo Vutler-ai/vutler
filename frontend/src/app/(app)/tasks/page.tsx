@@ -102,7 +102,7 @@ function AssigneeAvatar({ name }: { name: string | null | undefined }) {
   return (
     <span
       className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-[#3b82f6]/20 text-[#3b82f6] text-xs font-semibold shrink-0"
-      title={name}
+      title={name || undefined}
     >
       {initials}
     </span>
