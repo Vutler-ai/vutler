@@ -1,106 +1,185 @@
 'use strict';
 
+/**
+ * Sandbox API — Code Execution Environment
+ *
+ * Provides real code execution for agents (JS, Python, Shell)
+ * via child_process with timeout enforcement and DB persistence.
+ *
+ * Routes:
+ *   POST /api/v1/sandbox/execute      — Execute a single code snippet
+ *   GET  /api/v1/sandbox/executions   — List executions (paginated + filtered)
+ *   GET  /api/v1/sandbox/executions/:id — Get single execution with full output
+ *   POST /api/v1/sandbox/batch        — Run multiple scripts in sequence
+ */
+
 const express = require('express');
 const router = express.Router();
+const { executeInSandbox, executeBatch } = require('../services/sandbox');
 const pool = require('../lib/vaultbrix');
-const { execSync } = require('child_process');
 
 const SCHEMA = 'tenant_vutler';
+const MAX_TIMEOUT_MS = 60_000;
+
+// ── DB setup ──────────────────────────────────────────────────────────────────
 
 async function ensureSandboxTable() {
   try {
-    const check = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='sandbox_executions'`
-    );
-    if (check.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.sandbox_executions (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          agent_name TEXT,
-          task_type TEXT,
-          title TEXT,
-          status TEXT DEFAULT 'pending',
-          duration_ms INT,
-          output TEXT,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-    }
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${SCHEMA}.sandbox_executions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID,
+        agent_id TEXT,
+        language TEXT NOT NULL,
+        code TEXT NOT NULL,
+        stdout TEXT,
+        stderr TEXT,
+        exit_code INTEGER,
+        status TEXT DEFAULT 'pending',
+        duration_ms INTEGER,
+        batch_id UUID,
+        batch_index INTEGER,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
   } catch (err) {
-    console.warn('[Sandbox] ensureSandboxTable warning (table may already exist):', err.message);
+    console.warn('[Sandbox] ensureSandboxTable warning:', err.message);
   }
 }
 
-// GET /api/v1/sandbox/executions
-router.get('/executions', async (req, res) => {
-  try {
-    await ensureSandboxTable();
-    const result = await pool.query(
-      `SELECT id, agent_name, task_type, title, status, duration_ms, output, created_at FROM ${SCHEMA}.sandbox_executions ORDER BY created_at DESC LIMIT 50`
-    );
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    console.error('[Sandbox] Executions error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// Run once on module load
+ensureSandboxTable().catch(() => {});
 
-// GET /api/v1/sandbox/stats
-router.get('/stats', async (req, res) => {
-  try {
-    await ensureSandboxTable();
-    const result = await pool.query(`
-      SELECT
-        COUNT(*)::int AS total_runs,
-        ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'pass') / GREATEST(COUNT(*), 1), 1) AS pass_rate,
-        ROUND(AVG(duration_ms))::int AS avg_duration_ms,
-        COUNT(DISTINCT agent_name)::int AS active_agents
-      FROM ${SCHEMA}.sandbox_executions
-    `);
-    const row = result.rows[0] || {};
-    res.json({
-      success: true,
-      data: {
-        totalRuns: row.total_runs || 0,
-        passRate: parseFloat(row.pass_rate) || 0,
-        avgDurationMs: row.avg_duration_ms || 0,
-        activeAgents: row.active_agents || 0
-      }
-    });
-  } catch (err) {
-    console.error('[Sandbox] Stats error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
+// ── POST /execute ─────────────────────────────────────────────────────────────
 
-// POST /api/v1/sandbox/execute
 router.post('/execute', async (req, res) => {
+  const { language, code, timeout_ms, agent_id } = req.body || {};
+
+  if (!language || !code) {
+    return res.status(400).json({ success: false, error: 'language and code are required' });
+  }
+
+  const supported = ['javascript', 'python', 'shell'];
+  if (!supported.includes(language)) {
+    return res.status(400).json({ success: false, error: `language must be one of: ${supported.join(', ')}` });
+  }
+
+  const timeoutMs = Math.min(
+    Number.isFinite(timeout_ms) ? Number(timeout_ms) : 30_000,
+    MAX_TIMEOUT_MS
+  );
+
   try {
-    await ensureSandboxTable();
-    const { agent, type, code } = req.body || {};
-    const title = (code || '').substring(0, 100) || 'Untitled execution';
-    const t0 = Date.now();
-    let output = '';
-    let status = 'pass';
+    const result = await executeInSandbox(language, code, agent_id || null, timeoutMs);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[Sandbox] Execute error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
-    try {
-      // Simple sandboxed execution with timeout
-      output = execSync('echo "Sandbox execution placeholder"', { timeout: 10000, encoding: 'utf8' });
-    } catch (execErr) {
-      status = 'error';
-      output = execErr.message || 'Execution failed';
-    }
+// ── GET /executions ───────────────────────────────────────────────────────────
 
-    const durationMs = Date.now() - t0;
-    const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.sandbox_executions (agent_name, task_type, title, status, duration_ms, output)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, status, duration_ms, created_at`,
-      [agent || 'Unknown', type || 'general', title, status, durationMs, output]
+router.get('/executions', async (req, res) => {
+  const { agent_id, language, status, limit = '20', offset = '0' } = req.query;
+
+  const limitN = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 100);
+  const offsetN = Math.max(parseInt(offset, 10) || 0, 0);
+
+  const conditions = ['batch_id IS NULL']; // top-level only (not batch sub-items)
+  const params = [];
+
+  if (agent_id) {
+    params.push(agent_id);
+    conditions.push(`agent_id = $${params.length}`);
+  }
+  if (language) {
+    params.push(language);
+    conditions.push(`language = $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    conditions.push(`status = $${params.length}`);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  try {
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM ${SCHEMA}.sandbox_executions ${where}`,
+      params
     );
+    const total = countResult.rows[0]?.total || 0;
+
+    params.push(limitN, offsetN);
+    const result = await pool.query(
+      `SELECT id, agent_id, language, code, stdout, stderr, exit_code, status, duration_ms, batch_id, batch_index, created_at
+       FROM ${SCHEMA}.sandbox_executions
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    res.json({ success: true, data: { executions: result.rows, total } });
+  } catch (err) {
+    console.error('[Sandbox] List executions error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /executions/:id ───────────────────────────────────────────────────────
+
+router.get('/executions/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT id, agent_id, language, code, stdout, stderr, exit_code, status, duration_ms, batch_id, batch_index, created_at
+       FROM ${SCHEMA}.sandbox_executions
+       WHERE id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Execution not found' });
+    }
 
     res.json({ success: true, data: result.rows[0] });
   } catch (err) {
-    console.error('[Sandbox] Execute error:', err.message);
+    console.error('[Sandbox] Get execution error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /batch ───────────────────────────────────────────────────────────────
+
+router.post('/batch', async (req, res) => {
+  const { scripts, stop_on_error = true, agent_id } = req.body || {};
+
+  if (!Array.isArray(scripts) || scripts.length === 0) {
+    return res.status(400).json({ success: false, error: 'scripts must be a non-empty array' });
+  }
+
+  if (scripts.length > 20) {
+    return res.status(400).json({ success: false, error: 'Maximum 20 scripts per batch' });
+  }
+
+  const supported = ['javascript', 'python', 'shell'];
+  for (const [i, s] of scripts.entries()) {
+    if (!s.language || !s.code) {
+      return res.status(400).json({ success: false, error: `scripts[${i}]: language and code are required` });
+    }
+    if (!supported.includes(s.language)) {
+      return res.status(400).json({ success: false, error: `scripts[${i}]: invalid language "${s.language}"` });
+    }
+  }
+
+  try {
+    const results = await executeBatch(scripts, { stopOnError: stop_on_error, agentId: agent_id || null });
+    res.json({ success: true, data: results });
+  } catch (err) {
+    console.error('[Sandbox] Batch error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
