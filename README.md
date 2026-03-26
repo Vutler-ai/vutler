@@ -1,485 +1,258 @@
 # Vutler Platform
 
-> AI Agent Management Platform by [Starbox Group](https://starbox-group.com/)
+> **Two products. One AI platform.** — by [Starbox Group](https://starbox-group.com/)
 
-Vutler is a production-grade platform for creating, deploying, and orchestrating AI agents that interact through chat, email, webhooks, and custom integrations. Built with Node.js, PostgreSQL, and designed for multi-tenant enterprise environments.
+Vutler is a production-grade platform for deploying AI agents that collaborate with humans across chat, email, drive, and tasks. Built on a monorepo architecture with two distinct products.
 
-**Homepage:** [vutler.ai](https://vutler.ai)
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- **Node.js** 20+ ([download](https://nodejs.org/))
-- **PostgreSQL** 15+ ([setup guide](https://www.postgresql.org/download/))
-- **Redis** 7+ (optional, for caching/pub-sub)
-- **npm** 10+
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/alopez3006/vutler-platform.git
-cd vutler-platform
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env  # Then edit with your settings
-
-# Run migrations (if applicable)
-npm run db:migrate
-
-# Start development server
-npm run dev
-
-# Or start production
-npm start
-```
-
-**Health check:**
-```bash
-curl http://localhost:3001/api/v1/health
-```
+**Homepage:** [vutler.ai](https://vutler.ai) · **App:** [app.vutler.ai](https://app.vutler.ai) · **Open Source:** [github.com/Vutler-ai/vutler](https://github.com/Vutler-ai/vutler)
 
 ---
 
-## 📋 Core Features
+## Two Products
 
-### Agent Runtime
-- **Multi-agent orchestration** with intelligent routing
-- **LLM support**: OpenAI, Anthropic, MiniMax
-- **Tool framework**: extensible system for custom tools
-- **Memory integration**: Snipara for persistent context
+### Vutler Office (Proprietary SaaS)
+AI-powered workspace where humans and agents collaborate.
 
-### Communication Channels
-- **Chat**: Deep Rocket.Chat integration with DDP protocol
-- **Email**: Inbound/outbound processing (IMAP/SMTP)
-- **Webhooks**: HTTP event handlers for custom integrations
-- **Real-time**: WebSocket + Socket.io for live updates
+| Feature | Description |
+|---------|-------------|
+| **Chat** | Real-time messaging with AI agents in the conversation |
+| **Email** | Agents send/receive via Postal (custom domains or @slug.vutler.ai) |
+| **Drive** | Shared file storage on Exoscale SOS (Swiss, GDPR/LPD) |
+| **Calendar** | Team scheduling with event management |
+| **Tasks** | Kanban board with subtasks + Snipara sync |
+| **Memory** | Workspace knowledge + agent memories + cross-scope search |
+| **Billing** | Stripe checkout with 8 plan tiers |
 
-### Enterprise Features
-- **Multi-tenant**: Workspace-based data isolation & RBAC
-- **VDrive**: Encrypted file storage with chat integration
-- **Billing**: Stripe integration for subscription management
-- **Security**: JWT auth, rate limiting, HTTPS, OWASP compliance
-- **Compliance**: GDPR, data retention policies
+### Vutler Agents (Open Source — AGPL-3.0)
+Build, deploy, and orchestrate AI agents anywhere.
 
----
-
-## 🛠 Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| **Runtime** | Node.js 20+ |
-| **API** | Express.js 4.x |
-| **Databases** | PostgreSQL 15+ (primary), MongoDB (Rocket.Chat), Redis (cache) |
-| **Real-time** | WebSocket (DDP), Socket.io |
-| **Container** | Docker + Docker Compose |
-| **Proxy** | Nginx |
-| **Process** | PM2 (production) |
-| **Auth** | JWT, OAuth2 |
-| **Payments** | Stripe API |
-
-### Key Dependencies
-```json
-{
-  "express": "^4.18.2",
-  "pg": "^8.11.0",
-  "mongodb": "^6.0.0",
-  "jsonwebtoken": "^9.0.3",
-  "stripe": "^20.4.1",
-  "axios": "^1.6.0",
-  "ws": "^8.19.0",
-  "helmet": "^8.1.0",
-  "express-rate-limit": "^8.3.0"
-}
-```
+| Feature | Description |
+|---------|-------------|
+| **17 Templates** | Pre-built agents for sales, ops, technical, finance |
+| **68 Skills** | Modular capabilities assignable to any agent |
+| **Nexus CLI** | Deploy agents locally or at client sites |
+| **Multi-Agent** | Rule-based task routing across agent teams |
+| **OpenRouter Auto** | Best model per prompt (200+ models) |
+| **Marketplace** | Share and install agent configurations |
+| **Sandbox** | Test agent execution safely |
 
 ---
 
-## 📁 Project Structure
+## Architecture
 
 ```
 vutler-platform/
-├── index.js                 # Main API server
-├── agents.js               # Agent runtime & orchestration
-├── agentRuntime.js         # Agent execution engine
-├── auth.js                 # Authentication & JWT
-├── chat-api.js             # Rocket.Chat integration
-├── drive.html              # VDrive frontend
-├── webhooks/               # Webhook handlers
-├── tests/                  # Test suite
-│   ├── llm-router.test.js
-│   ├── agent-identity.test.js
-│   ├── chat.test.js
-│   └── drive-api.test.js
-├── package.json
-├── vutler-nginx.conf       # Nginx configuration
-├── Dockerfile
-├── .env                    # Environment variables
-└── AGENTS.md              # Developer guide
+├── packages/
+│   ├── core/           # Shared: auth, DB, permissions, feature gate
+│   ├── office/         # SaaS: chat, email, drive, tasks, calendar
+│   ├── agents/         # Open: agent routes, marketplace, swarm, LLM
+│   ├── nexus/          # Open: CLI, multi-agent runtime, providers
+│   └── mcp-server/     # MCP: 13 tools for external AI agents
+├── frontend/           # Next.js 16 + shadcn/ui + Tailwind CSS 4
+├── services/           # LLM router, Snipara client, Stripe, crypto
+├── api/                # Express routes (agents, nexus, billing, etc.)
+├── seeds/              # 17 templates + 68 skills
+└── tests/e2e/          # 9 test suites
 ```
 
 ---
 
-## 🔧 Configuration
+## Tech Stack
 
-### Environment Variables
-
-**Core:**
-```bash
-NODE_ENV=production              # development | production
-PORT=3001
-API_URL=https://api.vutler.ai
-
-DATABASE_URL=postgresql://...    # PostgreSQL connection string
-REDIS_URL=redis://...            # Redis connection (optional)
-MONGODB_URI=mongodb://...        # MongoDB for Rocket.Chat
-```
-
-**Authentication:**
-```bash
-AUTH_SECRET=your-jwt-secret
-OAUTH_CLIENT_ID=...
-OAUTH_CLIENT_SECRET=...
-```
-
-**Integrations:**
-```bash
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-MINMAX_API_KEY=...
-
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-
-ROCKET_CHAT_URL=https://chat.example.com
-ROCKET_CHAT_USER=vutler-bot
-ROCKET_CHAT_PASSWORD=...
-```
-
-**Email:**
-```bash
-IMAP_HOST=imap.gmail.com
-IMAP_PORT=993
-IMAP_USER=alex@vutler.com
-IMAP_PASSWORD=...
-
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=...
-SMTP_PASSWORD=...
-```
-
-**Storage (AWS S3/R2):**
-```bash
-AWS_REGION=eu-central-1
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-S3_BUCKET=vutler-files
-```
-
-See `.env.example` for complete reference.
+| Layer | Technology |
+|-------|-----------|
+| **Backend** | Node.js + Express.js |
+| **Frontend** | Next.js 16, React 19, TypeScript, shadcn/ui, Tailwind CSS 4 |
+| **Database** | PostgreSQL (Vaultbrix) |
+| **LLM** | OpenRouter Auto, Anthropic, OpenAI, Groq, Mistral, Ollama |
+| **Memory** | Snipara (3-level scoping: instance, template, global) |
+| **Storage** | Exoscale SOS (Swiss, S3-compatible) |
+| **Email** | Postal (self-hosted SMTP) |
+| **Payments** | Stripe (live, 5 products, 10 prices) |
+| **Auth** | JWT + Google OAuth + GitHub OAuth |
+| **Hosting** | Swiss 🇨🇭 (Geneva datacenter, GDPR/LPD) |
 
 ---
 
-## 🚦 Development
-
-### Scripts
+## Quick Start
 
 ```bash
-# Development with auto-reload
-npm run dev
+# Clone
+git clone https://github.com/alopez3006/vutler-platform.git
+cd vutler-platform
 
-# Run all tests
-npm test
+# Install
+npm install
+cd frontend && npm install && cd ..
 
-# Test specific module
-npm run test:llm         # LLM router
-npm run test:agent       # Agent identity
-npm run test:chat        # Chat integration
-npm run test:drive       # VDrive API
-npm run test:email-send  # Email sending
-npm run test:email-recv  # Email receiving
+# Configure
+cp .env.example .env  # Add your keys
 
-# Watch tests
-npm run test:watch
+# Run API
+PORT=3001 node index.js
 
-# Linting
-npm run lint
-npm run format
+# Run Frontend (separate terminal)
+cd frontend && npm run dev
 ```
 
-### API Endpoints
+**Health:** `curl http://localhost:3001/api/v1/health`
 
-**Health & Status:**
-```
-GET  /api/v1/health
-GET  /api/v1/status
+---
+
+## API Endpoints
+
+### Workspace (Office)
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET/POST | `/api/v1/chat/channels` | Chat channels + messages |
+| GET/POST | `/api/v1/email` | Email inbox + send + drafts + approval |
+| GET/POST | `/api/v1/drive/files` | File browser + upload + download |
+| GET/POST | `/api/v1/tasks-v2` | Tasks + subtasks + Snipara sync |
+| GET/POST | `/api/v1/calendar/events` | Calendar events CRUD |
+| GET | `/api/v1/memory/*` | Memory: workspace, agents, search |
+
+### Agents
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET/POST | `/api/v1/agents` | Agent CRUD + execute |
+| GET/POST | `/api/v1/nexus/*` | Nexus node management + multi-agent |
+| GET | `/api/v1/marketplace/templates` | 17 agent templates |
+| GET | `/api/v1/marketplace/skills` | 68 skills by category |
+| GET/POST | `/api/v1/llm/*` | LLM provider management |
+
+### Billing
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/v1/billing/plans` | 8 plan tiers |
+| GET | `/api/v1/billing/subscription` | Current subscription + usage |
+| POST | `/api/v1/billing/checkout` | Stripe checkout session |
+| POST | `/api/v1/billing/portal` | Stripe customer portal |
+| POST | `/api/v1/billing/webhooks/stripe` | Stripe webhook handler |
+
+### Auth
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/v1/auth/login` | Email/password login |
+| POST | `/api/v1/auth/register` | New account |
+| GET | `/api/v1/auth/google` | Google OAuth |
+| GET | `/api/v1/auth/github` | GitHub OAuth |
+
+---
+
+## MCP Server
+
+Expose your Vutler workspace to any AI agent (Claude Code, Cursor, etc.):
+
+```json
+{
+  "mcpServers": {
+    "vutler": {
+      "command": "npx",
+      "args": ["@vutler/mcp-office"],
+      "env": {
+        "VUTLER_API_KEY": "your-api-key",
+        "VUTLER_API_URL": "https://app.vutler.ai"
+      }
+    }
+  }
+}
 ```
 
-**Agents:**
-```
-GET    /api/v1/agents              # List agents
-POST   /api/v1/agents              # Create agent
-GET    /api/v1/agents/:id          # Get agent details
-PUT    /api/v1/agents/:id          # Update agent
-DELETE /api/v1/agents/:id          # Delete agent
-POST   /api/v1/agents/:id/invoke   # Execute agent
-```
+**13 tools:** send_email, read_emails, send_chat, create_task, list_tasks, upload_file, list_files, list_events, search, and more.
 
-**Messages & Chat:**
-```
-POST   /api/v1/messages             # Send message
-GET    /api/v1/messages             # Get message history
-POST   /api/v1/chat/webhook         # Incoming webhook
-```
+---
 
-**VDrive (File Storage):**
-```
-POST   /api/v1/vdrive/upload        # Upload file
-GET    /api/v1/vdrive/:fileId       # Download file
-DELETE /api/v1/vdrive/:fileId       # Delete file
-GET    /api/v1/vdrive/list          # List files
-```
+## Nexus CLI
 
-**Billing:**
-```
-POST   /api/v1/billing/checkout     # Stripe checkout session
-GET    /api/v1/billing/usage        # Usage stats
-```
+Deploy agents locally or at client sites:
 
-**Webhooks:**
-```
-POST   /api/webhooks/stripe         # Stripe events
-POST   /api/webhooks/rocket-chat    # Rocket.Chat events
+```bash
+# Local mode (clone cloud agents to your machine)
+vutler-nexus start --key YOUR_KEY --name "My Workstation"
+
+# Multi-agent (3 agents with routing rules)
+vutler-nexus agents          # List running agents
+vutler-nexus spawn mike      # Spawn an agent from pool
+
+# Enterprise (deploy at client site)
+vutler-nexus create-agent    # Create new agent for client
 ```
 
 ---
 
-## 🐳 Docker Deployment
+## Plans & Pricing
 
-### Local Docker Setup
+| Plan | Price | Category |
+|------|-------|----------|
+| Free | $0/mo | Office |
+| Office Starter | $29/mo | Office |
+| Office Team | $79/mo | Office |
+| Agents Starter | $29/mo | Agents |
+| Agents Pro | $79/mo | Agents |
+| Full Platform | $129/mo | Full |
+| Enterprise | Custom | Full |
 
+---
+
+## Deployment
+
+### Docker (Production)
 ```bash
-# Build image
+# API
 docker build -t vutler-api:latest .
+docker run -d --name vutler-api --network host --env-file .env vutler-api:latest
 
-# Run container
-docker run -d \
-  --name vutler-api \
-  -p 3001:3001 \
-  --env-file .env \
-  vutler-api:latest
-
-# View logs
-docker logs -f vutler-api
-
-# Stop container
-docker stop vutler-api
+# Frontend
+cd frontend && bash ../scripts/deploy-frontend.sh
 ```
 
-### Production (VPS)
-
-**Deploy from main branch:**
+### VPS
 ```bash
+ssh ubuntu@83.228.222.180
 cd /home/ubuntu/vutler
 git pull origin main
-./scripts/deploy-api.sh
+docker build --no-cache -t vutler-api:latest .
+bash scripts/deploy-frontend.sh
 ```
 
-**Via Docker Compose:**
+---
+
+## Testing
+
 ```bash
-docker-compose up -d
+# E2E tests (9 suites)
+npm run test:e2e
+
+# Suites: health, agents, tasks, chat, drive, billing, nexus, marketplace
 ```
 
 ---
 
-## 🔐 Security
+## Security
 
-### Best Practices
-- ✅ **HTTPS only** in production
-- ✅ **JWT validation** on all protected endpoints
-- ✅ **Rate limiting** (express-rate-limit)
-- ✅ **CORS** properly configured
-- ✅ **Helmet** security headers
-- ✅ **Input validation** (express-validator, Zod)
-- ✅ **SQL injection prevention** (parameterized queries)
-- ✅ **OWASP Top 10 compliance**
-
-### Authentication
-
-Default JWT structure:
-```json
-{
-  "sub": "user-uuid",
-  "email": "user@example.com",
-  "workspace": "workspace-id",
-  "iat": 1234567890,
-  "exp": 1234654290
-}
-```
-
-### Rate Limiting
-
-- **Public endpoints**: 100 req/min
-- **API endpoints**: 1000 req/min per user
-- **WebSocket**: 50 messages/min
+- JWT + OAuth (Google, GitHub)
+- Rate limiting (express-rate-limit)
+- Helmet security headers
+- Stripe webhook signature verification
+- CORS + CSRF protection
+- Swiss hosting (GDPR/LPD compliant)
 
 ---
 
-## 📊 Monitoring & Logging
+## License
 
-### Health Check
-```bash
-curl http://localhost:3001/api/v1/health
-```
-
-Response:
-```json
-{
-  "status": "ok",
-  "uptime": 3600,
-  "postgres": "connected",
-  "redis": "connected",
-  "timestamp": "2024-03-26T10:00:00Z"
-}
-```
-
-### Logs
-- **Console**: Development mode
-- **File**: `/var/log/vutler/api.log` (production)
-- **Format**: JSON for structured logging
+- **Vutler Agents** (packages/agents, packages/nexus, packages/core): **AGPL-3.0**
+- **Vutler Office** (packages/office, frontend, billing): **Proprietary**
 
 ---
 
-## 🤝 Contributing
+## Links
 
-We welcome contributions from the community!
-
-### Before You Start
-1. Read [AGENTS.md](./AGENTS.md) — comprehensive developer guide
-2. Check [CODING_STANDARDS.md](./CODING_STANDARDS.md) — code style
-3. Review open issues & PRs
-
-### Workflow
-```bash
-# 1. Create feature branch from `dev`
-git checkout -b feature/your-feature dev
-
-# 2. Make changes
-npm run format   # Format code
-npm run lint     # Check linting
-
-# 3. Test thoroughly
-npm test
-
-# 4. Push & create PR
-git push origin feature/your-feature
-```
-
-**Branch naming:**
-- `feature/` — new features
-- `fix/` — bug fixes
-- `docs/` — documentation
-- `test/` — tests
-- `refactor/` — refactoring
+- 🌐 [vutler.ai](https://vutler.ai)
+- 📱 [app.vutler.ai](https://app.vutler.ai)
+- 🐙 [github.com/Vutler-ai/vutler](https://github.com/Vutler-ai/vutler) (Open Source)
+- 💼 [starbox-group.com](https://starbox-group.com/)
 
 ---
 
-## 📦 Release & Versioning
-
-Follows **Semantic Versioning** (MAJOR.MINOR.PATCH):
-
-- **MAJOR**: Breaking changes (v2.0.0)
-- **MINOR**: New features, backward compatible (v1.1.0)
-- **PATCH**: Bug fixes (v1.0.1)
-
-**Release process:**
-```bash
-npm version patch|minor|major
-git push origin main --tags
-# GitHub Actions deploys automatically
-```
-
----
-
-## 🆘 Support & Contact
-
-### Documentation
-- **Full Docs**: [AGENTS.md](./AGENTS.md)
-- **Standards**: [CODING_STANDARDS.md](./CODING_STANDARDS.md)
-- **Security**: [SECURITY.md](./SECURITY.md)
-
-### Get Help
-- **Issues**: [GitHub Issues](https://github.com/alopez3006/vutler-platform/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/alopez3006/vutler-platform/discussions)
-- **Email**: support@vutler.ai
-- **Slack**: [Vutler Community](https://slack.vutler.ai)
-
-### Reporting Bugs
-```bash
-# Include in your report:
-1. Node.js version (node --version)
-2. Steps to reproduce
-3. Expected vs. actual behavior
-4. Error logs (no sensitive data!)
-5. Environment (dev/prod)
-```
-
----
-
-## 📄 License
-
-**MIT License** — See [LICENSE](./LICENSE) for full text.
-
-You are free to use, modify, and distribute this software with attribution.
-
----
-
-## 🎯 Roadmap
-
-- [ ] **v2.0** — GraphQL API
-- [ ] **Agents v2** — Enhanced memory system
-- [ ] **Mobile app** — iOS/Android
-- [ ] **Open API** — Third-party integrations
-- [ ] **Custom models** — Fine-tuned agent training
-
-See [roadmap.md](./roadmap.md) for details.
-
----
-
-## 👥 Team
-
-**Vutler** is developed by **Starbox Group** with contributions from the open-source community.
-
-- **CEO**: Alex Lopez
-- **CTO**: [Victor Kravtsov](https://github.com/vkravtsov)
-- **Lead Dev**: [Andrea Giordano](https://github.com/agiordano)
-
----
-
-## 💬 Acknowledgments
-
-Built with ❤️ using:
-- [Express.js](https://expressjs.com/)
-- [PostgreSQL](https://www.postgresql.org/)
-- [Rocket.Chat](https://rocket.chat/)
-- [OpenAI](https://openai.com/), [Anthropic](https://anthropic.com/), [MiniMax](https://www.minimaxi.com/)
-
----
-
-## 📞 Quick Links
-
-- 🌐 **Website**: https://vutler.ai
-- 📧 **Email**: contact@vutler.ai
-- 🐙 **GitHub**: https://github.com/alopez3006/vutler-platform
-- 💼 **Company**: https://starbox-group.com/
-
----
-
-**Last updated**: March 26, 2024
-**Status**: 🟢 Production Ready
+**Built with ❤️ in Geneva, Switzerland 🇨🇭** · **Last updated:** March 2026
