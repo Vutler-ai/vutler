@@ -537,7 +537,7 @@ export default function AgentsPage() {
         </Button>
       </PageHeader>
 
-      <main className="flex-1 px-6 pb-6">
+      <div className="flex-1 px-6 pb-6">
         {/* Tabs */}
         <div className="flex items-center gap-1 mb-5 border-b border-[rgba(255,255,255,0.07)] -mx-6 px-6">
           {(['agents', 'templates'] as Tab[]).map(tab => (
@@ -702,7 +702,7 @@ export default function AgentsPage() {
             onCreated={agentId => router.push(`/agents/${agentId}/config`)}
           />
         )}
-      </main>
+      </div>
     </>
   );
 }

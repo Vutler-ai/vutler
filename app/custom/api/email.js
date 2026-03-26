@@ -177,7 +177,7 @@ router.post('/email/send', async (req, res) => {
 
     const pg = req.app.locals.pg;
 
-    // Determine sender: use agent email if agentId provided
+    // Determine sender: prefer explicit from → agent email → authenticated user email → noreply
     let sender = from;
     if (!sender && agentId && pg) {
       try {
@@ -187,6 +187,9 @@ router.post('/email/send', async (req, res) => {
         );
         if (agentRow.rows[0]?.email) sender = agentRow.rows[0].email;
       } catch (_) {}
+    }
+    if (!sender) {
+      sender = req.user?.email || req.userEmail || null;
     }
     sender = sender || `noreply@${EMAIL_DOMAIN}`;
 
@@ -247,8 +250,8 @@ router.post('/email/draft', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    let sender = from || `noreply@${EMAIL_DOMAIN}`;
-    if (!from && agentId) {
+    let sender = from;
+    if (!sender && agentId) {
       try {
         const agentRow = await pg.query(
           `SELECT email FROM ${SCHEMA}.agents WHERE id = $1 LIMIT 1`,
@@ -257,6 +260,10 @@ router.post('/email/draft', async (req, res) => {
         if (agentRow.rows[0]?.email) sender = agentRow.rows[0].email;
       } catch (_) {}
     }
+    if (!sender) {
+      sender = req.user?.email || req.userEmail || null;
+    }
+    sender = sender || `noreply@${EMAIL_DOMAIN}`;
 
     const r = await pg.query(
       `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, status, is_read, agent_id, created_at)

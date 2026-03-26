@@ -3,7 +3,7 @@ set -e
 
 echo "[Deploy] Building frontend..."
 cd frontend
-docker build -t vutler-frontend:latest .
+docker build --no-cache -t vutler-frontend:latest .
 
 echo "[Deploy] Stopping old container..."
 docker stop vutler-frontend 2>/dev/null || true

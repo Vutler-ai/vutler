@@ -166,10 +166,11 @@ router.get('/chat/channels', async (req, res) => {
     const result = await pg.query(
       `SELECT c.*,
           (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) AS message_count,
-          (SELECT COUNT(*) FROM ${SCHEMA}.chat_channel_members cm WHERE cm.channel_id = c.id) AS member_count
+          (SELECT COUNT(*) FROM ${SCHEMA}.chat_channel_members cm WHERE cm.channel_id = c.id) AS member_count,
+          (SELECT MAX(m2.created_at) FROM ${SCHEMA}.chat_messages m2 WHERE m2.channel_id = c.id) AS last_message_at
        FROM ${SCHEMA}.chat_channels c
        WHERE c.workspace_id = $1
-       ORDER BY c.created_at ASC`,
+       ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC`,
       [ws]
     );
 

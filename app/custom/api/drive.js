@@ -88,7 +88,7 @@ async function getWorkspaceBucket(workspaceId) {
     }
     
     // Otherwise generate from slug and update
-    const bucketName = s3Driver.generateBucketName(workspace.slug);
+    const bucketName = s3Driver.getBucketName(workspace.slug);
     await pool.query(
       'UPDATE tenant_vutler.workspaces SET storage_bucket = $1 WHERE id = $2',
       [bucketName, workspaceId]
@@ -452,19 +452,33 @@ router.get('/drive/download/:id', authenticateAgent, requireCorePermission('driv
       return sendDriveError(res, 400, 'INVALID_REQUEST', 'File ID or path is required');
     }
     
+    // Guard: s3_key must be present (folders and legacy records may lack one)
+    if (!fileRecord.s3_key) {
+      return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File has no stored content (missing S3 key)');
+    }
+
     const bucket = await getWorkspaceBucket(workspaceId);
-    
+
     // Download from S3
     const s3Result = await s3Driver.download(bucket, fileRecord.s3_key);
-    
+
     // Set response headers
     res.setHeader('Content-Type', fileRecord.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.name}"`);
-    res.setHeader('Content-Length', fileRecord.size_bytes);
-    
-    // Stream to response
-    s3Result.stream.pipe(res);
-    
+    if (fileRecord.size_bytes) res.setHeader('Content-Length', fileRecord.size_bytes);
+
+    // Stream to response — AWS SDK v3 returns body as s3Result.Body (a ReadableStream / Readable)
+    const body = s3Result.Body;
+    if (body && typeof body.pipe === 'function') {
+      body.pipe(res);
+    } else if (body && typeof body.transformToByteArray === 'function') {
+      // AWS SDK v3 web-compatible stream
+      const bytes = await body.transformToByteArray();
+      res.end(Buffer.from(bytes));
+    } else {
+      res.end(body);
+    }
+
     console.log(`[DriveAPI] File downloaded: ${fileRecord.name} from S3`);
   } catch (error) {
     console.error('[DriveAPI] Download error:', error);
@@ -505,7 +519,7 @@ router.delete('/drive/files/:id', authenticateAgent, requireCorePermission('driv
     // Delete from S3 if it's a file (not a folder)
     if (fileRecord.mime_type !== 'inode/directory' && fileRecord.s3_key) {
       const bucket = await getWorkspaceBucket(workspaceId);
-      await s3Driver.delete(bucket, fileRecord.s3_key);
+      await s3Driver.remove(bucket, fileRecord.s3_key);
     }
     
     // Soft delete from database
@@ -564,7 +578,7 @@ router.delete('/files', authenticateAgent, requireCorePermission('drive.delete')
     // Delete from S3 if it's a file
     if (fileRecord.mime_type !== 'inode/directory' && fileRecord.s3_key) {
       const bucket = await getWorkspaceBucket(workspaceId);
-      await s3Driver.delete(bucket, fileRecord.s3_key);
+      await s3Driver.remove(bucket, fileRecord.s3_key);
     }
     
     // Soft delete from database
