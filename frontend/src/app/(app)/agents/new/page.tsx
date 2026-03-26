@@ -2,14 +2,20 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { authFetch } from '@/lib/authFetch';
+import { authFetch } from '@/lib/api/client';
+import { createAgent } from '@/lib/api/endpoints/agents';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 
-// Keep fallback models in case API fails
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const FALLBACK_MODELS = [
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet', provider: 'anthropic' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku', provider: 'anthropic' },
-  { value: 'gpt-4o', label: 'GPT-4o', provider: 'openai' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini', provider: 'openai' },
+  { provider: 'anthropic', model_name: 'claude-sonnet-4-20250514' },
+  { provider: 'anthropic', model_name: 'claude-haiku-4-5' },
+  { provider: 'openai', model_name: 'gpt-4o' },
+  { provider: 'openai', model_name: 'gpt-4o-mini' },
 ];
 
 const TOOLS = [
@@ -23,16 +29,15 @@ const TOOLS = [
 const EMOJIS = ['🤖', '🧠', '⚡', '🔥', '🎯', '💡', '🛡️', '🚀', '🌟', '🎨', '📊', '🔧', '🤝', '👾', '🦾', '🧬'];
 
 const PROVIDER_NAMES: Record<string, string> = {
-  'openai': 'OpenAI',
-  'anthropic': 'Anthropic',
-  'openrouter': 'OpenRouter',
-  'mistral': 'Mistral',
-  'groq': 'Groq',
-  'google': 'Google',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  openrouter: 'OpenRouter',
+  mistral: 'Mistral',
+  groq: 'Groq',
+  google: 'Google',
 };
 
 interface LLMModel {
-  id?: string;
   provider: string;
   model_name: string;
   tier?: string;
@@ -40,16 +45,25 @@ interface LLMModel {
   enabled?: boolean;
 }
 
+// ─── Validation ───────────────────────────────────────────────────────────────
+
+function validate(form: { name: string }): string | null {
+  if (!form.name.trim()) return 'Name is required';
+  return null;
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function NewAgentPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
   const [models, setModels] = useState<LLMModel[]>([]);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
   const [form, setForm] = useState({
     name: '',
-    username: '',
-    email: '',
     role: '',
     description: '',
     model: 'claude-sonnet-4-20250514',
@@ -57,214 +71,216 @@ export default function NewAgentPage() {
     system_prompt: '',
     tools: [] as string[],
     avatar: '🤖',
-    mbti: 'INTJ',
-    temperature: 0.7,
-    max_tokens: 4096,
   });
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
-  // Load models from API
+  // Load models
   useEffect(() => {
-    loadModels();
+    authFetch('/api/v1/llm/models')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.data?.length > 0) {
+          setModels(data.data.filter((m: LLMModel) => m.enabled !== false));
+        } else {
+          setModels(FALLBACK_MODELS);
+        }
+      })
+      .catch(() => setModels(FALLBACK_MODELS))
+      .finally(() => setLoadingModels(false));
   }, []);
 
-  const loadModels = async () => {
-    try {
-      const res = await authFetch('/api/v1/llm/models');
-      if (!res.ok) throw new Error('Failed to load models');
-      const data = await res.json();
-      
-      if (data.success && data.data && data.data.length > 0) {
-        setModels(data.data.filter((m: LLMModel) => m.enabled !== false));
-      } else {
-        // Fallback to hardcoded models
-        setModels(FALLBACK_MODELS.map(m => ({ 
-          provider: m.provider, 
-          model_name: m.value,
-          tier: 'pro',
-        })));
-      }
-    } catch (err) {
-      console.error('Failed to load models:', err);
-      // Use fallback models
-      setModels(FALLBACK_MODELS.map(m => ({ 
-        provider: m.provider, 
-        model_name: m.value,
-        tier: 'pro',
-      })));
-    } finally {
-      setLoadingModels(false);
-    }
-  };
-
-  // Group models by provider
-  const groupedModels = models.reduce((acc, model) => {
-    const provider = model.provider || 'other';
-    if (!acc[provider]) acc[provider] = [];
-    acc[provider].push(model);
+  const groupedModels = models.reduce((acc, m) => {
+    const p = m.provider || 'other';
+    if (!acc[p]) acc[p] = [];
+    acc[p].push(m);
     return acc;
   }, {} as Record<string, LLMModel[]>);
 
-  const toggleTool = (key: string) => {
-    setForm(prev => ({
-      ...prev,
-      tools: prev.tools.includes(key) ? prev.tools.filter(t => t !== key) : [...prev.tools, key],
-    }));
-  };
+  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
+    setForm(prev => ({ ...prev, [key]: value }));
+
+  const toggleTool = (key: string) =>
+    set('tools', form.tools.includes(key)
+      ? form.tools.filter(t => t !== key)
+      : [...form.tools, key]);
 
   const handleModelChange = (modelName: string) => {
-    const model = models.find(m => m.model_name === modelName);
-    setForm(prev => ({ 
-      ...prev, 
-      model: modelName, 
-      provider: model?.provider || prev.provider 
-    }));
+    const m = models.find(x => x.model_name === modelName);
+    setForm(prev => ({ ...prev, model: modelName, provider: m?.provider || prev.provider }));
   };
 
-  const create = async () => {
-    if (!form.name.trim()) { setError('Name is required'); return; }
+  const handleSubmit = async () => {
+    const validationError = validate(form);
+    if (validationError) { setError(validationError); return; }
     setSaving(true);
     setError(null);
     try {
       const payload = {
-        ...form,
-        username: form.username || form.name.toLowerCase().replace(/\s+/g, '-'),
-        email: form.email || `${form.name.toLowerCase().replace(/\s+/g, '-')}@vutler.ai`,
-        temperature: form.temperature.toString(),
+        name: form.name,
+        username: form.name.toLowerCase().replace(/\s+/g, '-'),
+        email: `${form.name.toLowerCase().replace(/\s+/g, '-')}@vutler.ai`,
+        role: form.role,
+        description: form.description,
+        model: form.model,
+        provider: form.provider,
+        system_prompt: form.system_prompt,
         capabilities: form.tools,
+        avatar: form.avatar,
+        platform: 'cloud',
       };
-      const res = await authFetch('/api/v1/agents', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-      const data = await res.json();
-      const newId = data.id || data.agent?.id;
-      router.push(newId ? `/agents/${newId}/config` : '/agents');
+      const agent = await createAgent(payload as any);
+      router.push(`/agents/${agent.id}/config`);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Failed to create agent');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      {/* Header */}
       <div className="mb-8">
-        <button onClick={() => router.push('/agents')} className="text-[#6b7280] hover:text-white transition-colors text-sm mb-2">← Back to Agents</button>
+        <button
+          onClick={() => router.push('/agents')}
+          className="text-[#6b7280] hover:text-white transition-colors text-sm mb-3 flex items-center gap-1"
+        >
+          ← Back to Agents
+        </button>
         <h1 className="text-2xl font-bold text-white">Create New Agent</h1>
         <p className="text-sm text-[#9ca3af] mt-1">Build and deploy a new AI agent</p>
       </div>
 
-      {error && <div className="mb-6 p-4 bg-red-900/20 border border-red-500/20 rounded-lg text-red-400">{error}</div>}
+      {error && (
+        <div className="mb-6 p-4 bg-red-900/20 border border-red-500/20 rounded-lg text-red-400 text-sm">
+          {error}
+        </div>
+      )}
 
       <div className="space-y-6">
-        {/* Avatar + Name */}
+        {/* Identity */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Identity</h2>
-          <div className="flex items-start gap-4 mb-4">
+          <h2 className="text-base font-semibold text-white mb-5">Identity</h2>
+          <div className="flex items-start gap-4 mb-5">
+            {/* Avatar picker */}
             <div className="relative">
               <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                className="w-16 h-16 rounded-xl bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-3xl hover:border-blue-500 transition-colors"
+                type="button"
+                onClick={() => setShowEmojiPicker(v => !v)}
+                className="size-16 rounded-xl bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-3xl hover:border-blue-500 transition-colors"
               >
                 {form.avatar}
               </button>
               {showEmojiPicker && (
-                <div className="absolute top-full mt-2 left-0 bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-lg p-3 grid grid-cols-8 gap-1 z-10 shadow-xl">
+                <div className="absolute top-full mt-2 left-0 bg-[#1a1b2a] border border-[rgba(255,255,255,0.1)] rounded-lg p-3 grid grid-cols-8 gap-1 z-10 shadow-xl">
                   {EMOJIS.map(e => (
-                    <button key={e} onClick={() => { setForm(prev => ({ ...prev, avatar: e })); setShowEmojiPicker(false); }} className="w-8 h-8 flex items-center justify-center hover:bg-[#0e0f1a] rounded text-lg">{e}</button>
+                    <button
+                      key={e}
+                      type="button"
+                      onClick={() => { set('avatar', e); setShowEmojiPicker(false); }}
+                      className="size-8 flex items-center justify-center hover:bg-[#0e0f1a] rounded text-lg"
+                    >
+                      {e}
+                    </button>
                   ))}
                 </div>
               )}
             </div>
+
             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-[#9ca3af] mb-1">Name *</label>
-                <input type="text" value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))} placeholder="My Agent" className="w-full px-3 py-2.5 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="space-y-1.5">
+                <Label className="text-[#9ca3af]">Name *</Label>
+                <Input
+                  value={form.name}
+                  onChange={e => set('name', e.target.value)}
+                  placeholder="My Agent"
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#4b5563]"
+                />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-[#9ca3af] mb-1">Role</label>
-                <input type="text" value={form.role} onChange={e => setForm(prev => ({ ...prev, role: e.target.value }))} placeholder="e.g., Research Assistant" className="w-full px-3 py-2.5 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="space-y-1.5">
+                <Label className="text-[#9ca3af]">Role</Label>
+                <Input
+                  value={form.role}
+                  onChange={e => set('role', e.target.value)}
+                  placeholder="e.g., Research Assistant"
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#4b5563]"
+                />
               </div>
             </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-[#9ca3af] mb-1">Description</label>
-            <textarea value={form.description} onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))} placeholder="What does this agent do?" rows={2} className="w-full px-3 py-2.5 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+
+          <div className="space-y-1.5">
+            <Label className="text-[#9ca3af]">Description</Label>
+            <Textarea
+              value={form.description}
+              onChange={e => set('description', e.target.value)}
+              placeholder="What does this agent do?"
+              rows={2}
+              className="bg-[#0e0f1a] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#4b5563] resize-none"
+            />
           </div>
         </section>
 
         {/* Model */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Model</h2>
-          
+          <h2 className="text-base font-semibold text-white mb-5">Model</h2>
           {loadingModels ? (
-            <div className="text-center py-4 text-[#9ca3af]">Loading models...</div>
+            <div className="text-sm text-[#9ca3af] py-2">Loading models...</div>
           ) : (
-            <select 
-              value={form.model} 
-              onChange={e => handleModelChange(e.target.value)} 
-              className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {Object.keys(groupedModels).sort().map(provider => {
-                const providerModels = groupedModels[provider];
-                const providerName = PROVIDER_NAMES[provider] || provider;
-                
-                return (
-                  <optgroup key={provider} label={providerName}>
-                    {providerModels.map(model => {
-                      const contextInfo = model.context_window 
-                        ? ` • ${(model.context_window / 1000).toFixed(0)}K` 
-                        : '';
-                      const tierInfo = model.tier ? ` • ${model.tier}` : '';
-                      
+            <>
+              <select
+                value={form.model}
+                onChange={e => handleModelChange(e.target.value)}
+                className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {Object.keys(groupedModels).sort().map(provider => (
+                  <optgroup key={provider} label={PROVIDER_NAMES[provider] || provider}>
+                    {groupedModels[provider].map(m => {
+                      const ctx = m.context_window ? ` · ${(m.context_window / 1000).toFixed(0)}K` : '';
+                      const tier = m.tier ? ` · ${m.tier}` : '';
                       return (
-                        <option key={`${provider}-${model.model_name}`} value={model.model_name}>
-                          {model.model_name}{tierInfo}{contextInfo}
+                        <option key={`${provider}-${m.model_name}`} value={m.model_name}>
+                          {m.model_name}{tier}{ctx}
                         </option>
                       );
                     })}
                   </optgroup>
-                );
-              })}
-            </select>
-          )}
-          
-          {/* Show model info */}
-          {form.model && (
-            <div className="mt-3 text-xs text-[#6b7280]">
-              {(() => {
-                const selectedModel = models.find(m => m.model_name === form.model);
-                if (!selectedModel) return null;
-                
-                const parts = [];
-                if (selectedModel.provider) {
-                  parts.push(`Provider: ${PROVIDER_NAMES[selectedModel.provider] || selectedModel.provider}`);
-                }
-                if (selectedModel.tier) {
-                  parts.push(`Tier: ${selectedModel.tier}`);
-                }
-                if (selectedModel.context_window) {
-                  parts.push(`Context: ${selectedModel.context_window.toLocaleString()} tokens`);
-                }
-                
-                return parts.join(' • ');
+                ))}
+              </select>
+              {form.model && (() => {
+                const sel = models.find(m => m.model_name === form.model);
+                if (!sel) return null;
+                const parts = [
+                  sel.provider && `Provider: ${PROVIDER_NAMES[sel.provider] || sel.provider}`,
+                  sel.tier && `Tier: ${sel.tier}`,
+                  sel.context_window && `Context: ${sel.context_window.toLocaleString()} tokens`,
+                ].filter(Boolean);
+                return parts.length > 0
+                  ? <p className="mt-2 text-xs text-[#6b7280]">{parts.join(' · ')}</p>
+                  : null;
               })()}
-            </div>
+            </>
           )}
         </section>
 
         {/* Tools */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Tools & Permissions</h2>
+          <h2 className="text-base font-semibold text-white mb-5">Tools &amp; Permissions</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {TOOLS.map(tool => (
-              <label key={tool.key} className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${form.tools.includes(tool.key) ? 'border-blue-500 bg-blue-500/10' : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)]'}`}>
-                <input type="checkbox" checked={form.tools.includes(tool.key)} onChange={() => toggleTool(tool.key)} className="w-4 h-4 rounded border-gray-600 text-blue-600 focus:ring-blue-500 bg-[#0e0f1a]" />
+              <label
+                key={tool.key}
+                className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                  form.tools.includes(tool.key)
+                    ? 'border-blue-500 bg-blue-500/10'
+                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)]'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.tools.includes(tool.key)}
+                  onChange={() => toggleTool(tool.key)}
+                  className="size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
+                />
                 <span className="text-sm text-white">{tool.label}</span>
               </label>
             ))}
@@ -273,20 +289,42 @@ export default function NewAgentPage() {
 
         {/* System Prompt */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">System Prompt</h2>
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-base font-semibold text-white">System Prompt</h2>
             <span className="text-xs text-[#6b7280]">{form.system_prompt.length} chars</span>
           </div>
-          <textarea value={form.system_prompt} onChange={e => setForm(prev => ({ ...prev, system_prompt: e.target.value }))} placeholder="Define the agent's behavior..." rows={8} className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white text-sm font-mono placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y leading-relaxed" />
+          <Textarea
+            value={form.system_prompt}
+            onChange={e => set('system_prompt', e.target.value)}
+            placeholder="Define the agent's behavior, personality, and instructions..."
+            rows={8}
+            className="bg-[#0e0f1a] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#4b5563] font-mono text-sm resize-y leading-relaxed"
+          />
         </section>
 
         {/* Actions */}
-        <div className="flex justify-end gap-3">
-          <button onClick={() => router.push('/agents')} className="px-6 py-2.5 text-[#9ca3af] hover:text-white transition-colors">Cancel</button>
-          <button onClick={create} disabled={saving || !form.name.trim()} className="px-8 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/30 text-white rounded-lg font-medium transition-colors flex items-center gap-2">
-            {saving && <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />}
-            {saving ? 'Creating...' : 'Create Agent'}
-          </button>
+        <div className="flex justify-end gap-3 pb-2">
+          <Button
+            variant="ghost"
+            onClick={() => router.push('/agents')}
+            className="text-[#9ca3af] hover:text-white"
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={saving || !form.name.trim()}
+            className="bg-blue-600 hover:bg-blue-700 text-white min-w-[130px]"
+          >
+            {saving ? (
+              <>
+                <span className="animate-spin rounded-full size-4 border-b-2 border-white" />
+                Creating...
+              </>
+            ) : (
+              'Create Agent'
+            )}
+          </Button>
         </div>
       </div>
     </div>

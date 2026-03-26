@@ -1,325 +1,279 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { authFetch } from '@/lib/authFetch';
-import { getAuthToken } from '@/lib/api';
+import { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/layout/page-header';
-import AgentsTable from '@/components/agents-table';
+import { useApi } from '@/hooks/use-api';
+import { getAgents, deleteAgent } from '@/lib/api/endpoints/agents';
+import type { Agent } from '@/lib/api/types';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 
-interface ExecuteState {
-  agentId: string;
-  agentName: string;
-  input: string;
-  response: string;
-  loading: boolean;
-  usage: { input: number; output: number; total: number } | null;
-  latency: number | null;
-  model: string;
-  provider: string;
-  tab: 'execute' | 'history';
-  history: any[];
-  historyLoading: boolean;
-  autoApproveEmail: boolean;
+// ─── Status Badge ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: Agent['status'] }) {
+  if (status === 'active') {
+    return (
+      <Badge className="bg-green-500/15 text-green-400 border-green-500/20 gap-1.5">
+        <span className="size-1.5 rounded-full bg-green-400 inline-block" />
+        Online
+      </Badge>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <Badge className="bg-red-500/15 text-red-400 border-red-500/20 gap-1.5">
+        <span className="size-1.5 rounded-full bg-red-400 inline-block" />
+        Error
+      </Badge>
+    );
+  }
+  return (
+    <Badge className="bg-[rgba(255,255,255,0.05)] text-[#9ca3af] border-[rgba(255,255,255,0.1)] gap-1.5">
+      <span className="size-1.5 rounded-full bg-[#6b7280] inline-block" />
+      Offline
+    </Badge>
+  );
 }
 
-export default function AgentsPage() {
-  const [agents, setAgents] = useState<any[]>([]);
-  const [exec, setExec] = useState<ExecuteState | null>(null);
-  const responseRef = useRef<HTMLDivElement>(null);
+// ─── Skeleton Rows ────────────────────────────────────────────────────────────
 
-  const fetchAgents = () => {
-    authFetch('/api/v1/agents')
-      .then(r => r.json())
-      .then(data => setAgents(data.agents || data || []))
-      .catch(err => console.error('Failed to fetch agents:', err));
-  };
+function TableSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <TableRow key={i} className="border-[rgba(255,255,255,0.05)]">
+          <TableCell className="px-4 py-3">
+            <div className="flex items-center gap-3">
+              <Skeleton className="size-8 rounded-lg" />
+              <Skeleton className="h-4 w-32" />
+            </div>
+          </TableCell>
+          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-24" /></TableCell>
+          <TableCell className="px-4 py-3"><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-28" /></TableCell>
+          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-24" /></TableCell>
+          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-12" /></TableCell>
+        </TableRow>
+      ))}
+    </>
+  );
+}
 
-  useEffect(() => { fetchAgents(); }, []);
+// ─── Delete Dialog ────────────────────────────────────────────────────────────
 
-  const openExecute = (agent: any) => {
-    setExec({
-      agentId: agent.id,
-      agentName: agent.name,
-      input: '',
-      response: '',
-      loading: false,
-      usage: null,
-      latency: null,
-      model: agent.model || '',
-      provider: agent.provider || '',
-      tab: 'execute',
-      history: [],
-      historyLoading: false,
-      autoApproveEmail: !!agent.autoApproveEmail,
-    });
-  };
+function DeleteAgentDialog({
+  agent,
+  onDeleted,
+}: {
+  agent: Agent;
+  onDeleted: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
 
-  const fetchHistory = async (agentId: string) => {
-    setExec(prev => prev ? { ...prev, historyLoading: true } : null);
+  const handleDelete = async () => {
+    setDeleting(true);
     try {
-      const res = await authFetch(`/api/v1/agents/${agentId}/executions`);
-      const data = await res.json();
-      setExec(prev => prev ? { ...prev, history: data.executions || [], historyLoading: false } : null);
+      await deleteAgent(agent.id);
+      onDeleted();
     } catch {
-      setExec(prev => prev ? { ...prev, historyLoading: false } : null);
+      // ignore — row remains
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const runExecuteStream = async () => {
-    if (!exec || !exec.input.trim()) return;
-    setExec(prev => prev ? { ...prev, loading: true, response: '', usage: null, latency: null } : null);
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+          onClick={e => e.stopPropagation()}
+        >
+          Delete
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="bg-[#14151f] border-[rgba(255,255,255,0.1)]">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-white">Delete Agent</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to delete <strong className="text-white">{agent.name}</strong>?
+            This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]">
+            Cancel
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={handleDelete}
+            className="bg-red-600 hover:bg-red-700"
+          >
+            {deleting ? 'Deleting...' : 'Delete'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
-    try {
-      const token = getAuthToken();
-      const url = `/api/v1/agents/${exec.agentId}/execute/stream?message=${encodeURIComponent(exec.input)}`;
-      const response = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+export default function AgentsPage() {
+  const router = useRouter();
+  const [search, setSearch] = useState('');
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No reader');
-      const decoder = new TextDecoder();
-      let buffer = '';
+  const { data: agents, isLoading, error, mutate } = useApi<Agent[]>(
+    '/api/v1/agents',
+    () => getAgents(),
+  );
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+  const filtered = useMemo(() => {
+    if (!agents) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(
+      a =>
+        a.name.toLowerCase().includes(q) ||
+        (a.model || '').toLowerCase().includes(q) ||
+        (a.platform || '').toLowerCase().includes(q),
+    );
+  }, [agents, search]);
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const evt = JSON.parse(line.slice(6));
-            if (evt.type === 'delta') {
-              setExec(prev => prev ? { ...prev, response: prev.response + evt.text } : null);
-              // Auto-scroll
-              if (responseRef.current) {
-                responseRef.current.scrollTop = responseRef.current.scrollHeight;
-              }
-            } else if (evt.type === 'done') {
-              setExec(prev => prev ? {
-                ...prev,
-                loading: false,
-                usage: evt.usage,
-                latency: evt.latency_ms,
-                model: evt.model || prev.model,
-                provider: evt.provider || prev.provider,
-              } : null);
-            } else if (evt.type === 'error') {
-              setExec(prev => prev ? { ...prev, loading: false, response: `Error: ${evt.error}` } : null);
-            }
-          } catch {}
-        }
-      }
-
-      // If we exit loop without done event
-      setExec(prev => prev && prev.loading ? { ...prev, loading: false } : prev);
-    } catch (err: any) {
-      setExec(prev => prev ? { ...prev, loading: false, response: `Error: ${err.message}` } : null);
-    }
-  };
-
-
-  const toggleAutoApprove = async (enabled: boolean) => {
-    if (!exec) return;
-    const prev = exec.autoApproveEmail;
-    setExec(curr => curr ? { ...curr, autoApproveEmail: enabled } : null);
-    try {
-      const res = await authFetch(`/api/v1/agents/${exec.agentId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auto_approve_email: enabled })
-      });
-      if (!res.ok) throw new Error('Failed to update auto-approval');
-      setAgents(list => list.map(a => a.id === exec.agentId ? { ...a, autoApproveEmail: enabled } : a));
-    } catch (e) {
-      setExec(curr => curr ? { ...curr, autoApproveEmail: prev } : null);
-      console.error(e);
-    }
-  };
-
-  const formatDate = (d: string) => {
-    const date = new Date(d);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const formatLastActive = (dateStr?: string) => {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+      ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
     <>
       <PageHeader title="Agents" description="Manage your AI agents">
-        <div className="flex gap-2">
-          <button
-            onClick={() => (window.location.href = '/marketplace')}
-            className="flex items-center px-4 py-2 rounded-lg font-medium text-sm bg-[#3b82f6] hover:bg-[#2563eb] text-white transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
-          >
-            + Deploy from Marketplace
-          </button>
-          <button
-            onClick={() => (window.location.href = '/agents/new')}
-            className="flex items-center px-4 py-2 rounded-lg font-medium text-sm bg-[#3b82f6] hover:bg-[#2563eb] text-white transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
-          >
-            + New Agent
-          </button>
-        </div>
+        <Button
+          variant="outline"
+          className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]"
+          onClick={() => router.push('/marketplace')}
+        >
+          Deploy from Marketplace
+        </Button>
+        <Button
+          className="bg-blue-600 hover:bg-blue-700 text-white"
+          onClick={() => router.push('/agents/new')}
+        >
+          + New Agent
+        </Button>
       </PageHeader>
-      <main className="flex-1 p-6">
-        <AgentsTable agents={agents} onAgentClick={(agent) => openExecute(agent)} />
 
-        {/* Execute Modal */}
-        {exec && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setExec(null)}>
-            <div
-              className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden"
-              onClick={e => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between p-5 border-b border-[rgba(255,255,255,0.07)]">
-                <div>
-                  <h2 className="text-lg font-semibold text-white">Agent: {exec.agentName}</h2>
-                  <p className="text-xs text-[#9ca3af] mt-1">
-                    {exec.model} • {exec.provider}
-                  </p>
-                  <label className="mt-2 inline-flex items-center gap-2 text-xs text-[#d1d5db]">
-                    <input
-                      type="checkbox"
-                      checked={exec.autoApproveEmail}
-                      onChange={(e) => toggleAutoApprove(e.target.checked)}
-                    />
-                    Auto-approve agent emails
-                  </label>
-                </div>
-                <button onClick={() => setExec(null)} className="text-[#6b7280] hover:text-white text-2xl leading-none">&times;</button>
-              </div>
+      <main className="flex-1 px-6 pb-6">
+        {/* Search bar */}
+        <div className="mb-4">
+          <Input
+            placeholder="Search agents..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="max-w-sm bg-[#14151f] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#6b7280]"
+          />
+        </div>
 
-              {/* Tabs */}
-              <div className="flex border-b border-[rgba(255,255,255,0.07)]">
-                <button
-                  onClick={() => setExec(prev => prev ? { ...prev, tab: 'execute' } : null)}
-                  className={`flex-1 py-3 text-sm font-medium transition-colors ${
-                    exec.tab === 'execute'
-                      ? 'text-blue-400 border-b-2 border-blue-400'
-                      : 'text-[#6b7280] hover:text-white'
-                  }`}
-                >
-                  ▶ Execute
-                </button>
-                <button
-                  onClick={() => {
-                    setExec(prev => prev ? { ...prev, tab: 'history' } : null);
-                    if (exec.history.length === 0) fetchHistory(exec.agentId);
-                  }}
-                  className={`flex-1 py-3 text-sm font-medium transition-colors ${
-                    exec.tab === 'history'
-                      ? 'text-blue-400 border-b-2 border-blue-400'
-                      : 'text-[#6b7280] hover:text-white'
-                  }`}
-                >
-                  📜 History
-                </button>
-              </div>
+        {/* Error state */}
+        {error && !isLoading && (
+          <div className="bg-red-900/20 border border-red-500/20 rounded-xl p-6 text-center text-red-400">
+            Failed to load agents. <button onClick={() => mutate()} className="underline ml-1">Retry</button>
+          </div>
+        )}
 
-              {/* Body */}
-              <div className="p-5 space-y-4 overflow-y-auto max-h-[60vh]">
-                {exec.tab === 'execute' ? (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-[#9ca3af] mb-2">Message / Prompt</label>
-                      <textarea
-                        value={exec.input}
-                        onChange={e => setExec(prev => prev ? { ...prev, input: e.target.value } : null)}
-                        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runExecuteStream(); }}
-                        placeholder="Type your message to the agent..."
-                        rows={3}
-                        className="w-full px-4 py-3 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                        autoFocus
-                      />
-                      <p className="text-xs text-[#6b7280] mt-1">Ctrl+Enter to send • Streaming enabled</p>
-                    </div>
+        {/* Table */}
+        {!error && (
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-[rgba(255,255,255,0.07)] hover:bg-transparent">
+                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Name</TableHead>
+                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Model</TableHead>
+                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Status</TableHead>
+                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Last Active</TableHead>
+                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Provider</TableHead>
+                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider w-[80px]">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading && <TableSkeleton />}
 
-                    <button
-                      onClick={runExecuteStream}
-                      disabled={exec.loading || !exec.input.trim()}
-                      className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                    >
-                      {exec.loading ? (
-                        <>
-                          <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                          Streaming...
-                        </>
-                      ) : (
-                        <>▶ Execute (Stream)</>
-                      )}
-                    </button>
-
-                    {/* Response */}
-                    {exec.response && (
-                      <div className="space-y-3">
-                        <label className="block text-sm font-medium text-[#9ca3af]">Response</label>
-                        <div
-                          ref={responseRef}
-                          className="bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg p-4 text-sm text-white whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto"
-                        >
-                          {exec.response}
-                          {exec.loading && <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-0.5" />}
-                        </div>
-
-                        {/* Stats */}
-                        {exec.usage && (
-                          <div className="flex flex-wrap gap-3 text-xs text-[#6b7280]">
-                            <span className="px-2 py-1 bg-[#0e0f1a] rounded">Tokens: {exec.usage.total} ({exec.usage.input}↑ {exec.usage.output}↓)</span>
-                            {exec.latency && <span className="px-2 py-1 bg-[#0e0f1a] rounded">Latency: {exec.latency}ms</span>}
-                            <span className="px-2 py-1 bg-[#0e0f1a] rounded">{exec.model}</span>
-                            <span className="px-2 py-1 bg-[#0e0f1a] rounded">{exec.provider}</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  /* History Tab */
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-[#9ca3af]">Execution History</label>
-                      <button
-                        onClick={() => fetchHistory(exec.agentId)}
-                        className="text-xs text-blue-400 hover:text-blue-300"
-                      >
-                        Refresh
-                      </button>
-                    </div>
-                    {exec.historyLoading ? (
-                      <div className="flex justify-center py-8">
-                        <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500" />
-                      </div>
-                    ) : exec.history.length === 0 ? (
-                      <div className="text-center py-8 text-[#6b7280]">
-                        No executions yet
-                      </div>
-                    ) : (
-                      exec.history.map((h: any, i: number) => (
-                        <div key={h.id || i} className="bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg p-4 space-y-2">
-                          <div className="flex items-center justify-between text-xs text-[#6b7280]">
-                            <span>{formatDate(h.created_at)}</span>
-                            <div className="flex gap-2">
-                              <span>{h.model}</span>
-                              <span>{h.tokens_used} tokens</span>
-                              <span>{h.latency_ms}ms</span>
-                            </div>
-                          </div>
-                          <div className="text-xs text-blue-300 font-medium">Input:</div>
-                          <div className="text-sm text-white/80 line-clamp-2">{h.input}</div>
-                          <div className="text-xs text-green-300 font-medium">Output:</div>
-                          <div className="text-sm text-white/60 line-clamp-3 whitespace-pre-wrap">{h.output}</div>
-                        </div>
-                      ))
-                    )}
-                  </div>
+                {!isLoading && filtered.length === 0 && (
+                  <TableRow className="border-0 hover:bg-transparent">
+                    <TableCell colSpan={6} className="text-center py-16 text-[#6b7280]">
+                      {search ? 'No agents match your search.' : 'No agents yet. Create your first agent.'}
+                    </TableCell>
+                  </TableRow>
                 )}
-              </div>
-            </div>
+
+                {!isLoading && filtered.map(agent => (
+                  <TableRow
+                    key={agent.id}
+                    className="border-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.03)] cursor-pointer transition-colors"
+                    onClick={() => router.push(`/agents/${agent.id}/config`)}
+                  >
+                    <TableCell className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="size-8 rounded-lg bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-lg shrink-0">
+                          {agent.avatar || '🤖'}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-white">{agent.name}</div>
+                          {agent.username && (
+                            <div className="text-xs text-[#6b7280]">@{agent.username}</div>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-[#9ca3af]">
+                      {agent.model || '—'}
+                    </TableCell>
+                    <TableCell className="px-4 py-3">
+                      <StatusBadge status={agent.status} />
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-[#9ca3af]">
+                      {formatLastActive(agent.lastActive)}
+                    </TableCell>
+                    <TableCell className="px-4 py-3 text-sm text-[#9ca3af]">
+                      {agent.provider || '—'}
+                    </TableCell>
+                    <TableCell className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                      <DeleteAgentDialog
+                        agent={agent}
+                        onDeleted={() => mutate()}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
       </main>

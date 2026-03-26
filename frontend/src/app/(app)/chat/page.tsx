@@ -1,719 +1,776 @@
 "use client";
 
-import { authFetch } from '@/lib/authFetch';
-import { ChatWebSocket } from '@/lib/websocket';
-import { getAuthToken } from '@/lib/api';
-import { useState, useEffect, useRef } from "react";
-import { 
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
   PaperAirplaneIcon,
   PaperClipIcon,
-  UserCircleIcon,
-  CpuChipIcon,
-  ExclamationTriangleIcon,
-  PlusIcon,
   HashtagIcon,
   MagnifyingGlassIcon,
   ChatBubbleLeftRightIcon,
   XMarkIcon,
   DocumentIcon,
-  TrashIcon
+  TrashIcon,
+  PlusIcon,
+  ArrowLeftIcon,
+  UsersIcon,
 } from "@heroicons/react/24/outline";
 
-interface Attachment {
-  id: string;
-  filename: string;
-  mime: string;
-  size: number;
-  path: string;
-  url: string;
-  uploaded_at?: string;
+import { getAuthToken } from "@/lib/api/client";
+import {
+  getChannels,
+  createChannel,
+  deleteChannel,
+  getMessages,
+  sendMessage as apiSendMessage,
+  getChannelMembers,
+  addChannelMember as apiAddChannelMember,
+  removeChannelMember as apiRemoveChannelMember,
+  uploadAttachment,
+} from "@/lib/api/endpoints/chat";
+import { ChatWebSocket } from "@/lib/websocket";
+import { useApi } from "@/hooks/use-api";
+import type { Channel, Message, ChannelMember } from "@/lib/api/types";
+
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 }
 
-interface Message {
-  id: string;
-  content: string;
-  sender_id: string;
-  sender_name: string;
-  created_at: string;
-  client_message_id?: string | null;
-  attachments?: Attachment[];
+function formatTime(dateString: string): string {
+  return new Date(dateString).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-interface Channel {
-  id: string;
-  name: string;
-  description?: string;
-  type: "channel" | "direct";
-  members: string[];
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-interface Agent {
-  id: string;
-  name: string;
-  avatar: string;
-  status: string;
-  username?: string;
+function isImageMime(mime: string): boolean {
+  return mime.startsWith("image/");
 }
 
-interface ChannelMember {
-  id: string;
-  type: "user" | "agent";
-  name: string;
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ChannelSkeleton() {
+  return (
+    <div className="space-y-1 px-2">
+      {[1, 2, 3].map((i) => (
+        <Skeleton key={i} className="h-9 w-full rounded-lg bg-white/5" />
+      ))}
+    </div>
+  );
 }
+
+function MessageSkeleton() {
+  return (
+    <div className="space-y-4 p-4">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className={`flex gap-3 ${i % 2 === 0 ? "justify-end" : ""}`}>
+          {i % 2 !== 0 && <Skeleton className="size-8 shrink-0 rounded-full bg-white/5" />}
+          <Skeleton
+            className={`h-12 rounded-lg bg-white/5 ${i % 2 === 0 ? "w-48" : "w-64"}`}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface ChannelItemProps {
+  channel: Channel;
+  isActive: boolean;
+  onClick: () => void;
+}
+
+function ChannelItem({ channel, isActive, onClick }: ChannelItemProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors group ${
+        isActive
+          ? "bg-[#14151f] text-white"
+          : "hover:bg-white/5 text-gray-400 hover:text-gray-200"
+      }`}
+    >
+      {channel.type === "channel" ? (
+        <HashtagIcon className="w-4 h-4 shrink-0" />
+      ) : (
+        <ChatBubbleLeftRightIcon className="w-4 h-4 shrink-0" />
+      )}
+      <span className="truncate text-sm">{channel.name}</span>
+    </button>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  // ── channels ──
+  const {
+    data: channelsData,
+    isLoading: channelsLoading,
+    mutate: mutateChannels,
+  } = useApi<Channel[]>("/api/v1/chat/channels", () => getChannels());
+
+  const channels = channelsData ?? [];
+  const channelChannels = channels.filter((c) => c.type === "channel");
+  const directChannels = channels.filter((c) => c.type === "direct");
+
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
-  const [inputMessage, setInputMessage] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [showNewChannelModal, setShowNewChannelModal] = useState(false);
-  const [newChannelName, setNewChannelName] = useState("");
-  const [newChannelDescription, setNewChannelDescription] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isSending, setIsSending] = useState(false);
-  const [showMembersModal, setShowMembersModal] = useState(false);
-  const [channelMembers, setChannelMembers] = useState<ChannelMember[]>([]);
-  const [memberType, setMemberType] = useState<"user" | "agent">("agent");
-  const [memberId, setMemberId] = useState("");
-  const [memberName, setMemberName] = useState("");
-  
+
+  // Auto-select first channel once loaded
+  useEffect(() => {
+    if (!selectedChannel && channels.length > 0) {
+      setSelectedChannel(channels[0]);
+    }
+  }, [channels, selectedChannel]);
+
+  // ── messages ──
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadMessages = useCallback(async (channelId: string) => {
+    setMessagesLoading(true);
+    try {
+      const msgs = await getMessages(channelId, 50);
+      setMessages(msgs);
+    } catch {
+      setMessages([]);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedChannel) {
+      loadMessages(selectedChannel.id);
+    } else {
+      setMessages([]);
+    }
+  }, [selectedChannel, loadMessages]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // ── websocket ──
   const wsRef = useRef<ChatWebSocket | null>(null);
   const [typingUsers, setTypingUsers] = useState<Record<string, string>>({});
   const typingTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
-    fetchChannels();
-    fetchAgents();
-  }, []);
-
-  useEffect(() => {
-    if (selectedChannel) {
-      fetchMessages(selectedChannel.id);
-      fetchChannelMembers(selectedChannel.id);
-    }
-  }, [selectedChannel]);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
-  }, [inputMessage]);
-
-  // WebSocket connection for real-time messages
-  useEffect(() => {
     const token = getAuthToken();
     if (!token) return;
+
     const ws = new ChatWebSocket(token);
     wsRef.current = ws;
 
     ws.on("message:new", (msg: Message) => {
-      setMessages(prev => {
-        const byId = prev.findIndex(m => m.id === msg.id);
+      setMessages((prev) => {
+        const byId = prev.findIndex((m) => m.id === msg.id);
         if (byId >= 0) {
           const next = [...prev];
           next[byId] = { ...next[byId], ...msg };
           return next;
         }
-
         const byClientId = msg.client_message_id
-          ? prev.findIndex(m => m.client_message_id === msg.client_message_id)
+          ? prev.findIndex((m) => m.client_message_id === msg.client_message_id)
           : -1;
         if (byClientId >= 0) {
           const next = [...prev];
           next[byClientId] = { ...next[byClientId], ...msg };
           return next;
         }
-
         return [...prev, msg];
       });
     });
 
-    ws.on("message:typing", (data: { channelId: string; userId: string; userName: string }) => {
-      setTypingUsers(prev => ({ ...prev, [data.userId]: data.userName }));
-      if (typingTimeoutRef.current[data.userId]) clearTimeout(typingTimeoutRef.current[data.userId]);
-      typingTimeoutRef.current[data.userId] = setTimeout(() => {
-        setTypingUsers(prev => {
-          const next = { ...prev };
-          delete next[data.userId];
-          return next;
-        });
-      }, 3000);
-    });
+    ws.on(
+      "message:typing",
+      (data: { channelId: string; userId: string; userName: string }) => {
+        setTypingUsers((prev) => ({ ...prev, [data.userId]: data.userName }));
+        if (typingTimeoutRef.current[data.userId])
+          clearTimeout(typingTimeoutRef.current[data.userId]);
+        typingTimeoutRef.current[data.userId] = setTimeout(() => {
+          setTypingUsers((prev) => {
+            const next = { ...prev };
+            delete next[data.userId];
+            return next;
+          });
+        }, 3000);
+      }
+    );
 
     ws.connect();
-    return () => { ws.destroy(); wsRef.current = null; };
+    return () => {
+      ws.destroy();
+      wsRef.current = null;
+    };
   }, []);
 
-  // Join/leave channel on WebSocket when selection changes
   useEffect(() => {
     if (!selectedChannel || !wsRef.current) return;
     wsRef.current.joinChannel(selectedChannel.id);
-    return () => { wsRef.current?.leaveChannel(selectedChannel.id); };
+    return () => {
+      wsRef.current?.leaveChannel(selectedChannel.id);
+    };
   }, [selectedChannel?.id]);
 
-  const fetchChannels = async () => {
-    try {
-      const response = await authFetch("/api/v1/chat/channels");
-      if (response.ok) {
-        const data = await response.json();
-        const nextChannels = data.channels || [];
-        setChannels(nextChannels);
-        setSelectedChannel((prev) => {
-          if (prev && nextChannels.some((c: Channel) => c.id === prev.id)) return prev;
-          return nextChannels[0] || null;
-        });
-      }
-    } catch (err) {
-      console.error("Failed to fetch channels:", err);
-      setError("Failed to load channels");
-    }
-  };
+  // ── send message ──
+  const [inputMessage, setInputMessage] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchChannelMembers = async (channelId: string) => {
-    try {
-      const response = await authFetch(`/api/v1/chat/channels/${channelId}/members`);
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setChannelMembers(data.members || []);
-      }
-    } catch (err) {
-      console.error("Failed to fetch channel members:", err);
-    }
-  };
-
-  const fetchAgents = async () => {
-    try {
-      const response = await authFetch("/api/v1/agents");
-      if (response.ok) {
-        const data = await response.json();
-        setAgents(data.agents || []);
-      }
-    } catch (err) {
-      console.error("Failed to fetch agents:", err);
-    }
-  };
-
-  const fetchMessages = async (channelId: string) => {
-    try {
-      setIsLoading(true);
-      const response = await authFetch(`/api/v1/chat/channels/${channelId}/messages?limit=50`);
-      if (response.ok) {
-        const data = await response.json();
-        setMessages(data.messages || []);
-      }
-    } catch (err) {
-      console.error("Failed to fetch messages:", err);
-      setError("Failed to load messages");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const isImageMime = (mime: string) => mime.startsWith("image/");
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+  }, [inputMessage]);
 
   const handleFilesSelected = (fileList: FileList | null) => {
     if (!fileList) return;
     const nextFiles = Array.from(fileList);
-    const total = selectedFiles.length + nextFiles.length;
-    if (total > 5) {
-      setError("Maximum 5 attachments per message");
+    if (selectedFiles.length + nextFiles.length > 5) {
+      setSendError("Maximum 5 attachments per message");
       return;
     }
-
     const tooBig = nextFiles.find((f) => f.size > 15 * 1024 * 1024);
     if (tooBig) {
-      setError(`File too large (max 15MB): ${tooBig.name}`);
+      setSendError(`File too large (max 15 MB): ${tooBig.name}`);
       return;
     }
-
     setSelectedFiles((prev) => [...prev, ...nextFiles]);
-    setError(null);
+    setSendError(null);
   };
 
-  const removeSelectedFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const uploadAttachments = async (channelId: string, files: File[]): Promise<Attachment[]> => {
-    if (!files.length) return [];
-    const form = new FormData();
-    files.forEach((file) => form.append('files', file));
-
-    const response = await authFetch(`/api/v1/chat/channels/${channelId}/attachments`, {
-      method: 'POST',
-      body: form
-    });
-
-    const data = await response.json();
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Attachment upload failed');
-    }
-
-    return data.attachments || [];
-  };
-
-  const sendMessage = async () => {
-    if ((!inputMessage.trim() && selectedFiles.length === 0) || !selectedChannel || isSending) return;
+  const handleSend = async () => {
+    if ((!inputMessage.trim() && selectedFiles.length === 0) || !selectedChannel || isSending)
+      return;
 
     setIsSending(true);
-    const currentText = inputMessage;
-    const currentFiles = [...selectedFiles];
+    const text = inputMessage;
+    const files = [...selectedFiles];
     const clientMessageId = `tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     const tempMessage: Message = {
       id: clientMessageId,
       client_message_id: clientMessageId,
-      content: currentText,
+      content: text,
       sender_id: "user",
       sender_name: "You",
-      attachments: currentFiles.map((f, idx) => ({
+      created_at: new Date().toISOString(),
+      attachments: files.map((f, idx) => ({
         id: `temp-${idx}`,
         filename: f.name,
-        mime: f.type || 'application/octet-stream',
+        mime: f.type || "application/octet-stream",
         size: f.size,
-        path: '',
-        url: '',
-        uploaded_at: new Date().toISOString()
+        path: "",
+        url: "",
+        uploaded_at: new Date().toISOString(),
       })),
-      created_at: new Date().toISOString()
     };
 
-    setMessages(prev => [...prev, tempMessage]);
+    setMessages((prev) => [...prev, tempMessage]);
     setInputMessage("");
     setSelectedFiles([]);
 
     try {
-      const attachments = await uploadAttachments(selectedChannel.id, currentFiles);
-      const response = await authFetch(`/api/v1/chat/channels/${selectedChannel.id}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: currentText,
-          sender_id: "user",
-          sender_name: "You",
-          attachments,
-          client_message_id: clientMessageId
-        })
+      let attachments: Array<{ id: string; url: string }> = [];
+      if (files.length > 0) {
+        const form = new FormData();
+        files.forEach((f) => form.append("files", f));
+        const res = await uploadAttachment(selectedChannel.id, form);
+        attachments = res.attachments;
+      }
+
+      const sent = await apiSendMessage(selectedChannel.id, {
+        content: text,
+        client_message_id: clientMessageId,
       });
 
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setMessages(prev => {
-          const idx = prev.findIndex(msg => msg.client_message_id === clientMessageId || msg.id === clientMessageId);
-          if (idx < 0) return prev;
-          const next = [...prev];
-          next[idx] = data.message;
-          return next;
-        });
-      } else {
-        throw new Error(data.error || "Failed to send message");
-      }
+      setMessages((prev) => {
+        const idx = prev.findIndex(
+          (m) => m.id === clientMessageId || m.client_message_id === clientMessageId
+        );
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = { ...sent, attachments: sent.attachments ?? (attachments.length > 0 ? (sent.attachments ?? []) : tempMessage.attachments) };
+        return next;
+      });
     } catch (err) {
-      console.error("Failed to send message:", err);
-      setError(err instanceof Error ? err.message : "Failed to send message");
-      setMessages(prev => prev.filter(msg => msg.id !== clientMessageId));
+      setSendError(err instanceof Error ? err.message : "Failed to send message");
+      setMessages((prev) => prev.filter((m) => m.id !== clientMessageId));
     } finally {
       setIsSending(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
-  };
-
-  const createChannel = async () => {
-    if (!newChannelName.trim()) return;
-    
-    try {
-      const response = await authFetch("/api/v1/chat/channels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newChannelName,
-          description: newChannelDescription,
-          type: "channel"
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setChannels(prev => [...prev, data.channel]);
-        setSelectedChannel(data.channel);
-        setShowNewChannelModal(false);
-        setNewChannelName("");
-        setNewChannelDescription("");
-      }
-    } catch (err) {
-      console.error("Failed to create channel:", err);
-      setError("Failed to create channel");
-    }
-  };
-
-  const createDirectMessage = async (agent: Agent) => {
-    try {
-      const response = await authFetch("/api/v1/chat/channels/direct", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user1: "user",
-          user2: agent.id,
-          user1_name: "You",
-          user2_name: agent.name
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        
-        // Add to channels if not already there
-        setChannels(prev => {
-          const exists = prev.find(c => c.id === data.channel.id);
-          if (!exists) {
-            return [...prev, data.channel];
-          }
-          return prev;
-        });
-        
-        setSelectedChannel(data.channel);
-      }
-    } catch (err) {
-      console.error("Failed to create direct message:", err);
-      setError("Failed to create direct message");
-    }
-  };
-
-  const deleteCurrentChannel = async () => {
-    if (!selectedChannel || selectedChannel.type !== 'channel') return;
-    const ok = window.confirm(`Delete channel "${selectedChannel.name}"?`);
-    if (!ok) return;
-
-    try {
-      const response = await authFetch(`/api/v1/chat/channels/${selectedChannel.id}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error('Delete failed');
-      const remaining = channels.filter((c) => c.id !== selectedChannel.id);
-      setChannels(remaining);
-      setSelectedChannel(remaining[0] || null);
-    } catch (err) {
-      console.error('Failed to delete channel:', err);
-      setError('Failed to delete channel');
-    }
-  };
-
-  const addChannelMember = async () => {
-    if (!selectedChannel || !memberId.trim()) return;
-    try {
-      const response = await authFetch(`/api/v1/chat/channels/${selectedChannel.id}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memberId: memberId.trim(), memberType, memberName: memberName.trim() || memberId.trim() })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to add member');
-      setChannelMembers(data.members || []);
-      setMemberId("");
-      setMemberName("");
-      await fetchChannels();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add member');
-    }
-  };
-
-  const removeChannelMember = async (id: string) => {
-    if (!selectedChannel) return;
-    try {
-      const response = await authFetch(`/api/v1/chat/channels/${selectedChannel.id}/members/${encodeURIComponent(id)}`, {
-        method: "DELETE"
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'Failed to remove member');
-      setChannelMembers(data.members || []);
-      await fetchChannels();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove member');
-    }
-  };
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      handleSend();
     }
   };
 
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString([], { 
-      hour: "2-digit", 
-      minute: "2-digit" 
-    });
+  const handleTyping = (value: string) => {
+    setInputMessage(value);
+    if (selectedChannel && wsRef.current && value) {
+      wsRef.current.sendTyping(selectedChannel.id);
+    }
   };
 
-  const filteredAgents = agents.filter(agent => 
-    agent.name.toLowerCase().includes(searchTerm.toLowerCase())
+  // ── channel search ──
+  const [searchTerm, setSearchTerm] = useState("");
+  const filteredChannelChannels = channelChannels.filter((c) =>
+    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const filteredDirectChannels = directChannels.filter((c) =>
+    c.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const channelChannels = channels.filter(c => c.type === "channel");
-  const directChannels = channels.filter(c => c.type === "direct");
+  // ── new channel dialog ──
+  const [showNewChannel, setShowNewChannel] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelDesc, setNewChannelDesc] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+
+  const handleCreateChannel = async () => {
+    if (!newChannelName.trim() || isCreating) return;
+    setIsCreating(true);
+    try {
+      const ch = await createChannel({
+        name: newChannelName.trim(),
+        description: newChannelDesc.trim() || undefined,
+        type: "channel",
+      });
+      await mutateChannels();
+      setSelectedChannel(ch);
+      setShowNewChannel(false);
+      setNewChannelName("");
+      setNewChannelDesc("");
+    } catch {
+      // silently ignore — user can retry
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  // ── delete channel ──
+  const handleDeleteChannel = async () => {
+    if (!selectedChannel || selectedChannel.type !== "channel") return;
+    if (!confirm(`Delete channel "${selectedChannel.name}"?`)) return;
+    try {
+      await deleteChannel(selectedChannel.id);
+      const remaining = channels.filter((c) => c.id !== selectedChannel.id);
+      await mutateChannels();
+      setSelectedChannel(remaining[0] ?? null);
+    } catch {
+      // ignore
+    }
+  };
+
+  // ── members dialog ──
+  const [showMembers, setShowMembers] = useState(false);
+  const [channelMembers, setChannelMembers] = useState<ChannelMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [memberType, setMemberType] = useState<"user" | "agent">("agent");
+  const [memberId, setMemberId] = useState("");
+  const [memberName, setMemberName] = useState("");
+
+  const loadMembers = useCallback(async (channelId: string) => {
+    setMembersLoading(true);
+    try {
+      const members = await getChannelMembers(channelId);
+      setChannelMembers(members);
+    } catch {
+      setChannelMembers([]);
+    } finally {
+      setMembersLoading(false);
+    }
+  }, []);
+
+  const handleOpenMembers = () => {
+    if (selectedChannel) {
+      loadMembers(selectedChannel.id);
+      setShowMembers(true);
+    }
+  };
+
+  const handleAddMember = async () => {
+    if (!selectedChannel || !memberId.trim()) return;
+    try {
+      await apiAddChannelMember(selectedChannel.id, {
+        id: memberId.trim(),
+        type: memberType,
+        name: memberName.trim() || memberId.trim(),
+      });
+      await loadMembers(selectedChannel.id);
+      await mutateChannels();
+      setMemberId("");
+      setMemberName("");
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleRemoveMember = async (id: string) => {
+    if (!selectedChannel) return;
+    try {
+      await apiRemoveChannelMember(selectedChannel.id, id);
+      await loadMembers(selectedChannel.id);
+      await mutateChannels();
+    } catch {
+      // ignore
+    }
+  };
+
+  // ── mobile view toggle ──
+  const [mobileShowMessages, setMobileShowMessages] = useState(false);
+
+  const selectChannel = (ch: Channel) => {
+    setSelectedChannel(ch);
+    setMobileShowMessages(true);
+  };
+
+  // ── typing indicator text ──
+  const typingNames = Object.values(typingUsers);
+  let typingText = "";
+  if (typingNames.length === 1) typingText = `${typingNames[0]} is typing...`;
+  else if (typingNames.length === 2)
+    typingText = `${typingNames[0]} and ${typingNames[1]} are typing...`;
+  else if (typingNames.length > 2) typingText = "Several people are typing...";
+
+  // ─────────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-[calc(100vh-120px)]">
-      {/* Sidebar */}
-      <div className="w-80 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-l-xl flex flex-col">
-        {/* Search Bar */}
-        <div className="p-4 border-b border-[rgba(255,255,255,0.07)]">
+    <div className="flex h-[calc(100vh-64px)] bg-[#08090f]">
+      {/* ── Sidebar ── */}
+      <aside
+        className={`
+          flex-col bg-[#0d0e1a] border-r border-white/[0.07]
+          w-full md:w-80 md:flex shrink-0
+          ${mobileShowMessages ? "hidden md:flex" : "flex"}
+        `}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07]">
+          <h2 className="text-sm font-semibold text-white">Chat</h2>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0 text-gray-400 hover:text-white"
+            onClick={() => setShowNewChannel(true)}
+            title="New channel"
+          >
+            <PlusIcon className="w-4 h-4" />
+          </Button>
+        </div>
+
+        {/* Search */}
+        <div className="px-3 py-3 border-b border-white/[0.07]">
           <div className="relative">
-            <MagnifyingGlassIcon className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search agents..."
+            <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+            <Input
+              placeholder="Search channels..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="pl-9 h-8 text-sm bg-white/5 border-white/[0.07] text-white placeholder:text-gray-500 focus-visible:ring-1 focus-visible:ring-blue-500"
             />
           </div>
         </div>
 
-        {/* Channels Section */}
-        <div className="flex-1 overflow-y-auto">
-          {/* Channel List */}
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
-                Channels
-              </h3>
-              <button
-                onClick={() => setShowNewChannelModal(true)}
-                className="p-1 hover:bg-[rgba(255,255,255,0.05)] rounded transition-colors"
-              >
-                <PlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
-              </button>
-            </div>
-            
-            <div className="space-y-1">
-              {channelChannels.map((channel) => (
-                <button
-                  key={channel.id}
-                  onClick={() => setSelectedChannel(channel)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                    selectedChannel?.id === channel.id
-                      ? "bg-blue-600 text-white"
-                      : "hover:bg-[rgba(255,255,255,0.05)] text-gray-300"
-                  }`}
-                >
-                  <HashtagIcon className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate">{channel.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Direct Messages Section */}
-          <div className="p-4 border-t border-[rgba(255,255,255,0.07)]">
-            <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3">
-              Agent DMs
-            </h3>
-            
-            {/* Existing DM channels */}
-            <div className="space-y-1 mb-4">
-              {directChannels.map((channel) => (
-                <button
-                  key={channel.id}
-                  onClick={() => setSelectedChannel(channel)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
-                    selectedChannel?.id === channel.id
-                      ? "bg-blue-600 text-white"
-                      : "hover:bg-[rgba(255,255,255,0.05)] text-gray-300"
-                  }`}
-                >
-                  <ChatBubbleLeftRightIcon className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate">{channel.name}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Available Agents */}
-            <div className="space-y-1">
-              {filteredAgents.map((agent) => (
-                <button
-                  key={agent.id}
-                  onClick={() => createDirectMessage(agent)}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left hover:bg-[rgba(255,255,255,0.05)] text-gray-300 transition-colors"
-                >
-                  <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0">
-                    <img 
-                      src={agent.avatar} 
-                      alt={agent.name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        target.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23374151"/><text x="50" y="50" text-anchor="middle" dy="0.3em" fill="white" font-size="40">${agent.name.charAt(0)}</text></svg>`;
-                      }}
-                    />
+        {/* Channel list */}
+        <div className="flex-1 overflow-y-auto py-2">
+          {channelsLoading ? (
+            <ChannelSkeleton />
+          ) : (
+            <>
+              {/* Channels */}
+              {filteredChannelChannels.length > 0 && (
+                <section className="mb-4">
+                  <div className="px-4 py-1.5 flex items-center justify-between">
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+                      Channels
+                    </span>
                   </div>
-                  <div className="flex-1 truncate">
-                    <div className="text-sm">{agent.name}</div>
-                    <div className={`text-xs ${
-                      agent.status === 'online' ? 'text-green-400' : 'text-gray-500'
-                    }`}>
-                      {agent.status}
-                    </div>
+                  <div className="px-2 space-y-0.5">
+                    {filteredChannelChannels.map((ch) => (
+                      <ChannelItem
+                        key={ch.id}
+                        channel={ch}
+                        isActive={selectedChannel?.id === ch.id}
+                        onClick={() => selectChannel(ch)}
+                      />
+                    ))}
                   </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Chat Area */}
-      <div className="flex-1 bg-[#14151f] border-t border-r border-b border-[rgba(255,255,255,0.07)] rounded-r-xl flex flex-col">
-        {selectedChannel ? (
-          <>
-            {/* Chat Header */}
-            <div className="p-4 border-b border-[rgba(255,255,255,0.07)] flex items-center gap-3">
-              {selectedChannel.type === "channel" ? (
-                <HashtagIcon className="w-6 h-6 text-gray-400" />
-              ) : (
-                <ChatBubbleLeftRightIcon className="w-6 h-6 text-gray-400" />
+                </section>
               )}
-              <div className="flex-1">
-                <h3 className="text-white font-medium">{selectedChannel.name}</h3>
-                {selectedChannel.description && (
-                  <p className="text-xs text-gray-400">{selectedChannel.description}</p>
-                )}
-              </div>
-              {selectedChannel.type === "channel" && (
-                <div className="flex items-center gap-2">
+
+              {/* Direct messages */}
+              {filteredDirectChannels.length > 0 && (
+                <section>
+                  <div className="px-4 py-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+                      Direct Messages
+                    </span>
+                  </div>
+                  <div className="px-2 space-y-0.5">
+                    {filteredDirectChannels.map((ch) => (
+                      <ChannelItem
+                        key={ch.id}
+                        channel={ch}
+                        isActive={selectedChannel?.id === ch.id}
+                        onClick={() => selectChannel(ch)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {/* Empty state */}
+              {channels.length === 0 && (
+                <div className="px-4 py-8 text-center text-sm text-gray-500">
+                  No channels yet.
+                  <br />
                   <button
-                    onClick={() => setShowMembersModal(true)}
-                    className="px-3 py-1.5 text-xs bg-[#1f2028] border border-[rgba(255,255,255,0.1)] text-gray-200 rounded-lg hover:bg-[#2b2d38]"
+                    className="mt-2 text-blue-400 hover:text-blue-300 underline"
+                    onClick={() => setShowNewChannel(true)}
                   >
-                    Members ({channelMembers.length || selectedChannel.members?.length || 0})
-                  </button>
-                  <button
-                    onClick={deleteCurrentChannel}
-                    className="p-2 text-red-300 border border-red-500/30 rounded-lg hover:bg-red-900/20"
-                    title="Delete channel"
-                  >
-                    <TrashIcon className="w-4 h-4" />
+                    Create one
                   </button>
                 </div>
               )}
-            </div>
+            </>
+          )}
+        </div>
+      </aside>
 
-            {/* Error Display */}
-            {error && (
-              <div className="mx-4 mt-4 p-3 bg-red-900/20 border border-red-500/20 rounded-lg text-red-400 text-sm flex items-center gap-2">
-                <ExclamationTriangleIcon className="w-4 h-4" />
-                {error}
+      {/* ── Main ── */}
+      <main
+        className={`
+          flex-col flex-1 min-w-0 bg-[#08090f]
+          ${mobileShowMessages ? "flex" : "hidden md:flex"}
+        `}
+      >
+        {selectedChannel ? (
+          <>
+            {/* Channel header */}
+            <header className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.07] shrink-0">
+              {/* Back button — mobile only */}
+              <button
+                className="md:hidden p-1 text-gray-400 hover:text-white"
+                onClick={() => setMobileShowMessages(false)}
+              >
+                <ArrowLeftIcon className="w-5 h-5" />
+              </button>
+
+              {selectedChannel.type === "channel" ? (
+                <HashtagIcon className="w-5 h-5 text-gray-400 shrink-0" />
+              ) : (
+                <ChatBubbleLeftRightIcon className="w-5 h-5 text-gray-400 shrink-0" />
+              )}
+
+              <div className="flex-1 min-w-0">
+                <h1 className="text-sm font-semibold text-white truncate">
+                  {selectedChannel.name}
+                </h1>
+                {selectedChannel.description && (
+                  <p className="text-xs text-gray-500 truncate">
+                    {selectedChannel.description}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {selectedChannel.type === "channel" && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2 gap-1.5 text-xs text-gray-400 hover:text-white"
+                      onClick={handleOpenMembers}
+                    >
+                      <UsersIcon className="w-4 h-4" />
+                      <span className="hidden sm:inline">
+                        {selectedChannel.members?.length ?? 0}
+                      </span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0 text-red-400/70 hover:text-red-400"
+                      onClick={handleDeleteChannel}
+                      title="Delete channel"
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </header>
+
+            {/* Error banner */}
+            {sendError && (
+              <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-900/20 px-3 py-2 text-sm text-red-400">
+                <span className="flex-1">{sendError}</span>
                 <button
-                  onClick={() => setError(null)}
-                  className="ml-auto text-red-300 hover:text-red-100"
+                  onClick={() => setSendError(null)}
+                  className="text-red-300 hover:text-red-100"
                 >
-                  ×
+                  <XMarkIcon className="w-4 h-4" />
                 </button>
               </div>
             )}
 
             {/* Messages */}
-            <div className="flex-1 p-4 overflow-y-auto">
-              {isLoading ? (
-                <div className="flex justify-center items-center h-full">
-                  <div className="text-gray-400">Loading messages...</div>
-                </div>
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              {messagesLoading ? (
+                <MessageSkeleton />
               ) : messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center">
-                  <CpuChipIcon className="w-16 h-16 text-[#6b7280] mb-4" />
-                  <h3 className="text-lg font-semibold text-white mb-2">Start the conversation</h3>
-                  <p className="text-[#9ca3af] max-w-md">
-                    Send the first message in {selectedChannel.name}
-                  </p>
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <div className="flex size-14 items-center justify-center rounded-full bg-white/5">
+                    {selectedChannel.type === "channel" ? (
+                      <HashtagIcon className="w-7 h-7 text-gray-500" />
+                    ) : (
+                      <ChatBubbleLeftRightIcon className="w-7 h-7 text-gray-500" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white">
+                      Start the conversation
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      Send the first message in{" "}
+                      <span className="text-gray-400">#{selectedChannel.name}</span>
+                    </p>
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {messages.map((message, index) => {
-                    const isUser = message.sender_id === "user";
-                    const showAvatar = index === 0 || messages[index - 1].sender_id !== message.sender_id;
-                    
+                <div className="space-y-1">
+                  {messages.map((msg, idx) => {
+                    const isOwn = msg.sender_id === "user";
+                    const prevMsg = messages[idx - 1];
+                    const isGrouped =
+                      prevMsg && prevMsg.sender_id === msg.sender_id;
+
                     return (
                       <div
-                        key={message.id}
-                        className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+                        key={msg.id}
+                        className={`flex gap-3 ${isOwn ? "flex-row-reverse" : "flex-row"} ${
+                          isGrouped ? "mt-0.5" : "mt-4"
+                        }`}
                       >
-                        <div className={`flex items-start gap-3 max-w-[80%] ${
-                          isUser ? "flex-row-reverse" : "flex-row"
-                        }`}>
-                          {showAvatar ? (
-                            <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0">
-                              {isUser ? (
-                                <UserCircleIcon className="w-full h-full text-blue-400 bg-blue-900/20 rounded-full p-1" />
-                              ) : (
-                                <div className="w-full h-full bg-gray-600 rounded-full flex items-center justify-center text-white text-sm">
-                                  {message.sender_name?.charAt(0) || "A"}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="w-8 h-8 flex-shrink-0" />
-                          )}
-                          
-                          <div className={`rounded-lg p-3 ${
-                            isUser
-                              ? "bg-blue-600 text-white"
-                              : "bg-[#1f2028] text-white border border-[rgba(255,255,255,0.05)]"
-                          }`}>
-                            {showAvatar && !isUser && (
-                              <div className="text-xs text-gray-300 mb-1 font-medium">
-                                {message.sender_name}
-                              </div>
-                            )}
-                            {message.content ? (
-                              <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                            ) : null}
+                        {/* Avatar */}
+                        {!isGrouped ? (
+                          <Avatar className="size-8 shrink-0 mt-0.5">
+                            <AvatarFallback
+                              className={
+                                isOwn
+                                  ? "bg-blue-600/30 text-blue-300"
+                                  : "bg-white/10 text-gray-300"
+                              }
+                            >
+                              {getInitials(msg.sender_name)}
+                            </AvatarFallback>
+                          </Avatar>
+                        ) : (
+                          <div className="size-8 shrink-0" />
+                        )}
 
-                            {message.attachments && message.attachments.length > 0 && (
+                        {/* Bubble */}
+                        <div
+                          className={`flex max-w-[75%] flex-col gap-1 ${
+                            isOwn ? "items-end" : "items-start"
+                          }`}
+                        >
+                          {!isGrouped && (
+                            <div
+                              className={`flex items-baseline gap-2 ${
+                                isOwn ? "flex-row-reverse" : "flex-row"
+                              }`}
+                            >
+                              <span className="text-xs font-medium text-gray-300">
+                                {isOwn ? "You" : msg.sender_name}
+                              </span>
+                              <span className="text-[11px] text-gray-600">
+                                {formatTime(msg.created_at)}
+                              </span>
+                            </div>
+                          )}
+
+                          <div
+                            className={`rounded-2xl px-3.5 py-2 text-sm leading-relaxed text-white ${
+                              isOwn
+                                ? "bg-blue-600/20 rounded-tr-sm"
+                                : "bg-[#14151f] rounded-tl-sm"
+                            }`}
+                          >
+                            {msg.content && (
+                              <p className="whitespace-pre-wrap break-words">
+                                {msg.content}
+                              </p>
+                            )}
+
+                            {msg.attachments && msg.attachments.length > 0 && (
                               <div className="mt-2 space-y-2">
-                                {message.attachments.map((attachment) => (
+                                {msg.attachments.map((att) => (
                                   <a
-                                    key={attachment.id}
-                                    href={attachment.url}
+                                    key={att.id}
+                                    href={att.url || "#"}
                                     target="_blank"
                                     rel="noreferrer"
                                     className="block"
                                   >
-                                    {isImageMime(attachment.mime) ? (
-                                      <div className="rounded-md overflow-hidden border border-white/10 bg-black/20">
+                                    {isImageMime(att.mime) && att.url ? (
+                                      <div className="overflow-hidden rounded-lg border border-white/10 bg-black/20">
                                         <img
-                                          src={attachment.url}
-                                          alt={attachment.filename}
+                                          src={att.url}
+                                          alt={att.filename}
                                           className="max-h-48 w-auto object-cover"
                                         />
-                                        <div className="px-2 py-1 text-xs text-gray-300">{attachment.filename}</div>
+                                        <div className="px-2 py-1 text-xs text-gray-400">
+                                          {att.filename}
+                                        </div>
                                       </div>
                                     ) : (
-                                      <div className="flex items-center gap-2 rounded-md border border-white/10 px-2 py-2 bg-black/20">
-                                        <DocumentIcon className="w-5 h-5 text-gray-300" />
+                                      <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                                        <DocumentIcon className="w-4 h-4 shrink-0 text-gray-400" />
                                         <div className="min-w-0">
-                                          <div className="text-xs text-white truncate">{attachment.filename}</div>
-                                          <div className="text-[11px] text-gray-400">{formatFileSize(attachment.size)}</div>
+                                          <p className="truncate text-xs text-white">
+                                            {att.filename}
+                                          </p>
+                                          <p className="text-[11px] text-gray-500">
+                                            {att.size ? formatFileSize(att.size) : ""}
+                                          </p>
                                         </div>
                                       </div>
                                     )}
@@ -722,38 +779,61 @@ export default function ChatPage() {
                               </div>
                             )}
 
-                            <div className={`text-xs mt-2 ${
-                              isUser ? "text-blue-100" : "text-gray-400"
-                            }`}>
-                              {formatTime(message.created_at)}
-                            </div>
+                            {isGrouped && (
+                              <p className="mt-1 text-[11px] text-gray-600 text-right">
+                                {formatTime(msg.created_at)}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
                     );
                   })}
+
+                  {/* Typing indicator */}
+                  {typingText && (
+                    <div className="mt-2 flex items-center gap-2 pl-11 text-xs text-gray-500 italic">
+                      <span className="flex gap-0.5">
+                        <span className="animate-bounce delay-0 w-1 h-1 rounded-full bg-gray-500 inline-block" />
+                        <span className="animate-bounce delay-75 w-1 h-1 rounded-full bg-gray-500 inline-block" />
+                        <span className="animate-bounce delay-150 w-1 h-1 rounded-full bg-gray-500 inline-block" />
+                      </span>
+                      {typingText}
+                    </div>
+                  )}
+
                   <div ref={messagesEndRef} />
                 </div>
               )}
             </div>
 
-            {/* Input Area */}
-            <div className="p-4 border-t border-[rgba(255,255,255,0.07)] space-y-3">
+            {/* Input area */}
+            <div className="shrink-0 border-t border-white/[0.07] px-4 py-3 space-y-2">
+              {/* File chips */}
               {selectedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {selectedFiles.map((file, index) => (
-                    <div key={`${file.name}-${index}`} className="flex items-center gap-2 bg-[#1f2028] border border-[rgba(255,255,255,0.08)] rounded-lg px-2 py-1 max-w-xs">
-                      <DocumentIcon className="w-4 h-4 text-gray-300" />
-                      <span className="text-xs text-gray-200 truncate max-w-[140px]">{file.name}</span>
-                      <button onClick={() => removeSelectedFile(index)} className="text-gray-400 hover:text-white">
-                        <XMarkIcon className="w-4 h-4" />
+                  {selectedFiles.map((file, idx) => (
+                    <div
+                      key={`${file.name}-${idx}`}
+                      className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 pl-2 pr-1 py-0.5 text-xs text-gray-300"
+                    >
+                      <DocumentIcon className="w-3.5 h-3.5 shrink-0" />
+                      <span className="max-w-[120px] truncate">{file.name}</span>
+                      <button
+                        onClick={() =>
+                          setSelectedFiles((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                        className="ml-0.5 rounded-full p-0.5 text-gray-500 hover:text-white"
+                      >
+                        <XMarkIcon className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="flex gap-3">
+              <div className="flex items-end gap-2">
+                {/* Attach */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -761,166 +841,225 @@ export default function ChatPage() {
                   className="hidden"
                   onChange={(e) => handleFilesSelected(e.target.files)}
                 />
-                <button
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-9 w-9 shrink-0 p-0 text-gray-500 hover:text-gray-200"
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] hover:bg-[#2b2d38] text-gray-200 rounded-lg transition-colors"
                   title="Attach file"
                 >
                   <PaperClipIcon className="w-5 h-5" />
-                </button>
+                </Button>
+
+                {/* Textarea */}
                 <textarea
                   ref={inputRef}
                   value={inputMessage}
-                  onChange={(e) => { setInputMessage(e.target.value); if (selectedChannel && wsRef.current && e.target.value) wsRef.current.sendTyping(selectedChannel.id); }}
+                  onChange={(e) => handleTyping(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={`Message ${selectedChannel.name}...`}
+                  placeholder={`Message #${selectedChannel.name}…`}
                   rows={1}
-                  className="flex-1 px-4 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none overflow-y-auto max-h-[180px]"
+                  className="flex-1 resize-none overflow-y-auto rounded-xl border border-white/[0.07] bg-[#14151f] px-3.5 py-2 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500/60 max-h-[180px]"
                 />
-                <button
-                  onClick={sendMessage}
-                  disabled={(!inputMessage.trim() && selectedFiles.length === 0) || isSending}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
+
+                {/* Send */}
+                <Button
+                  size="sm"
+                  onClick={handleSend}
+                  disabled={
+                    (!inputMessage.trim() && selectedFiles.length === 0) || isSending
+                  }
+                  className="h-9 w-9 shrink-0 p-0 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40"
                 >
-                  <PaperAirplaneIcon className="w-5 h-5" />
-                </button>
+                  <PaperAirplaneIcon className="w-4 h-4" />
+                </Button>
               </div>
             </div>
           </>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <ChatBubbleLeftRightIcon className="w-16 h-16 text-[#6b7280] mb-4" />
-            <h3 className="text-lg font-semibold text-white mb-2">Select a channel</h3>
-            <p className="text-[#9ca3af] max-w-md">
-              Choose a channel from the sidebar to start chatting
-            </p>
+          /* Empty state — no channel selected */
+          <div className="flex h-full flex-col items-center justify-center gap-4 text-center px-4">
+            <div className="flex size-16 items-center justify-center rounded-full bg-white/5">
+              <ChatBubbleLeftRightIcon className="w-8 h-8 text-gray-500" />
+            </div>
+            <div>
+              <p className="text-base font-semibold text-white">Select a channel</p>
+              <p className="mt-1 text-sm text-gray-500">
+                Choose a channel from the sidebar to start chatting
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => setShowNewChannel(true)}
+            >
+              <PlusIcon className="w-4 h-4 mr-1.5" />
+              New Channel
+            </Button>
           </div>
         )}
-      </div>
+      </main>
 
-      {/* Channel Members Modal */}
-      {showMembersModal && selectedChannel && selectedChannel.type === "channel" && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 w-full max-w-lg mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">Manage Members · {selectedChannel.name}</h3>
-            <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
-              {channelMembers.map((m) => (
-                <div key={m.id} className="flex items-center justify-between bg-[#1f2028] rounded-lg px-3 py-2 border border-[rgba(255,255,255,0.08)]">
-                  <div>
-                    <div className="text-sm text-white">{m.name || m.id}</div>
-                    <div className="text-xs text-gray-400">{m.type} · {m.id}</div>
-                  </div>
-                  <button onClick={() => removeChannelMember(m.id)} className="text-xs px-2 py-1 rounded bg-red-700/50 hover:bg-red-700 text-white">Remove</button>
+      {/* ── New Channel Dialog ── */}
+      <Dialog open={showNewChannel} onOpenChange={setShowNewChannel}>
+        <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Channel</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-300">
+                Channel Name
+              </label>
+              <Input
+                value={newChannelName}
+                onChange={(e) => setNewChannelName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateChannel();
+                }}
+                placeholder="e.g. general"
+                className="bg-white/5 border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-gray-300">
+                Description{" "}
+                <span className="text-gray-600 font-normal">(optional)</span>
+              </label>
+              <Input
+                value={newChannelDesc}
+                onChange={(e) => setNewChannelDesc(e.target.value)}
+                placeholder="What is this channel about?"
+                className="bg-white/5 border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setShowNewChannel(false)}
+              className="text-gray-400"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreateChannel}
+              disabled={!newChannelName.trim() || isCreating}
+              className="bg-blue-600 hover:bg-blue-500"
+            >
+              {isCreating ? "Creating…" : "Create Channel"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Members Dialog ── */}
+      <Dialog open={showMembers} onOpenChange={setShowMembers}>
+        <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              Members · {selectedChannel?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {/* Member list */}
+            <div className="max-h-56 overflow-y-auto space-y-1.5 rounded-lg border border-white/[0.07] bg-white/[0.02] p-2">
+              {membersLoading ? (
+                <div className="space-y-2 p-2">
+                  {[1, 2].map((i) => (
+                    <Skeleton key={i} className="h-9 w-full bg-white/5 rounded-lg" />
+                  ))}
                 </div>
-              ))}
+              ) : channelMembers.length === 0 ? (
+                <p className="py-4 text-center text-sm text-gray-500">
+                  No members yet
+                </p>
+              ) : (
+                channelMembers.map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Avatar className="size-7 shrink-0">
+                        <AvatarFallback className="text-[11px] bg-white/10 text-gray-300">
+                          {getInitials(m.name || m.id)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-white">
+                          {m.name || m.id}
+                        </p>
+                        <p className="text-[11px] text-gray-500">
+                          {m.type}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs text-red-400/70 hover:text-red-400 shrink-0"
+                      onClick={() => handleRemoveMember(m.id)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))
+              )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-              <select
-                value={memberType}
-                onChange={(e) => setMemberType(e.target.value as "user" | "agent")}
-                className="px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white"
-              >
-                <option value="agent">Agent</option>
-                <option value="user">User</option>
-              </select>
-              <input
-                value={memberId}
-                onChange={(e) => setMemberId(e.target.value)}
-                placeholder={memberType === "agent" ? "agent id" : "user id"}
-                className="px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-400"
-              />
-              <input
+            {/* Add member */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                Add Member
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                <select
+                  value={memberType}
+                  onChange={(e) => setMemberType(e.target.value as "user" | "agent")}
+                  className="col-span-1 rounded-lg border border-white/[0.07] bg-white/5 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  <option value="agent">Agent</option>
+                  <option value="user">User</option>
+                </select>
+                <Input
+                  value={memberId}
+                  onChange={(e) => setMemberId(e.target.value)}
+                  placeholder={memberType === "agent" ? "Agent ID" : "User ID"}
+                  className="col-span-2 bg-white/5 border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500"
+                />
+              </div>
+              <Input
                 value={memberName}
                 onChange={(e) => setMemberName(e.target.value)}
-                placeholder="display name"
-                className="px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-400"
+                placeholder="Display name (optional)"
+                className="bg-white/5 border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500"
               />
             </div>
-
-            {memberType === "agent" && agents.length > 0 && (
-              <div className="mb-4 text-xs text-gray-400">
-                Quick pick: {agents.slice(0, 8).map((a) => (
-                  <button key={a.id} onClick={() => { setMemberId(a.id); setMemberName(a.name); }} className="ml-2 text-blue-300 hover:text-blue-200">{a.name}</button>
-                ))}
-              </div>
-            )}
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => setShowMembersModal(false)}
-                className="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
-              >
-                Close
-              </button>
-              <button
-                onClick={addChannelMember}
-                disabled={!memberId.trim()}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
-              >
-                Add Member
-              </button>
-            </div>
           </div>
-        </div>
-      )}
 
-      {/* New Channel Modal */}
-      {showNewChannelModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">Create Channel</h3>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Channel Name
-                </label>
-                <input
-                  type="text"
-                  value={newChannelName}
-                  onChange={(e) => setNewChannelName(e.target.value)}
-                  placeholder="general"
-                  className="w-full px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Description (optional)
-                </label>
-                <textarea
-                  value={newChannelDescription}
-                  onChange={(e) => setNewChannelDescription(e.target.value)}
-                  placeholder="What is this channel about?"
-                  rows={3}
-                  className="w-full px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-            
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => {
-                  setShowNewChannelModal(false);
-                  setNewChannelName("");
-                  setNewChannelDescription("");
-                }}
-                className="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={createChannel}
-                disabled={!newChannelName.trim()}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white rounded-lg transition-colors"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setShowMembers(false)}
+              className="text-gray-400"
+            >
+              Close
+            </Button>
+            <Button
+              onClick={handleAddMember}
+              disabled={!memberId.trim()}
+              className="bg-blue-600 hover:bg-blue-500"
+            >
+              Add Member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
