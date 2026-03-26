@@ -94,9 +94,9 @@ const PROVIDER_META: Record<
   },
   openrouter: {
     label: "OpenRouter",
-    description: "Unified gateway to 200+ models from every major provider.",
-    models: ["auto", "llama-3", "mistral", "gemini-pro"],
-    gradient: "from-[#7c3aed] to-[#5b21b6]",
+    description: "Unified API gateway — access 200+ models from OpenAI, Anthropic, Google, Meta, Mistral and more through a single API.",
+    models: ["gpt-4o", "claude-3.5-sonnet", "gemini-pro", "llama-3.1", "mixtral", "command-r+"],
+    gradient: "from-[#7c3aed] to-[#3b82f6]",
   },
   groq: {
     label: "Groq",
