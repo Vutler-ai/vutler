@@ -80,12 +80,14 @@ function tryDecodeJWT(req) {
 }
 
 /**
- * Resolve API key via SHA256 lookup in tenant_vutler.api_keys (PostgreSQL)
+ * Resolve API key via SHA256 lookup — checks both:
+ *   1. api_keys (legacy table)
+ *   2. tenant_vutler.workspace_api_keys (nexus/register keys)
  */
 async function resolveApiKey(req, apiKey) {
   const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
 
-  // Check cache
+  // Check cache (only a positive hit or an explicit null after both tables checked)
   const cached = apiKeyCache.get(keyHash);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
@@ -95,6 +97,7 @@ async function resolveApiKey(req, apiKey) {
     return null;
   }
 
+  // ── Table 1: legacy api_keys ──
   try {
     const result = await pg.query(
       `SELECT ak.id, ak.workspace_id, ak.name, ak.role, ak.created_by_user_id,
@@ -107,28 +110,54 @@ async function resolveApiKey(req, apiKey) {
       [keyHash]
     );
 
-    if (result.rows.length === 0) {
-      apiKeyCache.set(keyHash, { data: null, expiresAt: Date.now() + 30000 });
-      return null;
+    if (result.rows.length > 0) {
+      const row = result.rows[0];
+      const data = {
+        id: row.created_by_user_id || row.id,
+        name: row.display_name || row.name || 'API Service',
+        email: row.email || `api-${row.name}@vutler.internal`,
+        role: row.role || 'service',
+        workspaceId: row.workspace_id || DEFAULT_WORKSPACE,
+        apiKeyId: row.id,
+        apiKeyName: row.name,
+      };
+      apiKeyCache.set(keyHash, { data, expiresAt: Date.now() + API_KEY_CACHE_TTL });
+      return data;
     }
-
-    const row = result.rows[0];
-    const data = {
-      id: row.created_by_user_id || row.id,
-      name: row.display_name || row.name || 'API Service',
-      email: row.email || `api-${row.name}@vutler.internal`,
-      role: row.role || 'service',
-      workspaceId: row.workspace_id || DEFAULT_WORKSPACE,
-      apiKeyId: row.id,
-      apiKeyName: row.name,
-    };
-
-    apiKeyCache.set(keyHash, { data, expiresAt: Date.now() + API_KEY_CACHE_TTL });
-    return data;
   } catch (err) {
-    console.error('[AUTH] API key DB lookup failed:', err.message);
-    return null;
+    console.error('[AUTH] API key lookup (api_keys) failed:', err.message);
   }
+
+  // ── Table 2: tenant_vutler.workspace_api_keys ──
+  try {
+    const result = await pg.query(
+      `SELECT ak.id, ak.workspace_id, ak.name, ak.created_by_user_id
+       FROM tenant_vutler.workspace_api_keys ak
+       WHERE ak.key_hash = $1 AND ak.revoked_at IS NULL
+       LIMIT 1`,
+      [keyHash]
+    );
+
+    if (result.rows.length > 0) {
+      const row = result.rows[0];
+      const data = {
+        id: row.created_by_user_id || row.id,
+        email: null,
+        name: row.name,
+        role: 'api_key',
+        workspaceId: row.workspace_id,
+        apiKeyId: row.id,
+      };
+      apiKeyCache.set(keyHash, { data, expiresAt: Date.now() + API_KEY_CACHE_TTL });
+      return data;
+    }
+  } catch (err) {
+    console.error('[AUTH] API key lookup (workspace_api_keys) failed:', err.message);
+  }
+
+  // Not found in either table — cache negative result
+  apiKeyCache.set(keyHash, { data: null, expiresAt: Date.now() + 30000 });
+  return null;
 }
 
 /**
