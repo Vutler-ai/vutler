@@ -29,7 +29,10 @@ mount('/agent-sync',      'agents',      '../../api/agent-sync');
 mount('/runtime',         'runtime',     '../../api/runtime');
 
 // ── Nexus ───────────────────────────────────────────────────────────────────
-mount('/nexus',           'nexus',       '../../app/custom/api/nexus');
+// Mount nexus WITHOUT feature gate — register/cli need public access,
+// and all other endpoints check auth internally
+try { router.use('/nexus', require('../../app/custom/api/nexus')); }
+catch (e) { console.warn('[AGENTS] Skip /nexus:', e.message); }
 mount('/nexus/routing',   'nexus',       '../../api/nexus-routing');
 
 // ── Marketplace ─────────────────────────────────────────────────────────────
