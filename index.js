@@ -120,6 +120,55 @@ function mount(prefix, mod) {
   }
 }
 
+// ── Nexus Register (mounted early, before auth middleware) ──────────────────
+app.post('/api/v1/nexus/register', async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    const authHeader = req.headers['authorization'] || '';
+    const secret = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.body?.apiKey || req.body?.key || null;
+    if (!secret) return res.status(401).json({ success: false, error: 'API key is required' });
+
+    const pg = app.locals.pg;
+    const keyHash = crypto.createHash('sha256').update(String(secret)).digest('hex');
+    const DEFAULT_WS = '00000000-0000-0000-0000-000000000001';
+    let workspaceId = DEFAULT_WS, nodeId = crypto.randomUUID(), authMethod = 'dev_mode';
+
+    if (pg) {
+      try {
+        const keyResult = await pg.query(
+          `SELECT id, workspace_id FROM tenant_vutler.workspace_api_keys WHERE key_hash = $1 AND revoked_at IS NULL LIMIT 1`,
+          [keyHash]
+        );
+        if (keyResult.rows[0]) {
+          workspaceId = keyResult.rows[0].workspace_id;
+          authMethod = 'api_key';
+          await pg.query(`UPDATE tenant_vutler.workspace_api_keys SET last_used_at = NOW() WHERE id = $1`, [keyResult.rows[0].id]);
+        } else if (process.env.NODE_ENV === 'production') {
+          return res.status(401).json({ success: false, error: 'Invalid API key' });
+        }
+        // Try to insert nexus node
+        try {
+          const { name = require('os').hostname(), type = 'local' } = req.body || {};
+          const ins = await pg.query(
+            `INSERT INTO tenant_vutler.nexus_nodes (workspace_id, name, type, status, agents_deployed) VALUES ($1, $2, $3, 'online', '[]'::jsonb) RETURNING id`,
+            [workspaceId, name, type]
+          );
+          nodeId = ins.rows[0].id;
+        } catch (_) {}
+      } catch (dbErr) {
+        if (process.env.NODE_ENV === 'production') throw dbErr;
+        console.warn('[NEXUS] DB error in register, dev mode fallback:', dbErr.message);
+      }
+    }
+
+    console.log(`[NEXUS] Node registered: ${req.body?.name || 'unnamed'} (${nodeId}) [${authMethod}]`);
+    res.json({ success: true, message: 'Registered', nodeId, workspaceId, auth: authMethod });
+  } catch (err) {
+    console.error('[NEXUS] Register error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Auth (with brute-force protection)
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
