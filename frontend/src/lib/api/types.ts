@@ -483,6 +483,53 @@ export interface SuccessResponse {
   success: boolean;
 }
 
+// ─── Sandbox ──────────────────────────────────────────────────────────────────
+
+export type SandboxLanguage = 'javascript' | 'python' | 'shell';
+export type SandboxStatus = 'pending' | 'running' | 'completed' | 'failed' | 'timeout' | 'skipped';
+
+export interface SandboxExecution {
+  id: string;
+  execution_id?: string;
+  agent_id?: string | null;
+  language: SandboxLanguage;
+  code: string;
+  stdout?: string | null;
+  stderr?: string | null;
+  exit_code?: number | null;
+  status: SandboxStatus;
+  duration_ms?: number | null;
+  batch_id?: string | null;
+  batch_index?: number | null;
+  created_at: string;
+}
+
+export interface SandboxExecutePayload {
+  language: SandboxLanguage;
+  code: string;
+  timeout_ms?: number;
+  agent_id?: string;
+}
+
+export interface SandboxBatchPayload {
+  scripts: Array<{ language: SandboxLanguage; code: string; timeout_ms?: number }>;
+  stop_on_error?: boolean;
+  agent_id?: string;
+}
+
+export interface SandboxExecutionsParams {
+  agent_id?: string;
+  language?: SandboxLanguage;
+  status?: SandboxStatus;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SandboxExecutionsResponse {
+  executions: SandboxExecution[];
+  total: number;
+}
+
 // ─── Memory ───────────────────────────────────────────────────────────────────
 
 export interface Memory {

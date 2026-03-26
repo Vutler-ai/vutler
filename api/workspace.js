@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { getAllowedFeatures, PLAN_SNIPARA } = require('../packages/core/middleware/featureGate');
+const { getAllowedFeatures, PLANS } = require('../packages/core/middleware/featureGate');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -62,7 +62,8 @@ router.get('/features', async (req, res) => {
   }
 
   const features = getAllowedFeatures(plan);
-  const snipara = PLAN_SNIPARA[plan] || PLAN_SNIPARA.full;
+  const planDef = PLANS[plan] || PLANS.full || {};
+  const snipara = planDef.snipara || { memory: true, context: true, tasks: true };
 
   res.json({ plan, features, snipara });
 });

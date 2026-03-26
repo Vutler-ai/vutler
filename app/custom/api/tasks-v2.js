@@ -56,7 +56,7 @@ router.get('/tasks-v2', authenticateAgent, async (req, res) => {
     const status = req.query.status;
     const parentId = req.query.parent_id;
     const params = [DEFAULT_WORKSPACE];
-    let where = 'workspace_id = $1';
+    let where = 't.workspace_id = $1';
 
     if (status) {
       params.push(status);
