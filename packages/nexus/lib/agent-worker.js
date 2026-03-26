@@ -63,10 +63,13 @@ class AgentWorker {
       // 3. Remember the result
       if (this.sniparaClient) {
         try {
-          await this.sniparaClient.remember(
-            `Completed task "${task.title}": ${typeof result === 'string' ? result.slice(0, 500) : JSON.stringify(result).slice(0, 500)}`,
-            { type: 'LEARNING', scope: this.sniparaScope }
-          );
+          const resultSummary = typeof result === 'string' ? result.slice(0, 500) : JSON.stringify(result).slice(0, 500);
+          const memContent = `Completed task: "${task.title}". Result: ${resultSummary}`;
+          console.log(`[Memory] Agent ${this.name} auto-remembering task completion (importance: 6)`);
+          await this.sniparaClient.remember(this.sniparaScope, memContent, {
+            type: 'action_log',
+            importance: 6,
+          });
         } catch (e) { /* fire and forget */ }
       }
 

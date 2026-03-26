@@ -584,3 +584,27 @@ export interface RememberPayload {
   type: Memory['type'];
   importance: number;
 }
+
+// ─── Workspace Memory ─────────────────────────────────────────────────────────
+
+export interface WorkspaceKnowledge {
+  content: string;
+  updatedAt: string;
+}
+
+export interface TemplateScope {
+  scope: string;
+  role: string;
+  docCount: number;
+  lastUpdated: string;
+}
+
+export interface MemorySearchResult {
+  id: string;
+  content: string;
+  scope: string;
+  agentName?: string;
+  importance: number;
+  type: string;
+  createdAt: string;
+}

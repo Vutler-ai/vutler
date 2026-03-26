@@ -1,5 +1,13 @@
 import { apiFetch } from '../client';
-import type { Memory, AgentContext, RememberPayload, SuccessResponse } from '../types';
+import type {
+  Memory,
+  AgentContext,
+  RememberPayload,
+  SuccessResponse,
+  WorkspaceKnowledge,
+  TemplateScope,
+  MemorySearchResult,
+} from '../types';
 
 // ─── Recall ───────────────────────────────────────────────────────────────────
 
@@ -81,4 +89,48 @@ export async function promoteMemory(
       body: JSON.stringify({ role: role ?? 'general' }),
     }
   );
+}
+
+// ─── Workspace Knowledge (SOUL.md) ────────────────────────────────────────────
+
+/**
+ * Get the workspace-level SOUL.md content (scope: platform-standards).
+ */
+export async function getWorkspaceKnowledge(): Promise<WorkspaceKnowledge> {
+  return apiFetch<WorkspaceKnowledge>('/api/v1/memory/workspace-knowledge');
+}
+
+/**
+ * Update the workspace-level SOUL.md content.
+ */
+export async function updateWorkspaceKnowledge(content: string): Promise<WorkspaceKnowledge> {
+  return apiFetch<WorkspaceKnowledge>('/api/v1/memory/workspace-knowledge', {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+// ─── Template Scopes ──────────────────────────────────────────────────────────
+
+/**
+ * List all template scopes with document counts.
+ */
+export async function getTemplateScopes(): Promise<TemplateScope[]> {
+  const data = await apiFetch<{ templates?: TemplateScope[] } | TemplateScope[]>(
+    '/api/v1/memory/templates'
+  );
+  return Array.isArray(data) ? data : (data.templates ?? []);
+}
+
+// ─── Cross-scope Search ───────────────────────────────────────────────────────
+
+/**
+ * Semantic search across all memory scopes via Snipara.
+ */
+export async function searchMemory(query: string): Promise<MemorySearchResult[]> {
+  const params = new URLSearchParams({ q: query });
+  const data = await apiFetch<{ results?: MemorySearchResult[] } | MemorySearchResult[]>(
+    `/api/v1/memory/search?${params}`
+  );
+  return Array.isArray(data) ? data : (data.results ?? []);
 }

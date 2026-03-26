@@ -14,6 +14,7 @@
     "test:email-send": "node tests/email-send.test.js",
     "test:email-receive": "node tests/email-receive.test.js",
     "test:chat": "node tests/chat.test.js",
+    "test:e2e": "node tests/e2e/run-all.js",
     "test:watch": "nodemon --exec npm test",
     "lint": "eslint .",
     "format": "prettier --write '**/*.js'"

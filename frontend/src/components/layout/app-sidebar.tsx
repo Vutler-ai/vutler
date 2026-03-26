@@ -20,6 +20,7 @@ import {
   SlidersHorizontal,
   ChevronLeft,
   MoreHorizontal,
+  Brain,
 } from 'lucide-react';
 import { useFeatures } from '@/hooks/useFeatures';
 
@@ -94,6 +95,11 @@ const sections: NavSection[] = [
         href: '/calendar',
         feature: 'calendar',
         icon: <CalendarDays className="w-5 h-5 flex-shrink-0" />,
+      },
+      {
+        label: 'Memory',
+        href: '/memory',
+        icon: <Brain className="w-5 h-5 flex-shrink-0" />,
       },
     ],
   },

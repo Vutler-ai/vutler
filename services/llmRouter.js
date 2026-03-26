@@ -1,6 +1,42 @@
 'use strict';
 
 const https = require('https');
+const sniparaClient = require('./sniparaClient');
+
+// ── Memory tool definitions injected when an agent has a Snipara scope ────────
+
+const MEMORY_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'remember',
+      description: 'Store important information for future reference. Use when the user shares facts, preferences, decisions, or context you should remember.',
+      parameters: {
+        type: 'object',
+        properties: {
+          content: { type: 'string', description: 'The information to remember' },
+          importance: { type: 'integer', minimum: 1, maximum: 10, description: 'How important (1=trivial, 10=critical)' },
+          type: { type: 'string', enum: ['fact', 'preference', 'decision', 'context', 'action_log'], description: 'Type of memory' },
+        },
+        required: ['content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recall',
+      description: 'Search your memory for relevant information before responding. Use when you need context about the user, project, or previous interactions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What to search for in memory' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+];
 
 const PROVIDERS = {
   openai: {
@@ -88,10 +124,20 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
   const baseURL = options.baseURL || cfg.baseURL;
   const { hostname, pathPrefix } = parseUrl(baseURL);
   const path = `${pathPrefix}${cfg.path}`;
+  const tools = options.tools || null;
 
   if (cfg.format === 'anthropic') {
     const sysMsg = systemPrompt || messages.find(m => m.role === 'system')?.content || '';
     const userMsgs = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+
+    const body = {
+      model: model || cfg.defaultModel,
+      max_tokens: maxTokens,
+      temperature,
+      system: sysMsg,
+      messages: userMsgs,
+    };
+    if (tools && tools.length > 0) body.tools = tools;
 
     return {
       hostname,
@@ -101,19 +147,21 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
         'x-api-key': apiKey,
         ...cfg.defaultHeaders,
       },
-      body: {
-        model: model || cfg.defaultModel,
-        max_tokens: maxTokens,
-        temperature,
-        system: sysMsg,
-        messages: userMsgs,
-      },
+      body,
     };
   }
 
   const allMsgs = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages.filter(m => m.role !== 'system')]
     : messages;
+
+  const body = {
+    model: model || cfg.defaultModel,
+    messages: allMsgs,
+    temperature,
+    max_tokens: maxTokens,
+  };
+  if (tools && tools.length > 0) body.tools = tools;
 
   return {
     hostname,
@@ -123,12 +171,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       'Authorization': `Bearer ${apiKey}`,
       ...cfg.defaultHeaders,
     },
-    body: {
-      model: model || cfg.defaultModel,
-      messages: allMsgs,
-      temperature,
-      max_tokens: maxTokens,
-    },
+    body,
   };
 }
 
@@ -161,8 +204,17 @@ function httpPost(hostname, path, headers, body, timeoutMs = 60000) {
 
 function normalizeResponse(provider, model, result, latency_ms) {
   if (provider === 'anthropic') {
+    // Anthropic: content is an array of blocks (text | tool_use)
+    const contentBlocks = result.content || [];
+    const textContent = contentBlocks.filter(b => b.type === 'text').map(b => b.text).join('');
+    const toolCalls = contentBlocks
+      .filter(b => b.type === 'tool_use')
+      .map(b => ({ id: b.id, name: b.name, arguments: b.input || {} }));
+
     return {
-      content: result.content?.[0]?.text || '',
+      content: textContent,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
+      stop_reason: result.stop_reason || null,
       provider,
       model: result.model || model,
       usage: {
@@ -174,8 +226,23 @@ function normalizeResponse(provider, model, result, latency_ms) {
     };
   }
 
+  // OpenAI-compatible: tool_calls live on message
+  const message = result.choices?.[0]?.message || {};
+  const rawToolCalls = message.tool_calls || null;
+  const toolCalls = rawToolCalls
+    ? rawToolCalls.map(tc => ({
+        id: tc.id,
+        name: tc.function?.name,
+        arguments: (() => {
+          try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
+        })(),
+      }))
+    : null;
+
   return {
-    content: result.choices?.[0]?.message?.content || '',
+    content: message.content || '',
+    tool_calls: toolCalls,
+    stop_reason: result.choices?.[0]?.finish_reason || null,
     provider,
     model: result.model || model,
     usage: {
@@ -216,13 +283,14 @@ async function logUsage(db, workspaceId, agent, llmResult) {
   } catch (_) {}
 }
 
-async function runOnce(attempt, messages) {
+async function runOnce(attempt, messages, tools) {
   const start = Date.now();
   const req = buildRequest(attempt.provider, attempt.model, messages, attempt.system_prompt, {
     temperature: attempt.temperature,
     maxTokens: attempt.max_tokens,
     apiKey: attempt.api_key,
     baseURL: attempt.base_url,
+    tools: tools || null,
   });
   const result = await httpPost(req.hostname, req.path, req.headers, req.body);
   return normalizeResponse(attempt.provider, attempt.model, result, Date.now() - start);
@@ -242,6 +310,17 @@ async function chat(agent, messages, db) {
   const primaryProvider = agent?.provider || detectProvider(model);
   const fallbackProvider = agent?.fallback_provider || agent?.fallback?.provider || null;
   const fallbackModel = agent?.fallback_model || agent?.fallback?.model || null;
+
+  // Determine memory scope — prefer snipara_instance_id, fall back to memory_scope, then agent id
+  const memoryScope = agent?.snipara_instance_id || agent?.memory_scope || null;
+
+  // Inject memory tools and augment system prompt when memory is configured
+  const memoryTools = memoryScope ? MEMORY_TOOLS : null;
+  let effectiveSystemPrompt = agent?.system_prompt || '';
+  if (memoryScope) {
+    const memoryInstruction = '\n\nYou have access to persistent memory. Use remember() to store important information and recall() to search your memory before responding to questions about past context.';
+    effectiveSystemPrompt = effectiveSystemPrompt + memoryInstruction;
+  }
 
   const attempts = [
     { provider: primaryProvider, model },
@@ -266,11 +345,60 @@ async function chat(agent, messages, db) {
       model: a.model || providerCfg.defaultModel,
       api_key,
       base_url,
-      system_prompt: agent?.system_prompt,
+      system_prompt: effectiveSystemPrompt,
     };
 
     try {
-      const llmResult = await runOnce(attempt, messages);
+      // ── Tool-call loop (max 3 iterations to prevent infinite loops) ──────────
+      let currentMessages = [...messages];
+      let llmResult;
+      const MAX_TOOL_ITERATIONS = 3;
+
+      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        llmResult = await runOnce(attempt, currentMessages, memoryTools);
+
+        // No tool calls → we have the final answer
+        if (!llmResult.tool_calls || llmResult.tool_calls.length === 0) break;
+
+        // Process each tool call
+        let continueLoop = false;
+        for (const toolCall of llmResult.tool_calls) {
+          const agentName = agent?.name || agent?.username || 'agent';
+          const args = toolCall.arguments || {};
+
+          if (toolCall.name === 'remember' && memoryScope) {
+            const importance = args.importance || 5;
+            console.log(`[Memory] Agent ${agentName} remembered: "${(args.content || '').slice(0, 100)}" (importance: ${importance})`);
+            await sniparaClient.remember(memoryScope, args.content || '', {
+              type: args.type || 'fact',
+              importance,
+            });
+            // remember doesn't need a re-call — inject a confirmation as tool result
+            currentMessages = [
+              ...currentMessages,
+              { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+              { role: 'tool', tool_call_id: toolCall.id, name: 'remember', content: 'Memory stored successfully.' },
+            ];
+            continueLoop = true;
+
+          } else if (toolCall.name === 'recall' && memoryScope) {
+            const query = args.query || '';
+            console.log(`[Memory] Agent ${agentName} recalling: "${query.slice(0, 80)}"`);
+            const recallResult = await sniparaClient.recall(memoryScope, query);
+            const recalledText = sniparaClient.extractText(recallResult) || 'No relevant memories found.';
+            // Inject recall result and let LLM continue
+            currentMessages = [
+              ...currentMessages,
+              { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+              { role: 'tool', tool_call_id: toolCall.id, name: 'recall', content: recalledText },
+            ];
+            continueLoop = true;
+          }
+        }
+
+        if (!continueLoop) break;
+      }
+
       await logUsage(db, workspaceId, agent, llmResult);
       return llmResult;
     } catch (err) {
