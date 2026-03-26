@@ -74,11 +74,28 @@ function normaliseMessage(row) {
 
 // ── Agent auto-response helper (async, non-blocking) ─────────────────────────
 
-async function triggerAgentResponse(req, channelId, workspaceId) {
+async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
   const pg = getPool(req);
   if (!pg) return;
 
   try {
+    // Try chatRuntime first — it handles soul loading, swarm routing, and Snipara memory.
+    // processMessage expects a full message row: { id, channel_id, content, sender_id, sender_name, workspace_id }
+    const chatRuntime = req.app && req.app.locals && req.app.locals.chatRuntime;
+    if (chatRuntime && typeof chatRuntime.processMessage === 'function' && savedMessage) {
+      await chatRuntime.processMessage({
+        id: savedMessage.id,
+        channel_id: channelId,
+        content: savedMessage.content,
+        sender_id: savedMessage.sender_id,
+        sender_name: savedMessage.sender_name,
+        workspace_id: workspaceId,
+      });
+      console.log(`[Chat] chatRuntime handled agent response in channel ${channelId}`);
+      return;
+    }
+
+    // Fallback: direct LLM call without chatRuntime
     const agentResult = await pg.query(
       `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens
        FROM ${SCHEMA}.chat_channel_members cm
@@ -91,6 +108,7 @@ async function triggerAgentResponse(req, channelId, workspaceId) {
     if (agentResult.rows.length === 0) return;
 
     const agent = agentResult.rows[0];
+    console.log(`[Chat] Direct LLM fallback for agent ${agent.name} in channel ${channelId}`);
 
     const historyResult = await pg.query(
       `SELECT sender_id, sender_name, content, created_at
@@ -109,31 +127,21 @@ async function triggerAgentResponse(req, channelId, workspaceId) {
           : m.content,
     }));
 
-    let llmResult;
-    try {
-      if (
-        req.app.locals.chatRuntime &&
-        typeof req.app.locals.chatRuntime.processMessage === 'function'
-      ) {
-        llmResult = await req.app.locals.chatRuntime.processMessage(agent, messages);
-      } else {
-        throw new Error('chatRuntime not available');
-      }
-    } catch (_crErr) {
-      const llmRouter = require('../../../services/llmRouter');
-      llmResult = await llmRouter.chat(
-        {
-          model: agent.model || 'claude-sonnet-4-20250514',
-          provider: agent.provider || undefined,
-          system_prompt:
-            agent.system_prompt ||
-            `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
-          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
-          max_tokens: agent.max_tokens || 4096,
-        },
-        messages
-      );
-    }
+    const llmRouter = require('../../../services/llmRouter');
+    const llmResult = await llmRouter.chat(
+      {
+        model: agent.model || 'claude-sonnet-4-20250514',
+        provider: agent.provider || undefined,
+        system_prompt:
+          agent.system_prompt ||
+          `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
+        temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
+        max_tokens: agent.max_tokens || 4096,
+        workspace_id: workspaceId,
+      },
+      messages,
+      pg  // pass DB so llmRouter can resolve workspace LLM provider config
+    );
 
     await pg.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id)
@@ -141,7 +149,7 @@ async function triggerAgentResponse(req, channelId, workspaceId) {
       [channelId, agent.id.toString(), agent.name, llmResult.content, workspaceId]
     );
 
-    console.log(`[Chat] Agent ${agent.name} responded in channel ${channelId}`);
+    console.log(`[Chat] Agent ${agent.name} responded in channel ${channelId} (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
   } catch (err) {
     console.error('[Chat] Agent response error:', err.message);
   }
@@ -343,7 +351,7 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
       [senderId, senderName.toLowerCase()]
     );
     if (isAgent.rows.length === 0) {
-      triggerAgentResponse(req, channelId, ws);
+      triggerAgentResponse(req, channelId, ws, saved);
     }
   } catch (err) {
     console.error('[Chat] POST /channels/:id/messages error:', err.message);
@@ -487,7 +495,7 @@ router.post('/chat/send', async (req, res) => {
       [sId, sName.toLowerCase()]
     );
     if (isAgent.rows.length === 0) {
-      triggerAgentResponse(req, channel_id, ws);
+      triggerAgentResponse(req, channel_id, ws, saved);
     }
   } catch (err) {
     console.error('[Chat] POST /send error:', err.message);

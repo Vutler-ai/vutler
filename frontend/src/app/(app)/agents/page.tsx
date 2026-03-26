@@ -60,14 +60,54 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
+// Known avatar slugs that map to PNG files in /static/avatars/
+const KNOWN_AVATAR_SLUGS = new Set([
+  'accounting-assistant', 'appointment-scheduler', 'av-engineer', 'bi-agent',
+  'competitor-monitor', 'compliance-monitor', 'contract-manager', 'customer-success',
+  'document-processor', 'ecommerce-manager', 'feedback-analyzer', 'hr-assistant',
+  'inventory-optimizer', 'invoice-manager', 'knowledge-base', 'lead-gen',
+  'marketing-campaign', 'personal-assistant', 'pricing-optimizer', 'procurement',
+  'project-coordinator', 'proposal-generator', 'research-analyst', 'social-media-manager',
+  'translator', 'workflow-automation',
+]);
+
+function getAvatarImageUrl(avatar: string | undefined, name: string): string | null {
+  if (!avatar) return null;
+  // If avatar is a known slug, use the PNG
+  if (KNOWN_AVATAR_SLUGS.has(avatar)) return `/static/avatars/${avatar}.png`;
+  // If avatar looks like a slug (lowercase, hyphens), try it
+  if (/^[a-z0-9-]+$/.test(avatar)) return `/static/avatars/${avatar}.png`;
+  // If avatar starts with http//, it's an external URL
+  if (avatar.startsWith('http')) return avatar;
+  // Otherwise it's likely an emoji — return null to fall through to emoji display
+  return null;
+}
+
 function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
-  if (agent.avatar) {
+  const [imgError, setImgError] = useState(false);
+  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
+
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={agent.name}
+        className="size-10 rounded-xl object-cover shrink-0 bg-[rgba(255,255,255,0.05)]"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  // Emoji avatar
+  if (agent.avatar && !imageUrl) {
     return (
       <div className="size-10 rounded-xl bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-xl shrink-0">
         {agent.avatar}
       </div>
     );
   }
+
+  // Initials fallback
   const initials = agent.name
     .split(' ')
     .map(w => w[0])

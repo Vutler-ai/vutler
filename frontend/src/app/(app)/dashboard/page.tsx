@@ -79,6 +79,13 @@ const FALLBACK_AVATAR = '/static/avatars/personal-assistant.png';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getAgentAvatarUrl(agent: Agent): string | null {
+  // 1. Direct avatar slug from DB (e.g. "lead-gen", "hr-assistant")
+  if (agent.avatar && /^[a-z0-9-]+$/.test(agent.avatar)) {
+    if (KNOWN_AVATAR_SLUGS.has(agent.avatar)) {
+      return `/static/avatars/${agent.avatar}.png`;
+    }
+  }
+  // 2. Derive slug from platform or name
   const source = agent.platform ?? agent.name ?? '';
   const slug = source
     .toLowerCase()
@@ -87,7 +94,7 @@ function getAgentAvatarUrl(agent: Agent): string | null {
   if (KNOWN_AVATAR_SLUGS.has(slug)) {
     return `/static/avatars/${slug}.png`;
   }
-  // Try the agent name as a slug
+  // 3. Try agent name as slug
   const nameSlug = agent.name
     .toLowerCase()
     .replace(/\s+/g, '-')

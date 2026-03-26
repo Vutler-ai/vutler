@@ -5,7 +5,7 @@
  */
 
 const crypto = require('crypto');
-const { ensureUserCorePermissions } = require('./core-permissions');
+const { ensureUserCorePermissions, DEFAULT_CORE_PERMISSIONS } = require('./core-permissions');
 
 // Import admin sessions from admin module (shared reference)
 let _adminSessions = null;
@@ -19,7 +19,19 @@ async function authenticateAgent(req, res, next) {
   try {
     // If global auth middleware already decoded JWT, trust it
     if (req.user && req.authType === "jwt") {
-      req.agent = { id: req.user.id, name: req.user.name || req.user.email, email: req.user.email, roles: [req.user.role || "user"], permissions: { admin: req.user.role === "admin" }, isAdminSession: true };
+      const isAdmin = req.user.role === "admin";
+      req.agent = {
+        id: req.user.id,
+        name: req.user.name || req.user.email,
+        email: req.user.email,
+        roles: [req.user.role || "user"],
+        permissions: {
+          admin: isAdmin,
+          // Grant default core permissions so hasCorePermission() passes for authenticated users
+          core: DEFAULT_CORE_PERMISSIONS,
+        },
+        isAdminSession: true,
+      };
       req.workspaceId = req.user.workspaceId || "00000000-0000-0000-0000-000000000001";
       return next();
     }

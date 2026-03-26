@@ -11,7 +11,7 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECKPOINT_FILE="$PROJECT_DIR/.claude/.session-context"
 API_KEY="${SNIPARA_API_KEY:-REDACTED_SNIPARA_KEY_1}"
-INJECT_ENDPOINT="https://rlm.dev/api/projects/test-workspace-api-vutler/automation/inject"
+INJECT_ENDPOINT="https://api.snipara.com/api/projects/test-workspace-api-vutler/automation/inject"
 
 # Read context from stdin (Claude passes session summary via stdin)
 CONTEXT=$(cat)
