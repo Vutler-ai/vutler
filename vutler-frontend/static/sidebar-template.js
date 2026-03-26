@@ -20,6 +20,32 @@
     return `<a href="${path}" class="sidebar-link${active ? ' active' : ''}"><i data-lucide="${icon}"></i> ${label}</a>`;
   }
 
+  function inferActiveFromPath(pathname) {
+    const map = [
+      ['/dashboard', 'dashboard'],
+      ['/agents', 'agents'],
+      ['/chat', 'chat'],
+      ['/drive', 'drive'],
+      ['/integrations', 'integrations'],
+      ['/tasks', 'tasks'],
+      ['/mail', 'mail'],
+      ['/calendar', 'calendar'],
+      ['/social-ops', 'social-ops'],
+      ['/nexus', 'nexus'],
+      ['/crm', 'crm'],
+      ['/audit', 'audit'],
+      ['/sandbox', 'sandbox'],
+      ['/marketplace', 'marketplace'],
+      ['/settings', 'settings'],
+      ['/billing', 'billing'],
+    ];
+    const current = String(pathname || '/');
+    for (const [prefix, key] of map) {
+      if (current === prefix || current.startsWith(prefix + '/')) return key;
+    }
+    return 'dashboard';
+  }
+
   function build(active) {
     return `
 <aside id="primary-sidebar" class="w-60 bg-navy-light border-r border-white/5 flex flex-col h-screen shrink-0" style="background:#0e0f1a">
@@ -35,6 +61,7 @@
     ${item('/tasks','check-square','Tasks',active==='tasks')}
     ${item('/mail','mail','Mail',active==='mail')}
     ${item('/calendar','calendar','Calendar',active==='calendar')}
+    ${item('/social-ops','megaphone','Social Ops',active==='social-ops')}
     ${item('/nexus','cpu','Nexus',active==='nexus')}
     ${item('/crm','users','CRM',active==='crm')}
     ${item('/audit','scroll-text','Audit Logs',active==='audit')}
@@ -59,10 +86,27 @@
 
   window.__VUTLER_SIDEBAR_BOOT = function () {
     ensureStyle();
-    const active = window.__VUTLER_SIDEBAR_ACTIVE || '';
+    const active = window.__VUTLER_SIDEBAR_ACTIVE || inferActiveFromPath(window.location.pathname);
     const existing = document.querySelector('aside');
     if (!existing) return;
     existing.outerHTML = build(active);
+
+    const links = document.querySelectorAll('#primary-sidebar .sidebar-link');
+    links.forEach((a) => {
+      const href = a.getAttribute('href') || '';
+      const target = inferActiveFromPath(href);
+      const current = inferActiveFromPath(window.location.pathname);
+      a.classList.toggle('active', target === current);
+    });
+
+    if (!window.__VUTLER_SIDEBAR_POPSTATE_BOUND) {
+      window.addEventListener('popstate', function () {
+        window.__VUTLER_SIDEBAR_ACTIVE = inferActiveFromPath(window.location.pathname);
+        if (window.__VUTLER_SIDEBAR_BOOT) window.__VUTLER_SIDEBAR_BOOT();
+      });
+      window.__VUTLER_SIDEBAR_POPSTATE_BOUND = true;
+    }
+
     if (typeof lucide !== 'undefined') lucide.createIcons();
   };
 })();
