@@ -15,29 +15,7 @@ const SCHEMA = 'tenant_vutler';
 
 async function ensureTables() {
   try {
-    const check1 = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_settings'`
-    );
-    if (check1.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_settings (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID DEFAULT '${WS_ID}',
-          name TEXT DEFAULT 'My Workspace',
-          description TEXT DEFAULT '',
-          timezone TEXT DEFAULT 'Europe/Zurich',
-          language TEXT DEFAULT 'fr',
-          logo_url TEXT,
-          default_provider TEXT DEFAULT '',
-          llm_providers JSONB DEFAULT '{}',
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-    } else {
-      // Migrate: add columns if missing
-      pool.query(`ALTER TABLE ${SCHEMA}.workspace_settings ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
-      pool.query(`ALTER TABLE ${SCHEMA}.workspace_settings ADD COLUMN IF NOT EXISTS default_provider TEXT DEFAULT ''`).catch(() => {});
-    }
+    // Only create workspace_api_keys if it doesn't exist — don't touch workspace_settings schema
     const check2 = await pool.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_api_keys'`
     );
@@ -56,7 +34,6 @@ async function ensureTables() {
         )
       `);
     } else {
-      // Migrate: add role and last_used_at if missing
       pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'developer'`).catch(() => {});
       pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ`).catch(() => {});
     }
@@ -65,6 +42,69 @@ async function ensureTables() {
   }
 }
 ensureTables().catch(err => console.warn('[SETTINGS] ensureTables warning:', err.message));
+
+/**
+ * Detect the workspace_settings table layout.
+ * Returns 'kv' if columns are (key, value), 'flat' if columns are (name, timezone, ...).
+ */
+async function detectSettingsLayout() {
+  try {
+    const r = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema='tenant_vutler' AND table_name='workspace_settings'`
+    );
+    const cols = r.rows.map(x => x.column_name);
+    if (cols.includes('key') && cols.includes('value')) return 'kv';
+    if (cols.includes('name')) return 'flat';
+    return 'kv'; // default assumption
+  } catch (_) {
+    return 'flat';
+  }
+}
+
+/**
+ * Read settings from key/value layout.
+ * Rows: { key: 'name', value: {...} }
+ */
+async function readSettingsKV(wsId) {
+  const r = await pool.query(
+    `SELECT key, value FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1`, [wsId]
+  );
+  const map = {};
+  for (const row of r.rows) {
+    map[row.key] = row.value;
+  }
+  // Support both JSON values and plain string values
+  const get = (k, def = '') => {
+    const v = map[k];
+    if (v === undefined || v === null) return def;
+    if (typeof v === 'object' && 'value' in v) return v.value;
+    return v;
+  };
+  return {
+    name: get('name', get('workspace_name', 'My Workspace')),
+    description: get('description', get('workspace_description', '')),
+    timezone: get('timezone', 'Europe/Zurich'),
+    language: get('language', 'fr'),
+    logo_url: get('logo_url', null) || null,
+    default_provider: get('default_provider', ''),
+    llm_providers: (typeof map['llm_providers'] === 'object' && map['llm_providers'] !== null && !('value' in map['llm_providers'])) ? map['llm_providers'] : {},
+    updated_at: get('updated_at', null) || null,
+  };
+}
+
+async function writeSettingKV(wsId, key, value) {
+  await pool.query(
+    `INSERT INTO ${SCHEMA}.workspace_settings (workspace_id, key, value)
+     VALUES ($1, $2, $3::jsonb)
+     ON CONFLICT (workspace_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [wsId, key, JSON.stringify(value)]
+  ).catch(async () => {
+    // If no unique constraint on (workspace_id, key), try upsert via delete+insert
+    await pool.query(`DELETE FROM ${SCHEMA}.workspace_settings WHERE workspace_id=$1 AND key=$2`, [wsId, key]);
+    await pool.query(`INSERT INTO ${SCHEMA}.workspace_settings (workspace_id, key, value) VALUES ($1,$2,$3::jsonb)`, [wsId, key, JSON.stringify(value)]);
+  });
+}
 
 function maskKey(key) {
   if (!key || key.length < 8) return '••••••••';
@@ -75,38 +115,50 @@ function maskKey(key) {
 router.get('/', async (req, res) => {
   try {
     const wsId = req.workspaceId || WS_ID;
-    let r = await pool.query(`SELECT * FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`, [wsId]);
-    if (r.rows.length === 0) {
-      try {
-        await pool.query(`INSERT INTO ${SCHEMA}.workspace_settings (workspace_id) VALUES ($1)`, [wsId]);
-      } catch (e) {
-        if ((e.message || '').includes('column "key"')) {
-          await pool.query(`INSERT INTO ${SCHEMA}.workspace_settings (workspace_id, key, value) VALUES ($1, 'default', '{}'::jsonb)`, [wsId]);
-        } else {
-          throw e;
-        }
+    const layout = await detectSettingsLayout();
+    let row = {};
+
+    if (layout === 'kv') {
+      row = await readSettingsKV(wsId);
+    } else {
+      // flat layout
+      let r = await pool.query(`SELECT * FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`, [wsId]);
+      if (r.rows.length === 0) {
+        try {
+          await pool.query(`INSERT INTO ${SCHEMA}.workspace_settings (workspace_id) VALUES ($1)`, [wsId]);
+        } catch (_) {}
+        r = await pool.query(`SELECT * FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`, [wsId]);
       }
-      r = await pool.query(`SELECT * FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`, [wsId]);
+      const r0 = r.rows[0] || {};
+      row = {
+        name: r0.name || 'My Workspace',
+        description: r0.description || '',
+        timezone: r0.timezone || 'Europe/Zurich',
+        language: r0.language || 'fr',
+        logo_url: r0.logo_url || null,
+        default_provider: r0.default_provider || '',
+        llm_providers: r0.llm_providers || {},
+        updated_at: r0.updated_at || null,
+      };
     }
-    const row = r.rows[0] || {};
+
     // Mask LLM keys
-    const providers = row.llm_providers || {};
+    const providers = (typeof row.llm_providers === 'object' && row.llm_providers !== null) ? row.llm_providers : {};
     const masked = {};
     for (const [k, v] of Object.entries(providers)) {
-      masked[k] = { ...v, api_key: v.api_key ? maskKey(v.api_key) : '' };
+      if (v && typeof v === 'object') {
+        masked[k] = { ...v, api_key: v.api_key ? maskKey(v.api_key) : '' };
+      }
     }
-    // Return both flat fields (for backward compat) and workspace_* aliases
-    // that the frontend WorkspaceTab reads via getStr()
+
     const settings = {
-      workspace_id: row.workspace_id || wsId,
-      // flat
+      workspace_id: wsId,
       name: row.name || 'My Workspace',
       timezone: row.timezone || 'Europe/Zurich',
       language: row.language || 'fr',
       logo_url: row.logo_url || null,
       llm_providers: masked,
       updated_at: row.updated_at || null,
-      // aliases expected by frontend
       workspace_name: row.name || 'My Workspace',
       workspace_description: row.description || '',
       default_provider: row.default_provider || '',
@@ -138,18 +190,30 @@ router.put('/', async (req, res) => {
     const language = body.language || extract('language');
     const logo_url = body.logo_url || extract('logo_url');
     const default_provider = body.default_provider || extract('default_provider');
-    await pool.query(
-      `UPDATE ${SCHEMA}.workspace_settings
-       SET name=COALESCE($1,name),
-           description=COALESCE($2,description),
-           timezone=COALESCE($3,timezone),
-           language=COALESCE($4,language),
-           logo_url=COALESCE($5,logo_url),
-           default_provider=COALESCE($6,default_provider),
-           updated_at=NOW()
-       WHERE workspace_id=$7`,
-      [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, wsId]
-    );
+
+    const layout = await detectSettingsLayout();
+
+    if (layout === 'kv') {
+      const updates = { name, description, timezone, language, logo_url, default_provider };
+      for (const [k, v] of Object.entries(updates)) {
+        if (v !== undefined && v !== null) {
+          await writeSettingKV(wsId, k, v).catch(() => {});
+        }
+      }
+    } else {
+      await pool.query(
+        `UPDATE ${SCHEMA}.workspace_settings
+         SET name=COALESCE($1,name),
+             description=COALESCE($2,description),
+             timezone=COALESCE($3,timezone),
+             language=COALESCE($4,language),
+             logo_url=COALESCE($5,logo_url),
+             default_provider=COALESCE($6,default_provider),
+             updated_at=NOW()
+         WHERE workspace_id=$7`,
+        [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, wsId]
+      );
+    }
     res.json({ success: true, message: 'Settings saved' });
   } catch (err) {
     console.error('[SETTINGS] PUT error:', err.message);

@@ -1059,7 +1059,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-[#9ca3af] mt-1">
-          Manage your profile, security, workspace, and integrations.
+          Manage your profile, security, workspace, and API keys.
         </p>
       </div>
 
@@ -1091,12 +1091,6 @@ export default function SettingsPage() {
               Workspace
             </TabsTrigger>
             <TabsTrigger
-              value="integrations"
-              className="data-[state=active]:bg-[#3b82f6] data-[state=active]:text-white text-[#9ca3af]"
-            >
-              Integrations
-            </TabsTrigger>
-            <TabsTrigger
               value="api-keys"
               className="data-[state=active]:bg-[#3b82f6] data-[state=active]:text-white text-[#9ca3af]"
             >
@@ -1120,10 +1114,6 @@ export default function SettingsPage() {
 
           <TabsContent value="workspace">
             <WorkspaceTab settings={settings} providers={providers} onToast={showToast} />
-          </TabsContent>
-
-          <TabsContent value="integrations">
-            <IntegrationsTab onToast={showToast} />
           </TabsContent>
 
           <TabsContent value="api-keys">

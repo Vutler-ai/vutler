@@ -255,6 +255,63 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools)
+router.get("/:id/config", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT model, provider, temperature, max_tokens, system_prompt, capabilities, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const row = result.rows[0];
+    const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
+    res.json({ success: true, config: {
+      model: row.model,
+      provider: row.provider,
+      temperature: row.temperature,
+      max_tokens: row.max_tokens,
+      system_prompt: isCoordinator ? null : row.system_prompt,
+      skills: row.capabilities || [],
+      tools: row.capabilities || [],
+      locked_prompt: isCoordinator
+    }});
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/v1/agents/:id/config — updates agent config
+router.put("/:id/config", async (req, res) => {
+  try {
+    const { model, provider, temperature, max_tokens, system_prompt, skills, tools } = req.body;
+    const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const ex = existing.rows[0];
+    const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
+    if (isCoordinator && system_prompt !== undefined) {
+      return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
+    }
+    const capabilities = skills || tools || undefined;
+    const result = await pool.query(
+      `UPDATE ${SCHEMA}.agents SET
+        model=COALESCE($1,model),
+        provider=COALESCE($2,provider),
+        temperature=COALESCE($3,temperature),
+        max_tokens=COALESCE($4,max_tokens),
+        system_prompt=CASE WHEN $5::text IS NULL THEN system_prompt ELSE $5 END,
+        capabilities=COALESCE($6,capabilities),
+        updated_at=NOW()
+       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities`,
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities ? JSON.stringify(capabilities) : null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const row = result.rows[0];
+    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [] } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/v1/agents/:id/llm-config
 router.get("/:id/llm-config", async (req, res) => {
   try {

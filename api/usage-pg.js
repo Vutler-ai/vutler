@@ -1,6 +1,6 @@
 /**
  * Usage API — PostgreSQL
- * Returns real token/request usage data with mock fallback when DB is empty.
+ * Returns real token/request usage data. Returns zeros when DB tables are empty.
  */
 'use strict';
 
@@ -27,7 +27,7 @@ function estimateCost(tokens, provider) {
 
 // ─── GET /api/v1/usage ─────────────────────────────────────────────────────────
 // Returns usage records + summary for the workspace.
-// Tries three possible table layouts; falls back to per-agent mock data.
+// Tries three possible table layouts; returns zeros when all tables are empty.
 router.get('/usage', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
@@ -119,45 +119,6 @@ router.get('/usage', async (req, res) => {
           records = result.rows;
         } catch (_) {}
       }
-    }
-
-    // ── Mock fallback — generate plausible per-agent records ──────────────────
-    if (records.length === 0) {
-      let agents = [];
-      if (pg) {
-        try {
-          const agentRes = await pg.query(
-            `SELECT id, name, model, provider FROM ${SCHEMA}.agents WHERE workspace_id = $1 LIMIT 10`,
-            [workspaceId]
-          );
-          agents = agentRes.rows;
-        } catch (_) {}
-      }
-
-      if (agents.length === 0) {
-        // Absolute fallback — single default agent entry
-        agents = [{ id: 'mock-0', name: 'Jarvis', model: 'claude-sonnet-4', provider: 'anthropic' }];
-      }
-
-      const now = Date.now();
-      records = agents.map((agent, i) => {
-        const inputTokens  = 5000  + (i * 1250);
-        const outputTokens = 2000  + (i * 500);
-        const totalTokens  = inputTokens + outputTokens;
-        const provider     = agent.provider || 'anthropic';
-        return {
-          id:             agent.id || `mock-${i}`,
-          agent_name:     agent.name || 'Agent',
-          model:          agent.model || 'claude-sonnet-4',
-          provider,
-          input_tokens:   inputTokens,
-          output_tokens:  outputTokens,
-          tokens:         totalTokens,
-          latency_ms:     1100 + (i * 100),
-          estimated_cost: estimateCost(totalTokens, provider),
-          created_at:     new Date(now - i * 3600000).toISOString(),
-        };
-      });
     }
 
     // ── Normalise cost if missing ─────────────────────────────────────────────
