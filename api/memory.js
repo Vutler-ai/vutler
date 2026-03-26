@@ -1,0 +1,356 @@
+/**
+ * Agent Memory API
+ * Provides recall, remember, context-query, promote, and delete
+ * for the 3-level hierarchy: instance → template → global
+ */
+const express = require("express");
+const router = express.Router();
+
+const SNIPARA_URL = "https://api.snipara.com/mcp/test-workspace-api-vutler";
+const SNIPARA_KEY = process.env.SNIPARA_API_KEY || "";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function normalizeRole(role) {
+  return String(role || "general")
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "general";
+}
+
+function getMemoryScope(agentId, level, role) {
+  if (level === "instance") return { scope: "agent", category: String(agentId || "unknown-agent") };
+  if (level === "template") return { scope: "project", category: `template-${normalizeRole(role)}` };
+  return { scope: "project", category: "platform-standards" };
+}
+
+async function sniparaCall(name, args) {
+  if (!SNIPARA_KEY) return null;
+  const resp = await fetch(SNIPARA_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${SNIPARA_KEY}`
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "tools/call",
+      params: { name, arguments: args }
+    })
+  });
+
+  if (!resp.ok) throw new Error(`Snipara HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error.message || "Snipara error");
+
+  // Parse result — Snipara may return structured content or text
+  const result = data.result;
+  if (!result) return null;
+  if (result.structuredContent) return result.structuredContent;
+  if (Array.isArray(result.content)) {
+    const txt = result.content.map((x) => x.text || "").join("\n");
+    try { return JSON.parse(txt); } catch { return txt; }
+  }
+  return result;
+}
+
+function normalizeMemories(raw, scope) {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : (raw.memories || raw.results || raw.items || []);
+  return arr.map((m, i) => ({
+    id: m.id || m.memory_id || `mem-${scope}-${i}`,
+    text: m.text || m.content || m.description || String(m),
+    type: m.type || "learning",
+    importance: typeof m.importance === "number" ? m.importance : 0.5,
+    scope: m.scope || scope,
+    category: m.category || undefined,
+    created_at: m.created_at || m.createdAt || new Date().toISOString(),
+    agent_id: m.agent_id || m.agentId || undefined,
+  }));
+}
+
+// ─── GET /api/v1/agents/:agentId/memories ─────────────────────────────────────
+// Recall instance memories for an agent + optional query
+router.get("/agents/:agentId/memories", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { q, limit = "20" } = req.query;
+
+    if (!SNIPARA_KEY) {
+      return res.json({ success: true, memories: [], meta: { snipara: false } });
+    }
+
+    const recalled = await sniparaCall("rlm_recall", {
+      query: q || `agent ${agentId} memories`,
+      agent_id: agentId,
+      scope: "agent",
+      category: agentId,
+      limit: parseInt(limit) || 20,
+    });
+
+    const memories = normalizeMemories(recalled, "agent");
+    return res.json({ success: true, memories });
+  } catch (error) {
+    console.error("[Memory API] recall failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── GET /api/v1/agents/:agentId/memories/template ────────────────────────────
+// Recall template-level memories (shared by role)
+router.get("/agents/:agentId/memories/template", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { role = "general", limit = "20" } = req.query;
+
+    if (!SNIPARA_KEY) {
+      return res.json({ success: true, memories: [], meta: { snipara: false } });
+    }
+
+    const normalizedRole = normalizeRole(role);
+    const recalled = await sniparaCall("rlm_recall", {
+      query: `${normalizedRole} knowledge best practices`,
+      scope: "project",
+      category: `template-${normalizedRole}`,
+      limit: parseInt(limit) || 20,
+    });
+
+    const memories = normalizeMemories(recalled, "template");
+    return res.json({ success: true, memories, role: normalizedRole });
+  } catch (error) {
+    console.error("[Memory API] template recall failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── GET /api/v1/agents/:agentId/memories/context ─────────────────────────────
+// Get agent context: soul doc + loaded memory count + template count
+router.get("/agents/:agentId/memories/context", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { role = "general" } = req.query;
+
+    if (!SNIPARA_KEY) {
+      return res.json({
+        success: true,
+        memories: [],
+        context: "",
+        soul: "",
+        template_count: 0,
+        instance_count: 0,
+        role,
+        meta: { snipara: false },
+      });
+    }
+
+    const normalizedRole = normalizeRole(role);
+
+    const [instanceRaw, templateRaw, soulDoc] = await Promise.all([
+      sniparaCall("rlm_recall", {
+        query: `agent ${agentId}`,
+        agent_id: agentId,
+        scope: "agent",
+        category: agentId,
+        limit: 50,
+      }).catch(() => []),
+      sniparaCall("rlm_recall", {
+        query: `${normalizedRole} knowledge`,
+        scope: "project",
+        category: `template-${normalizedRole}`,
+        limit: 10,
+      }).catch(() => []),
+      sniparaCall("rlm_load_document", { path: "agents/SOUL.md" }).catch(() => ""),
+    ]);
+
+    const instanceMemories = normalizeMemories(instanceRaw, "agent");
+    const templateMemories = normalizeMemories(templateRaw, "template");
+    const allMemories = [...instanceMemories, ...templateMemories];
+
+    return res.json({
+      success: true,
+      memories: allMemories,
+      context: `Agent ${agentId} — ${instanceMemories.length} personal memories, ${templateMemories.length} template memories loaded`,
+      soul: typeof soulDoc === "string" ? soulDoc : JSON.stringify(soulDoc),
+      template_count: templateMemories.length,
+      instance_count: instanceMemories.length,
+      role: normalizedRole,
+    });
+  } catch (error) {
+    console.error("[Memory API] context failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── POST /api/v1/agents/:agentId/memories ────────────────────────────────────
+// Store a new instance memory for an agent
+router.post("/agents/:agentId/memories", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { text, type = "fact", importance = 0.5 } = req.body || {};
+
+    if (!text) {
+      return res.status(400).json({ success: false, error: "text is required" });
+    }
+
+    if (!SNIPARA_KEY) {
+      return res.status(503).json({ success: false, error: "Snipara not configured" });
+    }
+
+    await sniparaCall("rlm_remember", {
+      text,
+      type,
+      importance: Math.min(1, Math.max(0, Number(importance) || 0.5)),
+      scope: "agent",
+      category: agentId,
+      metadata: {
+        agent_id: agentId,
+        source: "vutler-dashboard",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    return res.status(201).json({ success: true });
+  } catch (error) {
+    console.error("[Memory API] remember failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── DELETE /api/v1/agents/:agentId/memories/:memoryId ────────────────────────
+// Delete an instance memory (best-effort via rlm_remember with empty text)
+router.delete("/agents/:agentId/memories/:memoryId", async (req, res) => {
+  try {
+    const { agentId, memoryId } = req.params;
+
+    if (!SNIPARA_KEY) {
+      return res.status(503).json({ success: false, error: "Snipara not configured" });
+    }
+
+    // Snipara RLM does not expose a delete tool — we overwrite with a tombstone
+    await sniparaCall("rlm_remember", {
+      text: `[DELETED memory ${memoryId}]`,
+      type: "fact",
+      importance: 0,
+      scope: "agent",
+      category: agentId,
+      metadata: {
+        deleted: true,
+        memory_id: memoryId,
+        deleted_at: new Date().toISOString(),
+      },
+    });
+
+    return res.json({ success: true, data: { id: memoryId, deleted: true } });
+  } catch (error) {
+    console.error("[Memory API] delete failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── POST /api/v1/memory/promote ──────────────────────────────────────────────
+// Promote one instance memory to template pool (write-gate)
+router.post("/promote", async (req, res) => {
+  try {
+    const { memory_id, role, agent_id } = req.body || {};
+    if (!memory_id) {
+      return res.status(400).json({ success: false, error: "memory_id is required" });
+    }
+
+    const effectiveAgent = agent_id || "unknown-agent";
+    const recalled = await sniparaCall("rlm_recall", {
+      query: `memory_id:${memory_id}`,
+      agent_id: effectiveAgent,
+      scope: "agent",
+      category: effectiveAgent,
+      limit: 1,
+    });
+
+    const textBlob = JSON.stringify(recalled || "");
+    const isRelevant = textBlob.length >= 30 && !/greet|hello|bonjour|salut/i.test(textBlob);
+    if (!isRelevant) {
+      return res.status(422).json({
+        success: false,
+        error: "Memory not relevant enough for template promotion",
+      });
+    }
+
+    const templateScope = getMemoryScope(effectiveAgent, "template", role || "general");
+    await sniparaCall("rlm_remember", {
+      text: `Promoted memory (${memory_id}): ${textBlob.substring(0, 1200)}`,
+      type: "learning",
+      importance: 0.7,
+      scope: templateScope.scope,
+      category: templateScope.category,
+      metadata: {
+        source_memory_id: memory_id,
+        promoted_from: "instance",
+        promoted_at: new Date().toISOString(),
+      },
+    });
+
+    return res.json({ success: true, data: { memory_id, promoted_to: templateScope } });
+  } catch (error) {
+    console.error("[Memory API] promote failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─── POST /api/v1/agents/:agentId/memories/:memoryId/promote ──────────────────
+// Promote a specific agent memory to template scope
+router.post("/agents/:agentId/memories/:memoryId/promote", async (req, res) => {
+  try {
+    const { agentId, memoryId } = req.params;
+    const { role = "general" } = req.body || {};
+
+    if (!SNIPARA_KEY) {
+      return res.status(503).json({ success: false, error: "Snipara not configured" });
+    }
+
+    const recalled = await sniparaCall("rlm_recall", {
+      query: `memory_id:${memoryId}`,
+      agent_id: agentId,
+      scope: "agent",
+      category: agentId,
+      limit: 1,
+    });
+
+    const textBlob = JSON.stringify(recalled || "");
+    const isRelevant = textBlob.length >= 30 && !/greet|hello|bonjour|salut/i.test(textBlob);
+    if (!isRelevant) {
+      return res.status(422).json({
+        success: false,
+        error: "Memory not relevant enough for template promotion",
+      });
+    }
+
+    const normalizedRole = normalizeRole(role);
+    await sniparaCall("rlm_remember", {
+      text: `Promoted from agent ${agentId} (${memoryId}): ${textBlob.substring(0, 1200)}`,
+      type: "learning",
+      importance: 0.7,
+      scope: "project",
+      category: `template-${normalizedRole}`,
+      metadata: {
+        source_agent_id: agentId,
+        source_memory_id: memoryId,
+        promoted_from: "instance",
+        promoted_at: new Date().toISOString(),
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        memory_id: memoryId,
+        promoted_to: { scope: "project", category: `template-${normalizedRole}` },
+      },
+    });
+  } catch (error) {
+    console.error("[Memory API] agent promote failed:", error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+module.exports = router;

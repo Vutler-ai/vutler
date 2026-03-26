@@ -1,0 +1,410 @@
+{
+  "lead_scoring": {
+    "name": "Lead Scoring",
+    "description": "Evaluate and rank leads based on engagement, demographics, firmographics, and behavioral signals using BANT or custom scoring models",
+    "category": "sales",
+    "icon": "target"
+  },
+  "crm_sync": {
+    "name": "CRM Sync",
+    "description": "Synchronize contacts, deals, activities, and notes bidirectionally with CRM platforms like Salesforce, HubSpot, or Pipedrive",
+    "category": "integration",
+    "icon": "refresh-cw"
+  },
+  "email_outreach": {
+    "name": "Email Outreach",
+    "description": "Compose and send personalized prospecting emails with dynamic fields, follow-up sequences, and open/click tracking",
+    "category": "sales",
+    "icon": "mail"
+  },
+  "pipeline_management": {
+    "name": "Pipeline Management",
+    "description": "Track deal stages, forecast revenue, monitor pipeline velocity, and flag stalled opportunities",
+    "category": "sales",
+    "icon": "trending-up"
+  },
+  "content_scheduling": {
+    "name": "Content Scheduling",
+    "description": "Plan and schedule social media posts across platforms at optimal engagement times using AI-driven timing recommendations",
+    "category": "marketing",
+    "icon": "clock"
+  },
+  "social_analytics": {
+    "name": "Social Analytics",
+    "description": "Track engagement rates, follower growth, reach, impressions, and share of voice across all social media platforms",
+    "category": "marketing",
+    "icon": "bar-chart-2"
+  },
+  "engagement_monitoring": {
+    "name": "Engagement Monitoring",
+    "description": "Monitor and respond to comments, mentions, DMs, and brand conversations in real-time across social platforms",
+    "category": "marketing",
+    "icon": "bell"
+  },
+  "multi_platform_posting": {
+    "name": "Multi-Platform Posting",
+    "description": "Publish content simultaneously to multiple social networks with platform-specific formatting and hashtag optimization",
+    "category": "marketing",
+    "icon": "share-2"
+  },
+  "campaign_planning": {
+    "name": "Campaign Planning",
+    "description": "Build comprehensive campaign briefs covering objectives, target audiences, messaging frameworks, channels, timelines, and success metrics",
+    "category": "marketing",
+    "icon": "clipboard"
+  },
+  "ab_testing": {
+    "name": "A/B Testing",
+    "description": "Design, run, and analyze controlled experiments on emails, ads, landing pages, and CTAs to maximize conversion rates",
+    "category": "marketing",
+    "icon": "git-branch"
+  },
+  "budget_tracking": {
+    "name": "Budget Tracking",
+    "description": "Monitor marketing spend by channel and campaign, track against budget, and reallocate resources to maximize ROI",
+    "category": "marketing",
+    "icon": "dollar-sign"
+  },
+  "roi_analysis": {
+    "name": "ROI Analysis",
+    "description": "Calculate return on investment and return on ad spend for campaigns, correlating marketing activities with revenue outcomes",
+    "category": "marketing",
+    "icon": "percent"
+  },
+  "keyword_research": {
+    "name": "Keyword Research",
+    "description": "Discover high-value search keywords using volume, difficulty, and intent data to guide content and paid search strategies",
+    "category": "marketing",
+    "icon": "search"
+  },
+  "content_optimization": {
+    "name": "Content Optimization",
+    "description": "Optimize on-page SEO elements including title tags, meta descriptions, headers, internal links, and content structure",
+    "category": "marketing",
+    "icon": "edit-3"
+  },
+  "backlink_analysis": {
+    "name": "Backlink Analysis",
+    "description": "Audit existing backlink profiles, identify toxic links, and discover new link-building opportunities",
+    "category": "marketing",
+    "icon": "link"
+  },
+  "ranking_tracking": {
+    "name": "Ranking Tracking",
+    "description": "Monitor keyword ranking positions over time and detect algorithm update impacts across target search terms",
+    "category": "marketing",
+    "icon": "activity"
+  },
+  "task_management": {
+    "name": "Task Management",
+    "description": "Create, assign, prioritize, and track tasks and subtasks with dependencies, due dates, and completion status",
+    "category": "operations",
+    "icon": "check-square"
+  },
+  "timeline_tracking": {
+    "name": "Timeline Tracking",
+    "description": "Maintain project timelines with Gantt-style views, milestone tracking, and proactive at-risk deadline alerts",
+    "category": "operations",
+    "icon": "calendar"
+  },
+  "resource_allocation": {
+    "name": "Resource Allocation",
+    "description": "Balance workloads across team members, track availability, and prevent burnout through intelligent capacity management",
+    "category": "operations",
+    "icon": "users"
+  },
+  "status_reporting": {
+    "name": "Status Reporting",
+    "description": "Generate structured project status reports with progress summaries, risk registers, and next action items for stakeholders",
+    "category": "operations",
+    "icon": "file-text"
+  },
+  "recruitment_screening": {
+    "name": "Recruitment Screening",
+    "description": "Evaluate job applications against role criteria and rank candidates with structured justifications and fit scores",
+    "category": "operations",
+    "icon": "user-check"
+  },
+  "onboarding": {
+    "name": "Onboarding",
+    "description": "Manage new employee onboarding workflows including equipment setup, system access, documentation, and 30/60/90-day plans",
+    "category": "operations",
+    "icon": "user-plus"
+  },
+  "policy_lookup": {
+    "name": "Policy Lookup",
+    "description": "Instantly retrieve and interpret HR policies, procedures, and compliance guidelines from company documentation",
+    "category": "operations",
+    "icon": "book-open"
+  },
+  "leave_management": {
+    "name": "Leave Management",
+    "description": "Process leave requests, check entitlement balances, validate team coverage, and update HR records",
+    "category": "operations",
+    "icon": "calendar-off"
+  },
+  "vendor_comparison": {
+    "name": "Vendor Comparison",
+    "description": "Evaluate and score vendors on price, quality, lead times, reliability, and contract terms using structured frameworks",
+    "category": "operations",
+    "icon": "shuffle"
+  },
+  "po_management": {
+    "name": "PO Management",
+    "description": "Create, track, and manage purchase orders through the full lifecycle from request through approval to delivery and invoicing",
+    "category": "operations",
+    "icon": "shopping-cart"
+  },
+  "inventory_tracking": {
+    "name": "Inventory Tracking",
+    "description": "Monitor stock levels in real-time, trigger reorder alerts, and maintain accurate inventory records across locations",
+    "category": "operations",
+    "icon": "package"
+  },
+  "cost_optimization": {
+    "name": "Cost Optimization",
+    "description": "Identify spending inefficiencies, consolidation opportunities, and negotiation leverage to reduce procurement costs",
+    "category": "operations",
+    "icon": "scissors"
+  },
+  "invoice_processing": {
+    "name": "Invoice Processing",
+    "description": "Validate, classify, and process incoming invoices against purchase orders with automated three-way matching",
+    "category": "finance",
+    "icon": "file-invoice"
+  },
+  "payment_tracking": {
+    "name": "Payment Tracking",
+    "description": "Monitor payment due dates, send proactive reminders, and track payment status across all outstanding invoices",
+    "category": "finance",
+    "icon": "credit-card"
+  },
+  "reconciliation": {
+    "name": "Reconciliation",
+    "description": "Reconcile financial records against bank statements and flag discrepancies for review",
+    "category": "finance",
+    "icon": "check-circle"
+  },
+  "approval_workflows": {
+    "name": "Approval Workflows",
+    "description": "Route documents through configurable approval chains based on value thresholds, department, and vendor type",
+    "category": "operations",
+    "icon": "git-pull-request"
+  },
+  "equipment_diagnostics": {
+    "name": "Equipment Diagnostics",
+    "description": "Diagnose AV and IT equipment issues through systematic signal flow analysis, log review, and configuration checks",
+    "category": "technical",
+    "icon": "tool"
+  },
+  "network_scanning": {
+    "name": "Network Scanning",
+    "description": "Discover and audit networked devices, check connectivity status, and identify unauthorized endpoints",
+    "category": "technical",
+    "icon": "wifi"
+  },
+  "snmp_monitoring": {
+    "name": "SNMP Monitoring",
+    "description": "Collect and analyze SNMP metrics from network devices including CPU load, interface errors, and bandwidth utilization",
+    "category": "technical",
+    "icon": "monitor"
+  },
+  "av_troubleshooting": {
+    "name": "AV Troubleshooting",
+    "description": "Provide systematic troubleshooting guidance for audio-visual systems including displays, switchers, and conferencing endpoints",
+    "category": "technical",
+    "icon": "zap"
+  },
+  "data_analysis": {
+    "name": "Data Analysis",
+    "description": "Analyze structured and unstructured datasets to identify patterns, anomalies, correlations, and business-relevant insights",
+    "category": "technical",
+    "icon": "bar-chart"
+  },
+  "report_generation": {
+    "name": "Report Generation",
+    "description": "Generate structured analytical reports with executive summaries, key findings, visualizations, and recommended actions",
+    "category": "technical",
+    "icon": "file-text"
+  },
+  "competitive_intelligence": {
+    "name": "Competitive Intelligence",
+    "description": "Build comprehensive competitor profiles covering products, pricing, positioning, strengths, weaknesses, and strategic moves",
+    "category": "technical",
+    "icon": "eye"
+  },
+  "trend_spotting": {
+    "name": "Trend Spotting",
+    "description": "Identify emerging market trends and assess their potential business impact across 3, 6, and 12-month horizons",
+    "category": "technical",
+    "icon": "trending-up"
+  },
+  "ocr_processing": {
+    "name": "OCR Processing",
+    "description": "Extract text from scanned documents, images, and PDFs with high accuracy using optical character recognition",
+    "category": "technical",
+    "icon": "scan"
+  },
+  "document_classification": {
+    "name": "Document Classification",
+    "description": "Automatically categorize documents by type — contracts, invoices, reports, forms, and correspondence",
+    "category": "technical",
+    "icon": "folder"
+  },
+  "data_extraction": {
+    "name": "Data Extraction",
+    "description": "Extract structured fields from documents including names, dates, amounts, addresses, and custom entities",
+    "category": "technical",
+    "icon": "download"
+  },
+  "summarization": {
+    "name": "Summarization",
+    "description": "Condense lengthy documents into concise summaries highlighting the most important points and key takeaways",
+    "category": "technical",
+    "icon": "align-left"
+  },
+  "article_creation": {
+    "name": "Article Creation",
+    "description": "Write clear, structured knowledge base articles including guides, how-tos, troubleshooting docs, and policy explanations",
+    "category": "content",
+    "icon": "pen-tool"
+  },
+  "search_optimization": {
+    "name": "Search Optimization",
+    "description": "Optimize content titles, tags, and metadata to improve discoverability and relevance in knowledge base search",
+    "category": "content",
+    "icon": "search"
+  },
+  "faq_management": {
+    "name": "FAQ Management",
+    "description": "Build and maintain FAQ sections based on common support queries, keeping answers accurate and current",
+    "category": "content",
+    "icon": "help-circle"
+  },
+  "content_curation": {
+    "name": "Content Curation",
+    "description": "Review, organize, and maintain a content library — removing duplicates, archiving obsolete material, and establishing hierarchy",
+    "category": "content",
+    "icon": "layers"
+  },
+  "ticket_triage": {
+    "name": "Ticket Triage",
+    "description": "Classify incoming support tickets by urgency, impact, and customer tier — routing to the appropriate team or queue",
+    "category": "support",
+    "icon": "inbox"
+  },
+  "satisfaction_tracking": {
+    "name": "Satisfaction Tracking",
+    "description": "Monitor CSAT, NPS, and customer health scores over time and alert when metrics fall below thresholds",
+    "category": "support",
+    "icon": "heart"
+  },
+  "churn_prediction": {
+    "name": "Churn Prediction",
+    "description": "Identify at-risk accounts by analyzing usage patterns, support volume, payment delays, and engagement signals",
+    "category": "support",
+    "icon": "alert-triangle"
+  },
+  "upsell_detection": {
+    "name": "Upsell Detection",
+    "description": "Detect expansion opportunities by monitoring product usage growth, feature adoption gaps, and customer business signals",
+    "category": "sales",
+    "icon": "arrow-up-right"
+  },
+  "calendar_management": {
+    "name": "Calendar Management",
+    "description": "Manage calendars intelligently — coordinate schedules, protect focus blocks, and enforce meeting hygiene rules",
+    "category": "operations",
+    "icon": "calendar"
+  },
+  "availability_matching": {
+    "name": "Availability Matching",
+    "description": "Find optimal meeting times by analyzing all attendee calendars, time zones, and working hour preferences",
+    "category": "operations",
+    "icon": "users"
+  },
+  "reminder_sending": {
+    "name": "Reminder Sending",
+    "description": "Send automated meeting reminders at configurable intervals with agenda, preparation materials, and dial-in details",
+    "category": "operations",
+    "icon": "bell"
+  },
+  "rescheduling": {
+    "name": "Rescheduling",
+    "description": "Handle rescheduling requests gracefully — find alternative slots within 24 hours and notify all attendees",
+    "category": "operations",
+    "icon": "repeat"
+  },
+  "sentiment_analysis": {
+    "name": "Sentiment Analysis",
+    "description": "Classify feedback as positive, neutral, or negative with confidence scores using natural language processing",
+    "category": "analytics",
+    "icon": "smile"
+  },
+  "theme_extraction": {
+    "name": "Theme Extraction",
+    "description": "Identify recurring topics and patterns in feedback using NLP to surface what customers talk about most",
+    "category": "analytics",
+    "icon": "tag"
+  },
+  "priority_ranking": {
+    "name": "Priority Ranking",
+    "description": "Rank issues by frequency, sentiment intensity, and business impact to guide product and support prioritization",
+    "category": "analytics",
+    "icon": "list"
+  },
+  "insight_reporting": {
+    "name": "Insight Reporting",
+    "description": "Generate structured insight reports with verbatim quotes, trend charts, theme breakdowns, and action recommendations",
+    "category": "analytics",
+    "icon": "pie-chart"
+  },
+  "bookkeeping": {
+    "name": "Bookkeeping",
+    "description": "Record and categorize financial transactions with correct account coding following GAAP or applicable standards",
+    "category": "finance",
+    "icon": "book"
+  },
+  "tax_preparation": {
+    "name": "Tax Preparation",
+    "description": "Organize deductible expenses, gather tax documentation, and support the tax advisor with structured financial data",
+    "category": "finance",
+    "icon": "file-minus"
+  },
+  "expense_tracking": {
+    "name": "Expense Tracking",
+    "description": "Track, categorize, and validate business expenses against policy — flagging violations and missing receipts",
+    "category": "finance",
+    "icon": "credit-card"
+  },
+  "financial_reporting": {
+    "name": "Financial Reporting",
+    "description": "Prepare P&L statements, balance sheets, cash flow reports, and expense breakdowns for management review",
+    "category": "finance",
+    "icon": "bar-chart-2"
+  },
+  "competitor_pricing": {
+    "name": "Competitor Pricing",
+    "description": "Monitor competitor prices across products and services to maintain accurate market positioning intelligence",
+    "category": "finance",
+    "icon": "eye"
+  },
+  "margin_analysis": {
+    "name": "Margin Analysis",
+    "description": "Calculate and track gross and net margins by product line, customer segment, and region to optimize profitability",
+    "category": "finance",
+    "icon": "trending-up"
+  },
+  "dynamic_pricing": {
+    "name": "Dynamic Pricing",
+    "description": "Model and implement dynamic pricing scenarios including volume discounts, time-based, and geographic price adjustments",
+    "category": "finance",
+    "icon": "sliders"
+  },
+  "discount_strategy": {
+    "name": "Discount Strategy",
+    "description": "Develop and evaluate discount structures analyzing impact on margin, volume, win rates, and customer lifetime value",
+    "category": "finance",
+    "icon": "tag"
+  }
+}

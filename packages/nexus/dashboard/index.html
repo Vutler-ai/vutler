@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vutler Nexus</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0b14;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;font-size:14px;min-height:100vh}
+  header{padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:12px}
+  header h1{font-size:18px;font-weight:600;letter-spacing:-0.3px}
+  header .node-name{color:#94a3b8;font-size:13px}
+  .badge{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+  .badge-local{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
+  .badge-enterprise{background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3)}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+  .dot-green{background:#4ade80;box-shadow:0 0 6px #4ade80}
+  .dot-red{background:#f87171;box-shadow:0 0 6px #f87171}
+  main{padding:20px 24px;display:grid;gap:16px;grid-template-columns:1fr 1fr;max-width:1100px}
+  .card{background:#14151f;border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:16px}
+  .card.full{grid-column:1/-1}
+  .card h2{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#64748b;margin-bottom:12px}
+  .stat{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
+  .stat:last-child{border-bottom:none}
+  .stat-label{color:#64748b}
+  .stat-value{color:#e2e8f0;font-family:monospace;font-size:13px}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;color:#64748b;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.07)}
+  td{padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .status-pill{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+  .s-completed{background:rgba(34,197,94,0.12);color:#4ade80}
+  .s-failed{background:rgba(248,113,113,0.12);color:#f87171}
+  .s-in_progress{background:rgba(251,191,36,0.12);color:#fbbf24}
+  .s-pending{background:rgba(148,163,184,0.12);color:#94a3b8}
+  pre{background:#0d0e1a;border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:12px;overflow-y:auto;max-height:180px;font-size:12px;color:#94a3b8;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+  .providers{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .chip{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:2px 8px;font-size:12px;color:#94a3b8}
+  .refresh{margin-left:auto;font-size:11px;color:#475569}
+</style>
+</head>
+<body>
+<header>
+  <h1>Vutler Nexus</h1>
+  <span class="node-name" id="node-name">—</span>
+  <span class="badge badge-local" id="mode-badge">local</span>
+  <span class="refresh" id="last-refresh">Refreshing…</span>
+</header>
+<main>
+  <div class="card">
+    <h2>Status</h2>
+    <div class="stat"><span class="stat-label">Connection</span><span class="stat-value" id="s-conn">—</span></div>
+    <div class="stat"><span class="stat-label">Node ID</span><span class="stat-value" id="s-id">—</span></div>
+    <div class="stat"><span class="stat-label">Role</span><span class="stat-value" id="s-role">—</span></div>
+    <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value" id="s-uptime">—</span></div>
+    <div class="stat"><span class="stat-label">Cloud Server</span><span class="stat-value" id="s-server">—</span></div>
+    <div class="stat"><span class="stat-label">Agents</span><span class="stat-value" id="s-agents">—</span></div>
+    <div class="stat"><span class="stat-label">Heap Used</span><span class="stat-value" id="s-heap">—</span></div>
+  </div>
+  <div class="card">
+    <h2>Config</h2>
+    <div class="stat"><span class="stat-label">Mode</span><span class="stat-value" id="c-mode">—</span></div>
+    <div class="stat"><span class="stat-label">Filesystem Root</span><span class="stat-value" id="c-fs">—</span></div>
+    <div class="stat"><span class="stat-label">Offline</span><span class="stat-value" id="c-offline">—</span></div>
+    <div class="stat" style="align-items:flex-start;flex-direction:column;gap:6px">
+      <span class="stat-label">Providers</span>
+      <div class="providers" id="c-providers"></div>
+    </div>
+  </div>
+  <div class="card full">
+    <h2>Recent Tasks</h2>
+    <table>
+      <thead><tr><th>Title</th><th>Status</th><th>Time</th></tr></thead>
+      <tbody id="tasks-body"><tr><td colspan="3" style="color:#475569">No tasks yet.</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card full">
+    <h2>Logs</h2>
+    <pre id="logs-pre">Loading…</pre>
+  </div>
+</main>
+<script>
+  function fmt(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return[h>0?h+'h':'',m>0?m+'m':'',sec+'s'].filter(Boolean).join(' ')}
+  function mb(b){return(b/1024/1024).toFixed(1)+' MB'}
+  async function refresh(){
+    try{
+      const [st,tasks,logs,cfg]=await Promise.all([
+        fetch('/api/status').then(r=>r.json()),
+        fetch('/api/tasks').then(r=>r.json()),
+        fetch('/api/logs').then(r=>r.json()),
+        fetch('/api/config').then(r=>r.json()),
+      ]);
+      document.getElementById('node-name').textContent=st.name||'—';
+      const badge=document.getElementById('mode-badge');
+      badge.textContent=st.mode||'local';
+      badge.className='badge '+(st.mode==='enterprise'?'badge-enterprise':'badge-local');
+      const conn=st.status==='connected';
+      document.getElementById('s-conn').innerHTML=`<span class="dot ${conn?'dot-green':'dot-red'}"></span>${st.status}`;
+      document.getElementById('s-id').textContent=st.node_id||'—';
+      document.getElementById('s-role').textContent=st.role||'—';
+      document.getElementById('s-uptime').textContent=fmt(st.uptime||0);
+      document.getElementById('s-server').textContent=st.cloud_server||'—';
+      document.getElementById('s-agents').textContent=st.agents??'0';
+      document.getElementById('s-heap').textContent=st.memory?mb(st.memory.heapUsed):'—';
+      document.getElementById('c-mode').textContent=cfg.mode||'—';
+      document.getElementById('c-fs').textContent=cfg.filesystem_root||'—';
+      document.getElementById('c-offline').textContent=cfg.offline_enabled?'enabled':'disabled';
+      const pEl=document.getElementById('c-providers');
+      pEl.innerHTML=(cfg.providers||[]).map(p=>`<span class="chip">${p}</span>`).join('');
+      const tbody=document.getElementById('tasks-body');
+      if(tasks.length===0){tbody.innerHTML='<tr><td colspan="3" style="color:#475569">No tasks yet.</td></tr>';}
+      else{tbody.innerHTML=tasks.slice(-10).reverse().map(t=>{
+        const sc='s-'+(t.status||'pending');
+        const time=t.completedAt||t.startedAt||t.createdAt||'';
+        const timeStr=time?new Date(time).toLocaleTimeString():'—';
+        return`<tr><td>${t.title||'—'}</td><td><span class="status-pill ${sc}">${t.status||'pending'}</span></td><td style="color:#64748b">${timeStr}</td></tr>`;
+      }).join('');}
+      const pre=document.getElementById('logs-pre');
+      pre.textContent=logs.length?(logs.slice(-50).join('\n')):'No logs yet.';
+      pre.scrollTop=pre.scrollHeight;
+      document.getElementById('last-refresh').textContent='Updated '+new Date().toLocaleTimeString();
+    }catch(e){document.getElementById('last-refresh').textContent='Error: '+e.message;}
+  }
+  refresh();
+  setInterval(refresh,5000);
+</script>
+</body>
+</html>
