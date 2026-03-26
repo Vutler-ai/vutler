@@ -9,6 +9,7 @@ const { transactionWithWorkspace, auditLog } = require('../services/pg');
 const { requireAdmin } = require('../lib/auth');
 const crypto = require('crypto');
 const s3Storage = require('../services/s3Storage');
+const { PLANS, VALID_PLAN_IDS, getPlan, getPlanLimits } = require('./packages/core/middleware/featureGate');
 
 // ============================================================================
 // POST /api/v1/workspaces — Create new workspace
@@ -35,11 +36,10 @@ router.post('/workspaces', requireAdmin, async (req, res) => {
     const workspaceId = rc_workspace_id || `ws_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
     // Validate plan
-    const validPlans = ['free', 'starter', 'pro', 'business'];
-    if (!validPlans.includes(plan)) {
+    if (!VALID_PLAN_IDS.includes(plan)) {
       return res.status(400).json({
         success: false,
-        error: `Plan must be one of: ${validPlans.join(', ')}`
+        error: `Plan must be one of: ${VALID_PLAN_IDS.join(', ')}`
       });
     }
 
@@ -76,7 +76,7 @@ router.post('/workspaces', requireAdmin, async (req, res) => {
         'anthropic',
         'api_key',
         'managed',  // Managed by Vutler (vs byokey)
-        getDefaultTokenLimit(plan),
+        getPlanLimits(plan).tokens_month,
         true
       ]);
 
@@ -303,11 +303,10 @@ router.put('/workspaces/:id', requireAdmin, async (req, res) => {
     }
 
     if (plan) {
-      const validPlans = ['free', 'starter', 'pro', 'business'];
-      if (!validPlans.includes(plan)) {
+      if (!VALID_PLAN_IDS.includes(plan)) {
         return res.status(400).json({
           success: false,
-          error: `Plan must be one of: ${validPlans.join(', ')}`
+          error: `Plan must be one of: ${VALID_PLAN_IDS.join(', ')}`
         });
       }
 
@@ -356,19 +355,5 @@ router.put('/workspaces/:id', requireAdmin, async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-
-// ============================================================================
-// Helper functions
-// ============================================================================
-
-function getDefaultTokenLimit(plan) {
-  const limits = {
-    free: 50000,      // ~25 conversations
-    starter: 250000,  // ~125 conversations
-    pro: 1000000,     // ~500 conversations  
-    business: 5000000 // ~2500 conversations
-  };
-  return limits[plan] || limits.free;
-}
 
 module.exports = router;

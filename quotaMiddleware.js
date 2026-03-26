@@ -6,6 +6,7 @@
 'use strict';
 
 const { checkWorkspaceLimits, auditLog } = require('../services/pg');
+const { getPlan, getPlanLimits } = require('./packages/core/middleware/featureGate');
 
 /**
  * Middleware to check agent creation quota
@@ -49,7 +50,13 @@ function checkQuota(resource) {
       
       const resourceAllowed = quotaStatus.allowed[resource];
       const resourceUsage = quotaStatus.usage[resource];
-      const resourceLimit = quotaStatus.limits[getResourceLimitKey(resource)];
+      const planLimits = getPlanLimits(plan);
+      const resourceLimitMap = {
+        agents: planLimits.agents,
+        tokens: planLimits.tokens_month,
+        storage: planLimits.storage_gb,
+      };
+      const resourceLimit = resourceLimitMap[resource];
       
       if (!resourceAllowed) {
         // Log quota exceeded
@@ -91,18 +98,6 @@ function checkQuota(resource) {
       next();
     }
   };
-}
-
-/**
- * Helper to map resource names to limit keys
- */
-function getResourceLimitKey(resource) {
-  const mapping = {
-    agents: 'maxAgents',
-    tokens: 'monthlyTokens', 
-    storage: 'storageMB'
-  };
-  return mapping[resource] || resource;
 }
 
 /**

@@ -2,86 +2,82 @@
 
 const express = require('express');
 const router = express.Router();
+const { PLANS } = require('../packages/core/middleware/featureGate');
 
-const STRIPE_ACCOUNT_ID = process.env.STRIPE_ACCOUNT_ID || 'acct_1T2tqGDj0FRggNOE';
-
-// Lazy-init Stripe to avoid issues if env not loaded yet
-let _stripe;
-function getStripe() {
-  if (!_stripe) {
-    const Stripe = require('stripe');
-    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-  }
-  return _stripe;
+let pool;
+try { pool = require('../lib/vaultbrix'); } catch (e) {
+  try { pool = require('../pg-updated'); } catch (e2) { console.error('[Billing] No DB pool found'); }
 }
 
-const PLANS = [
-  { id: 'starter', name: 'Starter', priceId: 'price_1T8qX9Dj0FRggNOEqGCBUoUH', amount: 2900, currency: 'usd', interval: 'month', features: ['25 AI Agents', 'Priority Support', '10GB Storage', 'Advanced Models', 'Email Integration'] },
-  { id: 'team', name: 'Team', priceId: 'price_1T8qXPDj0FRggNOECtmF6aYB', amount: 7900, currency: 'usd', interval: 'month', popular: true, features: ['100 AI Agents', '24/7 Support', '100GB Storage', 'Premium Models', 'Team Collaboration', 'API Access'] },
-  { id: 'enterprise', name: 'Enterprise', priceId: 'price_1T8qXhDj0FRggNOEM5TAjxw2', amount: 19900, currency: 'usd', interval: 'month', features: ['Unlimited Agents', 'Dedicated Support', 'Unlimited Storage', 'Custom Models', 'SSO Integration', 'Custom Development'] },
-];
+const SCHEMA = 'tenant_vutler';
+const STRIPE_ACCOUNT_ID = process.env.STRIPE_ACCOUNT_ID || 'acct_1T2tqGDj0FRggNOE';
+let _stripe;
+function getStripe() {
+  if (!_stripe) { const Stripe = require('stripe'); _stripe = new Stripe(process.env.STRIPE_SECRET_KEY); }
+  return _stripe;
+}
+function getStripePriceId(planId, interval) {
+  return process.env[`STRIPE_PRICE_${planId.toUpperCase()}_${interval.toUpperCase()}`] || null;
+}
 
 const ADDONS = [
-  { id: 'extra-agent-standard', name: 'Extra Agent (Standard)', priceId: 'price_1T8qXyDj0FRggNOEVYLTt3du', amount: 1200, currency: 'usd', interval: 'month' },
-  { id: 'extra-agent-enterprise', name: 'Extra Agent (Enterprise)', priceId: 'price_1T8qYFDj0FRggNOEhgaQHujI', amount: 900, currency: 'usd', interval: 'month' },
-  { id: 'nexus-clone', name: 'Nexus Clone', priceId: 'price_1T8qYWDj0FRggNOEXEpPA6jl', amount: 1900, currency: 'usd', interval: 'month' },
-  { id: 'nexus-runtime', name: 'Nexus Runtime', priceId: 'price_1T8qYlDj0FRggNOEQ8emiuG9', amount: 3900, currency: 'usd', interval: 'month' },
+  { id: 'extra_nexus_node', label: 'Extra Nexus Node', price: 1900, unit: 'node/month' },
+  { id: 'extra_agents_10',  label: 'Extra 10 Agents',  price: 1200, unit: '10 agents/month' },
 ];
 
-// ── GET /billing/plans ──
-router.get('/billing/plans', async (req, res) => {
-  try {
-    res.json({ success: true, data: { plans: PLANS, addons: ADDONS } });
-  } catch (err) {
-    console.error('[Billing] plans error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+router.get('/billing/plans', (req, res) => {
+  const grouped = { office: [], agents: [], full: [], addons: ADDONS };
+  for (const [id, plan] of Object.entries(PLANS)) {
+    if (!plan.price || (plan.price.monthly === 0 && plan.price.yearly === 0)) continue;
+    const entry = { id, label: plan.label, price: plan.price, features: plan.features, limits: plan.limits };
+    if (plan.tier === 'office')       grouped.office.push(entry);
+    else if (plan.tier === 'agents')  grouped.agents.push(entry);
+    else if (plan.tier === 'full')    grouped.full.push(entry);
   }
+  res.json({ success: true, data: grouped });
 });
 
-// ── GET /billing/subscription ──
 router.get('/billing/subscription', async (req, res) => {
   try {
-    const stripe = getStripe();
-    const userId = req.userId;
-    const email = req.userEmail || req.user?.email;
+    const workspaceId = req.workspaceId;
+    if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
-    // Find customer by email or metadata
-    let customers;
-    if (email) {
-      customers = await stripe.customers.list({ email, limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
-    }
+    const subRow = pool
+      ? (await pool.query(
+          `SELECT * FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 AND status = 'active' LIMIT 1`,
+          [workspaceId]
+        )).rows[0]
+      : null;
 
-    if (!customers || !customers.data.length) {
+    if (!subRow) {
       return res.json({ success: true, data: { plan: 'free', status: 'active', subscription: null } });
     }
 
-    const customer = customers.data[0];
-    const subs = await stripe.subscriptions.list({ customer: customer.id, status: 'active', limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
-
-    if (!subs.data.length) {
-      return res.json({ success: true, data: { plan: 'free', status: 'active', subscription: null, customerId: customer.id } });
+    const planDef = PLANS[subRow.plan_id] || PLANS.free;
+    let usage = null;
+    if (pool) {
+      const usageRes = await pool.query(
+        `SELECT metric, value FROM ${SCHEMA}.usage_records WHERE workspace_id = $1`,
+        [workspaceId]
+      );
+      usage = Object.fromEntries(usageRes.rows.map(r => [r.metric, r.value]));
     }
-
-    const sub = subs.data[0];
-    const priceId = sub.items.data[0]?.price?.id;
-    const matchedPlan = PLANS.find(p => p.priceId === priceId);
 
     res.json({
       success: true,
       data: {
-        plan: matchedPlan?.id || 'unknown',
-        planName: matchedPlan?.name || 'Unknown',
-        status: sub.status,
-        currentPeriodEnd: sub.current_period_end,
-        cancelAtPeriodEnd: sub.cancel_at_period_end,
-        subscription: {
-          id: sub.id,
-          priceId,
-          amount: sub.items.data[0]?.price?.unit_amount,
-          currency: sub.items.data[0]?.price?.currency,
-        },
-        customerId: customer.id,
-      }
+        plan: subRow.plan_id,
+        label: planDef.label,
+        status: subRow.status,
+        interval: subRow.interval,
+        currentPeriodStart: subRow.current_period_start,
+        currentPeriodEnd: subRow.current_period_end,
+        cancelAtPeriodEnd: subRow.cancel_at_period_end,
+        stripeSubscriptionId: subRow.stripe_subscription_id,
+        stripeCustomerId: subRow.stripe_customer_id,
+        limits: planDef.limits,
+        usage,
+      },
     });
   } catch (err) {
     console.error('[Billing] subscription error:', err.message);
@@ -89,69 +85,75 @@ router.get('/billing/subscription', async (req, res) => {
   }
 });
 
-// ── POST /billing/checkout ──
 router.post('/billing/checkout', async (req, res) => {
   try {
+    const { planId, interval = 'monthly', successUrl, cancelUrl } = req.body;
+
+    if (!planId || !PLANS[planId]) return res.status(400).json({ success: false, error: 'Invalid planId' });
+    if (!['monthly', 'yearly'].includes(interval)) return res.status(400).json({ success: false, error: 'interval must be monthly or yearly' });
+
+    const priceId = getStripePriceId(planId, interval);
+    if (!priceId) return res.status(400).json({ success: false, error: `No Stripe price configured for ${planId}/${interval}` });
+
     const stripe = getStripe();
-    const { priceId, successUrl, cancelUrl } = req.body;
-
-    if (!priceId) return res.status(400).json({ success: false, error: 'priceId is required' });
-
-    const validPrice = PLANS.find(p => p.priceId === priceId) || ADDONS.find(a => a.priceId === priceId);
-    if (!validPrice) return res.status(400).json({ success: false, error: 'Invalid priceId' });
-
     const email = req.userEmail || req.user?.email;
-
-    // Find or create customer
     let customerId;
+
     if (email) {
       const existing = await stripe.customers.list({ email, limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
-      if (existing.data.length) {
-        customerId = existing.data[0].id;
-      } else {
-        const newCust = await stripe.customers.create({ email, metadata: { userId: req.userId, workspaceId: req.workspaceId } }, { stripeAccount: STRIPE_ACCOUNT_ID });
-        customerId = newCust.id;
-      }
+      customerId = existing.data.length
+        ? existing.data[0].id
+        : (await stripe.customers.create(
+            { email, metadata: { userId: req.userId, workspaceId: req.workspaceId } },
+            { stripeAccount: STRIPE_ACCOUNT_ID }
+          )).id;
     }
 
-    const sessionParams = {
+    const params = {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: successUrl || 'https://app.vutler.ai/billing?success=true',
-      cancel_url: cancelUrl || 'https://app.vutler.ai/billing?canceled=true',
-      metadata: { userId: req.userId, workspaceId: req.workspaceId },
+      cancel_url:  cancelUrl  || 'https://app.vutler.ai/billing?canceled=true',
+      metadata: { planId, interval, userId: req.userId, workspaceId: req.workspaceId },
     };
+    if (customerId) params.customer = customerId;
+    else if (email)  params.customer_email = email;
 
-    if (customerId) sessionParams.customer = customerId;
-    else if (email) sessionParams.customer_email = email;
-
-    const session = await stripe.checkout.sessions.create(sessionParams, { stripeAccount: STRIPE_ACCOUNT_ID });
-
-    res.json({ success: true, data: { url: session.url, sessionId: session.id } });
+    const session = await stripe.checkout.sessions.create(params, { stripeAccount: STRIPE_ACCOUNT_ID });
+    res.json({ success: true, data: { url: session.url } });
   } catch (err) {
     console.error('[Billing] checkout error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ── POST /billing/portal ──
 router.post('/billing/portal', async (req, res) => {
   try {
-    const stripe = getStripe();
-    const email = req.userEmail || req.user?.email;
+    const workspaceId = req.workspaceId;
+    let customerId;
 
-    if (!email) return res.status(400).json({ success: false, error: 'User email not found' });
-
-    const customers = await stripe.customers.list({ email, limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
-    if (!customers.data.length) {
-      return res.status(404).json({ success: false, error: 'No billing account found. Subscribe to a plan first.' });
+    if (pool && workspaceId) {
+      const row = (await pool.query(
+        `SELECT stripe_customer_id FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 AND status = 'active' LIMIT 1`,
+        [workspaceId]
+      )).rows[0];
+      customerId = row?.stripe_customer_id;
     }
 
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customers.data[0].id,
-      return_url: req.body.returnUrl || 'https://app.vutler.ai/billing',
-    }, { stripeAccount: STRIPE_ACCOUNT_ID });
+    if (!customerId) {
+      const email = req.userEmail || req.user?.email;
+      if (!email) return res.status(404).json({ success: false, error: 'No billing account found' });
+      const stripe = getStripe();
+      const list = await stripe.customers.list({ email, limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
+      if (!list.data.length) return res.status(404).json({ success: false, error: 'No billing account found. Subscribe to a plan first.' });
+      customerId = list.data[0].id;
+    }
 
+    const stripe = getStripe();
+    const session = await stripe.billingPortal.sessions.create(
+      { customer: customerId, return_url: req.body.returnUrl || 'https://app.vutler.ai/billing' },
+      { stripeAccount: STRIPE_ACCOUNT_ID }
+    );
     res.json({ success: true, data: { url: session.url } });
   } catch (err) {
     console.error('[Billing] portal error:', err.message);
@@ -159,49 +161,93 @@ router.post('/billing/portal', async (req, res) => {
   }
 });
 
-// ── POST /billing/webhook ── (called with raw body, no auth)
 router.post('/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const stripe = getStripe();
+  let event;
   try {
-    const stripe = getStripe();
-    const sig = req.headers['stripe-signature'];
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('[Billing] Webhook signature failed:', err.message);
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
 
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-    } catch (err) {
-      console.error('[Billing] Webhook signature verification failed:', err.message);
-      return res.status(400).json({ error: 'Invalid signature' });
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const s = event.data.object;
+      const { planId, interval, workspaceId } = s.metadata || {};
+      if (pool && workspaceId && planId) {
+        const q = `INSERT INTO ${SCHEMA}.workspace_subscriptions
+          (workspace_id,plan_id,interval,status,stripe_customer_id,stripe_subscription_id,current_period_start,current_period_end,cancel_at_period_end)
+          VALUES($1,$2,$3,'active',$4,$5,NOW(),NOW()+INTERVAL '1 month',false)
+          ON CONFLICT(workspace_id) DO UPDATE SET plan_id=$2,interval=$3,status='active',
+          stripe_customer_id=$4,stripe_subscription_id=$5,current_period_start=NOW(),
+          current_period_end=NOW()+INTERVAL '1 month',cancel_at_period_end=false`;
+        await pool.query(q, [workspaceId, planId, interval, s.customer, s.subscription]);
+      }
+    } else if (event.type === 'customer.subscription.updated') {
+      const sub = event.data.object;
+      if (pool) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.workspace_subscriptions SET
+             status=$1, current_period_start=to_timestamp($2), current_period_end=to_timestamp($3),
+             cancel_at_period_end=$4
+           WHERE stripe_subscription_id=$5`,
+          [sub.status, sub.current_period_start, sub.current_period_end, sub.cancel_at_period_end, sub.id]
+        );
+      }
+    } else if (event.type === 'customer.subscription.deleted') {
+      if (pool) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
+          [event.data.object.id]
+        );
+      }
     }
-
-    console.log('[Billing] Webhook event:', event.type);
-
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object;
-        console.log('[Billing] Checkout completed for customer:', session.customer, 'subscription:', session.subscription);
-        // TODO: Update user plan in DB if needed
-        break;
-      }
-      case 'customer.subscription.updated': {
-        const sub = event.data.object;
-        console.log('[Billing] Subscription updated:', sub.id, 'status:', sub.status);
-        break;
-      }
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object;
-        console.log('[Billing] Subscription deleted:', sub.id);
-        // TODO: Downgrade user to free plan in DB
-        break;
-      }
-      default:
-        console.log('[Billing] Unhandled event type:', event.type);
-    }
-
     res.json({ received: true });
   } catch (err) {
-    console.error('[Billing] webhook error:', err.message);
+    console.error('[Billing] webhook handler error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/billing/change-plan', async (req, res) => {
+  try {
+    const { planId } = req.body;
+    if (!planId || !PLANS[planId]) return res.status(400).json({ success: false, error: 'Invalid planId' });
+    const workspaceId = req.workspaceId;
+    let subRow = null;
+    if (pool && workspaceId) {
+      subRow = (await pool.query(
+        `SELECT * FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 AND status = 'active' LIMIT 1`,
+        [workspaceId]
+      )).rows[0];
+    }
+
+    if (subRow?.stripe_subscription_id) {
+      const stripe = getStripe();
+      const interval = subRow.interval || 'monthly';
+      const newPriceId = getStripePriceId(planId, interval);
+      if (!newPriceId) return res.status(400).json({ success: false, error: `No Stripe price configured for ${planId}/${interval}` });
+
+      const stripeSub = await stripe.subscriptions.retrieve(subRow.stripe_subscription_id, {}, { stripeAccount: STRIPE_ACCOUNT_ID });
+      await stripe.subscriptions.update(
+        subRow.stripe_subscription_id,
+        { items: [{ id: stripeSub.items.data[0].id, price: newPriceId }], proration_behavior: 'create_prorations' },
+        { stripeAccount: STRIPE_ACCOUNT_ID }
+      );
+    }
+
+    if (pool && workspaceId) {
+      await pool.query(
+        `UPDATE ${SCHEMA}.workspace_subscriptions SET plan_id=$1 WHERE workspace_id=$2`,
+        [planId, workspaceId]
+      );
+    }
+
+    res.json({ success: true, data: { planId, label: PLANS[planId].label } });
+  } catch (err) {
+    console.error('[Billing] change-plan error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

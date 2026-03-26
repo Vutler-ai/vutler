@@ -1,83 +1,203 @@
 'use strict';
 
 /**
- * Feature Gate Middleware
- * Controls access to Office/Agents features based on workspace plan.
+ * featureGate.js — Single Source of Truth for all Vutler plans.
  *
- * Plans:
- *  - 'office'  → chat, drive, email, tasks, calendar, integrations, whatsapp
- *  - 'agents'  → agents, nexus, marketplace, sandbox, builder, swarm, automations, llm, tools
- *  - 'full'    → everything (default for existing workspaces)
+ * Usage:
+ *   const { getPlan, hasFeature, gateFeature } = require('@vutler/core/middleware/featureGate');
+ *
+ * Limits: -1 means unlimited (enterprise).
+ * Features: ['*'] means all features allowed.
+ * Prices: in cents (e.g. 2900 = $29.00).
  */
 
-const PLAN_FEATURES = {
-  office: [
-    'chat', 'drive', 'email', 'tasks', 'calendar',
-    'integrations', 'whatsapp', 'dashboard', 'goals',
-  ],
-  agents: [
-    'agents', 'nexus', 'marketplace', 'sandbox', 'builder',
-    'swarm', 'automations', 'llm', 'tools', 'runtime',
-    'deployments', 'templates', 'knowledge',
-  ],
-  full: ['*'],
+// ---------------------------------------------------------------------------
+// Plan definitions
+// ---------------------------------------------------------------------------
+
+const PLANS = {
+  free: {
+    label: 'Free',
+    tier: 'free',
+    products: [],
+    features: [],
+    limits: { agents: 1, tokens_month: 50000, storage_gb: 1 },
+    snipara: ['context'],
+    price: { monthly: 0, yearly: 0 },
+  },
+  office_starter: {
+    label: 'Office Starter',
+    tier: 'office',
+    products: ['office'],
+    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    limits: { agents: 0, tokens_month: 100000, storage_gb: 10 },
+    snipara: ['context'],
+    price: { monthly: 2900, yearly: 29000 },
+  },
+  office_team: {
+    label: 'Office Team',
+    tier: 'office',
+    products: ['office'],
+    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    limits: { agents: 0, tokens_month: 500000, storage_gb: 100 },
+    snipara: ['context'],
+    price: { monthly: 7900, yearly: 79000 },
+  },
+  agents_starter: {
+    label: 'Agents Starter',
+    tier: 'agents',
+    products: ['agents'],
+    features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    limits: { agents: 25, tokens_month: 250000, storage_gb: 10, nexus_nodes: 2 },
+    snipara: ['context', 'memory'],
+    price: { monthly: 2900, yearly: 29000 },
+  },
+  agents_pro: {
+    label: 'Agents Pro',
+    tier: 'agents',
+    products: ['agents'],
+    features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10 },
+    snipara: ['context', 'memory'],
+    price: { monthly: 7900, yearly: 79000 },
+  },
+  full: {
+    label: 'Full Platform',
+    tier: 'full',
+    products: ['office', 'agents'],
+    features: ['*'],
+    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10 },
+    snipara: ['context', 'memory'],
+    price: { monthly: 12900, yearly: 129000 },
+  },
+  enterprise: {
+    label: 'Enterprise',
+    tier: 'full',
+    products: ['office', 'agents'],
+    features: ['*'],
+    limits: { agents: -1, tokens_month: -1, storage_gb: -1, nexus_nodes: -1 },
+    snipara: ['context', 'memory'],
+    price: { monthly: 0, yearly: 0 }, // custom pricing
+  },
+  beta: {
+    label: 'Beta',
+    tier: 'full',
+    products: ['office', 'agents'],
+    features: ['*'],
+    limits: { agents: 50, tokens_month: 500000, storage_gb: 50, nexus_nodes: 5 },
+    snipara: ['context', 'memory'],
+    price: { monthly: 0, yearly: 0 },
+  },
 };
 
-// Snipara capabilities per plan
-const PLAN_SNIPARA = {
-  office: ['context'],                // rlm_context_query, rlm_search only
-  agents: ['context', 'memory'],      // + rlm_remember, rlm_recall, swarm tools
-  full:   ['context', 'memory'],
-};
+/** All valid plan identifiers. */
+const VALID_PLAN_IDS = Object.keys(PLANS);
+
+// ---------------------------------------------------------------------------
+// Accessor helpers
+// ---------------------------------------------------------------------------
 
 /**
- * Express middleware factory.
- * @param {string} feature - Feature key to check (e.g. 'chat', 'agents')
+ * Returns the plan definition for the given ID, falling back to 'free'.
+ * @param {string} planId
+ * @returns {object}
  */
-function gateFeature(feature) {
-  return (req, res, next) => {
-    const plan = req.workspace?.plan || 'full';
-    const allowed = PLAN_FEATURES[plan] || [];
+function getPlan(planId) {
+  return PLANS[planId] || PLANS.free;
+}
 
-    if (allowed.includes('*') || allowed.includes(feature)) {
+/**
+ * Returns the features array for a plan. ['*'] means all features.
+ * @param {string} planId
+ * @returns {string[]}
+ */
+function getAllowedFeatures(planId) {
+  return getPlan(planId).features;
+}
+
+/**
+ * Returns true if the plan grants access to the given feature.
+ * Handles the '*' wildcard (enterprise / full / beta).
+ * @param {string} planId
+ * @param {string} featureName
+ * @returns {boolean}
+ */
+function hasFeature(planId, featureName) {
+  const features = getAllowedFeatures(planId);
+  return features.includes('*') || features.includes(featureName);
+}
+
+/**
+ * Returns the limits object for a plan.
+ * @param {string} planId
+ * @returns {object}
+ */
+function getPlanLimits(planId) {
+  return getPlan(planId).limits;
+}
+
+/**
+ * Returns true if the plan includes the given Snipara capability.
+ * @param {string} planId
+ * @param {'context'|'memory'} capability
+ * @returns {boolean}
+ */
+function hasSniparaCapability(planId, capability) {
+  return getPlan(planId).snipara.includes(capability);
+}
+
+/**
+ * Returns true if the plan includes access to the given product.
+ * @param {string} planId
+ * @param {'office'|'agents'} product
+ * @returns {boolean}
+ */
+function hasProduct(planId, product) {
+  return getPlan(planId).products.includes(product);
+}
+
+// ---------------------------------------------------------------------------
+// Express middleware
+// ---------------------------------------------------------------------------
+
+/**
+ * Express middleware factory. Gates a route behind a feature check.
+ * Reads the workspace plan from req.workspacePlan, defaulting to 'free'.
+ *
+ * @param {string} featureName - Feature key to check (e.g. 'chat', 'agents')
+ * @returns {Function} Express middleware
+ *
+ * @example
+ *   router.get('/agents', gateFeature('agents'), handler);
+ */
+function gateFeature(featureName) {
+  return (req, res, next) => {
+    const planId = req.workspacePlan || 'free';
+
+    if (hasFeature(planId, featureName)) {
       return next();
     }
 
     return res.status(403).json({
       error: 'feature_not_available',
-      message: `Feature "${feature}" is not available on your "${plan}" plan.`,
+      message: `Feature "${featureName}" is not available on your "${planId}" plan.`,
       upgrade_url: '/settings/billing',
     });
   };
 }
 
-/**
- * Check if a workspace has access to a Snipara capability.
- * @param {string} plan - Workspace plan
- * @param {'context'|'memory'} capability - Snipara capability
- * @returns {boolean}
- */
-function hasSniparaCapability(plan, capability) {
-  const caps = PLAN_SNIPARA[plan] || PLAN_SNIPARA.full;
-  return caps.includes(capability);
-}
-
-/**
- * Returns all allowed features for a plan (used by frontend sidebar).
- * @param {string} plan
- * @returns {string[]}
- */
-function getAllowedFeatures(plan) {
-  if (plan === 'full') {
-    return [...PLAN_FEATURES.office, ...PLAN_FEATURES.agents];
-  }
-  return PLAN_FEATURES[plan] || [];
-}
+// ---------------------------------------------------------------------------
+// Exports
+// ---------------------------------------------------------------------------
 
 module.exports = {
-  gateFeature,
-  hasSniparaCapability,
+  PLANS,
+  VALID_PLAN_IDS,
+  getPlan,
   getAllowedFeatures,
-  PLAN_FEATURES,
-  PLAN_SNIPARA,
+  hasFeature,
+  getPlanLimits,
+  hasSniparaCapability,
+  hasProduct,
+  gateFeature,
 };
