@@ -60,6 +60,8 @@ export async function apiFetch<T>(
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    console.warn(`[apiFetch] No auth token found (key: "${AUTH_TOKEN_KEY}") for request: ${endpoint}`);
   }
 
   let response: Response;

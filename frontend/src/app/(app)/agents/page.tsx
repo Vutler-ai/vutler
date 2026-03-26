@@ -4,8 +4,9 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/layout/page-header';
 import { useApi } from '@/hooks/use-api';
-import { getAgents, deleteAgent } from '@/lib/api/endpoints/agents';
-import type { Agent } from '@/lib/api/types';
+import { getAgents, deleteAgent, createAgent } from '@/lib/api/endpoints/agents';
+import { getTemplates } from '@/lib/api/endpoints/marketplace';
+import type { Agent, MarketplaceTemplate } from '@/lib/api/types';
 import {
   Table,
   TableBody,
@@ -57,6 +58,29 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
   );
 }
 
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+
+function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
+  if (agent.avatar) {
+    return (
+      <div className="size-10 rounded-xl bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-xl shrink-0">
+        {agent.avatar}
+      </div>
+    );
+  }
+  const initials = agent.name
+    .split(' ')
+    .map(w => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+  return (
+    <div className="size-10 rounded-xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-sm font-bold text-blue-400 shrink-0">
+      {initials || '?'}
+    </div>
+  );
+}
+
 // ─── Skeleton Rows ────────────────────────────────────────────────────────────
 
 function TableSkeleton() {
@@ -64,17 +88,20 @@ function TableSkeleton() {
     <>
       {Array.from({ length: 5 }).map((_, i) => (
         <TableRow key={i} className="border-[rgba(255,255,255,0.05)]">
-          <TableCell className="px-4 py-3">
+          <TableCell className="px-4 py-3.5">
             <div className="flex items-center gap-3">
-              <Skeleton className="size-8 rounded-lg" />
-              <Skeleton className="h-4 w-32" />
+              <Skeleton className="size-10 rounded-xl" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-3 w-24" />
+              </div>
             </div>
           </TableCell>
-          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-24" /></TableCell>
-          <TableCell className="px-4 py-3"><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
-          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-28" /></TableCell>
-          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-24" /></TableCell>
-          <TableCell className="px-4 py-3"><Skeleton className="h-4 w-12" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-20" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-28" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-24" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-20" /></TableCell>
         </TableRow>
       ))}
     </>
@@ -110,7 +137,7 @@ function DeleteAgentDialog({
         <Button
           variant="ghost"
           size="sm"
-          className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+          className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-8 px-2 text-xs"
           onClick={e => e.stopPropagation()}
         >
           Delete
@@ -141,11 +168,174 @@ function DeleteAgentDialog({
   );
 }
 
+// ─── Templates Tab ────────────────────────────────────────────────────────────
+
+function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
+  const [search, setSearch] = useState('');
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+
+  const { data, isLoading, error } = useApi(
+    '/api/v1/marketplace/templates',
+    () => getTemplates({ limit: 50 }),
+  );
+
+  const templates = data?.templates ?? [];
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return templates;
+    const q = search.toLowerCase();
+    return templates.filter(
+      t =>
+        t.name.toLowerCase().includes(q) ||
+        t.description.toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q),
+    );
+  }, [templates, search]);
+
+  const handleUseTemplate = async (template: MarketplaceTemplate) => {
+    setInstalling(template.id);
+    setInstallError(null);
+    try {
+      const agent = await createAgent({
+        name: template.name,
+        platform: 'cloud',
+        config: {
+          model: template.config.model,
+          temperature: template.config.temperature,
+          system_prompt: template.config.system_prompt,
+          avatar: template.config.icon,
+        },
+      } as any);
+      onCreated(agent.id);
+    } catch (err: any) {
+      setInstallError(err.message || 'Failed to create agent from template');
+    } finally {
+      setInstalling(null);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-5 flex items-center gap-3">
+        <Input
+          placeholder="Search templates..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="max-w-sm bg-[#14151f] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#6b7280]"
+        />
+      </div>
+
+      {installError && (
+        <div className="mb-4 bg-red-900/20 border border-red-500/20 rounded-lg p-4 text-red-400 text-sm">
+          {installError}
+        </div>
+      )}
+
+      {error && !isLoading && (
+        <div className="bg-red-900/20 border border-red-500/20 rounded-xl p-6 text-center text-red-400">
+          Failed to load templates.
+        </div>
+      )}
+
+      {isLoading && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
+              <div className="flex items-start gap-3 mb-3">
+                <Skeleton className="size-10 rounded-lg" />
+                <div className="space-y-1.5 flex-1">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/3" />
+                </div>
+              </div>
+              <Skeleton className="h-3 w-full mb-1" />
+              <Skeleton className="h-3 w-4/5 mb-4" />
+              <Skeleton className="h-8 w-full rounded-lg" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!isLoading && !error && (
+        <>
+          {filtered.length === 0 ? (
+            <div className="text-center py-16 text-[#6b7280]">
+              {search ? 'No templates match your search.' : 'No templates available.'}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filtered.map(template => (
+                <div
+                  key={template.id}
+                  className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5 flex flex-col hover:border-[rgba(255,255,255,0.15)] transition-colors"
+                >
+                  {/* Card header */}
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="size-10 rounded-lg bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-xl shrink-0">
+                      {template.config.icon || '🤖'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-semibold text-white truncate">{template.name}</h3>
+                      <span className="text-xs text-[#6b7280]">{template.category}</span>
+                    </div>
+                  </div>
+
+                  {/* Description */}
+                  <p className="text-xs text-[#9ca3af] line-clamp-2 flex-1 mb-4">
+                    {template.description}
+                  </p>
+
+                  {/* Meta */}
+                  <div className="flex items-center gap-2 mb-4 flex-wrap">
+                    {template.config.tags?.slice(0, 3).map(tag => (
+                      <span
+                        key={tag}
+                        className="text-[10px] px-2 py-0.5 rounded-full bg-[rgba(255,255,255,0.05)] text-[#9ca3af] border border-[rgba(255,255,255,0.07)]"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Model info */}
+                  <p className="text-xs text-[#6b7280] mb-4 truncate">
+                    Model: {template.config.model || '—'}
+                  </p>
+
+                  {/* Action */}
+                  <Button
+                    onClick={() => handleUseTemplate(template)}
+                    disabled={installing === template.id}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm h-8"
+                  >
+                    {installing === template.id ? (
+                      <span className="flex items-center gap-2">
+                        <span className="animate-spin rounded-full size-3 border-b border-white" />
+                        Creating...
+                      </span>
+                    ) : (
+                      'Use Template'
+                    )}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+type Tab = 'agents' | 'templates';
 
 export default function AgentsPage() {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<Tab>('agents');
 
   const { data: agents, isLoading, error, mutate } = useApi<Agent[]>(
     '/api/v1/agents',
@@ -160,7 +350,8 @@ export default function AgentsPage() {
       a =>
         a.name.toLowerCase().includes(q) ||
         (a.model || '').toLowerCase().includes(q) ||
-        (a.platform || '').toLowerCase().includes(q),
+        (a.platform || '').toLowerCase().includes(q) ||
+        (a.provider || '').toLowerCase().includes(q),
     );
   }, [agents, search]);
 
@@ -168,113 +359,188 @@ export default function AgentsPage() {
     if (!dateStr) return '—';
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return '—';
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
-      ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return (
+      d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+      ' ' +
+      d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    );
   };
 
   return (
     <>
       <PageHeader title="Agents" description="Manage your AI agents">
         <Button
-          variant="outline"
-          className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]"
-          onClick={() => router.push('/marketplace')}
-        >
-          Deploy from Marketplace
-        </Button>
-        <Button
           className="bg-blue-600 hover:bg-blue-700 text-white"
           onClick={() => router.push('/agents/new')}
         >
-          + New Agent
+          + Create Agent
         </Button>
       </PageHeader>
 
       <main className="flex-1 px-6 pb-6">
-        {/* Search bar */}
-        <div className="mb-4">
-          <Input
-            placeholder="Search agents..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="max-w-sm bg-[#14151f] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#6b7280]"
-          />
+        {/* Tabs */}
+        <div className="flex items-center gap-1 mb-5 border-b border-[rgba(255,255,255,0.07)] -mx-6 px-6">
+          {(['agents', 'templates'] as Tab[]).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap capitalize ${
+                activeTab === tab
+                  ? 'text-blue-400 border-blue-400'
+                  : 'text-[#6b7280] border-transparent hover:text-white hover:border-[rgba(255,255,255,0.2)]'
+              }`}
+            >
+              {tab === 'agents' ? 'My Agents' : 'Templates'}
+            </button>
+          ))}
         </div>
 
-        {/* Error state */}
-        {error && !isLoading && (
-          <div className="bg-red-900/20 border border-red-500/20 rounded-xl p-6 text-center text-red-400">
-            Failed to load agents. <button onClick={() => mutate()} className="underline ml-1">Retry</button>
-          </div>
+        {/* ── My Agents tab ── */}
+        {activeTab === 'agents' && (
+          <>
+            {/* Search bar */}
+            <div className="mb-4">
+              <Input
+                placeholder="Search agents..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="max-w-sm bg-[#14151f] border-[rgba(255,255,255,0.07)] text-white placeholder:text-[#6b7280]"
+              />
+            </div>
+
+            {/* Error state */}
+            {error && !isLoading && (
+              <div className="bg-red-900/20 border border-red-500/20 rounded-xl p-6 text-center text-red-400">
+                Failed to load agents.{' '}
+                <button onClick={() => mutate()} className="underline ml-1">
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* Table */}
+            {!error && (
+              <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-[rgba(255,255,255,0.07)] hover:bg-transparent">
+                      <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
+                        Agent
+                      </TableHead>
+                      <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
+                        Model
+                      </TableHead>
+                      <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
+                        Status
+                      </TableHead>
+                      <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
+                        Last Active
+                      </TableHead>
+                      <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
+                        Provider
+                      </TableHead>
+                      <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading && <TableSkeleton />}
+
+                    {!isLoading && filtered.length === 0 && (
+                      <TableRow className="border-0 hover:bg-transparent">
+                        <TableCell colSpan={6} className="text-center py-16 text-[#6b7280]">
+                          {search
+                            ? 'No agents match your search.'
+                            : 'No agents yet. Create your first agent or use a template.'}
+                        </TableCell>
+                      </TableRow>
+                    )}
+
+                    {!isLoading &&
+                      filtered.map(agent => (
+                        <TableRow
+                          key={agent.id}
+                          className="border-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.03)] cursor-pointer transition-colors"
+                          onClick={() => router.push(`/agents/${agent.id}/config`)}
+                        >
+                          {/* Agent name cell */}
+                          <TableCell className="px-4 py-3.5">
+                            <div className="flex items-center gap-3">
+                              <AgentAvatar agent={agent} />
+                              <div>
+                                <div className="text-lg font-semibold text-white leading-tight">
+                                  {agent.name}
+                                </div>
+                                {(agent.username || agent.platform) && (
+                                  <div className="text-xs text-[#6b7280] mt-0.5">
+                                    {agent.username
+                                      ? `@${agent.username}`
+                                      : agent.platform}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </TableCell>
+
+                          <TableCell className="px-4 py-3.5 text-sm text-[#9ca3af]">
+                            {agent.model || '—'}
+                          </TableCell>
+
+                          <TableCell className="px-4 py-3.5">
+                            <StatusBadge status={agent.status} />
+                          </TableCell>
+
+                          <TableCell className="px-4 py-3.5 text-sm text-[#9ca3af] whitespace-nowrap">
+                            {formatLastActive(agent.lastActive)}
+                          </TableCell>
+
+                          <TableCell className="px-4 py-3.5 text-sm text-[#9ca3af]">
+                            {agent.provider || '—'}
+                          </TableCell>
+
+                          {/* Actions cell */}
+                          <TableCell
+                            className="px-4 py-3.5"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-[#9ca3af] hover:text-white hover:bg-[rgba(255,255,255,0.07)] h-8 px-2 text-xs"
+                                onClick={() => router.push(`/agents/${agent.id}/config`)}
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-[#9ca3af] hover:text-white hover:bg-[rgba(255,255,255,0.07)] h-8 px-2 text-xs"
+                                onClick={() => router.push(`/agents/${agent.id}/executions`)}
+                              >
+                                Executions
+                              </Button>
+                              <DeleteAgentDialog
+                                agent={agent}
+                                onDeleted={() => mutate()}
+                              />
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Table */}
-        {!error && (
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-[rgba(255,255,255,0.07)] hover:bg-transparent">
-                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Name</TableHead>
-                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Model</TableHead>
-                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Status</TableHead>
-                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Last Active</TableHead>
-                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">Provider</TableHead>
-                  <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider w-[80px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading && <TableSkeleton />}
-
-                {!isLoading && filtered.length === 0 && (
-                  <TableRow className="border-0 hover:bg-transparent">
-                    <TableCell colSpan={6} className="text-center py-16 text-[#6b7280]">
-                      {search ? 'No agents match your search.' : 'No agents yet. Create your first agent.'}
-                    </TableCell>
-                  </TableRow>
-                )}
-
-                {!isLoading && filtered.map(agent => (
-                  <TableRow
-                    key={agent.id}
-                    className="border-[rgba(255,255,255,0.05)] hover:bg-[rgba(255,255,255,0.03)] cursor-pointer transition-colors"
-                    onClick={() => router.push(`/agents/${agent.id}/config`)}
-                  >
-                    <TableCell className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="size-8 rounded-lg bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-lg shrink-0">
-                          {agent.avatar || '🤖'}
-                        </div>
-                        <div>
-                          <div className="text-sm font-medium text-white">{agent.name}</div>
-                          {agent.username && (
-                            <div className="text-xs text-[#6b7280]">@{agent.username}</div>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-sm text-[#9ca3af]">
-                      {agent.model || '—'}
-                    </TableCell>
-                    <TableCell className="px-4 py-3">
-                      <StatusBadge status={agent.status} />
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-sm text-[#9ca3af]">
-                      {formatLastActive(agent.lastActive)}
-                    </TableCell>
-                    <TableCell className="px-4 py-3 text-sm text-[#9ca3af]">
-                      {agent.provider || '—'}
-                    </TableCell>
-                    <TableCell className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <DeleteAgentDialog
-                        agent={agent}
-                        onDeleted={() => mutate()}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+        {/* ── Templates tab ── */}
+        {activeTab === 'templates' && (
+          <TemplatesTab
+            onCreated={agentId => router.push(`/agents/${agentId}/config`)}
+          />
         )}
       </main>
     </>

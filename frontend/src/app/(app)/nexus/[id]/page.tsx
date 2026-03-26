@@ -163,19 +163,41 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
   const agents: NodeAgent[] = node.agents ?? [];
   const activity: ActivityEvent[] = node.recentActivity ?? [];
 
+  const isEnterprise = node.mode === 'enterprise';
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
+      {/* Breadcrumb */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <Link href="/nexus" className="text-sm text-[#9ca3af] hover:text-white transition-colors flex items-center gap-1">
-            ← Back to Nexus
+        <div className="flex items-center gap-2 flex-wrap text-sm">
+          <Link href="/nexus" className="text-[#9ca3af] hover:text-white transition-colors">
+            ← Nexus
           </Link>
+          {isEnterprise && node.clientName && (
+            <>
+              <span className="text-[#374151]">/</span>
+              <span className="text-[#6b7280]">{node.clientName}</span>
+            </>
+          )}
           <span className="text-[#374151]">/</span>
-          <h1 className="text-lg font-semibold text-white">{node.name}</h1>
+          <h1 className="text-white font-semibold">{node.name}</h1>
         </div>
         <StatusBadge status={node.status} />
       </div>
+
+      {/* Enterprise client info banner */}
+      {isEnterprise && node.clientName && (
+        <div className="flex items-center gap-3 bg-emerald-900/10 border border-emerald-500/20 rounded-xl px-4 py-3">
+          <span className="text-emerald-400 text-lg shrink-0">🏢</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-emerald-400/70 uppercase tracking-wide font-medium">Enterprise Deployment</p>
+            <p className="text-sm text-white font-medium truncate">{node.clientName}</p>
+          </div>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-900/30 text-emerald-400 border border-emerald-500/30 shrink-0">
+            Enterprise
+          </span>
+        </div>
+      )}
 
       {/* Info card */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
