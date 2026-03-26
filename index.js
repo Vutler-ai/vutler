@@ -547,10 +547,18 @@ app.use('/api/v1/llm', llmLimiter);
 app.use('/api/v1', apiLimiter);
 
 // Office routes (chat, drive, email, tasks, calendar, integrations)
-mount('/api/v1', require('./packages/office/routes'));
+try { app.use('/api/v1', require('./packages/office/routes')); } catch (e) { console.warn('[BOOT] Office routes failed:', e.message); }
 
 // Agents routes (agents, nexus, marketplace, sandbox, swarm, llm, tools)
-mount('/api/v1', require('./packages/agents/routes'));
+try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { console.warn('[BOOT] Agents routes failed:', e.message); }
+
+// Direct fallback mounts (in case package routers fail)
+try { app.use('/api/v1/tasks', require('./app/custom/api/tasks-v2')); } catch (_) {}
+try { app.use('/api/v1/agents', require('./app/custom/api/agents')); } catch (_) {}
+try { app.use('/api/v1/chat', require('./app/custom/api/chat')); } catch (_) {}
+try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
+try { app.use('/api/v1/email', require('./app/custom/api/email-vaultbrix')); } catch (_) {}
+try { app.use('/api/v1/drive', require('./app/custom/api/drive')); } catch (_) {}
 
 // ---------------------------------------------------------------------------
 // 8. LANDING & REDIRECTS
