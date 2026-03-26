@@ -388,4 +388,117 @@ router.put('/email/:uid/read', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/v1/email/incoming — Postal webhook for inbound emails
+ *
+ * Postal calls this endpoint when an email arrives at a Vutler-managed address.
+ * We look up which agent owns the destination address via email_routes and store
+ * the message in the emails table for the agent to process.
+ *
+ * Postal payload shape (simplified):
+ * {
+ *   id: number,
+ *   rcpt_to: "agent@domain.com",
+ *   mail_from: "sender@example.com",
+ *   subject: "...",
+ *   plain_body: "...",
+ *   html_body: "...",
+ *   message: { ... }
+ * }
+ */
+router.post('/email/incoming', async (req, res) => {
+  // Acknowledge Postal immediately to avoid retries
+  res.json({ success: true });
+
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) {
+      console.warn('[EMAIL/INCOMING] No DB — dropping inbound email');
+      return;
+    }
+
+    const payload = req.body || {};
+    const recipient = (payload.rcpt_to || payload.to || '').toLowerCase().trim();
+    const sender = payload.mail_from || payload.from || '';
+    const subject = payload.subject || '(no subject)';
+    const body = payload.plain_body || payload.body || '';
+    const htmlBody = payload.html_body || null;
+
+    if (!recipient) {
+      console.warn('[EMAIL/INCOMING] Missing recipient — skipping');
+      return;
+    }
+
+    console.log(`[EMAIL/INCOMING] Received from ${sender} → ${recipient}: ${subject}`);
+
+    // Look up route for this address
+    let agentId = null;
+    let autoReply = false;
+    let approvalRequired = true;
+
+    try {
+      const routeRow = await pg.query(
+        `SELECT er.agent_id, er.auto_reply, er.approval_required
+         FROM tenant_vutler.email_routes er
+         WHERE LOWER(er.email_address) = $1 LIMIT 1`,
+        [recipient]
+      );
+      if (routeRow.rows[0]) {
+        agentId = routeRow.rows[0].agent_id;
+        autoReply = routeRow.rows[0].auto_reply;
+        approvalRequired = routeRow.rows[0].approval_required;
+      }
+    } catch (routeErr) {
+      console.warn('[EMAIL/INCOMING] Route lookup failed:', routeErr.message);
+    }
+
+    // Store incoming email in inbox
+    const insertResult = await pg.query(
+      `INSERT INTO ${SCHEMA}.emails
+         (from_addr, to_addr, subject, body, html_body, folder, status, is_read, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'inbox', 'received', false, $6, NOW())
+       RETURNING id`,
+      [sender, recipient, subject, body, htmlBody, agentId || null]
+    );
+    const emailId = insertResult.rows[0]?.id;
+
+    console.log(`[EMAIL/INCOMING] Stored email ${emailId} → agent ${agentId || 'unrouted'}`);
+
+    // If auto-reply is enabled and an agent is assigned, create a pending draft
+    if (agentId && autoReply) {
+      const replyStatus = approvalRequired ? 'pending_approval' : 'pending_send';
+      const replyFolder = approvalRequired ? 'drafts' : 'outbox';
+
+      // Fetch agent email for From header
+      let agentEmail = recipient; // default: reply from the address that received the mail
+      try {
+        const agentRow = await pg.query(
+          `SELECT email FROM tenant_vutler.agents WHERE id = $1 LIMIT 1`,
+          [agentId]
+        );
+        if (agentRow.rows[0]?.email) agentEmail = agentRow.rows[0].email;
+      } catch (_) {}
+
+      await pg.query(
+        `INSERT INTO ${SCHEMA}.emails
+           (from_addr, to_addr, subject, body, folder, status, is_read, agent_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, false, $7, NOW())`,
+        [
+          agentEmail,
+          sender,
+          `Re: ${subject}`,
+          `Thank you for your email. ${approvalRequired ? 'Your reply is pending approval.' : 'We will be in touch shortly.'}`,
+          replyFolder,
+          replyStatus,
+          agentId,
+        ]
+      );
+
+      console.log(`[EMAIL/INCOMING] Auto-reply draft created for agent ${agentId} (approval_required=${approvalRequired})`);
+    }
+  } catch (err) {
+    console.error('[EMAIL/INCOMING] Processing error:', err.message);
+  }
+});
+
 module.exports = router;

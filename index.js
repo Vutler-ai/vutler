@@ -62,7 +62,7 @@ app.use(cors({
 
 // Skip JSON parsing for Stripe webhook (needs raw body)
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/v1/billing/webhook') return next();
+  if (req.originalUrl === '/api/v1/billing/webhook' || req.originalUrl === '/api/v1/billing/webhooks/stripe') return next();
   express.json({ limit: '10mb' })(req, res, next);
 });
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

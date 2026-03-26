@@ -174,11 +174,13 @@ router.post('/billing/checkout', async (req, res) => {
 
     const priceId = getStripePriceId(planId, interval);
 
-    // ── Mock checkout when Stripe is not yet configured ───────────────────────
-    if (!priceId || !process.env.STRIPE_SECRET_KEY) {
-      console.warn(`[Billing] Stripe not configured — returning mock checkout URL for ${planId}/${interval}`);
-      const mockUrl = `https://checkout.stripe.com/mock?plan=${planId}&interval=${interval}`;
-      return res.json({ success: true, data: { url: mockUrl } });
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.error('[Billing] STRIPE_SECRET_KEY is not set');
+      return res.status(500).json({ success: false, error: 'Stripe is not configured on this server' });
+    }
+    if (!priceId) {
+      console.error(`[Billing] No Stripe price ID found for ${planId}/${interval}. Set STRIPE_PRICE_${planId.toUpperCase()}_${interval.toUpperCase()} env var.`);
+      return res.status(400).json({ success: false, error: `No price configured for plan "${planId}" (${interval}). Run scripts/stripe-setup.js to create prices.` });
     }
 
     const stripe = getStripe();
@@ -228,10 +230,9 @@ router.post('/billing/portal', async (req, res) => {
       } catch (_) {}
     }
 
-    // ── Mock portal when Stripe is not yet configured ─────────────────────────
-    if (!customerId || !process.env.STRIPE_SECRET_KEY) {
-      console.warn('[Billing] Stripe not configured or no customer — returning mock portal URL');
-      return res.json({ success: true, data: { url: 'https://billing.stripe.com/mock/portal' } });
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.error('[Billing] STRIPE_SECRET_KEY is not set');
+      return res.status(500).json({ success: false, error: 'Stripe is not configured on this server' });
     }
 
     const stripe = getStripe();
@@ -296,6 +297,74 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
           `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
         );
+      }
+    } else if (event.type === 'invoice.payment_failed') {
+      const invoice = event.data.object;
+      if (pool && invoice.subscription) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.workspace_subscriptions SET status='past_due' WHERE stripe_subscription_id=$1`,
+          [invoice.subscription]
+        );
+        console.warn('[Billing] Payment failed for subscription', invoice.subscription, '— marked past_due');
+      }
+    }
+    res.json({ received: true });
+  } catch (err) {
+    console.error('[Billing] webhook handler error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Alias — some Stripe dashboard configs point to /billing/webhooks/stripe
+router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  const stripe = getStripe();
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('[Billing] Webhook signature failed:', err.message);
+    return res.status(400).json({ error: 'Invalid signature' });
+  }
+
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const s = event.data.object;
+      const { planId, interval, workspaceId } = s.metadata || {};
+      if (pool && workspaceId && planId) {
+        const q = `INSERT INTO ${SCHEMA}.workspace_subscriptions
+          (workspace_id,plan_id,interval,status,stripe_customer_id,stripe_subscription_id,current_period_start,current_period_end,cancel_at_period_end)
+          VALUES($1,$2,$3,'active',$4,$5,NOW(),NOW()+INTERVAL '1 month',false)
+          ON CONFLICT(workspace_id) DO UPDATE SET plan_id=$2,interval=$3,status='active',
+          stripe_customer_id=$4,stripe_subscription_id=$5,current_period_start=NOW(),
+          current_period_end=NOW()+INTERVAL '1 month',cancel_at_period_end=false`;
+        await pool.query(q, [workspaceId, planId, interval, s.customer, s.subscription]);
+      }
+    } else if (event.type === 'customer.subscription.updated') {
+      const sub = event.data.object;
+      if (pool) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.workspace_subscriptions SET
+             status=$1, current_period_start=to_timestamp($2), current_period_end=to_timestamp($3),
+             cancel_at_period_end=$4
+           WHERE stripe_subscription_id=$5`,
+          [sub.status, sub.current_period_start, sub.current_period_end, sub.cancel_at_period_end, sub.id]
+        );
+      }
+    } else if (event.type === 'customer.subscription.deleted') {
+      if (pool) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
+          [event.data.object.id]
+        );
+      }
+    } else if (event.type === 'invoice.payment_failed') {
+      const invoice = event.data.object;
+      if (pool && invoice.subscription) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.workspace_subscriptions SET status='past_due' WHERE stripe_subscription_id=$1`,
+          [invoice.subscription]
+        );
+        console.warn('[Billing] Payment failed for subscription', invoice.subscription, '— marked past_due');
       }
     }
     res.json({ received: true });

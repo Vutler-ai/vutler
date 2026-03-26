@@ -47,6 +47,10 @@ mountRoot('email', '../../app/custom/api/email', 'email');
 mount('/email/vaultbrix', 'email', '../../api/email-vaultbrix');
 mount('/emails', 'email', '../../api/emails');
 
+// ── Agent Email System ───────────────────────────────────────────────────────
+mount('/email/domains', 'email', '../../api/email-domains');
+mount('/email/routes', 'email', '../../api/email-routes');
+
 // ── Tasks (full-path: /tasks-v2, /tasks-v2/:id) ────────────────────────────
 mountRoot('tasks', '../../app/custom/api/tasks-v2', 'tasks-v2');
 mount('/task-router', 'tasks', '../../api/tasks-router');

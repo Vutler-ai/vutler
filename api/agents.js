@@ -8,6 +8,56 @@ const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
+const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
+
+/**
+ * Resolve the default email domain for a workspace.
+ * Prefers the first fully-verified custom domain; falls back to {slug}.vutler.ai.
+ */
+async function resolveWorkspaceEmailDomain(workspaceId) {
+  try {
+    const verified = await pool.query(
+      `SELECT domain FROM ${SCHEMA}.workspace_domains
+       WHERE workspace_id = $1 AND mx_verified = true AND spf_verified = true
+       ORDER BY verified_at DESC LIMIT 1`,
+      [workspaceId]
+    );
+    if (verified.rows[0]) return verified.rows[0].domain;
+  } catch (_) {}
+
+  try {
+    const ws = await pool.query(
+      `SELECT slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
+      [workspaceId]
+    );
+    if (ws.rows[0]?.slug) return `${ws.rows[0].slug}.${FALLBACK_DOMAIN_SUFFIX}`;
+  } catch (_) {}
+
+  return `workspace.${FALLBACK_DOMAIN_SUFFIX}`;
+}
+
+/**
+ * Generate a unique agent email address: {username}@{domain}
+ * If the address is taken, append a short suffix.
+ */
+async function generateAgentEmail(username, workspaceId) {
+  const domain = await resolveWorkspaceEmailDomain(workspaceId);
+  const base = `${username.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${domain}`;
+
+  // Check uniqueness in email_routes
+  try {
+    const existing = await pool.query(
+      `SELECT id FROM ${SCHEMA}.email_routes WHERE email_address = $1 LIMIT 1`,
+      [base]
+    );
+    if (existing.rows.length === 0) return base;
+    // Address taken — append a random 4-char suffix
+    const suffix = Math.random().toString(36).slice(2, 6);
+    return `${username.toLowerCase().replace(/[^a-z0-9._-]/g, '')}-${suffix}@${domain}`;
+  } catch (_) {
+    return base;
+  }
+}
 
 
 // GET /api/v1/agents — list all agents
@@ -110,13 +160,39 @@ router.post("/", async (req, res) => {
       finalSystemPrompt = MINIMAL_PROMPT(name);
     }
 
+    // Auto-generate email if not provided
+    let finalEmail = email || null;
+    if (!finalEmail) {
+      try {
+        finalEmail = await generateAgentEmail(username, ws);
+      } catch (emailErr) {
+        console.warn("[AGENTS] Email auto-generation failed (non-fatal):", emailErr.message);
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [name, username, email||null, type||"bot", role||null, mbti||null, finalModel, provider||null,
+      [name, username, finalEmail, type||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
        `/sprites/agent-${username}.png`, ws]
     );
+
+    // Register email route for inbound routing
+    if (finalEmail) {
+      try {
+        const agentId = result.rows[0].id;
+        await pool.query(
+          `INSERT INTO ${SCHEMA}.email_routes (workspace_id, email_address, agent_id, auto_reply, approval_required)
+           VALUES ($1, $2, $3, true, true)
+           ON CONFLICT (email_address) DO NOTHING`,
+          [ws, finalEmail, agentId]
+        );
+      } catch (routeErr) {
+        console.warn("[AGENTS] Email route registration failed (non-fatal):", routeErr.message);
+      }
+    }
+
     res.json({ success: true, agent: result.rows[0] });
   } catch (err) {
     console.error("[AGENTS] Create error:", err.message);
