@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const { VPSProviderFactory } = require('../services/vpsProvider');
-const { CryptoService } = require('../crypto-service');
+const { CryptoService } = require('../services/crypto');
 const { AgentDeploymentService } = require('../services/agentDeployment');
 const { authenticateAgent } = require('../lib/auth');
 

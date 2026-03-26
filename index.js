@@ -15,6 +15,7 @@ const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app);
@@ -446,6 +447,51 @@ app.get('/api/v1/nexus/:nodeId/memory/context', async (req, res) => {
   }
 });
 
+// GET /api/v1/nexus/:nodeId/agent-config — sync agent personality for local mode
+app.get('/api/v1/nexus/:nodeId/agent-config', async (req, res) => {
+  try {
+    const pg = app.locals.pg;
+    if (!pg) return res.json({ success: false, error: 'DB unavailable' });
+
+    // Get node info
+    const node = await pg.query(
+      'SELECT mode, clone_source_agent_id, snipara_instance_id, role FROM tenant_vutler.nexus_nodes WHERE id = $1',
+      [req.params.nodeId]
+    );
+    if (!node.rows[0]) return res.status(404).json({ error: 'Node not found' });
+
+    const { mode, clone_source_agent_id, role } = node.rows[0];
+
+    // For local mode: fetch the source agent's config
+    let agentConfig = {};
+    if (mode === 'local' && clone_source_agent_id) {
+      const agent = await pg.query(
+        'SELECT name, system_prompt, personality, model, tools FROM tenant_vutler.agents WHERE id = $1',
+        [clone_source_agent_id]
+      );
+      if (agent.rows[0]) agentConfig = agent.rows[0];
+    }
+
+    // Load Snipara context if available
+    let context = {};
+    const coordinator = req.app.locals.swarmCoordinator;
+    if (coordinator?.sniparaCall) {
+      try {
+        const [soul, memory, user] = await Promise.all([
+          coordinator.sniparaCall('rlm_load_document', { path: 'agents/SOUL.md' }).catch(() => ''),
+          coordinator.sniparaCall('rlm_load_document', { path: 'agents/MEMORY.md' }).catch(() => ''),
+          coordinator.sniparaCall('rlm_load_document', { path: 'agents/USER.md' }).catch(() => ''),
+        ]);
+        context = { soul, memory, user };
+      } catch (_) {}
+    }
+
+    res.json({ success: true, mode, role, agent: agentConfig, context });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Auth (with brute-force protection)
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
@@ -569,11 +615,13 @@ async function start() {
       console.log('Schedule triggers initialized');
     } catch (_) {}
 
-    // BMAD auto-sync
+    // BMAD auto-sync — only start if the docs directory exists
     try {
-      const BmadAutoSync = require('./services/bmadAutoSync');
-      new BmadAutoSync().start();
-      console.log('BMAD auto-sync started');
+      if (fs.existsSync('./docs/bmad/BMAD_MASTER.md')) {
+        const BmadAutoSync = require('./services/bmadAutoSync');
+        new BmadAutoSync().start();
+        console.log('BMAD auto-sync started');
+      }
     } catch (_) {}
 
     // Start listening

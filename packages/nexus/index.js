@@ -69,6 +69,9 @@ class NexusNode {
       this.nodeId = regResult.nodeId;
       this.workspaceId = regResult.workspaceId;
       console.log(`[Nexus] Registered as node ${this.nodeId} (workspace ${this.workspaceId})`);
+      // Initialize Snipara client for memory operations
+      const { SniparaClient } = require('./lib/snipara-client');
+      this.snipara = new SniparaClient(this.server, this.nodeId, this.key);
     } else {
       console.error('[Nexus] Registration failed:', regResult.error || 'unknown');
       throw new Error('Registration failed');
