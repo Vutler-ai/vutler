@@ -6,6 +6,9 @@ import type {
   Provider,
   ChangePasswordPayload,
   SuccessResponse,
+  ApiKeyListResponse,
+  ApiKeyCreateResponse,
+  ApiKeyRole,
 } from '../types';
 
 export async function getMe(): Promise<UserProfile> {
@@ -55,4 +58,24 @@ export async function getProviders(): Promise<Provider[]> {
     '/api/v1/providers'
   );
   return Array.isArray(data) ? data : (data.providers ?? []);
+}
+
+export async function getApiKeys(): Promise<ApiKeyListResponse> {
+  return apiFetch<ApiKeyListResponse>('/api/v1/settings/api-keys');
+}
+
+export async function createApiKey(
+  name: string,
+  role: ApiKeyRole
+): Promise<ApiKeyCreateResponse> {
+  return apiFetch<ApiKeyCreateResponse>('/api/v1/settings/api-keys', {
+    method: 'POST',
+    body: JSON.stringify({ name, role }),
+  });
+}
+
+export async function revokeApiKey(id: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/settings/api-keys/${id}`, {
+    method: 'DELETE',
+  });
 }

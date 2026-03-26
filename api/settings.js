@@ -24,13 +24,19 @@ async function ensureTables() {
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           workspace_id UUID DEFAULT '${WS_ID}',
           name TEXT DEFAULT 'My Workspace',
+          description TEXT DEFAULT '',
           timezone TEXT DEFAULT 'Europe/Zurich',
           language TEXT DEFAULT 'fr',
           logo_url TEXT,
+          default_provider TEXT DEFAULT '',
           llm_providers JSONB DEFAULT '{}',
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);
+    } else {
+      // Migrate: add columns if missing
+      pool.query(`ALTER TABLE ${SCHEMA}.workspace_settings ADD COLUMN IF NOT EXISTS description TEXT DEFAULT ''`).catch(() => {});
+      pool.query(`ALTER TABLE ${SCHEMA}.workspace_settings ADD COLUMN IF NOT EXISTS default_provider TEXT DEFAULT ''`).catch(() => {});
     }
     const check2 = await pool.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_api_keys'`
@@ -43,10 +49,16 @@ async function ensureTables() {
           name TEXT NOT NULL,
           key_hash TEXT NOT NULL,
           key_prefix TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'developer',
           created_at TIMESTAMPTZ DEFAULT NOW(),
+          last_used_at TIMESTAMPTZ,
           revoked_at TIMESTAMPTZ
         )
       `);
+    } else {
+      // Migrate: add role and last_used_at if missing
+      pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'developer'`).catch(() => {});
+      pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ`).catch(() => {});
     }
   } catch (err) {
     console.warn('[SETTINGS] ensureTables warning (tables may already exist):', err.message);
@@ -77,22 +89,29 @@ router.get('/', async (req, res) => {
       r = await pool.query(`SELECT * FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`, [wsId]);
     }
     const row = r.rows[0] || {};
-    const s = {
-      workspace_id: row.workspace_id || wsId,
-      name: row.name || 'My Workspace',
-      timezone: row.timezone || 'Europe/Zurich',
-      language: row.language || 'fr',
-      logo_url: row.logo_url || null,
-      llm_providers: row.llm_providers || {},
-      updated_at: row.updated_at || null,
-    };
     // Mask LLM keys
-    const providers = s.llm_providers || {};
+    const providers = row.llm_providers || {};
     const masked = {};
     for (const [k, v] of Object.entries(providers)) {
       masked[k] = { ...v, api_key: v.api_key ? maskKey(v.api_key) : '' };
     }
-    res.json({ success: true, settings: { ...s, llm_providers: masked } });
+    // Return both flat fields (for backward compat) and workspace_* aliases
+    // that the frontend WorkspaceTab reads via getStr()
+    const settings = {
+      workspace_id: row.workspace_id || wsId,
+      // flat
+      name: row.name || 'My Workspace',
+      timezone: row.timezone || 'Europe/Zurich',
+      language: row.language || 'fr',
+      logo_url: row.logo_url || null,
+      llm_providers: masked,
+      updated_at: row.updated_at || null,
+      // aliases expected by frontend
+      workspace_name: row.name || 'My Workspace',
+      workspace_description: row.description || '',
+      default_provider: row.default_provider || '',
+    };
+    res.json({ success: true, settings });
   } catch (err) {
     console.error('[SETTINGS] GET error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -103,10 +122,33 @@ router.get('/', async (req, res) => {
 router.put('/', async (req, res) => {
   try {
     const wsId = req.workspaceId || WS_ID;
-    const { name, timezone, language, logo_url } = req.body;
+    // Support both flat { name, timezone } and nested { settings: { workspace_name: { value } } }
+    const body = req.body || {};
+    const s = body.settings || {};
+    const extract = (key) => {
+      const v = s[key];
+      if (!v) return undefined;
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object' && 'value' in v) return v.value;
+      return undefined;
+    };
+    const name = body.name || extract('workspace_name');
+    const description = body.description || extract('workspace_description');
+    const timezone = body.timezone || extract('timezone');
+    const language = body.language || extract('language');
+    const logo_url = body.logo_url || extract('logo_url');
+    const default_provider = body.default_provider || extract('default_provider');
     await pool.query(
-      `UPDATE ${SCHEMA}.workspace_settings SET name=COALESCE($1,name), timezone=COALESCE($2,timezone), language=COALESCE($3,language), logo_url=COALESCE($4,logo_url), updated_at=NOW() WHERE workspace_id=$5`,
-      [name, timezone, language, logo_url, wsId]
+      `UPDATE ${SCHEMA}.workspace_settings
+       SET name=COALESCE($1,name),
+           description=COALESCE($2,description),
+           timezone=COALESCE($3,timezone),
+           language=COALESCE($4,language),
+           logo_url=COALESCE($5,logo_url),
+           default_provider=COALESCE($6,default_provider),
+           updated_at=NOW()
+       WHERE workspace_id=$7`,
+      [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, wsId]
     );
     res.json({ success: true, message: 'Settings saved' });
   } catch (err) {
@@ -160,7 +202,25 @@ router.put('/llm-providers', async (req, res) => {
 router.get('/api-keys', async (req, res) => {
   try {
     const wsId = req.workspaceId || WS_ID;
-    const r = await pool.query(`SELECT id, name, key_prefix, created_at, revoked_at FROM ${SCHEMA}.workspace_api_keys WHERE workspace_id=$1 AND revoked_at IS NULL ORDER BY created_at DESC`, [wsId]);
+    // Try with last_used_at and role columns (may not exist on older schemas)
+    let r;
+    try {
+      r = await pool.query(
+        `SELECT id, name, key_prefix, role, created_at, last_used_at, revoked_at
+         FROM ${SCHEMA}.workspace_api_keys
+         WHERE workspace_id=$1
+         ORDER BY created_at DESC`,
+        [wsId]
+      );
+    } catch (_) {
+      r = await pool.query(
+        `SELECT id, name, key_prefix, created_at, revoked_at
+         FROM ${SCHEMA}.workspace_api_keys
+         WHERE workspace_id=$1
+         ORDER BY created_at DESC`,
+        [wsId]
+      );
+    }
     res.json({ success: true, keys: r.rows });
   } catch (err) {
     console.error('[SETTINGS] GET api-keys error:', err.message);
@@ -172,13 +232,36 @@ router.get('/api-keys', async (req, res) => {
 router.post('/api-keys', async (req, res) => {
   try {
     const wsId = req.workspaceId || WS_ID;
-    const { name } = req.body;
+    const { name, role } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'Name required' });
+    const validRoles = ['admin', 'developer', 'viewer'];
+    const keyRole = validRoles.includes(role) ? role : 'developer';
     const raw = 'vt_' + crypto.randomBytes(24).toString('hex');
     const hash = crypto.createHash('sha256').update(raw).digest('hex');
-    const prefix = raw.substring(0, 6) + '••••' + raw.substring(raw.length - 4);
-    await pool.query(`INSERT INTO ${SCHEMA}.workspace_api_keys (workspace_id, name, key_hash, key_prefix) VALUES ($1,$2,$3,$4)`, [wsId, name, hash, prefix]);
-    res.json({ success: true, key: raw, message: 'Copy this key now — it won\'t be shown again.' });
+    const prefix = raw.substring(0, 14) + '...';
+    // Try inserting with role column; fall back if column doesn't exist
+    let insertedId;
+    try {
+      const ins = await pool.query(
+        `INSERT INTO ${SCHEMA}.workspace_api_keys (workspace_id, name, key_hash, key_prefix, role)
+         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+        [wsId, name, hash, prefix, keyRole]
+      );
+      insertedId = ins.rows[0]?.id;
+    } catch (_) {
+      const ins = await pool.query(
+        `INSERT INTO ${SCHEMA}.workspace_api_keys (workspace_id, name, key_hash, key_prefix)
+         VALUES ($1,$2,$3,$4) RETURNING id`,
+        [wsId, name, hash, prefix]
+      );
+      insertedId = ins.rows[0]?.id;
+    }
+    res.json({
+      success: true,
+      key: { id: insertedId, name, key_prefix: prefix, role: keyRole },
+      secret: raw,
+      message: "Store this key now — it won't be shown again.",
+    });
   } catch (err) {
     console.error('[SETTINGS] POST api-keys error:', err.message);
     res.status(500).json({ success: false, error: err.message });

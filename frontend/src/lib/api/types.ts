@@ -435,6 +435,32 @@ export interface AvailableProvider {
   actions?: string[];
 }
 
+// ─── API Keys ─────────────────────────────────────────────────────────────────
+
+export type ApiKeyRole = 'admin' | 'developer' | 'viewer';
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  role?: ApiKeyRole;
+  created_at: string;
+  last_used_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface ApiKeyListResponse {
+  success: boolean;
+  keys: ApiKey[];
+}
+
+export interface ApiKeyCreateResponse {
+  success: boolean;
+  key: ApiKey;
+  secret: string;
+  message: string;
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
 export interface SettingValue {

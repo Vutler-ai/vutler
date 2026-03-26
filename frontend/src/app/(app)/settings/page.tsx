@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useApi } from "@/hooks/use-api";
 import { apiFetch } from "@/lib/api/client";
-import { getMe, updateMe, getSettings, updateSettings, updatePassword, getProviders } from "@/lib/api/endpoints/settings";
+import { getMe, updateMe, getSettings, updateSettings, updatePassword, getProviders, getApiKeys, createApiKey, revokeApiKey } from "@/lib/api/endpoints/settings";
 import { getIntegrations, getAvailableProviders, connect, disconnect } from "@/lib/api/endpoints/integrations";
-import type { UserProfile, WorkspaceSettings, Integration, AvailableProvider, Provider } from "@/lib/api/types";
+import type { UserProfile, WorkspaceSettings, Integration, AvailableProvider, Provider, ApiKey, ApiKeyRole } from "@/lib/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -527,6 +527,386 @@ function IntegrationsTab({
   );
 }
 
+// ─── API Keys Tab ─────────────────────────────────────────────────────────────
+
+const ROLES: { value: ApiKeyRole; label: string; description: string }[] = [
+  { value: "admin", label: "Admin", description: "Full access to all APIs" },
+  { value: "developer", label: "Developer", description: "Read/write access, no billing" },
+  { value: "viewer", label: "Viewer", description: "Read-only access" },
+];
+
+function roleBadgeClass(role?: string) {
+  if (role === "admin") return "border-purple-500/40 text-purple-400 bg-purple-500/10";
+  if (role === "viewer") return "border-gray-500/40 text-gray-400 bg-gray-500/10";
+  return "border-blue-500/40 text-blue-400 bg-blue-500/10";
+}
+
+function formatDate(iso?: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function ApiKeysTab({ onToast }: { onToast: (msg: string, type: "success" | "error") => void }) {
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Generate dialog state
+  const [showDialog, setShowDialog] = useState(false);
+  const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyRole, setNewKeyRole] = useState<ApiKeyRole>("developer");
+  const [generating, setGenerating] = useState(false);
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+
+  // Revoke confirm state
+  const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
+  const [revoking, setRevoking] = useState(false);
+
+  // Masked copy feedback
+  const [copiedMasked, setCopiedMasked] = useState<string | null>(null);
+
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  const fetchKeys = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await getApiKeys();
+      setKeys(res.keys ?? []);
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Failed to load API keys", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [onToast]);
+
+  useEffect(() => { fetchKeys(); }, [fetchKeys]);
+
+  const openDialog = () => {
+    setNewKeyName("");
+    setNewKeyRole("developer");
+    setRevealedSecret(null);
+    setCopiedSecret(false);
+    setShowDialog(true);
+    setTimeout(() => nameRef.current?.focus(), 50);
+  };
+
+  const handleGenerate = async () => {
+    if (!newKeyName.trim()) { onToast("Key name is required", "error"); return; }
+    setGenerating(true);
+    try {
+      const res = await createApiKey(newKeyName.trim(), newKeyRole);
+      setRevealedSecret(res.secret);
+      await fetchKeys();
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Failed to generate key", "error");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleCopySecret = async () => {
+    if (!revealedSecret) return;
+    try {
+      await navigator.clipboard.writeText(revealedSecret);
+      setCopiedSecret(true);
+      setTimeout(() => setCopiedSecret(false), 2500);
+    } catch {
+      onToast("Copy failed — please select and copy manually", "error");
+    }
+  };
+
+  const handleCopyMasked = (keyId: string) => {
+    onToast("Key is masked. Generate a new one to get the full key.", "error");
+    setCopiedMasked(keyId);
+    setTimeout(() => setCopiedMasked(null), 2500);
+  };
+
+  const confirmRevoke = async () => {
+    if (!revokeTarget) return;
+    setRevoking(true);
+    try {
+      await revokeApiKey(revokeTarget.id);
+      onToast(`Key "${revokeTarget.name}" revoked`, "success");
+      setRevokeTarget(null);
+      await fetchKeys();
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Failed to revoke key", "error");
+    } finally {
+      setRevoking(false);
+    }
+  };
+
+  const activeKeys = keys.filter((k) => !k.revoked_at);
+  const revokedKeys = keys.filter((k) => !!k.revoked_at);
+
+  return (
+    <div className="space-y-6">
+      {/* Generate dialog */}
+      {showDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="p-6">
+              <h3 className="text-white text-lg font-semibold mb-1">Generate New API Key</h3>
+              <p className="text-[#9ca3af] text-sm mb-5">The full key is shown only once after generation.</p>
+
+              {!revealedSecret ? (
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-sm text-[#d1d5db]">Key Name</label>
+                    <input
+                      ref={nameRef}
+                      value={newKeyName}
+                      onChange={(e) => setNewKeyName(e.target.value)}
+                      placeholder="e.g. CLI key, MCP server, Nexus"
+                      className="w-full px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-md text-white text-sm placeholder-[#6b7280] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+                      onKeyDown={(e) => e.key === "Enter" && handleGenerate()}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm text-[#d1d5db]">Role</label>
+                    <div className="space-y-2">
+                      {ROLES.map((r) => (
+                        <label
+                          key={r.value}
+                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            newKeyRole === r.value
+                              ? "border-[#3b82f6] bg-[#3b82f6]/10"
+                              : "border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)]"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="role"
+                            value={r.value}
+                            checked={newKeyRole === r.value}
+                            onChange={() => setNewKeyRole(r.value)}
+                            className="mt-0.5 accent-[#3b82f6]"
+                          />
+                          <div>
+                            <p className="text-white text-sm font-medium">{r.label}</p>
+                            <p className="text-[#6b7280] text-xs">{r.description}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 pt-2">
+                    <button
+                      onClick={() => setShowDialog(false)}
+                      className="px-4 py-2 text-sm text-[#9ca3af] border border-[rgba(255,255,255,0.1)] rounded-lg hover:text-white hover:bg-[#1f2028] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleGenerate}
+                      disabled={generating || !newKeyName.trim()}
+                      className="px-4 py-2 text-sm bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg transition-colors"
+                    >
+                      {generating ? "Generating…" : "Generate Key"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
+                    <p className="text-amber-300 text-sm font-medium mb-1">Save this key — you won&apos;t see it again</p>
+                    <p className="text-amber-200/70 text-xs">Store it in a secure location such as a password manager or secret vault.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm text-[#d1d5db]">Your new API key</label>
+                    <div className="flex gap-2">
+                      <input
+                        readOnly
+                        value={revealedSecret}
+                        className="flex-1 px-3 py-2 bg-[#0a0b14] border border-[rgba(255,255,255,0.1)] rounded-md text-green-400 text-xs font-mono focus:outline-none select-all"
+                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                      />
+                      <button
+                        onClick={handleCopySecret}
+                        className={`shrink-0 px-3 py-2 text-sm rounded-md border transition-colors ${
+                          copiedSecret
+                            ? "border-green-500/50 text-green-400 bg-green-500/10"
+                            : "border-[rgba(255,255,255,0.1)] text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
+                        }`}
+                      >
+                        {copiedSecret ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => setShowDialog(false)}
+                      className="px-4 py-2 text-sm bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg transition-colors"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revoke confirm dialog */}
+      {revokeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#14151f] border border-red-500/30 rounded-2xl w-full max-w-sm shadow-2xl p-6">
+            <h3 className="text-white text-lg font-semibold mb-2">Revoke API Key</h3>
+            <p className="text-[#9ca3af] text-sm mb-5">
+              Are you sure you want to revoke{" "}
+              <span className="text-white font-medium">&quot;{revokeTarget.name}&quot;</span>?
+              Any applications using it will immediately lose access.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setRevokeTarget(null)}
+                disabled={revoking}
+                className="px-4 py-2 text-sm text-[#9ca3af] border border-[rgba(255,255,255,0.1)] rounded-lg hover:text-white hover:bg-[#1f2028] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRevoke}
+                disabled={revoking}
+                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+              >
+                {revoking ? "Revoking…" : "Revoke Key"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-white">API Keys</CardTitle>
+              <CardDescription className="text-[#9ca3af]">
+                Manage programmatic access keys for your workspace.
+              </CardDescription>
+            </div>
+            <Button onClick={openDialog} className="bg-[#3b82f6] hover:bg-[#2563eb] shrink-0">
+              Generate New Key
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-16 rounded-xl bg-[#1f2028]" />
+              ))}
+            </div>
+          ) : activeKeys.length === 0 ? (
+            <div className="text-center py-10">
+              <p className="text-[#6b7280] text-sm">No active API keys.</p>
+              <p className="text-[#4b5563] text-xs mt-1">Generate your first key to get started.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {activeKeys.map((k) => (
+                <div
+                  key={k.id}
+                  className="flex items-center justify-between gap-4 p-4 bg-[#1f2028] border border-[rgba(255,255,255,0.05)] rounded-xl"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-white text-sm font-medium">{k.name}</span>
+                      <Badge
+                        variant="outline"
+                        className={`text-xs capitalize ${roleBadgeClass(k.role)}`}
+                      >
+                        {k.role ?? "developer"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="text-xs border-green-500/30 text-green-400 bg-green-500/10"
+                      >
+                        Active
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <code className="text-[#6b7280] text-xs font-mono bg-[#0a0b14] px-2 py-0.5 rounded">
+                        {k.key_prefix}
+                      </code>
+                      <span className="text-[#4b5563] text-xs">Created {formatDate(k.created_at)}</span>
+                      {k.last_used_at && (
+                        <span className="text-[#4b5563] text-xs">Last used {formatDate(k.last_used_at)}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCopyMasked(k.id)}
+                      className={`border-[rgba(255,255,255,0.1)] text-[#9ca3af] hover:text-white hover:bg-[#14151f] text-xs ${
+                        copiedMasked === k.id ? "border-amber-500/40 text-amber-400" : ""
+                      }`}
+                    >
+                      {copiedMasked === k.id ? "Masked" : "Copy"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRevokeTarget(k)}
+                      className="border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 text-xs"
+                    >
+                      Revoke
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {revokedKeys.length > 0 && (
+            <div className="mt-6">
+              <p className="text-xs text-[#4b5563] font-medium uppercase tracking-wide mb-3">Revoked Keys</p>
+              <div className="space-y-2">
+                {revokedKeys.map((k) => (
+                  <div
+                    key={k.id}
+                    className="flex items-center justify-between gap-4 p-3 bg-[#0a0b14] border border-[rgba(255,255,255,0.03)] rounded-xl opacity-60"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <span className="text-[#6b7280] text-sm line-through">{k.name}</span>
+                        <Badge variant="outline" className="text-xs border-red-500/30 text-red-400 bg-red-500/10">
+                          Revoked
+                        </Badge>
+                      </div>
+                      <div className="flex gap-3 flex-wrap">
+                        <code className="text-[#4b5563] text-xs font-mono">{k.key_prefix}</code>
+                        <span className="text-[#4b5563] text-xs">Revoked {formatDate(k.revoked_at)}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <CardTitle className="text-white text-base">Using Your API Key</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-[#9ca3af] text-sm">Include your key as a Bearer token in the Authorization header:</p>
+          <pre className="bg-[#0a0b14] border border-[rgba(255,255,255,0.05)] rounded-lg p-4 text-xs text-[#6b7280] font-mono overflow-x-auto">
+            {`curl https://api.vutler.ai/v1/agents \\
+  -H "Authorization: Bearer vt_your_key_here"`}
+          </pre>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Account Tab (danger zone) ────────────────────────────────────────────────
 
 function AccountTab({
@@ -717,6 +1097,12 @@ export default function SettingsPage() {
               Integrations
             </TabsTrigger>
             <TabsTrigger
+              value="api-keys"
+              className="data-[state=active]:bg-[#3b82f6] data-[state=active]:text-white text-[#9ca3af]"
+            >
+              API Keys
+            </TabsTrigger>
+            <TabsTrigger
               value="account"
               className="data-[state=active]:bg-[#3b82f6] data-[state=active]:text-white text-[#9ca3af]"
             >
@@ -738,6 +1124,10 @@ export default function SettingsPage() {
 
           <TabsContent value="integrations">
             <IntegrationsTab onToast={showToast} />
+          </TabsContent>
+
+          <TabsContent value="api-keys">
+            <ApiKeysTab onToast={showToast} />
           </TabsContent>
 
           <TabsContent value="account">
