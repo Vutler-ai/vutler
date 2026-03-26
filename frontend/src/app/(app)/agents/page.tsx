@@ -73,12 +73,16 @@ const KNOWN_AVATAR_SLUGS = new Set([
 
 function getAvatarImageUrl(avatar: string | undefined, name: string): string | null {
   if (!avatar) return null;
+  // If avatar is already a full path (e.g. /static/avatars/andrea.png), use it directly
+  if (avatar.startsWith('/static/') || avatar.startsWith('/sprites/')) return avatar;
   // If avatar is a known slug, use the PNG
   if (KNOWN_AVATAR_SLUGS.has(avatar)) return `/static/avatars/${avatar}.png`;
   // If avatar looks like a slug (lowercase, hyphens), try it
   if (/^[a-z0-9-]+$/.test(avatar)) return `/static/avatars/${avatar}.png`;
-  // If avatar starts with http//, it's an external URL
+  // If avatar starts with http, it's an external URL
   if (avatar.startsWith('http')) return avatar;
+  // If avatar ends with .png/.svg/.jpg, it's a relative path
+  if (/\.(png|svg|jpg|jpeg|webp)$/i.test(avatar)) return avatar;
   // Otherwise it's likely an emoji — return null to fall through to emoji display
   return null;
 }

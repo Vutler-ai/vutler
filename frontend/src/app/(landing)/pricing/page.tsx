@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { CheckIcon, XMarkIcon, StarIcon } from '@heroicons/react/24/solid';
 
 // ─── Plan data from featureGate.js ────────────────────────────────────────────
 
@@ -16,7 +17,6 @@ interface Plan {
   price: { monthly: number; yearly: number };
   limits: {
     agents: number;
-    tokens_month: number;
     storage_gb: number;
     nexus_nodes?: number;
     nexus_local?: number;
@@ -33,7 +33,7 @@ const PLANS: Plan[] = [
     label: 'Free',
     tier: 'free',
     price: { monthly: 0, yearly: 0 },
-    limits: { agents: 1, tokens_month: 50000, storage_gb: 1 },
+    limits: { agents: 1, storage_gb: 1 },
     features: ['context'],
   },
   {
@@ -41,7 +41,7 @@ const PLANS: Plan[] = [
     label: 'Office Starter',
     tier: 'office',
     price: { monthly: 2900, yearly: 29000 },
-    limits: { agents: 0, tokens_month: 100000, storage_gb: 10 },
+    limits: { agents: 0, storage_gb: 10 },
     features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
   },
   {
@@ -49,7 +49,7 @@ const PLANS: Plan[] = [
     label: 'Office Team',
     tier: 'office',
     price: { monthly: 7900, yearly: 79000 },
-    limits: { agents: 0, tokens_month: 500000, storage_gb: 100 },
+    limits: { agents: 0, storage_gb: 100 },
     features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
   },
   {
@@ -57,7 +57,7 @@ const PLANS: Plan[] = [
     label: 'Agents Starter',
     tier: 'agents',
     price: { monthly: 2900, yearly: 29000 },
-    limits: { agents: 25, tokens_month: 250000, storage_gb: 10, nexus_nodes: 2, nexus_local: 2, nexus_enterprise: 0 },
+    limits: { agents: 25, storage_gb: 10, nexus_nodes: 2, nexus_local: 2, nexus_enterprise: 0 },
     features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
   },
   {
@@ -65,7 +65,7 @@ const PLANS: Plan[] = [
     label: 'Agents Pro',
     tier: 'agents',
     price: { monthly: 7900, yearly: 79000 },
-    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 3 },
+    limits: { agents: 100, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 3 },
     features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
     highlight: true,
     badge: 'Most Popular',
@@ -75,7 +75,7 @@ const PLANS: Plan[] = [
     label: 'Full Platform',
     tier: 'full',
     price: { monthly: 12900, yearly: 129000 },
-    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 5 },
+    limits: { agents: 100, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 5 },
     features: ['*'],
     badge: 'Best Value',
   },
@@ -84,7 +84,7 @@ const PLANS: Plan[] = [
     label: 'Enterprise',
     tier: 'enterprise',
     price: { monthly: 0, yearly: 0 },
-    limits: { agents: -1, tokens_month: -1, storage_gb: -1, nexus_nodes: -1, nexus_local: -1, nexus_enterprise: -1 },
+    limits: { agents: -1, storage_gb: -1, nexus_nodes: -1, nexus_local: -1, nexus_enterprise: -1 },
     features: ['*'],
   },
   {
@@ -92,7 +92,7 @@ const PLANS: Plan[] = [
     label: 'Open Beta',
     tier: 'beta',
     price: { monthly: 0, yearly: 0 },
-    limits: { agents: 50, tokens_month: 500000, storage_gb: 50, nexus_nodes: 5, nexus_local: 5, nexus_enterprise: 1 },
+    limits: { agents: 50, storage_gb: 50, nexus_nodes: 5, nexus_local: 5, nexus_enterprise: 1 },
     features: ['*'],
     badge: 'Current',
   },
@@ -104,13 +104,6 @@ function fmtPrice(cents: number, yearly: boolean): string {
   if (cents === 0) return 'Free';
   const monthly = yearly ? Math.round(cents / 100 / 12) : cents / 100;
   return `$${monthly}`;
-}
-
-function fmtTokens(n: number): string {
-  if (n === -1) return 'Unlimited';
-  if (n >= 1000000) return `${n / 1000000}M`;
-  if (n >= 1000) return `${n / 1000}K`;
-  return String(n);
 }
 
 function fmtLimit(n: number): string {
@@ -130,7 +123,7 @@ interface ComparisonRow {
 
 const COMPARISON_ROWS: ComparisonRow[] = [
   { label: 'Max agents', key: 'agents', type: 'limit', getValue: (p) => fmtLimit(p.limits.agents) },
-  { label: 'Tokens / month', key: 'tokens', type: 'limit', getValue: (p) => fmtTokens(p.limits.tokens_month) },
+  { label: 'LLM (Bring Your Own Key)', key: 'byok', type: 'custom', getValue: () => true },
   { label: 'Storage', key: 'storage', type: 'limit', getValue: (p) => p.limits.storage_gb === -1 ? 'Unlimited' : `${p.limits.storage_gb}GB` },
   { label: 'Nexus nodes', key: 'nexus_nodes', type: 'limit', getValue: (p) => fmtLimit(p.limits.nexus_nodes ?? 0) },
   { label: 'Enterprise nodes', key: 'nexus_enterprise', type: 'limit', getValue: (p) => fmtLimit(p.limits.nexus_enterprise ?? 0) },
@@ -164,19 +157,11 @@ function getCellValue(plan: Plan, row: ComparisonRow): string | boolean {
 // ─── Check / X icons ─────────────────────────────────────────────────────────
 
 function Check() {
-  return (
-    <svg className="w-5 h-5 text-green-400 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-    </svg>
-  );
+  return <CheckIcon className="w-5 h-5 text-green-400 mx-auto" />;
 }
 
 function Cross() {
-  return (
-    <svg className="w-5 h-5 text-white/15 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  );
+  return <XMarkIcon className="w-5 h-5 text-white/15 mx-auto" />;
 }
 
 // ─── Tier color helpers ───────────────────────────────────────────────────────
@@ -251,7 +236,10 @@ export default function PricingPage() {
               >
                 {plan.badge && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                    <Badge className={`border ${colors.badge} shadow-lg text-xs`}>{plan.badge}</Badge>
+                    <Badge className={`border ${colors.badge} shadow-lg text-xs flex items-center gap-1`}>
+                      {plan.badge === 'Most Popular' && <StarIcon className="w-3 h-3" />}
+                      {plan.badge}
+                    </Badge>
                   </div>
                 )}
 
@@ -296,8 +284,8 @@ export default function PricingPage() {
                     <span className={`font-medium ${colors.text}`}>{fmtLimit(plan.limits.agents)}</span>
                   </div>
                   <div className="flex justify-between text-xs">
-                    <span className="text-white/40">Tokens/mo</span>
-                    <span className={`font-medium ${colors.text}`}>{fmtTokens(plan.limits.tokens_month)}</span>
+                    <span className="text-white/40">LLM</span>
+                    <span className={`font-medium ${colors.text}`}>Bring Your Own Key</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-white/40">Storage</span>
@@ -404,9 +392,9 @@ export default function PricingPage() {
               desc: 'Vutler Agents is AGPL-3.0. Self-host for free, or use our managed cloud.',
             },
             {
-              icon: '⚡',
-              title: 'Token-based billing',
-              desc: 'Pay for the tokens you use, not the number of people using the platform.',
+              icon: '🔑',
+              title: 'Bring Your Own Key (BYOK)',
+              desc: 'Connect your own OpenRouter, Anthropic, or OpenAI key. No token limits on any plan. Don\'t have a key? Purchase LLM Credits separately.',
             },
             {
               icon: '🔒',

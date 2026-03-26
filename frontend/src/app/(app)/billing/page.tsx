@@ -13,6 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 // These are shown when the API is unavailable and serve as the source of truth
 // for plan metadata. Prices are in cents. Limits: -1 = unlimited.
 
+// NOTE: LLM is BYOK — no token limits on any plan. Token tracking in /usage
+// is for monitoring only. Users can also purchase LLM Credits separately.
 const FALLBACK_PLANS: PlansResponse = {
   office: [
     {
@@ -20,7 +22,7 @@ const FALLBACK_PLANS: PlansResponse = {
       label: "Free",
       price: { monthly: 0, yearly: 0 },
       features: [],
-      limits: { agents: 1, tokens: 50000, storage: "1 GB" },
+      limits: { agents: 1, storage: "1 GB" },
     },
     {
       id: "office_starter",
@@ -36,8 +38,9 @@ const FALLBACK_PLANS: PlansResponse = {
         "Dashboard",
         "Goals & CRM",
         "Pixel Office",
+        "LLM: Bring Your Own Key",
       ],
-      limits: { tokens: 100000, storage: "10 GB" },
+      limits: { storage: "10 GB" },
     },
     {
       id: "office_team",
@@ -53,8 +56,9 @@ const FALLBACK_PLANS: PlansResponse = {
         "Dashboard",
         "Goals & CRM",
         "Pixel Office",
+        "LLM: Bring Your Own Key",
       ],
-      limits: { tokens: 500000, storage: "100 GB" },
+      limits: { storage: "100 GB" },
     },
   ],
   agents: [
@@ -73,8 +77,9 @@ const FALLBACK_PLANS: PlansResponse = {
         "Deployments & templates",
         "Knowledge base",
         "Providers & dashboard",
+        "LLM: Bring Your Own Key",
       ],
-      limits: { agents: 25, nexusNodes: 2, tokens: 250000, storage: "10 GB" },
+      limits: { agents: 25, nexusNodes: 2, storage: "10 GB" },
     },
     {
       id: "agents_pro",
@@ -92,8 +97,9 @@ const FALLBACK_PLANS: PlansResponse = {
         "Knowledge base",
         "Providers & dashboard",
         "3 enterprise Nexus nodes",
+        "LLM: Bring Your Own Key",
       ],
-      limits: { agents: 100, nexusNodes: 10, tokens: 1000000, storage: "100 GB" },
+      limits: { agents: 100, nexusNodes: 10, storage: "100 GB" },
     },
   ],
   full: [
@@ -109,8 +115,9 @@ const FALLBACK_PLANS: PlansResponse = {
         "Priority support",
         "Unlimited features",
         "5 enterprise Nexus nodes",
+        "LLM: Bring Your Own Key",
       ],
-      limits: { agents: 100, nexusNodes: 10, tokens: 1000000, storage: "100 GB" },
+      limits: { agents: 100, nexusNodes: 10, storage: "100 GB" },
     },
     {
       id: "enterprise",
@@ -118,13 +125,13 @@ const FALLBACK_PLANS: PlansResponse = {
       price: { monthly: 0, yearly: 0 },
       features: [
         "Unlimited agents",
-        "Unlimited tokens",
         "Unlimited storage",
         "Unlimited Nexus nodes",
         "Custom SLAs",
         "White-labelling",
         "Dedicated support",
         "Custom integrations",
+        "LLM: Bring Your Own Key",
       ],
       limits: {},
     },
@@ -248,11 +255,6 @@ function CurrentPlanCard({
             limit={usage.agents.limit}
           />
           <UsageMeter
-            label="Tokens"
-            used={usage.tokens.used}
-            limit={usage.tokens.limit}
-          />
-          <UsageMeter
             label="Storage"
             used={usage.storage_gb.used}
             limit={usage.storage_gb.limit}
@@ -264,7 +266,7 @@ function CurrentPlanCard({
       {!subscription?.planId && (
         <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5">
           <p className="text-sm text-[#9ca3af]">
-            You&apos;re on the Free plan. Upgrade below to unlock more agents, tokens, and storage.
+            You&apos;re on the Free plan. Upgrade below to unlock more agents and storage. LLM is Bring Your Own Key — no token limits on any plan.
           </p>
         </CardContent>
       )}
@@ -354,12 +356,7 @@ function PlanCard({
               <p className="text-[#6b7280] text-xs">Nexus Nodes</p>
             </div>
           )}
-          {plan.limits.tokens !== undefined && (
-            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-              <p className="text-white font-semibold text-sm">{formatLimit(plan.limits.tokens)}</p>
-              <p className="text-[#6b7280] text-xs">Tokens/mo</p>
-            </div>
-          )}
+          {/* Tokens/mo removed — LLM is BYOK, no plan-based token limits */}
           {plan.limits.storage && (
             <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
               <p className="text-white font-semibold text-sm">{plan.limits.storage}</p>
@@ -499,6 +496,35 @@ export default function BillingPage() {
           portalLoading={portalLoading}
         />
       )}
+
+      {/* LLM Credits */}
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <CardTitle className="text-white">LLM Credits</CardTitle>
+              <p className="text-sm text-[#9ca3af] mt-1">
+                Bring your own OpenRouter or Anthropic key, or purchase credits to use Vutler&apos;s managed LLM pool.
+              </p>
+            </div>
+            <Button
+              className="bg-[#3b82f6] hover:bg-[#2563eb] shrink-0"
+              onClick={() => window.alert('LLM Credits coming soon — $10 ≈ 1M tokens')}
+            >
+              Buy Credits — $10 / 1M tokens
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-4">
+          <p className="text-xs text-[#6b7280] leading-relaxed">
+            Already have an API key?{" "}
+            <a href="/settings/providers" className="text-[#3b82f6] hover:underline">
+              Connect it in Settings → Providers
+            </a>{" "}
+            — tokens are unlimited when you use your own key.
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

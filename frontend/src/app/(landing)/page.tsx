@@ -6,6 +6,19 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { getAuthToken } from '@/lib/api/client';
+import {
+  ChatBubbleLeftRightIcon,
+  EnvelopeIcon,
+  CloudArrowUpIcon,
+  ClipboardDocumentCheckIcon,
+  ServerStackIcon,
+  AcademicCapIcon,
+  CheckIcon,
+} from '@heroicons/react/24/outline';
+import {
+  BuildingOffice2Icon as BuildingOffice2IconSolid,
+  CpuChipIcon as CpuChipIconSolid,
+} from '@heroicons/react/24/solid';
 
 // ─── Auth redirect ─────────────────────────────────────────────────────────────
 
@@ -126,60 +139,75 @@ function HeroSection() {
           {/* Right — dashboard mockup */}
           <div className="relative hidden lg:block">
             <div className="relative rounded-2xl border border-white/10 bg-[#14151f] shadow-2xl shadow-blue-900/20 overflow-hidden">
-              {/* Fake window chrome */}
+              {/* Window chrome */}
               <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-[#0e0f1a]">
-                <div className="w-3 h-3 rounded-full bg-red-500/60" />
-                <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-                <div className="w-3 h-3 rounded-full bg-green-500/60" />
-                <div className="ml-4 flex-1 h-5 rounded bg-white/5 max-w-xs" />
+                <div className="w-3 h-3 rounded-full bg-red-500" />
+                <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                <div className="w-3 h-3 rounded-full bg-green-500" />
+                <span className="ml-4 text-xs text-white/30 font-medium">Vutler Dashboard</span>
               </div>
 
-              {/* Fake sidebar + content */}
-              <div className="flex h-72">
-                {/* Sidebar */}
-                <div className="w-48 border-r border-white/5 bg-[#0e0f1a] p-3 space-y-1 shrink-0">
-                  {['Chat', 'Email', 'Drive', 'Tasks', 'Agents', 'Calendar'].map((item, i) => (
-                    <div
-                      key={item}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${i === 0 ? 'bg-blue-600/20 text-blue-400' : 'text-white/30 hover:text-white/60'}`}
-                    >
-                      <div className={`w-1.5 h-1.5 rounded-full ${i === 0 ? 'bg-blue-400' : 'bg-white/20'}`} />
-                      {item}
+              {/* Dashboard body */}
+              <div className="p-4 space-y-3">
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-[#0e0f1a] rounded-xl p-3 border border-white/5">
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest font-medium mb-1">Active Agents</p>
+                    <p className="text-xl font-bold text-white">12</p>
+                    <p className="text-[10px] text-green-400 mt-0.5">▲ +3 this week</p>
+                  </div>
+                  <div className="bg-[#0e0f1a] rounded-xl p-3 border border-white/5">
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest font-medium mb-1">Tasks Today</p>
+                    <p className="text-xl font-bold text-white">847</p>
+                    <p className="text-[10px] text-green-400 mt-0.5">▲ +12%</p>
+                  </div>
+                  <div className="bg-[#0e0f1a] rounded-xl p-3 border border-white/5">
+                    <p className="text-[10px] text-white/40 uppercase tracking-widest font-medium mb-1">Token Usage</p>
+                    <p className="text-xl font-bold text-white">2.4M</p>
+                    <p className="text-[10px] text-white/30 mt-0.5">of 5M limit</p>
+                  </div>
+                </div>
+
+                {/* Agent list */}
+                <div className="bg-[#0e0f1a] rounded-xl border border-white/5 overflow-hidden">
+                  {[
+                    { name: 'Support Agent', tasks: '124 tasks', badge: 'ONLINE', dotClass: 'bg-green-400', badgeClass: 'bg-green-500/15 text-green-400 border-green-500/30' },
+                    { name: 'Sales Bot', tasks: '89 tasks', badge: 'ONLINE', dotClass: 'bg-green-400', badgeClass: 'bg-green-500/15 text-green-400 border-green-500/30' },
+                    { name: 'Data Analyst', tasks: 'Processing…', badge: 'BUSY', dotClass: 'bg-yellow-400 animate-pulse', badgeClass: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' },
+                    { name: 'Email Handler', tasks: 'Idle', badge: 'IDLE', dotClass: 'bg-white/20', badgeClass: 'bg-white/5 text-white/40 border-white/10' },
+                  ].map((agent, i) => (
+                    <div key={agent.name} className={`flex items-center gap-3 px-3 py-2.5 ${i < 3 ? 'border-b border-white/5' : ''}`}>
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${agent.dotClass}`} />
+                      <span className="flex-1 text-xs font-medium text-white/80">{agent.name}</span>
+                      <span className="text-xs text-white/30">{agent.tasks}</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${agent.badgeClass}`}>{agent.badge}</span>
                     </div>
                   ))}
                 </div>
 
-                {/* Main area */}
-                <div className="flex-1 p-4 space-y-3">
-                  {/* Agent cards */}
+                {/* Activity feed */}
+                <div className="space-y-1.5">
                   {[
-                    { name: 'EmailBot', status: 'Running', color: 'blue' },
-                    { name: 'SupportAgent', status: 'Idle', color: 'green' },
-                    { name: 'DataPipeline', status: 'Processing', color: 'purple' },
-                  ].map((agent) => (
-                    <div key={agent.name} className="flex items-center gap-3 p-3 rounded-lg border border-white/5 bg-[#0e0f1a]">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-${agent.color}-600/20 text-${agent.color}-400`}>
-                        {agent.name[0]}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium text-white/80 truncate">{agent.name}</div>
-                        <div className="text-xs text-white/30">{agent.status}</div>
-                      </div>
-                      <div className={`w-2 h-2 rounded-full ${agent.status === 'Running' ? 'bg-blue-400 animate-pulse' : agent.status === 'Idle' ? 'bg-green-400' : 'bg-purple-400 animate-pulse'}`} />
+                    { icon: '✉', text: 'Support Agent replied to 3 tickets', time: 'now', iconClass: 'text-blue-400' },
+                    { icon: '💬', text: 'Sales Bot closed a lead on WhatsApp', time: '1m', iconClass: 'text-green-400' },
+                    { icon: '📄', text: 'Data Analyst exported report.csv', time: '4m', iconClass: 'text-purple-400' },
+                  ].map((item) => (
+                    <div key={item.time} className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-[#0e0f1a] border border-white/5">
+                      <span className={`text-sm shrink-0 ${item.iconClass}`}>{item.icon}</span>
+                      <span className="flex-1 text-xs text-white/60 truncate">{item.text}</span>
+                      <span className="text-[10px] text-white/25 shrink-0">{item.time}</span>
                     </div>
                   ))}
-
-                  {/* Bottom stats */}
-                  <div className="grid grid-cols-3 gap-2 pt-1">
-                    {['247 tasks', '98% uptime', '12 agents'].map((stat) => (
-                      <div key={stat} className="text-center p-2 rounded-lg border border-white/5 bg-[#0e0f1a]">
-                        <div className="text-xs text-white/30">{stat}</div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               </div>
             </div>
+
+            {/* Float badge — GPT-5.3 connected */}
+            <div className="absolute -bottom-3 -right-4 flex items-center gap-2 bg-[#0e0f1a] border border-white/10 rounded-full px-3 py-1.5 shadow-lg text-xs font-medium text-white/70">
+              <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
+              GPT-5.3 connected
+            </div>
+
             {/* Glow under mockup */}
             <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 w-3/4 h-32 bg-blue-600/10 blur-3xl rounded-full" />
           </div>
@@ -207,9 +235,7 @@ function ProductsSection() {
           <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-blue-600/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <div className="relative">
             <div className="w-12 h-12 rounded-xl bg-blue-600/20 flex items-center justify-center mb-6">
-              <svg className="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
+              <BuildingOffice2IconSolid className="w-6 h-6 text-blue-400" />
             </div>
             <Badge className="mb-4 bg-blue-600/20 text-blue-400 border-blue-500/30 border">Vutler Office</Badge>
             <h3 className="text-2xl font-bold mb-3">Your AI-powered workspace</h3>
@@ -219,9 +245,7 @@ function ProductsSection() {
             <ul className="space-y-2 mb-8">
               {['Chat with AI agents', 'Email with approval flow', 'Drive — Swiss S3 storage', 'Calendar & scheduling', 'Tasks & Kanban boards', 'Memory & context across sessions', 'CRM & customer tracking'].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-white/60">
-                  <svg className="w-4 h-4 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
+                  <CheckIcon className="w-4 h-4 text-blue-400 shrink-0" />
                   {f}
                 </li>
               ))}
@@ -239,9 +263,7 @@ function ProductsSection() {
           </div>
           <div className="relative">
             <div className="w-12 h-12 rounded-xl bg-purple-600/20 flex items-center justify-center mb-6">
-              <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17H3a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-2M9 9h6" />
-              </svg>
+              <CpuChipIconSolid className="w-6 h-6 text-purple-400" />
             </div>
             <Badge className="mb-4 bg-purple-600/20 text-purple-400 border-purple-500/30 border">Vutler Agents</Badge>
             <h3 className="text-2xl font-bold mb-3">Deploy anywhere, own everything</h3>
@@ -251,9 +273,7 @@ function ProductsSection() {
             <ul className="space-y-2 mb-8">
               {['17 agent templates ready to deploy', '68 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Multi-agent swarms', 'Marketplace for community agents', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-white/60">
-                  <svg className="w-4 h-4 text-purple-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
+                  <CheckIcon className="w-4 h-4 text-purple-400 shrink-0" />
                   {f}
                 </li>
               ))}
@@ -272,61 +292,37 @@ function ProductsSection() {
 
 const FEATURES = [
   {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-      </svg>
-    ),
+    icon: <ChatBubbleLeftRightIcon className="w-6 h-6" />,
     color: 'blue',
     title: 'Chat with AI agents',
     description: 'Talk to any model via OpenRouter. Agents remember context, switch tasks, and collaborate across your workspace.',
   },
   {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-      </svg>
-    ),
+    icon: <EnvelopeIcon className="w-6 h-6" />,
     color: 'purple',
     title: 'Email with approval flow',
     description: 'AI drafts and sends emails on your behalf. Sensitive actions require human approval — full control at every step.',
   },
   {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
-      </svg>
-    ),
+    icon: <CloudArrowUpIcon className="w-6 h-6" />,
     color: 'green',
     title: 'Drive — Swiss S3 storage',
     description: 'File management with Swiss-hosted object storage. Agents can read, write, and share files securely.',
   },
   {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-      </svg>
-    ),
+    icon: <ClipboardDocumentCheckIcon className="w-6 h-6" />,
     color: 'orange',
     title: 'Tasks + Kanban + Subtasks',
     description: 'Full project management built-in. Agents create, assign, and complete tasks automatically as work progresses.',
   },
   {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    ),
+    icon: <ServerStackIcon className="w-6 h-6" />,
     color: 'blue',
     title: 'Nexus: Deploy anywhere',
     description: 'CLI tool for deploying Vutler agents to any infrastructure — local, cloud, or enterprise. Full control over runtime.',
   },
   {
-    icon: (
-      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-      </svg>
-    ),
+    icon: <AcademicCapIcon className="w-6 h-6" />,
     color: 'purple',
     title: 'Memory: Agents that learn',
     description: 'Persistent context and semantic memory. Agents remember past conversations, preferences, and decisions.',
@@ -429,15 +425,81 @@ function MCPSection() {
 
 // ─── Integrations ─────────────────────────────────────────────────────────────
 
+// ─── Brand SVG logomarks ──────────────────────────────────────────────────────
+
+function OpenRouterLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+    </svg>
+  );
+}
+
+function AnthropicLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13.827 3.8h-3.654L4 20.2h3.975l1.243-3.44h5.565l1.243 3.44H20L13.827 3.8zm-3.6 9.96 1.773-4.91 1.773 4.91H10.227z"/>
+    </svg>
+  );
+}
+
+function OpenAILogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.032.067L9.74 19.96a4.5 4.5 0 0 1-6.14-1.656zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0L4.2 14.11A4.5 4.5 0 0 1 2.34 7.896zm16.597 3.855-5.833-3.387 2.019-1.168a.076.076 0 0 1 .071 0l4.618 2.684a4.5 4.5 0 0 1-.676 8.122v-5.673a.795.795 0 0 0-.399-.578zm2.01-3.023-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.614-2.682a4.5 4.5 0 0 1 6.894 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08-4.778 2.758a.795.795 0 0 0-.392.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/>
+    </svg>
+  );
+}
+
+function GoogleLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12.545 10.239v3.821h5.445c-.712 2.315-2.647 3.972-5.445 3.972a6.033 6.033 0 1 1 0-12.064c1.498 0 2.866.549 3.921 1.453l2.814-2.814A9.969 9.969 0 0 0 12.545 2C7.021 2 2.543 6.477 2.543 12s4.478 10 10.002 10c8.396 0 10.249-7.85 9.426-11.748z"/>
+    </svg>
+  );
+}
+
+function GitHubLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+    </svg>
+  );
+}
+
+function SlackLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zm10.122 2.521a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zm-1.268 0a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zm-2.523 10.122a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zm0-1.268a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/>
+    </svg>
+  );
+}
+
+function StripeLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z"/>
+    </svg>
+  );
+}
+
+function PostalLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
+      <path d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/>
+    </svg>
+  );
+}
+
 const INTEGRATIONS = [
-  { name: 'OpenRouter', logo: '🔀', color: 'blue' },
-  { name: 'Anthropic', logo: '🧠', color: 'orange' },
-  { name: 'OpenAI', logo: '⚡', color: 'green' },
-  { name: 'Google', logo: '🔍', color: 'blue' },
-  { name: 'GitHub', logo: '🐙', color: 'purple' },
-  { name: 'Slack', logo: '💬', color: 'purple' },
-  { name: 'Stripe', logo: '💳', color: 'blue' },
-  { name: 'Postal', logo: '✉️', color: 'orange' },
+  { name: 'OpenRouter', logo: <OpenRouterLogo className="w-8 h-8 text-white/70" />, color: 'blue' },
+  { name: 'Anthropic', logo: <AnthropicLogo className="w-8 h-8 text-white/70" />, color: 'orange' },
+  { name: 'OpenAI', logo: <OpenAILogo className="w-8 h-8 text-white/70" />, color: 'green' },
+  { name: 'Google', logo: <GoogleLogo className="w-8 h-8 text-white/70" />, color: 'blue' },
+  { name: 'GitHub', logo: <GitHubLogo className="w-8 h-8 text-white/70" />, color: 'purple' },
+  { name: 'Slack', logo: <SlackLogo className="w-8 h-8 text-white/70" />, color: 'purple' },
+  { name: 'Stripe', logo: <StripeLogo className="w-8 h-8 text-white/70" />, color: 'blue' },
+  { name: 'Postal', logo: <PostalLogo className="w-8 h-8 text-white/70" />, color: 'orange' },
 ];
 
 function IntegrationsSection() {
@@ -455,7 +517,7 @@ function IntegrationsSection() {
             key={intg.name}
             className="flex flex-col items-center gap-3 p-6 rounded-xl border border-white/5 bg-[#14151f] hover:border-white/10 hover:bg-[#16172a] transition-all duration-200 cursor-default"
           >
-            <span className="text-3xl">{intg.logo}</span>
+            {intg.logo}
             <span className="text-sm font-medium text-white/60">{intg.name}</span>
           </div>
         ))}
@@ -531,9 +593,7 @@ function PricingPreview() {
               <ul className="space-y-2">
                 {plan.features.map((f) => (
                   <li key={f} className="flex items-center gap-2 text-sm text-white/60">
-                    <svg className={`w-4 h-4 ${textColor} shrink-0`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
+                    <CheckIcon className={`w-4 h-4 ${textColor} shrink-0`} />
                     {f}
                   </li>
                 ))}

@@ -79,6 +79,10 @@ const FALLBACK_AVATAR = '/static/avatars/personal-assistant.png';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getAgentAvatarUrl(agent: Agent): string | null {
+  // 0. If avatar is a full path (e.g. /static/avatars/andrea.png), use directly
+  if (agent.avatar && (agent.avatar.startsWith('/static/') || agent.avatar.startsWith('/sprites/') || /\.(png|svg|jpg)$/i.test(agent.avatar))) {
+    return agent.avatar;
+  }
   // 1. Direct avatar slug from DB (e.g. "lead-gen", "hr-assistant")
   if (agent.avatar && /^[a-z0-9-]+$/.test(agent.avatar)) {
     if (KNOWN_AVATAR_SLUGS.has(agent.avatar)) {
