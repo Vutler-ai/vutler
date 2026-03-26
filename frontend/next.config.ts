@@ -9,13 +9,7 @@ const nextConfig: NextConfig = {
 
   // Optimize images — allow static avatar proxy
   images: {
-    formats: ['image/avif', 'image/webp'],
-    remotePatterns: [
-      { protocol: 'http', hostname: 'localhost', port: '3001', pathname: '/static/**' },
-      { protocol: 'http', hostname: 'localhost', port: '3099', pathname: '/static/**' },
-      { protocol: 'https', hostname: 'app.vutler.ai', pathname: '/static/**' },
-    ],
-    unoptimized: process.env.NODE_ENV !== 'production',
+    unoptimized: true, // Avatars served directly by nginx — no Next.js optimization needed
   },
 
   // Proxy API, WebSocket, and static asset requests to the Express backend
