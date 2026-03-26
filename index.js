@@ -124,14 +124,41 @@ function mount(prefix, mod) {
 app.post('/api/v1/nexus/register', async (req, res) => {
   try {
     const crypto = require('crypto');
-    const authHeader = req.headers['authorization'] || '';
-    const secret = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.body?.apiKey || req.body?.key || null;
-    if (!secret) return res.status(401).json({ success: false, error: 'API key is required' });
-
     const pg = app.locals.pg;
-    const keyHash = crypto.createHash('sha256').update(String(secret)).digest('hex');
     const DEFAULT_WS = '00000000-0000-0000-0000-000000000001';
     let workspaceId = DEFAULT_WS, nodeId = crypto.randomUUID(), authMethod = 'dev_mode';
+
+    // ── Deploy token auth (Nexus-Local / Nexus-Enterprise) ──────────────────
+    const deployToken = req.body?.deploy_token;
+    if (deployToken) {
+      const { validateToken } = require('./services/tokenService');
+      const payload = validateToken(deployToken);
+      if (!payload) return res.status(401).json({ success: false, error: 'Invalid or expired deploy token' });
+
+      workspaceId = payload.workspace_id || DEFAULT_WS;
+      nodeId = payload.node_id || nodeId;
+      authMethod = `deploy_token_${payload.mode || 'unknown'}`;
+
+      if (pg) {
+        try {
+          const tokenHash = crypto.createHash('sha256').update(deployToken).digest('hex');
+          await pg.query(
+            `UPDATE tenant_vutler.nexus_nodes SET status = 'online', last_heartbeat = NOW() WHERE id = $1 AND deploy_token_hash = $2`,
+            [nodeId, tokenHash]
+          );
+        } catch (_) {}
+      }
+
+      console.log(`[NEXUS] Node registered via deploy token: ${req.body?.name || payload.node_id} (${nodeId}) [${authMethod}]`);
+      return res.json({ success: true, message: 'Registered', nodeId, workspaceId, auth: authMethod, mode: payload.mode });
+    }
+
+    // ── API key auth (legacy / manual) ──────────────────────────────────────
+    const authHeader = req.headers['authorization'] || '';
+    const secret = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.body?.apiKey || req.body?.key || null;
+    if (!secret) return res.status(401).json({ success: false, error: 'API key or deploy_token is required' });
+
+    const keyHash = crypto.createHash('sha256').update(String(secret)).digest('hex');
 
     if (pg) {
       try {
@@ -167,6 +194,69 @@ app.post('/api/v1/nexus/register', async (req, res) => {
     console.error('[NEXUS] Register error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// ── Nexus Token Generation endpoints (before auth middleware) ────────────────
+app.post('/api/v1/nexus/tokens/local', async (req, res) => {
+  const { agentId, permissions, llmConfig } = req.body;
+  if (!agentId) return res.status(400).json({ success: false, error: 'agentId required' });
+
+  const pg = app.locals.pg;
+  const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+
+  // Look up agent to get name and snipara instance ID
+  let agentName = 'Unknown Agent';
+  let sniparaInstanceId = agentId;
+  if (pg) {
+    try {
+      const agent = await pg.query('SELECT name, id FROM tenant_vutler.agents WHERE id = $1', [agentId]);
+      if (agent.rows[0]) agentName = agent.rows[0].name;
+    } catch (_) {}
+  }
+
+  const { generateLocalToken } = require('./services/tokenService');
+  const result = generateLocalToken({ agentId, agentName, workspaceId, sniparaInstanceId, permissions, llmConfig });
+
+  // Pre-create node in DB
+  if (pg) {
+    try {
+      await pg.query(
+        `INSERT INTO tenant_vutler.nexus_nodes (id, workspace_id, name, mode, clone_source_agent_id, snipara_instance_id, status, deploy_token_hash)
+         VALUES ($1, $2, $3, 'local', $4, $5, 'pending_activation', $6)`,
+        [result.nodeId, workspaceId, agentName + ' (Local)', agentId, sniparaInstanceId,
+         require('crypto').createHash('sha256').update(result.token).digest('hex')]
+      );
+    } catch (_) {}
+  }
+
+  res.json({ success: true, ...result, mode: 'local' });
+});
+
+app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
+  const { name, clientName, role, filesystemRoot, allowedDirs, permissions, shellConfig, offlineConfig } = req.body;
+  if (!name || !clientName) return res.status(400).json({ success: false, error: 'name and clientName required' });
+
+  const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+
+  const { generateEnterpriseToken } = require('./services/tokenService');
+  const result = generateEnterpriseToken({ name, clientName, workspaceId, role, filesystemRoot, allowedDirs, permissions, shellConfig, offlineConfig });
+
+  const pg = app.locals.pg;
+  if (pg) {
+    try {
+      const tokenPayload = JSON.parse(Buffer.from(result.token.split('.')[1], 'base64url').toString());
+      await pg.query(
+        `INSERT INTO tenant_vutler.nexus_nodes (id, workspace_id, name, mode, client_name, role, snipara_instance_id, filesystem_root, allowed_dirs, offline_config, status, deploy_token_hash)
+         VALUES ($1, $2, $3, 'enterprise', $4, $5, $6, $7, $8::jsonb, $9::jsonb, 'pending_activation', $10)`,
+        [result.nodeId, workspaceId, name, clientName, role || 'general', tokenPayload.snipara_instance_id,
+         filesystemRoot || '/opt/' + clientName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+         JSON.stringify(allowedDirs || []), JSON.stringify(offlineConfig || {}),
+         require('crypto').createHash('sha256').update(result.token).digest('hex')]
+      );
+    } catch (e) { console.warn('[NEXUS] Pre-create enterprise node failed:', e.message); }
+  }
+
+  res.json({ success: true, ...result, mode: 'enterprise', clientName });
 });
 
 // ── Nexus Task + Heartbeat endpoints (before auth middleware) ────────────────

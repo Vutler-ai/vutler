@@ -9,6 +9,12 @@ class NexusNode {
     this.name = opts.name || process.env.NODE_NAME || require('os').hostname();
     this.type = opts.type || 'local';
     this.port = opts.port || 3100;
+    this.mode = opts.mode || 'standard';
+    this.sniparaInstanceId = opts.snipara_instance_id || null;
+    this.clientName = opts.client_name || null;
+    this.filesystemRoot = opts.filesystem_root || null;
+    this.role = opts.role || 'general';
+    this.deployToken = opts.deploy_token || null;
     this.nodeId = null;
     this.ws = null;
     this.agents = [];
@@ -38,7 +44,15 @@ class NexusNode {
     // 1. Register node via REST API
     console.log(`[Nexus] Connecting to ${this.server}...`);
     const regResult = await this._apiCall('POST', '/api/v1/nexus/register', {
-      name: this.name, type: this.type, host: require('os').hostname(), port: this.port
+      name: this.name,
+      type: this.type,
+      host: require('os').hostname(),
+      port: this.port,
+      mode: this.mode,
+      deploy_token: this.deployToken,
+      snipara_instance_id: this.sniparaInstanceId,
+      client_name: this.clientName,
+      role: this.role,
     });
 
     if (regResult.success && regResult.nodeId) {
