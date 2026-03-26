@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    container_name: vutler-api
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    volumes:
+      - ./uploads:/app/uploads
+
+  frontend:
+    build: ./frontend
+    container_name: vutler-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - API_URL=http://localhost:3001
+      - WS_URL=http://localhost:3001
+    depends_on:
+      - api
