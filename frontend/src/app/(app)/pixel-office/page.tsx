@@ -140,7 +140,7 @@ function AgentTile({ agent, onClick }: { agent: Agent; onClick: () => void }) {
 
       <span className="text-xs font-mono font-bold text-slate-200 mt-1 truncate max-w-full">
         {isNexus && <span className="text-amber-400 mr-1">★</span>}
-        {agent.name.split(" ")[0]}
+        {(agent.name || 'Agent').split(" ")[0]}
       </span>
 
       <span className="text-[10px] font-mono truncate max-w-full" style={{ color }}>
@@ -181,7 +181,7 @@ function DeployedAgentTile({ agent, onClick }: { agent: Agent; onClick: () => vo
 
       <div className="flex flex-col items-start min-w-0">
         <span className="text-sm font-mono font-bold text-slate-200 truncate">
-          {agent.name.split(" ")[0]}
+          {(agent.name || 'Agent').split(" ")[0]}
         </span>
         <span className="text-[10px] font-mono" style={{ color }}>{agent.role}</span>
         {agent.deployment && (

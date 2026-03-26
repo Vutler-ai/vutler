@@ -46,10 +46,10 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getInitials(name: string): string {
-  return name
+function getInitials(name: string | null | undefined): string {
+  return (name || 'U')
     .split(" ")
-    .map((w) => w[0])
+    .map((w) => w[0] || '')
     .join("")
     .slice(0, 2)
     .toUpperCase();
