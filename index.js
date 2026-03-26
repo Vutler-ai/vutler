@@ -1,5 +1,8 @@
 'use strict';
 
+// Load .env before anything else
+require('dotenv').config();
+
 /**
  * Vutler API Server — Monorepo Entry Point
  *
