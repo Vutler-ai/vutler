@@ -1,249 +1,291 @@
 "use client";
 
-import { authFetch } from '@/lib/authFetch';
-import { useState, useEffect } from "react";
-import { ChartBarIcon, CpuChipIcon, CalendarDaysIcon } from "@heroicons/react/24/outline";
+import { useState, useCallback } from "react";
+import { useApi } from "@/hooks/use-api";
+import { apiFetch } from "@/lib/api/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
-interface UsageData {
-  success: boolean;
-  data: any[];
-  total_tokens: number;
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface UsageRecord {
+  id?: string;
+  agent?: string;
+  agent_name?: string;
+  model?: string;
+  provider?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  tokens?: number;
+  requests?: number;
+  latency_ms?: number;
+  estimated_cost?: number;
+  created_at?: string;
+  timestamp?: string;
 }
 
-interface Agent {
-  id: string;
-  name: string;
-  provider: string;
-  model: string;
-  avatar: string;
+interface UsageResponse {
+  success?: boolean;
+  data: UsageRecord[];
+  total_tokens?: number;
+  total_requests?: number;
+  total_cost?: number;
+  avg_latency_ms?: number;
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmt(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function fmtCost(n: number): string {
+  if (!n) return "$0.00";
+  return `$${n.toFixed(4)}`;
+}
+
+function fmtDate(d: string | undefined): string {
+  if (!d) return "—";
+  try {
+    return new Date(d).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return d;
+  }
+}
+
+function exportCsv(data: UsageRecord[]): void {
+  const headers = ["Agent", "Model", "Provider", "Input Tokens", "Output Tokens", "Total Tokens", "Requests", "Est. Cost", "Timestamp"];
+  const rows = data.map((r) => [
+    r.agent_name ?? r.agent ?? "",
+    r.model ?? "",
+    r.provider ?? "",
+    r.input_tokens ?? "",
+    r.output_tokens ?? "",
+    r.tokens ?? ((r.input_tokens ?? 0) + (r.output_tokens ?? 0)),
+    r.requests ?? "",
+    r.estimated_cost ?? "",
+    r.created_at ?? r.timestamp ?? "",
+  ]);
+  const csv = [headers, ...rows].map((row) => row.map(String).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `usage-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Stat Card ────────────────────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: string;
+}) {
+  return (
+    <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+      <CardContent className="pt-6">
+        <div className="flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center shrink-0`} />
+          <div>
+            <p className="text-xs text-[#9ca3af] uppercase tracking-wide font-medium">{label}</p>
+            <p className="text-2xl font-bold text-white">{value}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Provider badge color ─────────────────────────────────────────────────────
+
+function ProviderBadge({ provider }: { provider: string | undefined }) {
+  const colors: Record<string, string> = {
+    openai: "bg-[#10a37f]/15 text-[#10a37f] border-[#10a37f]/30",
+    anthropic: "bg-[#d97757]/15 text-[#d97757] border-[#d97757]/30",
+    groq: "bg-[#f59e0b]/15 text-[#f59e0b] border-[#f59e0b]/30",
+    mistral: "bg-[#3b82f6]/15 text-[#3b82f6] border-[#3b82f6]/30",
+    openrouter: "bg-[#7c3aed]/15 text-[#7c3aed] border-[#7c3aed]/30",
+    ollama: "bg-[#6b7280]/15 text-[#9ca3af] border-[#6b7280]/30",
+  };
+  const key = (provider ?? "").toLowerCase();
+  const cls = colors[key] ?? "bg-[#374151]/15 text-[#9ca3af] border-[#374151]/30";
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-md text-xs font-medium border ${cls}`}>
+      {provider ?? "—"}
+    </span>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function UsagePage() {
-  const [usage, setUsage] = useState<UsageData | null>(null);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, isLoading, error, mutate } = useApi<UsageResponse>(
+    "/api/v1/usage",
+    () => apiFetch<UsageResponse>("/api/v1/usage")
+  );
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const records = data?.data ?? [];
+  const totalTokens = data?.total_tokens ?? records.reduce((s, r) => s + (r.tokens ?? (r.input_tokens ?? 0) + (r.output_tokens ?? 0)), 0);
+  const totalRequests = data?.total_requests ?? records.reduce((s, r) => s + (r.requests ?? 1), 0);
+  const totalCost = data?.total_cost ?? records.reduce((s, r) => s + (r.estimated_cost ?? 0), 0);
+  const avgLatency = data?.avg_latency_ms ?? (records.length > 0 ? Math.round(records.reduce((s, r) => s + (r.latency_ms ?? 0), 0) / records.length) : 0);
 
-  const fetchData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      
-      const [usageRes, agentsRes] = await Promise.all([
-        authFetch("/api/v1/usage"),
-        authFetch("/api/v1/agents")
-      ]);
-      
-      if (!usageRes.ok || !agentsRes.ok) {
-        throw new Error("Failed to fetch data");
-      }
-      
-      const [usageData, agentsData] = await Promise.all([
-        usageRes.json(),
-        agentsRes.json()
-      ]);
-      
-      setUsage(usageData);
-      setAgents(agentsData.agents || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch usage data");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const formatNumber = (num: number) => {
-    if (num >= 1000000) {
-      return `${(num / 1000000).toFixed(1)}M`;
-    } else if (num >= 1000) {
-      return `${(num / 1000).toFixed(1)}K`;
-    }
-    return num.toString();
-  };
-
-  const getProviderColor = (provider: string) => {
-    switch (provider.toLowerCase()) {
-      case "openai": return "from-green-500 to-green-600";
-      case "anthropic": return "from-blue-500 to-blue-600";
-      default: return "from-gray-500 to-gray-600";
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-      </div>
-    );
-  }
-
-  const hasUsageData = usage && usage.data && usage.data.length > 0;
+  const handleRefresh = useCallback(() => { mutate(); }, [mutate]);
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-white">Usage Analytics</h1>
-          <p className="text-sm text-[#9ca3af]">
-            Monitor token consumption and API usage across your agents
+          <p className="text-sm text-[#9ca3af] mt-1">
+            Monitor token consumption and API calls across your agents.
           </p>
         </div>
-        <button
-          onClick={fetchData}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
-        >
-          <ChartBarIcon className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex gap-2 shrink-0">
+          {records.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportCsv(records)}
+              className="border-[rgba(255,255,255,0.1)] text-[#9ca3af] hover:text-white hover:bg-[#1f2028]"
+            >
+              Export CSV
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={handleRefresh}
+            className="bg-[#3b82f6] hover:bg-[#2563eb]"
+          >
+            Refresh
+          </Button>
+        </div>
       </div>
 
+      {/* Error */}
       {error && (
-        <div className="mb-6 p-4 bg-red-900/20 border border-red-500/20 rounded-lg text-red-400">
-          {error}
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm">
+          {error.message}
         </div>
       )}
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <CpuChipIcon className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-[#9ca3af] uppercase tracking-wide">
-                Total Tokens
-              </h3>
-              <p className="text-2xl font-bold text-white">
-                {formatNumber(usage?.total_tokens || 0)}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
-              <ChartBarIcon className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-[#9ca3af] uppercase tracking-wide">
-                Active Agents
-              </h3>
-              <p className="text-2xl font-bold text-white">
-                {agents.length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-yellow-500 to-orange-600 rounded-lg flex items-center justify-center">
-              <CalendarDaysIcon className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-[#9ca3af] uppercase tracking-wide">
-                Usage Period
-              </h3>
-              <p className="text-2xl font-bold text-white">
-                All Time
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Usage Details */}
-      {hasUsageData ? (
-        <div className="space-y-6">
-          {/* Usage Chart or Table would go here */}
-          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Usage Breakdown</h2>
-            <div className="space-y-4">
-              {usage.data.map((item, index) => (
-                <div
-                  key={index}
-                  className="flex items-center justify-between p-4 bg-[#1f2028] border border-[rgba(255,255,255,0.05)] rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white text-sm font-bold">
-                      {item.agent?.charAt(0) || "?"}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-white">
-                        {item.agent || "Unknown"}
-                      </p>
-                      <p className="text-xs text-[#9ca3af]">
-                        {item.model || "Unknown Model"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-white">
-                      {formatNumber(item.tokens || 0)} tokens
-                    </p>
-                    <p className="text-xs text-[#9ca3af]">
-                      {item.requests || 0} requests
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+      {/* Stats */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="h-24 rounded-xl bg-[#14151f]" />
+          ))}
         </div>
       ) : (
-        /* No Usage Data */
-        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-12 text-center">
-          <ChartBarIcon className="w-16 h-16 mx-auto text-[#6b7280] mb-4" />
-          <h2 className="text-lg font-semibold text-white mb-2">No Usage Data</h2>
-          <p className="text-[#9ca3af] max-w-md mx-auto mb-6">
-            Start using your agents to see token consumption and usage analytics here.
-          </p>
-          
-          {/* Show Current Agents */}
-          {agents.length > 0 && (
-            <div className="mt-8">
-              <h3 className="text-sm font-medium text-white mb-4">
-                Ready to Track Usage ({agents.length} agents)
-              </h3>
-              <div className="flex flex-wrap justify-center gap-3 max-w-2xl mx-auto">
-                {agents.slice(0, 8).map((agent) => (
-                  <div
-                    key={agent.id}
-                    className="flex items-center gap-2 px-3 py-2 bg-[#1f2028] border border-[rgba(255,255,255,0.05)] rounded-lg"
-                  >
-                    <div className="w-6 h-6 rounded-full overflow-hidden">
-                      <img 
-                        src={agent.avatar} 
-                        alt={agent.name}
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="%23374151"/><text x="50" y="50" text-anchor="middle" dy="0.3em" fill="white" font-size="40">${agent.name.charAt(0)}</text></svg>`;
-                        }}
-                      />
-                    </div>
-                    <span className="text-sm text-white">{agent.name}</span>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${getProviderColor(agent.provider)} text-white`}>
-                      {agent.provider}
-                    </span>
-                  </div>
-                ))}
-                {agents.length > 8 && (
-                  <div className="flex items-center justify-center w-12 h-10 bg-[#1f2028] border border-[rgba(255,255,255,0.05)] rounded-lg">
-                    <span className="text-sm text-[#9ca3af]">+{agents.length - 8}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard label="Total Tokens" value={fmt(totalTokens)} color="from-blue-500 to-purple-600" />
+          <StatCard label="Estimated Cost" value={fmtCost(totalCost)} color="from-green-500 to-emerald-600" />
+          <StatCard label="API Calls" value={fmt(totalRequests)} color="from-yellow-500 to-orange-500" />
+          <StatCard label="Avg Latency" value={avgLatency ? `${avgLatency}ms` : "—"} color="from-pink-500 to-rose-600" />
         </div>
       )}
+
+      {/* Table */}
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <CardTitle className="text-white text-base">Usage Breakdown</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <div className="p-6 space-y-3">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-10 rounded-lg bg-[#1f2028]" />
+              ))}
+            </div>
+          ) : records.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center px-6">
+              <div className="w-14 h-14 mb-4 rounded-2xl bg-[#1f2028] flex items-center justify-center text-2xl">
+                📊
+              </div>
+              <p className="text-white font-semibold mb-1">No usage data yet</p>
+              <p className="text-[#9ca3af] text-sm max-w-sm">
+                Start running your agents to see token consumption and API usage here.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-[rgba(255,255,255,0.06)] hover:bg-transparent">
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium">Agent</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium">Model</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium">Provider</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium text-right">Input</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium text-right">Output</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium text-right">Total</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium text-right">Cost</TableHead>
+                    <TableHead className="text-[#9ca3af] text-xs uppercase font-medium">Timestamp</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {records.map((r, idx) => {
+                    const total = r.tokens ?? (r.input_tokens ?? 0) + (r.output_tokens ?? 0);
+                    return (
+                      <TableRow
+                        key={r.id ?? idx}
+                        className="border-[rgba(255,255,255,0.05)] hover:bg-[#1f2028]/50 transition-colors"
+                      >
+                        <TableCell className="text-white font-medium">
+                          {r.agent_name ?? r.agent ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-[#9ca3af] text-sm">
+                          {r.model ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <ProviderBadge provider={r.provider} />
+                        </TableCell>
+                        <TableCell className="text-[#9ca3af] text-right text-sm">
+                          {r.input_tokens != null ? fmt(r.input_tokens) : "—"}
+                        </TableCell>
+                        <TableCell className="text-[#9ca3af] text-right text-sm">
+                          {r.output_tokens != null ? fmt(r.output_tokens) : "—"}
+                        </TableCell>
+                        <TableCell className="text-white text-right text-sm font-medium">
+                          {fmt(total)}
+                        </TableCell>
+                        <TableCell className="text-[#6b7280] text-right text-sm">
+                          {r.estimated_cost != null ? fmtCost(r.estimated_cost) : "—"}
+                        </TableCell>
+                        <TableCell className="text-[#6b7280] text-sm whitespace-nowrap">
+                          {fmtDate(r.created_at ?? r.timestamp)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
