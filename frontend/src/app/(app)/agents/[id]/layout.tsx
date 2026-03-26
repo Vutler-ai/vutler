@@ -15,16 +15,54 @@ const TABS = [
   { label: 'Publish', path: 'publish' },
 ] as const;
 
-// ─── Status Dot ───────────────────────────────────────────────────────────────
+// ─── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusDot({ status }: { status: Agent['status'] }) {
-  const color =
-    status === 'active'
-      ? 'bg-green-400'
-      : status === 'error'
-        ? 'bg-red-400'
-        : 'bg-[#6b7280]';
-  return <span className={`inline-block size-2 rounded-full ${color}`} />;
+function StatusBadge({ status }: { status: Agent['status'] }) {
+  if (status === 'active') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-green-400 bg-green-500/15 border border-green-500/20 px-2 py-0.5 rounded-full">
+        <span className="size-1.5 rounded-full bg-green-400 inline-block" />
+        Online
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-red-400 bg-red-500/15 border border-red-500/20 px-2 py-0.5 rounded-full">
+        <span className="size-1.5 rounded-full bg-red-400 inline-block" />
+        Error
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-[#9ca3af] bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] px-2 py-0.5 rounded-full">
+      <span className="size-1.5 rounded-full bg-[#6b7280] inline-block" />
+      Offline
+    </span>
+  );
+}
+
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+
+function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
+  if (agent.avatar) {
+    return (
+      <div className="size-10 rounded-xl bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-xl shrink-0">
+        {agent.avatar}
+      </div>
+    );
+  }
+  const initials = agent.name
+    .split(' ')
+    .map(w => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+  return (
+    <div className="size-10 rounded-xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center text-sm font-bold text-blue-400 shrink-0">
+      {initials || '?'}
+    </div>
+  );
 }
 
 // ─── Layout ───────────────────────────────────────────────────────────────────
@@ -47,36 +85,50 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
       {/* Header */}
       <div className="px-6 pt-4 pb-0 border-b border-[rgba(255,255,255,0.07)]">
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm mb-3">
+        <div className="flex items-center gap-2 text-xs mb-4 text-[#6b7280]">
           <button
             onClick={() => router.push('/agents')}
-            className="text-[#6b7280] hover:text-white transition-colors"
+            className="hover:text-white transition-colors"
           >
             Agents
           </button>
           <span className="text-[#4b5563]">/</span>
           {isLoading ? (
-            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-3 w-24" />
           ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-white font-medium">{agent?.name ?? 'Agent'}</span>
-              {agent && <StatusDot status={agent.status} />}
-            </div>
+            <span className="text-[#9ca3af]">{agent?.name ?? 'Agent'}</span>
           )}
         </div>
 
-        {/* Agent name + status line */}
-        {!isLoading && agent && (
-          <div className="flex items-center gap-3 mb-3">
-            <span className="text-xl">{agent.avatar || '🤖'}</span>
+        {/* Agent identity */}
+        <div className="flex items-center gap-4 mb-4">
+          {isLoading ? (
+            <>
+              <Skeleton className="size-10 rounded-xl" />
+              <div className="space-y-2">
+                <Skeleton className="h-5 w-44" />
+                <Skeleton className="h-3 w-32" />
+              </div>
+            </>
+          ) : agent ? (
+            <>
+              <AgentAvatar agent={agent} />
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-xl font-bold text-white leading-tight">{agent.name}</h1>
+                  <StatusBadge status={agent.status} />
+                </div>
+                <p className="text-xs text-[#6b7280] mt-0.5">
+                  {[agent.model, agent.provider].filter(Boolean).join(' · ') || 'No model configured'}
+                </p>
+              </div>
+            </>
+          ) : (
             <div>
-              <h1 className="text-lg font-semibold text-white leading-tight">{agent.name}</h1>
-              {agent.model && (
-                <p className="text-xs text-[#6b7280]">{agent.model}{agent.provider ? ` · ${agent.provider}` : ''}</p>
-              )}
+              <h1 className="text-xl font-bold text-white">Agent</h1>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Tab navigation */}
         <nav className="flex gap-1 -mb-px" role="tablist">

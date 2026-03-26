@@ -5,7 +5,7 @@ export async function getEmails(folder: EmailFolder = 'inbox'): Promise<Email[]>
   const url =
     folder === 'sent'
       ? '/api/v1/email/sent'
-      : '/api/v1/email?folder=inbox';
+      : `/api/v1/email?folder=${encodeURIComponent(folder)}`;
   const data = await apiFetch<{ data?: Email[] } | Email[]>(url);
   return Array.isArray(data) ? data : (data.data ?? []);
 }

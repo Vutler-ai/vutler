@@ -58,6 +58,7 @@ export interface AgentExecution {
   tokens_used: number;
   latency_ms: number;
   created_at: string;
+  status?: 'success' | 'error' | 'failed' | 'running' | 'pending' | 'done' | 'completed' | string;
 }
 
 export interface AgentExecuteStreamEvent {
@@ -259,6 +260,7 @@ export interface NexusNode {
   lastHeartbeat?: string;
   mode?: 'local' | 'enterprise' | 'standard';
   clientName?: string;
+  clientId?: string;
 }
 
 export interface NexusStats {
