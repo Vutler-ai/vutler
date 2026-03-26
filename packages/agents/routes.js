@@ -20,8 +20,15 @@ function mount(path, gate, modulePath) {
   }
 }
 
-// ── Agents ──────────────────────────────────────────────────────────────────
-mount('/agents',          'agents',      '../../app/custom/api/agents');
+// ── Agents (full-path: /agents, /agents/:id) ────────────────────────────────
+function mountRoot(gate, modulePath, label) {
+  try {
+    router.use('/', gateFeature(gate), require(modulePath));
+  } catch (e) {
+    console.warn(`[AGENTS] Skip ${label}: ${e.message}`);
+  }
+}
+mountRoot('agents', '../../app/custom/api/agents', 'agents');
 mount('/agent-runtime',   'agents',      '../../app/custom/api/runtime');
 mount('/agent-sync',      'agents',      '../../api/agent-sync');
 

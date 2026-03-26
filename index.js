@@ -546,13 +546,13 @@ try { app.use('/api/v1', require('./packages/office/routes')); } catch (e) { con
 // Agents routes (agents, nexus, marketplace, sandbox, swarm, llm, tools)
 try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { console.warn('[BOOT] Agents routes failed:', e.message); }
 
-// Direct fallback mounts
-try { app.use('/api/v1/tasks', require('./app/custom/api/tasks-v2')); } catch (_) {}
-try { app.use('/api/v1/agents', require('./app/custom/api/agents')); } catch (_) {}
-try { app.use('/api/v1/chat', require('./app/custom/api/chat')); } catch (_) {}
+// Direct fallback mounts (full-path modules at /api/v1, relative at prefix)
+try { app.use('/api/v1', require('./app/custom/api/tasks-v2')); } catch (_) {}
+try { app.use('/api/v1', require('./app/custom/api/agents')); } catch (_) {}
+try { app.use('/api/v1', require('./app/custom/api/chat')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
-try { app.use('/api/v1/email', require('./app/custom/api/email-vaultbrix')); } catch (_) {}
-try { app.use('/api/v1/drive', require('./app/custom/api/drive')); } catch (_) {}
+try { app.use('/api/v1', require('./app/custom/api/email')); } catch (_) {}
+try { app.use('/api/v1', require('./app/custom/api/drive')); } catch (_) {}
 
 // Rate limiters AFTER route mounts (won't block route matching)
 app.use('/api/v1/chat/send', llmLimiter);
