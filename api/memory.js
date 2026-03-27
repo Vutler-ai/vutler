@@ -6,8 +6,8 @@
 const express = require("express");
 const router = express.Router();
 
-const SNIPARA_URL = "https://api.snipara.com/mcp/test-workspace-api-vutler";
-const SNIPARA_KEY = process.env.SNIPARA_API_KEY || "";
+const SNIPARA_URL = process.env.SNIPARA_MCP_URL || process.env.SNIPARA_API_URL || "https://api.snipara.com/mcp/test-workspace-api-vutler";
+const SNIPARA_KEY = process.env.SNIPARA_API_KEY || process.env.RLM_TOKEN || "REDACTED_SNIPARA_KEY_2";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
