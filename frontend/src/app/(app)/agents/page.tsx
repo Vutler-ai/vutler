@@ -60,32 +60,7 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
-// Known avatar slugs that map to PNG files in /static/avatars/
-const KNOWN_AVATAR_SLUGS = new Set([
-  'accounting-assistant', 'appointment-scheduler', 'av-engineer', 'bi-agent',
-  'competitor-monitor', 'compliance-monitor', 'contract-manager', 'customer-success',
-  'document-processor', 'ecommerce-manager', 'feedback-analyzer', 'hr-assistant',
-  'inventory-optimizer', 'invoice-manager', 'knowledge-base', 'lead-gen',
-  'marketing-campaign', 'personal-assistant', 'pricing-optimizer', 'procurement',
-  'project-coordinator', 'proposal-generator', 'research-analyst', 'social-media-manager',
-  'translator', 'workflow-automation',
-]);
-
-function getAvatarImageUrl(avatar: string | undefined, name: string): string | null {
-  if (!avatar) return null;
-  // If avatar is already a full path (e.g. /static/avatars/andrea.png), use it directly
-  if (avatar.startsWith('/static/') || avatar.startsWith('/sprites/')) return avatar;
-  // If avatar is a known slug, use the PNG
-  if (KNOWN_AVATAR_SLUGS.has(avatar)) return `/static/avatars/${avatar}.png`;
-  // If avatar looks like a slug (lowercase, hyphens), try it
-  if (/^[a-z0-9-]+$/.test(avatar)) return `/static/avatars/${avatar}.png`;
-  // If avatar starts with http, it's an external URL
-  if (avatar.startsWith('http')) return avatar;
-  // If avatar ends with .png/.svg/.jpg, it's a relative path
-  if (/\.(png|svg|jpg|jpeg|webp)$/i.test(avatar)) return avatar;
-  // Otherwise it's likely an emoji — return null to fall through to emoji display
-  return null;
-}
+import { getAvatarImageUrl } from '@/lib/avatar';
 
 function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
   const [imgError, setImgError] = useState(false);

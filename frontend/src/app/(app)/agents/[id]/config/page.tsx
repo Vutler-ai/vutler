@@ -26,6 +26,7 @@ interface AgentConfig {
   };
   secrets: { key: string; value: string }[];
   system_prompt: string;
+  mbti?: string;
   skills?: string[];
 }
 
@@ -65,6 +66,44 @@ const PROVIDER_NAMES: Record<string, string> = {
   custom: 'Custom Endpoint',
 };
 
+// ─── MBTI Personality Types ──────────────────────────────────────────────────
+
+const MBTI_TYPES: { type: string; label: string; desc: string; prompt: string }[] = [
+  { type: 'INTJ', label: 'Architect', desc: 'Strategic, analytical, long-term planner', prompt: 'Your cognitive style is INTJ (The Architect): you approach problems strategically and analytically, prioritizing efficiency and long-term planning. You communicate in a direct, structured manner and focus on systemic improvements.' },
+  { type: 'INTP', label: 'Logician', desc: 'Curious, theory-driven, problem-solver', prompt: 'Your cognitive style is INTP (The Logician): you are deeply curious and theory-driven, exploring problems from first principles. You communicate precisely, enjoy intellectual exploration, and favor elegant solutions over brute-force approaches.' },
+  { type: 'ENTJ', label: 'Commander', desc: 'Organized, goal-oriented, decisive', prompt: 'Your cognitive style is ENTJ (The Commander): you are organized, goal-oriented, and decisive. You take charge of situations, set clear expectations, and drive results with confidence and directness.' },
+  { type: 'ENTP', label: 'Debater', desc: 'Creative, challenges assumptions', prompt: 'Your cognitive style is ENTP (The Debater): you are a creative innovator who generates ideas rapidly, challenges assumptions, and explores unconventional angles. You communicate with energy and wit.' },
+  { type: 'INFJ', label: 'Advocate', desc: 'Empathetic, vision-driven, diplomatic', prompt: 'Your cognitive style is INFJ (The Advocate): you are insightful and empathetic, driven by a clear vision of the best outcome. You communicate diplomatically and seek meaningful, values-aligned solutions.' },
+  { type: 'INFP', label: 'Mediator', desc: 'Authentic, creative, supportive', prompt: 'Your cognitive style is INFP (The Mediator): you are values-driven, authentic, and creative. You communicate with warmth and empathy, seeking solutions that align with deeper purpose.' },
+  { type: 'ENFJ', label: 'Protagonist', desc: 'Motivational, people-focused', prompt: 'Your cognitive style is ENFJ (The Protagonist): you are inspirational and people-focused, motivating others through clear communication and genuine care for their growth and success.' },
+  { type: 'ENFP', label: 'Campaigner', desc: 'Imaginative, enthusiastic, connector', prompt: 'Your cognitive style is ENFP (The Campaigner): you are enthusiastic and imaginative, connecting ideas and people with spontaneous energy. You communicate with warmth and infectious optimism.' },
+  { type: 'ISTJ', label: 'Logistician', desc: 'Methodical, detail-oriented, consistent', prompt: 'Your cognitive style is ISTJ (The Logistician): you are methodical, detail-oriented, and consistent. You follow established procedures, verify facts carefully, and deliver reliable, thorough work.' },
+  { type: 'ISFJ', label: 'Defender', desc: 'Caring, thorough, service-oriented', prompt: 'Your cognitive style is ISFJ (The Defender): you are caring, thorough, and service-oriented. You pay close attention to others\' needs and provide dependable, considerate support.' },
+  { type: 'ESTJ', label: 'Executive', desc: 'Efficient, practical, structured', prompt: 'Your cognitive style is ESTJ (The Executive): you are efficient, practical, and structured. You organize tasks clearly, enforce standards, and ensure processes run smoothly.' },
+  { type: 'ESFJ', label: 'Consul', desc: 'Warm, cooperative, harmonious', prompt: 'Your cognitive style is ESFJ (The Consul): you are warm, cooperative, and focused on group harmony. You communicate supportively and ensure everyone feels heard and included.' },
+  { type: 'ISTP', label: 'Virtuoso', desc: 'Pragmatic, hands-on, adaptable', prompt: 'Your cognitive style is ISTP (The Virtuoso): you are pragmatic and hands-on, solving problems efficiently with minimal fuss. You adapt quickly and prefer action over lengthy discussion.' },
+  { type: 'ISFP', label: 'Adventurer', desc: 'Flexible, sensitive, action-oriented', prompt: 'Your cognitive style is ISFP (The Adventurer): you are flexible, sensitive, and action-oriented. You approach tasks with quiet dedication and a focus on practical, meaningful outcomes.' },
+  { type: 'ESTP', label: 'Entrepreneur', desc: 'Bold, practical, results-driven', prompt: 'Your cognitive style is ESTP (The Entrepreneur): you are bold, practical, and results-driven. You act quickly, communicate directly, and thrive in fast-moving situations.' },
+  { type: 'ESFP', label: 'Entertainer', desc: 'Spontaneous, engaging, optimistic', prompt: 'Your cognitive style is ESFP (The Entertainer): you are spontaneous, engaging, and optimistic. You communicate with energy and warmth, making interactions lively and enjoyable.' },
+];
+
+// ─── Auto-select model logic ─────────────────────────────────────────────────
+
+const TECHNICAL_SKILLS = new Set(['code_execution', 'data_analysis', 'vulnerability_scanning', 'cicd_automation', 'infrastructure_as_code', 'etl_pipelines', 'test_automation', 'schema_management', 'equipment_diagnostics', 'network_scanning']);
+const CREATIVE_SKILLS = new Set(['content_scheduling', 'article_creation', 'campaign_planning', 'multi_platform_posting', 'search_optimization', 'engagement_monitoring']);
+const SIMPLE_SKILLS = new Set(['ticket_triage', 'appointment_scheduling', 'faq_management', 'satisfaction_tracking', 'onboarding']);
+
+function autoSelectModel(skills: string[]): string {
+  if (!skills.length) return 'openrouter/auto';
+  const hasTechnical = skills.some(s => TECHNICAL_SKILLS.has(s));
+  const hasCreative = skills.some(s => CREATIVE_SKILLS.has(s));
+  const allSimple = skills.every(s => SIMPLE_SKILLS.has(s));
+  if (hasTechnical) return 'claude-sonnet-4-20250514';
+  if (hasCreative) return 'gpt-4o';
+  if (allSimple) return 'gpt-4o-mini';
+  return 'openrouter/auto';
+}
+
 const DEFAULT_CONFIG: AgentConfig = {
   llm_routing: 'cloud',
   model: 'claude-sonnet-4-20250514',
@@ -78,6 +117,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   },
   secrets: [],
   system_prompt: '',
+  mbti: '',
   skills: [],
 };
 
@@ -404,7 +444,20 @@ export default function AgentConfigPage() {
 
         {/* Model */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Model</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-semibold text-white">Model</h3>
+            <button
+              type="button"
+              onClick={() => {
+                const recommended = autoSelectModel(config.skills ?? []);
+                setConfig(prev => ({ ...prev, model: recommended }));
+              }}
+              className="text-xs text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 px-3 py-1 rounded-full transition-colors"
+              title="Pick the best model based on this agent's skills"
+            >
+              Auto-select
+            </button>
+          </div>
           {loadingModels ? (
             <Skeleton className="h-12 w-full" />
           ) : (
@@ -483,7 +536,17 @@ export default function AgentConfigPage() {
         {/* Secrets */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <div className="mb-4">
-            <h3 className="text-base font-semibold text-white">Secrets</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-white">Secrets</h3>
+              <span
+                className="text-[#6b7280] hover:text-[#9ca3af] cursor-help transition-colors"
+                title="API keys and credentials this agent can use at runtime (e.g. CRM API key, SMTP password, third-party tokens). Stored locally — never sent to Vutler cloud."
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="size-4">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM8.94 6.94a.75.75 0 1 1-1.061-1.061 3 3 0 1 1 2.871 5.026v.345a.75.75 0 0 1-1.5 0v-.5c0-.72.57-1.172 1.081-1.287A1.5 1.5 0 1 0 8.94 6.94ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+                </svg>
+              </span>
+            </div>
             <p className="text-xs text-[#6b7280] mt-0.5">Local-only — never synced to cloud</p>
           </div>
 
@@ -529,12 +592,58 @@ export default function AgentConfigPage() {
           </div>
         </section>
 
-        {/* System Prompt */}
+        {/* System Prompt + Personality */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-semibold text-white">System Prompt / Personality</h3>
             <span className="text-xs text-[#6b7280]">{config.system_prompt.length} chars</span>
           </div>
+
+          {/* MBTI Personality Picker */}
+          <div className="mb-4">
+            <Label className="text-sm text-[#9ca3af] mb-2 block">Personality Type (MBTI)</Label>
+            <div className="flex gap-2 items-center">
+              <select
+                value={config.mbti || ''}
+                onChange={e => {
+                  const newType = e.target.value;
+                  if (!newType) {
+                    setConfig(prev => ({
+                      ...prev,
+                      mbti: '',
+                      system_prompt: prev.system_prompt.replace(/\[Personality: [A-Z]{4}\]\n[^\n]*\n?\n?/g, '').trimStart(),
+                    }));
+                    return;
+                  }
+                  const entry = MBTI_TYPES.find(m => m.type === newType);
+                  if (entry) {
+                    const tag = `[Personality: ${newType}]`;
+                    setConfig(prev => ({
+                      ...prev,
+                      mbti: newType,
+                      system_prompt: `${tag}\n${entry.prompt}\n\n${prev.system_prompt.replace(/\[Personality: [A-Z]{4}\]\n[^\n]*\n?\n?/g, '').trimStart()}`,
+                    }));
+                  } else {
+                    setConfig(prev => ({ ...prev, mbti: newType }));
+                  }
+                }}
+                className="flex-1 px-3 py-2 bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">None</option>
+                {MBTI_TYPES.map(m => (
+                  <option key={m.type} value={m.type}>
+                    {m.type} — {m.label} ({m.desc})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {config.mbti && (
+              <p className="mt-2 text-xs text-blue-400/80">
+                {MBTI_TYPES.find(m => m.type === config.mbti)?.prompt.slice(0, 120)}...
+              </p>
+            )}
+          </div>
+
           <Textarea
             value={config.system_prompt}
             onChange={e => setConfig(prev => ({ ...prev, system_prompt: e.target.value }))}

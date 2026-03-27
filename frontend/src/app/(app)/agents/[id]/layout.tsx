@@ -1,10 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useApi } from '@/hooks/use-api';
 import { getAgent } from '@/lib/api/endpoints/agents';
 import type { Agent } from '@/lib/api/types';
 import { Skeleton } from '@/components/ui/skeleton';
+import { getAvatarImageUrl } from '@/lib/avatar';
 
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 
@@ -18,7 +20,7 @@ const TABS = [
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: Agent['status'] }) {
+function StatusBadge({ status, model }: { status: Agent['status']; model?: string }) {
   if (status === 'active') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-green-400 bg-green-500/15 border border-green-500/20 px-2 py-0.5 rounded-full">
@@ -35,6 +37,17 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
       </span>
     );
   }
+  if (!model) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/15 border border-amber-500/20 px-2 py-0.5 rounded-full cursor-help"
+        title="Configure a model in the Config tab to bring this agent online"
+      >
+        <span className="size-1.5 rounded-full bg-amber-400 inline-block" />
+        No model
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-[#9ca3af] bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] px-2 py-0.5 rounded-full">
       <span className="size-1.5 rounded-full bg-[#6b7280] inline-block" />
@@ -46,13 +59,28 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
 function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
-  if (agent.avatar) {
+  const [imgError, setImgError] = useState(false);
+  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
+
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={agent.name}
+        className="size-10 rounded-xl object-cover shrink-0 bg-[rgba(255,255,255,0.05)]"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  if (agent.avatar && !imageUrl) {
     return (
       <div className="size-10 rounded-xl bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-xl shrink-0">
         {agent.avatar}
       </div>
     );
   }
+
   const initials = (agent.name || (agent as any).username || 'A')
     .split(' ')
     .map((w: string) => w[0] || '')
@@ -97,7 +125,7 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
           {isLoading ? (
             <Skeleton className="h-3 w-24" />
           ) : (
-            <span className="text-[#9ca3af]">{agent?.name ?? 'Agent'}</span>
+            <span className="text-[#9ca3af]">{agent?.name || (agent as any)?.username || 'Agent'}</span>
           )}
         </div>
 
@@ -117,7 +145,7 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
               <div>
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <h1 className="text-xl font-bold text-white leading-tight">{agent.name}</h1>
-                  <StatusBadge status={agent.status} />
+                  <StatusBadge status={agent.status} model={agent.model} />
                 </div>
                 <p className="text-xs text-[#6b7280] mt-0.5">
                   {[agent.model, agent.provider].filter(Boolean).join(' · ') || 'No model configured'}
