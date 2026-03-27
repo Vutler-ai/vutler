@@ -40,3 +40,129 @@ export async function deleteEmail(uid: string): Promise<SuccessResponse> {
     method: 'DELETE',
   });
 }
+
+// ─── Approval Workflow ──────────────────────────────────────────────────────
+
+export async function getPendingApprovals(): Promise<Email[]> {
+  const data = await apiFetch<{ emails: Email[] }>('/api/v1/email/pending');
+  return (data.emails ?? []).map((e: Email & { isRead?: boolean; htmlBody?: string }) => ({
+    ...e,
+    unread: !e.isRead,
+    html: e.htmlBody,
+  }));
+}
+
+export async function approveEmail(id: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/approve/${id}`, {
+    method: 'POST',
+  });
+}
+
+export async function rejectEmail(id: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/draft/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function regenerateEmail(id: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/draft/${id}/regenerate`, {
+    method: 'POST',
+  });
+}
+
+export async function assignEmailToAgent(emailId: string, agentId: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/${emailId}/assign`, {
+    method: 'POST',
+    body: JSON.stringify({ agent_id: agentId }),
+  });
+}
+
+// ─── Email Stats ────────────────────────────────────────────────────────────
+
+export interface EmailStats {
+  unread: number;
+  pendingApproval: number;
+  agentHandled: number;
+  total: number;
+}
+
+export async function getEmailStats(): Promise<EmailStats> {
+  const data = await apiFetch<{ stats: EmailStats }>('/api/v1/email/stats');
+  return data.stats;
+}
+
+// ─── Email Groups ───────────────────────────────────────────────────────────
+
+export interface EmailGroupMember {
+  id: string;
+  memberType: 'agent' | 'human';
+  agentId?: string;
+  agentName?: string;
+  agentUsername?: string;
+  agentAvatar?: string;
+  humanEmail?: string;
+  humanName?: string;
+  role: 'owner' | 'member';
+  notify: boolean;
+  canReply: boolean;
+}
+
+export interface EmailGroup {
+  id: string;
+  name: string;
+  emailAddress: string;
+  description?: string;
+  autoReply: boolean;
+  approvalRequired: boolean;
+  memberCount: number;
+  members?: EmailGroupMember[];
+}
+
+export async function getEmailGroups(): Promise<EmailGroup[]> {
+  const data = await apiFetch<{ groups: EmailGroup[] }>('/api/v1/email/groups');
+  return data.groups ?? [];
+}
+
+export async function createEmailGroup(payload: {
+  name: string;
+  email_prefix: string;
+  description?: string;
+}): Promise<EmailGroup> {
+  const data = await apiFetch<{ group: EmailGroup }>('/api/v1/email/groups', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return data.group;
+}
+
+export async function getEmailGroup(id: string): Promise<EmailGroup> {
+  const data = await apiFetch<{ group: EmailGroup }>(`/api/v1/email/groups/${id}`);
+  return data.group;
+}
+
+export async function deleteEmailGroup(id: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/groups/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function addGroupMember(
+  groupId: string,
+  member: { agent_id?: string; human_email?: string; human_name?: string }
+): Promise<EmailGroupMember> {
+  const data = await apiFetch<{ member: EmailGroupMember }>(
+    `/api/v1/email/groups/${groupId}/members`,
+    { method: 'POST', body: JSON.stringify(member) }
+  );
+  return data.member;
+}
+
+export async function removeGroupMember(
+  groupId: string,
+  memberId: string
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    `/api/v1/email/groups/${groupId}/members/${memberId}`,
+    { method: 'DELETE' }
+  );
+}

@@ -91,4 +91,9 @@ mount('/local-agent',     'agents',      '../../api/local-agent');
 // ── VPS ─────────────────────────────────────────────────────────────────────
 mount('/vps',             'agents',      '../../api/vps');
 
+// ── Email ────────────────────────────────────────────────────────────────────
+mount('/email/routes',    'agents',      '../../api/email-routes');
+mount('/email/domains',   'agents',      '../../api/email-domains');
+mount('/email/groups',    'agents',      '../../api/email-groups');
+
 module.exports = router;

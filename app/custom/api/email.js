@@ -454,10 +454,11 @@ router.post('/email/incoming', async (req, res) => {
 
     console.log(`[EMAIL/INCOMING] Received from ${sender} → ${recipient}: ${subject}`);
 
-    // Look up route for this address
+    // ── Step 1: Try direct agent route ──────────────────────────────
     let agentId = null;
     let autoReply = false;
     let approvalRequired = true;
+    let isGroupEmail = false;
 
     try {
       const routeRow = await pg.query(
@@ -475,25 +476,85 @@ router.post('/email/incoming', async (req, res) => {
       console.warn('[EMAIL/INCOMING] Route lookup failed:', routeErr.message);
     }
 
-    // Store incoming email in inbox
-    const insertResult = await pg.query(
-      `INSERT INTO ${SCHEMA}.emails
-         (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, NOW())
-       RETURNING id`,
-      [sender, recipient, subject, body, htmlBody, agentId || null]
-    );
-    const emailId = insertResult.rows[0]?.id;
+    // ── Step 2: Try email group if no direct route ────────────────────
+    if (!agentId) {
+      try {
+        const groupRow = await pg.query(
+          `SELECT g.id, g.auto_reply, g.approval_required, g.workspace_id
+           FROM ${SCHEMA}.email_groups g
+           WHERE LOWER(g.email_address) = $1 LIMIT 1`,
+          [recipient]
+        );
 
-    console.log(`[EMAIL/INCOMING] Stored email ${emailId} → agent ${agentId || 'unrouted'}`);
+        if (groupRow.rows[0]) {
+          isGroupEmail = true;
+          const group = groupRow.rows[0];
+          autoReply = group.auto_reply;
+          approvalRequired = group.approval_required;
 
-    // If auto-reply is enabled and an agent is assigned, create a pending draft
-    if (agentId && autoReply) {
-      const replyStatus = approvalRequired ? 'pending_approval' : 'pending_send';
+          // Get all group members
+          const membersResult = await pg.query(
+            `SELECT m.*, a.email AS agent_email, a.name AS agent_name
+             FROM ${SCHEMA}.email_group_members m
+             LEFT JOIN ${SCHEMA}.agents a ON a.id = m.agent_id
+             WHERE m.group_id = $1 AND m.notify = true`,
+            [group.id]
+          );
+
+          // Create inbox email for each agent member
+          for (const member of membersResult.rows) {
+            if (member.member_type === 'agent' && member.agent_id) {
+              await pg.query(
+                `INSERT INTO ${SCHEMA}.emails
+                   (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
+                 VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, NOW())`,
+                [sender, recipient, subject, body, htmlBody, member.agent_id]
+              );
+              console.log(`[EMAIL/INCOMING] Group delivery → agent ${member.agent_name || member.agent_id}`);
+            }
+
+            // Forward to human members via Postal
+            if (member.member_type === 'human' && member.human_email) {
+              try {
+                await sendViaPostal({
+                  from: recipient,
+                  to: member.human_email,
+                  subject: `[${recipient}] ${subject}`,
+                  body: `Forwarded from ${sender}:\n\n${body}`,
+                  htmlBody,
+                });
+                console.log(`[EMAIL/INCOMING] Group forward → human ${member.human_email}`);
+              } catch (fwdErr) {
+                console.error(`[EMAIL/INCOMING] Forward to ${member.human_email} failed:`, fwdErr.message);
+              }
+            }
+          }
+
+          console.log(`[EMAIL/INCOMING] Group ${recipient}: delivered to ${membersResult.rows.length} members`);
+        }
+      } catch (groupErr) {
+        console.warn('[EMAIL/INCOMING] Group lookup failed:', groupErr.message);
+      }
+    }
+
+    // ── Step 3: Store incoming email (for direct routes or unrouted) ──
+    if (!isGroupEmail) {
+      const insertResult = await pg.query(
+        `INSERT INTO ${SCHEMA}.emails
+           (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, NOW())
+         RETURNING id`,
+        [sender, recipient, subject, body, htmlBody, agentId || null]
+      );
+      const emailId = insertResult.rows[0]?.id;
+      console.log(`[EMAIL/INCOMING] Stored email ${emailId} → agent ${agentId || 'unrouted'}`);
+    }
+
+    // ── Step 4: Auto-reply draft (for direct agent routes only) ──────
+    if (agentId && autoReply && !isGroupEmail) {
       const replyFolder = approvalRequired ? 'drafts' : 'outbox';
 
-      // Fetch agent email for From header
-      let agentEmail = recipient; // default: reply from the address that received the mail
+      let agentEmail = recipient;
       try {
         const agentRow = await pg.query(
           `SELECT email FROM tenant_vutler.agents WHERE id = $1 LIMIT 1`,
@@ -520,6 +581,177 @@ router.post('/email/incoming', async (req, res) => {
     }
   } catch (err) {
     console.error('[EMAIL/INCOMING] Processing error:', err.message);
+  }
+});
+
+/**
+ * GET /api/v1/email/pending — drafts pending human approval
+ */
+router.get('/email/pending', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.json({ success: true, emails: [], count: 0 });
+
+    const r = await pg.query(
+      `SELECT e.*, a.name AS agent_name, a.avatar AS agent_avatar, a.username AS agent_username
+       FROM ${SCHEMA}.emails e
+       LEFT JOIN ${SCHEMA}.agents a ON a.id = e.agent_id
+       WHERE e.folder = 'drafts' AND e.agent_id IS NOT NULL
+       ORDER BY e.created_at DESC LIMIT 100`
+    );
+
+    const emails = r.rows.map(e => ({
+      id: e.id,
+      from: e.from_addr,
+      to: e.to_addr,
+      subject: e.subject,
+      body: e.body,
+      htmlBody: e.html_body,
+      status: 'pending_approval',
+      agentId: e.agent_id,
+      agentName: e.agent_name,
+      agentAvatar: e.agent_avatar,
+      agentUsername: e.agent_username,
+      date: e.created_at,
+    }));
+
+    res.json({ success: true, emails, count: emails.length });
+  } catch (err) {
+    console.error('[EMAIL] Pending error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/v1/email/stats — counters for sidebar badges
+ */
+router.get('/email/stats', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.json({ success: true, stats: { unread: 0, pendingApproval: 0, agentHandled: 0, total: 0 } });
+
+    const r = await pg.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE folder IN ('inbox') AND is_read = false) AS unread,
+        COUNT(*) FILTER (WHERE folder = 'drafts' AND agent_id IS NOT NULL) AS pending_approval,
+        COUNT(*) FILTER (WHERE agent_id IS NOT NULL AND folder = 'sent') AS agent_handled,
+        COUNT(*) AS total
+      FROM ${SCHEMA}.emails
+    `);
+
+    const row = r.rows[0];
+    res.json({
+      success: true,
+      stats: {
+        unread: Number(row.unread),
+        pendingApproval: Number(row.pending_approval),
+        agentHandled: Number(row.agent_handled),
+        total: Number(row.total),
+      },
+    });
+  } catch (err) {
+    console.error('[EMAIL] Stats error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/email/:id/assign — assign an email to an agent
+ * Used by "Assign to Agent" button in the UI.
+ */
+router.post('/email/:id/assign', async (req, res) => {
+  try {
+    const { agent_id } = req.body;
+    if (!agent_id) return res.status(400).json({ success: false, error: 'agent_id required' });
+
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+
+    // Verify agent exists
+    const agentCheck = await pg.query(
+      `SELECT id, name FROM ${SCHEMA}.agents WHERE id = $1 LIMIT 1`,
+      [agent_id]
+    );
+    if (!agentCheck.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    const result = await pg.query(
+      `UPDATE ${SCHEMA}.emails SET agent_id = $1 WHERE id = $2 RETURNING id, agent_id`,
+      [agent_id, req.params.id]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Email not found' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        emailId: req.params.id,
+        agentId: agent_id,
+        agentName: agentCheck.rows[0].name,
+      },
+    });
+  } catch (err) {
+    console.error('[EMAIL] Assign error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/email/draft/:id/regenerate — ask agent to re-draft
+ * Marks the current draft as 'rejected' and triggers a new draft generation.
+ */
+router.post('/email/draft/:id/regenerate', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+
+    const emailRow = await pg.query(
+      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND folder = 'drafts' LIMIT 1`,
+      [req.params.id]
+    );
+
+    if (!emailRow.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Draft not found' });
+    }
+
+    const email = emailRow.rows[0];
+
+    // Mark old draft as rejected
+    await pg.query(
+      `UPDATE ${SCHEMA}.emails SET folder = 'trash' WHERE id = $1`,
+      [req.params.id]
+    );
+
+    // Create a placeholder for the new draft (agent will fill it in)
+    const newDraft = await pg.query(
+      `INSERT INTO ${SCHEMA}.emails
+         (from_addr, to_addr, subject, body, folder, is_read, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, 'drafts', false, $5, NOW())
+       RETURNING id`,
+      [
+        email.from_addr,
+        email.to_addr,
+        email.subject,
+        '[Regenerating draft... The agent is composing a new response.]',
+        email.agent_id,
+      ]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        oldDraftId: req.params.id,
+        newDraftId: newDraft.rows[0].id,
+        status: 'regenerating',
+        message: 'Old draft discarded. Agent is generating a new response.',
+      },
+    });
+  } catch (err) {
+    console.error('[EMAIL] Regenerate error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
