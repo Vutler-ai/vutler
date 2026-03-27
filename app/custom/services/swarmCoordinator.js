@@ -187,13 +187,19 @@ class SwarmCoordinator {
         agentId = this.pickBestAgent(task);
       }
     }
+    // Score workflow mode (LITE vs FULL)
+    const { getWorkflowModeSelector } = require('../../../services/workflowMode');
+    const workflow = getWorkflowModeSelector().score(task);
+    console.log(`[SwarmCoordinator] Workflow mode: ${workflow.mode} (score: ${workflow.score}) for "${(task.title || '').slice(0, 50)}"`);
+
     const payload = {
       swarm_id: this.swarmId,
       title: task.title || "Nouvelle tâche",
       description: task.description || task.text || task.title || "",
       priority: task.priority || "medium",
       agent_id: agentId,
-      for_agent_id: agentId
+      for_agent_id: agentId,
+      metadata: { workflow_mode: workflow.mode, workflow_score: workflow.score, workflow_reasons: workflow.reasons },
     };
 
     const created = await this.sniparaCall("rlm_task_create", payload);

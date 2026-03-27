@@ -56,8 +56,29 @@ async function execute({ taskType, title, description, code, errorLog, metadata 
   const agentConfig = agentRow.rows[0] || agent;
 
   // 3. Build prompt based on task type
-  const systemPrompt = buildSystemPrompt(taskType, agentConfig);
+  let systemPrompt = buildSystemPrompt(taskType, agentConfig);
   const userMessage = buildUserMessage({ taskType, title, description, code, errorLog, metadata });
+
+  // 3b. Apply workflow mode — enrich context for FULL tasks
+  const { getWorkflowModeSelector } = require('./workflowMode');
+  const workflow = getWorkflowModeSelector().score({ title, description, taskType });
+  console.log(`[SANDBOX] Workflow mode: ${workflow.mode} (score: ${workflow.score})`);
+
+  if (workflow.mode === 'FULL') {
+    try {
+      const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+      const coordinator = getSwarmCoordinator();
+      const fullContext = await getWorkflowModeSelector().gatherFullContext(
+        agent.username || agent.id, { title, description }, coordinator
+      );
+      systemPrompt = fullContext.enrichedPrompt + '\n\n' + systemPrompt;
+    } catch (err) {
+      console.warn('[SANDBOX] FULL context gathering failed, proceeding with LITE:', err.message);
+      systemPrompt = getWorkflowModeSelector().getLitePrompt() + '\n\n' + systemPrompt;
+    }
+  } else {
+    systemPrompt = getWorkflowModeSelector().getLitePrompt() + '\n\n' + systemPrompt;
+  }
 
   const messages = [{ role: 'user', content: userMessage }];
 
@@ -69,8 +90,8 @@ async function execute({ taskType, title, description, code, errorLog, metadata 
         model: agentConfig.model,
         provider: agentConfig.provider,
         system_prompt: systemPrompt,
-        temperature: 0.3, // low temp for precision
-        max_tokens: 8192,
+        temperature: workflow.mode === 'FULL' ? 0.4 : 0.3,
+        max_tokens: workflow.mode === 'FULL' ? 16384 : 8192,
       },
       messages
     );
