@@ -64,7 +64,7 @@ const BUILT_IN_TOOLS = [
  * GET /api/v1/tools
  * List available tools
  */
-router.get('/tools', authenticateAgent, async (req, res) => {
+router.get('/', authenticateAgent, async (req, res) => {
   try {
     const category = req.query.category;
     
@@ -96,7 +96,7 @@ router.get('/tools', authenticateAgent, async (req, res) => {
  * GET /api/v1/tools/:id
  * Get tool details
  */
-router.get('/tools/:id', authenticateAgent, async (req, res) => {
+router.get('/:id', authenticateAgent, async (req, res) => {
   try {
     const { id } = req.params;
     const tool = BUILT_IN_TOOLS.find(t => t.id === id);
@@ -126,7 +126,7 @@ router.get('/tools/:id', authenticateAgent, async (req, res) => {
  * POST /api/v1/tools/:id/execute
  * Execute a tool (for testing)
  */
-router.post('/tools/:id/execute', authenticateAgent, async (req, res) => {
+router.post('/:id/execute', authenticateAgent, async (req, res) => {
   try {
     const { id } = req.params;
     const { params = {} } = req.body;
