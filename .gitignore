@@ -27,7 +27,9 @@ references/superpowers/
 data/
 node_modules/
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.example
 *.bak
 *.bak.*
 *.backup*

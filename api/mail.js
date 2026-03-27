@@ -6,9 +6,9 @@ const http = require('http');
 const llmRouter = require('../services/llmRouter');
 const pool = require('../lib/vaultbrix');
 
-const POSTAL_HOST = 'mail.vutler.ai';
-const POSTAL_ENDPOINT = 'http://localhost:8082';
-const POSTAL_API_KEY = 'aa91f11a58ea9771d5036ed6429073f709a716bf-v2';
+const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.vutler.ai';
+const POSTAL_ENDPOINT = process.env.POSTAL_ENDPOINT || 'http://localhost:8082';
+const POSTAL_API_KEY = process.env.POSTAL_API_KEY || '';
 
 const AGENTS = {
   'andrea@vutler.ai': { name: 'Andrea', color: '#8B5CF6' },

@@ -646,11 +646,89 @@ router.put('/me/password', async (req, res) => {
   }
 });
 
+// ── Password reset helpers ────────────────────────────────────────────────────
+
+const http = require('http');
+const POSTAL_ENDPOINT = 'http://localhost:8082';
+const POSTAL_HOST = 'mail.vutler.ai';
+
+async function ensureResetTokensTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${SCHEMA}.password_reset_tokens (
+      token       TEXT PRIMARY KEY,
+      user_id     UUID NOT NULL,
+      email       TEXT NOT NULL,
+      expires_at  TIMESTAMPTZ NOT NULL,
+      used        BOOLEAN NOT NULL DEFAULT false,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+function sendPostalMail({ to, subject, plain_body, html_body }) {
+  return new Promise((resolve, reject) => {
+    const apiKey = process.env.POSTAL_API_KEY;
+    if (!apiKey) return resolve({ skipped: true }); // silently skip if not configured
+    const postData = JSON.stringify({
+      to: [to],
+      from: 'noreply@vutler.ai',
+      subject,
+      plain_body,
+      html_body,
+    });
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: 8082,
+      path: '/api/v1/send/message',
+      method: 'POST',
+      headers: {
+        'Host': POSTAL_HOST,
+        'X-Server-API-Key': apiKey,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
+    });
+    req.on('error', (e) => { console.error('[AUTH] Postal error:', e.message); resolve({}); });
+    req.write(postData);
+    req.end();
+  });
+}
+
 // POST /api/v1/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ success: false, error: 'Email required' });
-  // Don't reveal if email exists
+  try {
+    const pool = require('../lib/vaultbrix');
+    await ensureResetTokensTable(pool);
+    const user = await pool.query(
+      `SELECT id, email, name FROM ${SCHEMA}.users_auth WHERE email = $1 LIMIT 1`,
+      [email.toLowerCase().trim()]
+    );
+    if (user.rows.length) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1h
+      await pool.query(
+        `INSERT INTO ${SCHEMA}.password_reset_tokens (token, user_id, email, expires_at)
+         VALUES ($1, $2, $3, $4)`,
+        [token, user.rows[0].id, user.rows[0].email, expiresAt]
+      );
+      const resetUrl = `${process.env.APP_URL || 'https://app.vutler.ai'}/reset-password?token=${token}`;
+      await sendPostalMail({
+        to: email,
+        subject: 'Reset your Vutler password',
+        plain_body: `Hi ${user.rows[0].name || 'there'},\n\nClick the link below to reset your password (valid 1 hour):\n\n${resetUrl}\n\nIf you didn't request this, ignore this email.`,
+        html_body: `<p>Hi ${user.rows[0].name || 'there'},</p><p>Click the link below to reset your password (valid 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, ignore this email.</p>`,
+      });
+    }
+  } catch (err) {
+    console.error('[AUTH] forgot-password error:', err.message);
+  }
+  // Always return success — don't reveal if email exists
   res.json({ success: true, message: 'If an account exists, a reset link will be sent' });
 });
 
@@ -658,8 +736,32 @@ router.post('/forgot-password', async (req, res) => {
 router.post('/reset-password', async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ success: false, error: 'Token and password required' });
-  // TODO: implement token-based reset
-  res.json({ success: true, message: 'Password reset successfully' });
+  if (password.length < 8) return res.status(400).json({ success: false, error: 'Password must be at least 8 characters' });
+  try {
+    const pool = require('../lib/vaultbrix');
+    await ensureResetTokensTable(pool);
+    const r = await pool.query(
+      `SELECT user_id, email, expires_at, used FROM ${SCHEMA}.password_reset_tokens WHERE token = $1 LIMIT 1`,
+      [token]
+    );
+    if (!r.rows.length) return res.status(400).json({ success: false, error: 'Invalid or expired reset token' });
+    const row = r.rows[0];
+    if (row.used) return res.status(400).json({ success: false, error: 'Reset token already used' });
+    if (new Date(row.expires_at) < new Date()) return res.status(400).json({ success: false, error: 'Reset token has expired' });
+    const { hash } = await hashPassword(password);
+    await pool.query(
+      `UPDATE ${SCHEMA}.users_auth SET password_hash = $1, salt = NULL WHERE id = $2`,
+      [hash, row.user_id]
+    );
+    await pool.query(
+      `UPDATE ${SCHEMA}.password_reset_tokens SET used = true WHERE token = $1`,
+      [token]
+    );
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (err) {
+    console.error('[AUTH] reset-password error:', err.message);
+    res.status(500).json({ success: false, error: 'Password reset failed' });
+  }
 });
 
 module.exports = router;

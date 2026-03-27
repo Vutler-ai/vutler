@@ -8,11 +8,31 @@ function getPool() {
   return null;
 }
 
+const SCHEMA = 'tenant_vutler';
+let tableReady = false;
+async function ensureTable(pool) {
+  if (tableReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ${SCHEMA}.client_companies (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      workspace_id  UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+      name          TEXT NOT NULL,
+      logo_url      TEXT,
+      contact_email TEXT,
+      notes         TEXT,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  tableReady = true;
+}
+
 // GET /api/v1/clients
 router.get('/', async (req, res) => {
   try {
     const pool = req.app.locals.pg || getPool()?.pool || getPool();
     if (!pool) return res.json({ success: true, data: [] });
+    await ensureTable(pool);
     const r = await pool.query(
       "SELECT id, workspace_id, name, logo_url, contact_email, notes, created_at FROM tenant_vutler.client_companies WHERE workspace_id = \$1 ORDER BY created_at DESC",
       [req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001']
@@ -29,6 +49,7 @@ router.get('/:id', async (req, res) => {
   try {
     const pool = req.app.locals.pg || getPool()?.pool || getPool();
     if (!pool) return res.status(404).json({ success: false, error: 'DB not available' });
+    await ensureTable(pool);
     const r = await pool.query(
       "SELECT * FROM tenant_vutler.client_companies WHERE id = \$1 AND workspace_id = \$2",
       [req.params.id, req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001']
@@ -46,6 +67,7 @@ router.post('/', async (req, res) => {
   try {
     const pool = req.app.locals.pg || getPool()?.pool || getPool();
     if (!pool) return res.status(500).json({ success: false, error: 'DB not available' });
+    await ensureTable(pool);
     const { name, contact_email, notes, logo_url } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'name required' });
     const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
@@ -65,6 +87,7 @@ router.put('/:id', async (req, res) => {
   try {
     const pool = req.app.locals.pg || getPool()?.pool || getPool();
     if (!pool) return res.status(500).json({ success: false, error: 'DB not available' });
+    await ensureTable(pool);
     const { name, contact_email, notes, logo_url } = req.body;
     const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
     const r = await pool.query(
@@ -84,6 +107,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const pool = req.app.locals.pg || getPool()?.pool || getPool();
     if (!pool) return res.status(500).json({ success: false, error: 'DB not available' });
+    await ensureTable(pool);
     const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
     const r = await pool.query(
       "DELETE FROM tenant_vutler.client_companies WHERE id=\$1 AND workspace_id=\$2 RETURNING id",
