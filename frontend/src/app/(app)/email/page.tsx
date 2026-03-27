@@ -1,20 +1,32 @@
 "use client";
-
-import { useState, useMemo } from "react";
-import { useApi } from "@/hooks/use-api";
-import { getEmails, markRead, sendEmail, deleteEmail } from "@/lib/api/endpoints/email";
+import { useState, useEffect, useMemo } from "react";
+import { apiFetch } from "@/lib/api/client";
+import {
+  getEmails,
+  markRead,
+  sendEmail,
+  deleteEmail,
+  getPendingApprovals,
+  approveEmail,
+  rejectEmail,
+  regenerateEmail,
+  assignEmailToAgent,
+  getEmailStats,
+  getEmailGroups,
+} from "@/lib/api/endpoints/email";
 import type { Email, EmailFolder } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-} from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -36,178 +48,727 @@ import {
   Send,
   Trash2,
   Reply,
+  Forward,
   RefreshCw,
   Search,
   Mail,
+  Inbox,
+  Archive,
+  FileText,
+  Bot,
+  Users,
+  Flag,
+  UserPlus,
+  Check,
+  X,
   ArrowLeft,
   Loader2,
 } from "lucide-react";
 
-// ─── Email List Skeleton ─────────────────────────────────────────────────────
+// ─── Extended Email type (agent fields from pending approvals) ─────────────
+
+type AugmentedEmail = Email & {
+  agentHandled?: boolean;
+  agentName?: string;
+  agentAvatar?: string;
+  agentId?: string;
+  pendingApproval?: boolean;
+  draftReply?: string;
+  flagged?: boolean;
+  [key: string]: unknown;
+};
+
+// ─── Filter type ──────────────────────────────────────────────────────────────
+
+type EmailFilter = "all" | "unread" | "agent" | "pending";
+
+// ─── Agent type ───────────────────────────────────────────────────────────────
+
+interface AgentEntry {
+  id: string;
+  name: string;
+  email?: string;
+  username?: string;
+  avatar?: string;
+}
+
+// ─── Email Group ──────────────────────────────────────────────────────────────
+
+interface GroupEntry {
+  id: string;
+  name: string;
+  emailAddress: string;
+  memberCount: number;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatTime(dateStr: string): string {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) {
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatFullDate(dateStr: string): string {
+  if (!dateStr) return "";
+  return new Date(dateStr).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function avatarFallback(name: string): string {
+  return name
+    .split(" ")
+    .map((n) => n[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+// ─── Sidebar ─────────────────────────────────────────────────────────────────
+
+interface SidebarProps {
+  folder: EmailFolder | "pending" | "archive" | "drafts";
+  onFolderChange: (f: EmailFolder | "pending" | "archive" | "drafts") => void;
+  unreadCount: number;
+  pendingCount: number;
+  agents: AgentEntry[];
+  groups: GroupEntry[];
+  onCompose: () => void;
+}
+
+function Sidebar({
+  folder,
+  onFolderChange,
+  unreadCount,
+  pendingCount,
+  agents,
+  groups,
+  onCompose,
+}: SidebarProps) {
+  const navFolders = [
+    { id: "inbox" as const, label: "Inbox", icon: Inbox, count: unreadCount },
+    { id: "sent" as const, label: "Sent", icon: Send, count: 0 },
+    { id: "drafts" as const, label: "Drafts", icon: FileText, count: 0 },
+    { id: "archive" as const, label: "Archive", icon: Archive, count: 0 },
+  ];
+
+  return (
+    <div className="w-64 flex-shrink-0 flex flex-col h-full bg-zinc-950 border-r border-zinc-800">
+      {/* Compose button */}
+      <div className="p-4 flex-shrink-0">
+        <Button
+          onClick={onCompose}
+          className="w-full bg-blue-600 hover:bg-blue-500 text-white gap-2 justify-start"
+          size="sm"
+        >
+          <PenSquare className="w-4 h-4" />
+          Compose
+        </Button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {/* Mailbox folders */}
+        <div className="px-3 pb-2">
+          <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider px-2 pb-1">
+            Mailbox
+          </p>
+          {navFolders.map(({ id, label, icon: Icon, count }) => (
+            <button
+              key={id}
+              onClick={() => onFolderChange(id)}
+              className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-sm transition-colors mb-0.5 ${
+                folder === id
+                  ? "bg-zinc-800 text-white"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Icon className="w-4 h-4 flex-shrink-0" />
+                <span>{label}</span>
+              </div>
+              {count > 0 && (
+                <Badge className="bg-blue-600 text-white text-[10px] px-1.5 h-4 min-w-[1.25rem] flex items-center justify-center border-none">
+                  {count}
+                </Badge>
+              )}
+            </button>
+          ))}
+
+          {/* Pending approvals */}
+          <button
+            onClick={() => onFolderChange("pending")}
+            className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-sm transition-colors mb-0.5 ${
+              folder === "pending"
+                ? "bg-zinc-800 text-white"
+                : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <Check className="w-4 h-4 flex-shrink-0" />
+              <span>Pending</span>
+            </div>
+            {pendingCount > 0 && (
+              <Badge className="bg-amber-500/80 text-white text-[10px] px-1.5 h-4 min-w-[1.25rem] flex items-center justify-center border-none">
+                {pendingCount}
+              </Badge>
+            )}
+          </button>
+        </div>
+
+        {/* AI Agents */}
+        {agents.length > 0 && (
+          <div className="px-3 pb-2 mt-3">
+            <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider px-2 pb-1">
+              AI Agents
+            </p>
+            <div className="space-y-0.5">
+              {agents.map((agent) => (
+                <div
+                  key={agent.id}
+                  className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 cursor-default transition-colors"
+                >
+                  {agent.avatar ? (
+                    <img
+                      src={agent.avatar}
+                      alt={agent.name}
+                      className="w-5 h-5 rounded-full object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full bg-zinc-700 flex items-center justify-center flex-shrink-0">
+                      <Bot className="w-3 h-3 text-zinc-400" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-xs truncate">{agent.name}</p>
+                    {agent.email && (
+                      <p className="text-[10px] text-zinc-600 truncate">{agent.email}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Groups */}
+        {groups.length > 0 && (
+          <div className="px-3 pb-4 mt-3">
+            <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-wider px-2 pb-1">
+              Groups
+            </p>
+            <div className="space-y-0.5">
+              {groups.map((group) => (
+                <div
+                  key={group.id}
+                  className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 cursor-default transition-colors"
+                >
+                  <Users className="w-4 h-4 flex-shrink-0 text-zinc-600" />
+                  <div className="min-w-0">
+                    <p className="text-xs truncate">{group.name}</p>
+                    <p className="text-[10px] text-zinc-600 truncate">{group.emailAddress}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Email List Item ──────────────────────────────────────────────────────────
+
+function EmailListItem({
+  email,
+  isSelected,
+  onClick,
+}: {
+  email: AugmentedEmail;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className={`relative px-4 py-3 cursor-pointer transition-colors border-l-2 ${
+        isSelected
+          ? "bg-zinc-800 border-l-blue-500"
+          : "border-l-transparent hover:bg-zinc-900/60"
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        {/* Unread dot */}
+        <div className="mt-1.5 flex-shrink-0 w-2 h-2">
+          {email.unread && (
+            <span className="block w-2 h-2 rounded-full bg-blue-500" />
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-2 mb-0.5">
+            <span
+              className={`text-sm truncate ${
+                email.unread ? "font-semibold text-white" : "font-medium text-zinc-300"
+              }`}
+            >
+              {email.from || email.to || "Unknown"}
+            </span>
+            <span className="text-[11px] text-zinc-600 flex-shrink-0">
+              {formatTime(email.date)}
+            </span>
+          </div>
+
+          <p
+            className={`text-xs truncate mb-1 ${
+              email.unread ? "text-zinc-200" : "text-zinc-500"
+            }`}
+          >
+            {email.subject || "(no subject)"}
+          </p>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {email.agentHandled && (
+              <Badge className="bg-violet-500/15 text-violet-400 border-violet-500/20 text-[10px] px-1.5 h-4 gap-0.5">
+                <Bot className="w-2.5 h-2.5" />
+                AI handled
+              </Badge>
+            )}
+            {email.pendingApproval && (
+              <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/20 text-[10px] px-1.5 h-4">
+                Pending
+              </Badge>
+            )}
+            {email.flagged && (
+              <Flag className="w-2.5 h-2.5 text-red-400" />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Email List Skeleton ──────────────────────────────────────────────────────
 
 function EmailListSkeleton() {
   return (
-    <div className="divide-y divide-white/5">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="p-4 space-y-2">
+    <div className="divide-y divide-zinc-800/50">
+      {Array.from({ length: 7 }).map((_, i) => (
+        <div key={i} className="px-4 py-3 space-y-1.5">
           <div className="flex justify-between">
-            <Skeleton className="h-4 w-36 bg-white/10" />
-            <Skeleton className="h-3 w-12 bg-white/10" />
+            <Skeleton className="h-3.5 w-28 bg-zinc-800" />
+            <Skeleton className="h-3 w-10 bg-zinc-800" />
           </div>
-          <Skeleton className="h-3 w-full bg-white/10" />
+          <Skeleton className="h-3 w-full bg-zinc-800" />
+          <Skeleton className="h-3 w-2/3 bg-zinc-800" />
         </div>
       ))}
     </div>
   );
 }
 
-// ─── Email List Item ─────────────────────────────────────────────────────────
+// ─── Approval Card ────────────────────────────────────────────────────────────
 
-interface EmailItemProps {
-  email: Email;
-  folder: EmailFolder;
-  isSelected: boolean;
-  onClick: () => void;
+interface ApprovalCardProps {
+  email: AugmentedEmail;
+  onApprove: () => void;
+  onReject: () => void;
+  onRegenerate: () => void;
+  onEdit: () => void;
+  loading: boolean;
 }
 
-function EmailItem({ email, folder, isSelected, onClick }: EmailItemProps) {
-  const displayName = folder === "sent" ? email.to : email.from;
-  const formattedDate = email.date
-    ? new Date(email.date).toLocaleDateString("en-US", {
-        day: "2-digit",
-        month: "short",
-      })
-    : "";
-
+function ApprovalCard({
+  email,
+  onApprove,
+  onReject,
+  onRegenerate,
+  onEdit,
+  loading,
+}: ApprovalCardProps) {
   return (
-    <div
-      onClick={onClick}
-      className={`
-        p-4 cursor-pointer transition-colors border-l-2
-        ${isSelected
-          ? "bg-white/[0.06] border-l-blue-500"
-          : "border-l-transparent hover:bg-white/[0.03]"}
-      `}
-    >
-      <div className="flex items-center justify-between mb-1 gap-2">
-        <span
-          className={`text-sm truncate flex items-center gap-2 min-w-0 ${
-            email.unread ? "font-semibold text-white" : "text-gray-300"
-          }`}
-        >
-          {email.unread && folder === "inbox" && (
-            <span className="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0" />
-          )}
-          <span className="truncate">{displayName}</span>
-        </span>
-        <span className="text-xs text-gray-500 flex-shrink-0">{formattedDate}</span>
-      </div>
-      <div
-        className={`text-sm truncate ${
-          email.unread && folder === "inbox" ? "text-gray-200" : "text-gray-500"
-        }`}
-      >
-        {email.subject || "(no subject)"}
-      </div>
-    </div>
+    <Card className="border-blue-500/40 bg-blue-950/20">
+      <CardHeader className="pb-3 pt-4 px-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            {email.agentAvatar ? (
+              <img
+                src={email.agentAvatar as string}
+                alt={email.agentName as string}
+                className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-violet-500/20 border border-violet-500/30 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-violet-400" />
+              </div>
+            )}
+            <div>
+              <p className="text-sm font-semibold text-white">
+                {(email.agentName as string) || "AI Agent"}
+              </p>
+              <p className="text-xs text-zinc-400">AI-generated draft · Needs review</p>
+            </div>
+          </div>
+          <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30 text-[10px] uppercase tracking-wide font-semibold flex-shrink-0">
+            Human Approval Required
+          </Badge>
+        </div>
+      </CardHeader>
+
+      <CardContent className="px-4 pb-4 space-y-3">
+        {/* Draft content */}
+        {email.draftReply && (
+          <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-3">
+            <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2">
+              Draft Reply
+            </p>
+            <p className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">
+              {email.draftReply as string}
+            </p>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            onClick={onApprove}
+            disabled={loading}
+            className="bg-blue-600 hover:bg-blue-500 text-white gap-2"
+          >
+            {loading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
+            Send Now
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onEdit}
+            disabled={loading}
+            className="bg-transparent border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white gap-1.5"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Edit Draft
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onRegenerate}
+            disabled={loading}
+            className="bg-transparent border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white gap-1.5"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Regenerate
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onReject}
+            disabled={loading}
+            className="text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1.5 ml-auto"
+          >
+            <X className="w-3.5 h-3.5" />
+            Reject
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
-// ─── Email Viewer ────────────────────────────────────────────────────────────
+// ─── Email Viewer ─────────────────────────────────────────────────────────────
 
 interface EmailViewerProps {
-  email: Email | null;
-  onReply: (email: Email) => void;
-  onDelete: (email: Email) => void;
+  email: AugmentedEmail | null;
+  agents: AgentEntry[];
+  onReply: (email: AugmentedEmail) => void;
+  onForward: (email: AugmentedEmail) => void;
+  onDelete: (email: AugmentedEmail) => void;
+  onFlag: (email: AugmentedEmail) => void;
+  onApprove: (email: AugmentedEmail) => void;
+  onReject: (email: AugmentedEmail) => void;
+  onRegenerate: (email: AugmentedEmail) => void;
+  onAssign: (emailId: string, agentId: string) => void;
   onBack?: () => void;
   showBack?: boolean;
 }
 
-function EmailViewer({ email, onReply, onDelete, onBack, showBack }: EmailViewerProps) {
+function EmailViewer({
+  email,
+  agents,
+  onReply,
+  onForward,
+  onDelete,
+  onFlag,
+  onApprove,
+  onReject,
+  onRegenerate,
+  onAssign,
+  onBack,
+  showBack,
+}: EmailViewerProps) {
+  const [approvalLoading, setApprovalLoading] = useState(false);
+  const [editingDraft, setEditingDraft] = useState(false);
+
   if (!email) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3">
-        <Mail className="w-12 h-12 opacity-30" />
-        <p className="text-sm">Select an email to view</p>
+      <div className="flex flex-col items-center justify-center h-full text-zinc-600 gap-3">
+        <div className="w-16 h-16 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+          <Mail className="w-7 h-7" />
+        </div>
+        <div className="text-center">
+          <p className="text-sm font-medium text-zinc-400">No email selected</p>
+          <p className="text-xs text-zinc-600 mt-0.5">Choose an email from the list to view it</p>
+        </div>
       </div>
     );
   }
 
-  const formattedDate = email.date
-    ? new Date(email.date).toLocaleString("en-US", {
-        dateStyle: "medium",
-        timeStyle: "short",
-      })
-    : "";
+  const handleApprove = async () => {
+    setApprovalLoading(true);
+    await onApprove(email);
+    setApprovalLoading(false);
+  };
+
+  const handleReject = async () => {
+    setApprovalLoading(true);
+    await onReject(email);
+    setApprovalLoading(false);
+  };
+
+  const handleRegenerate = async () => {
+    setApprovalLoading(true);
+    await onRegenerate(email);
+    setApprovalLoading(false);
+  };
 
   return (
     <div className="flex flex-col h-full">
-      {/* Viewer header */}
-      <div className="p-5 border-b border-white/[0.07] flex-shrink-0">
-        {showBack && (
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-white mb-3 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </button>
-        )}
-        <h2 className="text-lg font-semibold text-white mb-3 leading-tight">
-          {email.subject || "(no subject)"}
-        </h2>
-        <div className="space-y-1 text-sm text-gray-400 mb-3">
-          <div>
-            <span className="text-gray-500">From: </span>
-            <span className="text-gray-200">{email.from}</span>
-          </div>
-          <div>
-            <span className="text-gray-500">To: </span>
-            <span className="text-gray-200">{email.to}</span>
-          </div>
-          <div className="text-gray-500 text-xs pt-0.5">{formattedDate}</div>
-        </div>
-        <div className="flex gap-2 pt-1">
+      {/* Action bar */}
+      <div className="flex-shrink-0 px-5 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5">
+          {showBack && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onBack}
+              className="text-zinc-400 hover:text-white hover:bg-zinc-800 gap-1.5 h-8 mr-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back
+            </Button>
+          )}
           <Button
+            variant="ghost"
             size="sm"
-            variant="outline"
             onClick={() => onReply(email)}
-            className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white gap-1.5 h-8"
+            className="text-zinc-400 hover:text-white hover:bg-zinc-800 gap-1.5 h-8"
           >
             <Reply className="w-3.5 h-3.5" />
             Reply
           </Button>
           <Button
+            variant="ghost"
             size="sm"
-            variant="outline"
+            onClick={() => onForward(email)}
+            className="text-zinc-400 hover:text-white hover:bg-zinc-800 gap-1.5 h-8"
+          >
+            <Forward className="w-3.5 h-3.5" />
+            Forward
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onFlag(email)}
+            className={`h-8 gap-1.5 ${
+              email.flagged
+                ? "text-red-400 hover:bg-red-500/10"
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+          >
+            <Flag className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* Assign to agent */}
+          {agents.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-zinc-400 hover:text-white hover:bg-zinc-800 gap-1.5 h-8"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  Assign
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                className="bg-zinc-900 border-zinc-700 text-zinc-200"
+                align="end"
+              >
+                {agents.map((agent) => (
+                  <DropdownMenuItem
+                    key={agent.id}
+                    onClick={() => onAssign(email.uid, agent.id)}
+                    className="hover:bg-zinc-800 cursor-pointer gap-2 text-sm"
+                  >
+                    <Bot className="w-3.5 h-3.5 text-violet-400" />
+                    {agent.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onDelete(email)}
-            className="bg-transparent border-white/10 text-red-400 hover:bg-red-500/10 hover:text-red-300 hover:border-red-500/30 gap-1.5 h-8"
+            className="text-red-400 hover:text-red-300 hover:bg-red-500/10 h-8 w-8 p-0"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Delete
           </Button>
         </div>
       </div>
 
-      {/* Viewer body */}
-      <div className="flex-1 overflow-y-auto p-5">
+      {/* Email header */}
+      <div className="flex-shrink-0 px-5 py-4 border-b border-zinc-800">
+        <h2 className="text-lg font-semibold text-white leading-snug mb-3">
+          {email.subject || "(no subject)"}
+        </h2>
+        <div className="space-y-1 text-sm">
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-zinc-600 text-xs w-8 flex-shrink-0">From</span>
+            <span className="text-zinc-200">{email.from}</span>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-zinc-600 text-xs w-8 flex-shrink-0">To</span>
+            <span className="text-zinc-400">{email.to}</span>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-zinc-600 text-xs w-8 flex-shrink-0">Date</span>
+            <span className="text-zinc-500 text-xs">{formatFullDate(email.date)}</span>
+          </div>
+        </div>
+
+        {email.agentHandled && (
+          <div className="mt-2 flex items-center gap-1.5">
+            <Bot className="w-3.5 h-3.5 text-violet-400" />
+            <span className="text-xs text-violet-400">
+              Handled by {(email.agentName as string) || "AI Agent"}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {email.html ? (
-          /* The HTML content comes from our own email server — treat as trusted for display */
           <div
-            className="text-gray-200 prose prose-invert prose-sm max-w-none"
+            className="text-zinc-200 prose prose-invert prose-sm max-w-none"
             dangerouslySetInnerHTML={{ __html: email.html }}
           />
         ) : (
-          <pre className="text-gray-200 whitespace-pre-wrap font-sans text-sm leading-relaxed">
-            {email.body}
+          <pre className="text-zinc-300 whitespace-pre-wrap font-sans text-sm leading-relaxed">
+            {email.body || "(no content)"}
           </pre>
+        )}
+
+        {/* Approval card */}
+        {email.pendingApproval && !editingDraft && (
+          <ApprovalCard
+            email={email}
+            onApprove={handleApprove}
+            onReject={handleReject}
+            onRegenerate={handleRegenerate}
+            onEdit={() => setEditingDraft(true)}
+            loading={approvalLoading}
+          />
+        )}
+
+        {/* Edit draft inline */}
+        {editingDraft && email.draftReply !== undefined && (
+          <EditDraftInline
+            initial={(email.draftReply as string) || ""}
+            onSend={async (body) => {
+              /* For now, treat as approve with edited body */
+              setEditingDraft(false);
+              await onApprove(email);
+            }}
+            onCancel={() => setEditingDraft(false)}
+          />
         )}
       </div>
     </div>
   );
 }
 
-// ─── Compose Dialog ──────────────────────────────────────────────────────────
+// ─── Edit Draft Inline ────────────────────────────────────────────────────────
+
+function EditDraftInline({
+  initial,
+  onSend,
+  onCancel,
+}: {
+  initial: string;
+  onSend: (body: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [body, setBody] = useState(initial);
+  const [sending, setSending] = useState(false);
+
+  return (
+    <Card className="border-blue-500/30 bg-blue-950/10">
+      <CardContent className="p-4 space-y-3">
+        <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Edit Draft</p>
+        <Textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={6}
+          className="bg-zinc-900 border-zinc-700 text-white placeholder:text-zinc-600 focus-visible:ring-blue-500/40 resize-none text-sm"
+        />
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCancel}
+            className="text-zinc-400 hover:text-white hover:bg-zinc-800"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={async () => {
+              setSending(true);
+              await onSend(body);
+              setSending(false);
+            }}
+            disabled={sending || !body.trim()}
+            className="bg-blue-600 hover:bg-blue-500 text-white gap-2"
+          >
+            {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Send
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Compose Dialog ───────────────────────────────────────────────────────────
 
 interface ComposeDialogProps {
   open: boolean;
@@ -231,17 +792,15 @@ function ComposeDialog({
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
 
-  const handleClose = () => {
-    if (sending) return;
-    onOpenChange(false);
-    setTimeout(() => {
+  useEffect(() => {
+    if (open) {
       setTo(defaultTo);
       setSubject(defaultSubject);
       setBody("");
       setError(null);
       setSent(false);
-    }, 200);
-  };
+    }
+  }, [open, defaultTo, defaultSubject]);
 
   const handleSend = async () => {
     if (!to || !subject || !body) return;
@@ -251,7 +810,7 @@ function ComposeDialog({
       await sendEmail({ to, subject, body });
       setSent(true);
       onSent();
-      setTimeout(handleClose, 1500);
+      setTimeout(() => onOpenChange(false), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send email");
     } finally {
@@ -259,84 +818,65 @@ function ComposeDialog({
     }
   };
 
-  const isValid = to.trim() && subject.trim() && body.trim();
-
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="bg-[#14151f] border-white/10 text-white max-w-2xl w-full">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-zinc-900 border-zinc-800 text-white max-w-2xl w-full">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold">New Message</DialogTitle>
         </DialogHeader>
 
         {sent ? (
           <div className="py-10 text-center">
-            <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
+            <div className="w-14 h-14 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center mx-auto mb-3">
               <Send className="w-6 h-6 text-green-400" />
             </div>
-            <p className="text-green-400 font-medium">Email sent successfully!</p>
+            <p className="text-green-400 font-medium">Email sent!</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {/* From (read-only) */}
             <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-500 w-14 text-right flex-shrink-0">From</span>
-              <Input
-                disabled
-                value="noreply@vutler.ai"
-                className="flex-1 bg-[#08090f] border-white/[0.07] text-gray-500 disabled:opacity-60 h-9"
-              />
-            </div>
-
-            {/* To */}
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-500 w-14 text-right flex-shrink-0">To</span>
+              <span className="text-xs text-zinc-500 w-14 text-right flex-shrink-0">To</span>
               <Input
                 type="email"
                 placeholder="recipient@example.com"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                className="flex-1 bg-[#08090f] border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500/40 h-9"
+                className="flex-1 bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-600 focus-visible:ring-blue-500/40 h-9"
               />
             </div>
-
-            {/* Subject */}
             <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-500 w-14 text-right flex-shrink-0">Subject</span>
+              <span className="text-xs text-zinc-500 w-14 text-right flex-shrink-0">Subject</span>
               <Input
-                placeholder="Email subject"
+                placeholder="Subject"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
-                className="flex-1 bg-[#08090f] border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500/40 h-9"
+                className="flex-1 bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-600 focus-visible:ring-blue-500/40 h-9"
               />
             </div>
-
-            {/* Body */}
             <Textarea
               placeholder="Write your message…"
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={10}
-              className="w-full bg-[#08090f] border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500/40 resize-none"
+              className="w-full bg-zinc-800 border-zinc-700 text-white placeholder:text-zinc-600 focus-visible:ring-blue-500/40 resize-none"
             />
-
             {error && (
-              <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2">
+              <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2">
                 {error}
-              </div>
+              </p>
             )}
-
             <div className="flex justify-end gap-2 pt-1">
               <Button
                 variant="ghost"
-                onClick={handleClose}
+                onClick={() => onOpenChange(false)}
                 disabled={sending}
-                className="text-gray-400 hover:text-white hover:bg-white/5"
+                className="text-zinc-400 hover:text-white hover:bg-zinc-800"
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleSend}
-                disabled={sending || !isValid}
+                disabled={sending || !to.trim() || !subject.trim() || !body.trim()}
                 className="bg-blue-600 hover:bg-blue-500 text-white gap-2"
               >
                 {sending ? (
@@ -359,57 +899,110 @@ function ComposeDialog({
   );
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmailPage() {
-  const [folder, setFolder] = useState<EmailFolder>("inbox");
-  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
+  const [folder, setFolder] = useState<EmailFolder | "pending" | "archive" | "drafts">("inbox");
+  const [emails, setEmails] = useState<AugmentedEmail[]>([]);
+  const [loadingEmails, setLoadingEmails] = useState(true);
+  const [agents, setAgents] = useState<AgentEntry[]>([]);
+  const [groups, setGroups] = useState<GroupEntry[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<AugmentedEmail[]>([]);
+
+  const [selectedEmail, setSelectedEmail] = useState<AugmentedEmail | null>(null);
+  const [filter, setFilter] = useState<EmailFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showCompose, setShowCompose] = useState(false);
-  const [replyDefaults, setReplyDefaults] = useState<{ to: string; subject: string }>({
-    to: "",
-    subject: "",
-  });
-  const [deleteTarget, setDeleteTarget] = useState<Email | null>(null);
+  const [replyDefaults, setReplyDefaults] = useState({ to: "", subject: "" });
+  const [deleteTarget, setDeleteTarget] = useState<AugmentedEmail | null>(null);
   const [deleting, setDeleting] = useState(false);
-  // Mobile: show viewer panel when an email is selected
   const [mobileView, setMobileView] = useState<"list" | "viewer">("list");
 
-  const {
-    data: emails,
-    isLoading,
-    error,
-    mutate,
-  } = useApi<Email[]>(
-    folder === "sent" ? "/api/v1/email/sent" : "/api/v1/email?folder=inbox",
-    () => getEmails(folder)
-  );
-
-  const handleFolderChange = (val: string) => {
-    setFolder(val as EmailFolder);
-    setSelectedEmail(null);
-    setMobileView("list");
+  // Load emails
+  const loadEmails = async () => {
+    setLoadingEmails(true);
+    try {
+      if (folder === "pending") {
+        const data = await getPendingApprovals();
+        setEmails(data.map((e) => ({ ...(e as AugmentedEmail), pendingApproval: true })));
+      } else if (folder === "inbox" || folder === "sent") {
+        const data = await getEmails(folder);
+        setEmails(data as AugmentedEmail[]);
+      } else {
+        // archive / drafts — not implemented yet, show empty
+        setEmails([]);
+      }
+    } catch {
+      setEmails([]);
+    } finally {
+      setLoadingEmails(false);
+    }
   };
 
-  const handleSelectEmail = async (email: Email) => {
+  // Load pending approvals count for sidebar badge
+  const loadPendingApprovals = async () => {
+    try {
+      const data = await getPendingApprovals();
+      setPendingApprovals(data as AugmentedEmail[]);
+    } catch {
+      setPendingApprovals([]);
+    }
+  };
+
+  // Load agents
+  const loadAgents = async () => {
+    try {
+      const data = await apiFetch<{ agents?: AgentEntry[] } | AgentEntry[]>("/api/v1/agents");
+      const list = Array.isArray(data) ? data : ((data as any).agents ?? []);
+      setAgents(list);
+    } catch {
+      setAgents([]);
+    }
+  };
+
+  // Load groups
+  const loadGroups = async () => {
+    try {
+      const data = await getEmailGroups();
+      setGroups(data as GroupEntry[]);
+    } catch {
+      setGroups([]);
+    }
+  };
+
+  useEffect(() => {
+    loadEmails();
+  }, [folder]);
+
+  useEffect(() => {
+    loadAgents();
+    loadGroups();
+    loadPendingApprovals();
+  }, []);
+
+  const handleFolderChange = (f: typeof folder) => {
+    setFolder(f);
+    setSelectedEmail(null);
+    setMobileView("list");
+    setFilter("all");
+  };
+
+  const handleSelectEmail = async (email: AugmentedEmail) => {
     setSelectedEmail(email);
     setMobileView("viewer");
-
     if (email.unread && folder === "inbox") {
-      // Optimistic update
-      mutate(
-        (prev) => prev?.map((e) => (e.uid === email.uid ? { ...e, unread: false } : e)),
-        false
+      setEmails((prev) =>
+        prev.map((e) => (e.uid === email.uid ? { ...e, unread: false } : e))
       );
       try {
         await markRead(email.uid);
       } catch {
-        // silently ignore — optimistic update stays
+        /* silent */
       }
     }
   };
 
-  const handleReply = (email: Email) => {
+  const handleReply = (email: AugmentedEmail) => {
     setReplyDefaults({
       to: email.from,
       subject: email.subject ? `Re: ${email.subject}` : "",
@@ -417,12 +1010,69 @@ export default function EmailPage() {
     setShowCompose(true);
   };
 
+  const handleForward = (email: AugmentedEmail) => {
+    setReplyDefaults({
+      to: "",
+      subject: email.subject ? `Fwd: ${email.subject}` : "",
+    });
+    setShowCompose(true);
+  };
+
+  const handleFlag = (email: AugmentedEmail) => {
+    setEmails((prev) =>
+      prev.map((e) => (e.uid === email.uid ? { ...e, flagged: !e.flagged } : e))
+    );
+    if (selectedEmail?.uid === email.uid) {
+      setSelectedEmail((prev) => prev ? { ...prev, flagged: !prev.flagged } : null);
+    }
+  };
+
+  const handleApprove = async (email: AugmentedEmail) => {
+    try {
+      await approveEmail(email.uid);
+      setEmails((prev) => prev.filter((e) => e.uid !== email.uid));
+      setSelectedEmail(null);
+      loadPendingApprovals();
+    } catch {
+      /* silent */
+    }
+  };
+
+  const handleReject = async (email: AugmentedEmail) => {
+    try {
+      await rejectEmail(email.uid);
+      setEmails((prev) => prev.filter((e) => e.uid !== email.uid));
+      setSelectedEmail(null);
+      loadPendingApprovals();
+    } catch {
+      /* silent */
+    }
+  };
+
+  const handleRegenerate = async (email: AugmentedEmail) => {
+    try {
+      await regenerateEmail(email.uid);
+      // Reload emails after regeneration
+      loadEmails();
+    } catch {
+      /* silent */
+    }
+  };
+
+  const handleAssign = async (emailId: string, agentId: string) => {
+    try {
+      await assignEmailToAgent(emailId, agentId);
+    } catch {
+      /* silent */
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
       await deleteEmail(deleteTarget.uid);
-      mutate((prev) => prev?.filter((e) => e.uid !== deleteTarget.uid), false);
+      setEmails((prev) => prev.filter((e) => e.uid !== deleteTarget.uid));
       if (selectedEmail?.uid === deleteTarget.uid) {
         setSelectedEmail(null);
         setMobileView("list");
@@ -433,184 +1083,186 @@ export default function EmailPage() {
     }
   };
 
+  // Filtered emails
   const filteredEmails = useMemo(() => {
-    if (!emails) return [];
-    if (!searchQuery.trim()) return emails;
-    const q = searchQuery.toLowerCase();
-    return emails.filter(
-      (e) =>
-        e.from?.toLowerCase().includes(q) ||
-        e.to?.toLowerCase().includes(q) ||
-        e.subject?.toLowerCase().includes(q)
-    );
-  }, [emails, searchQuery]);
+    let list = emails;
+
+    // Apply filter
+    if (filter === "unread") list = list.filter((e) => e.unread);
+    else if (filter === "agent") list = list.filter((e) => e.agentHandled);
+    else if (filter === "pending") list = list.filter((e) => e.pendingApproval);
+
+    // Apply search
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (e) =>
+          e.from?.toLowerCase().includes(q) ||
+          e.to?.toLowerCase().includes(q) ||
+          e.subject?.toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [emails, filter, searchQuery]);
 
   const unreadCount = useMemo(
-    () => emails?.filter((e) => e.unread).length ?? 0,
+    () => emails.filter((e) => e.unread).length,
     [emails]
   );
 
+  const filters: { id: EmailFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "unread", label: "Unread" },
+    { id: "agent", label: "Agent-handled" },
+    { id: "pending", label: "Pending Approval" },
+  ];
+
   return (
-    <div className="h-full flex flex-col gap-4">
-      {/* ── Page header ─────────────────────────────────────────── */}
-      <div className="flex items-center justify-between flex-shrink-0">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Email</h1>
-          <p className="text-sm text-gray-500">
-            {folder === "inbox"
-              ? `Inbox${unreadCount > 0 ? ` · ${unreadCount} unread` : ""}`
-              : "Sent"}
-            {emails ? ` · ${emails.length} messages` : ""}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => mutate()}
-            disabled={isLoading}
-            className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white gap-1.5"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              setReplyDefaults({ to: "", subject: "" });
-              setShowCompose(true);
-            }}
-            className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5"
-          >
-            <PenSquare className="w-3.5 h-3.5" />
-            Compose
-          </Button>
-        </div>
+    <div className="h-full flex bg-zinc-950">
+      {/* ── Left Sidebar ───────────────────────────────────────────────────── */}
+      <div className={`${mobileView === "viewer" ? "hidden" : "flex"} md:flex flex-shrink-0 h-full`}>
+        <Sidebar
+          folder={folder}
+          onFolderChange={handleFolderChange}
+          unreadCount={unreadCount}
+          pendingCount={pendingApprovals.length}
+          agents={agents}
+          groups={groups}
+          onCompose={() => {
+            setReplyDefaults({ to: "", subject: "" });
+            setShowCompose(true);
+          }}
+        />
       </div>
 
-      {/* ── Folder tabs + Search ─────────────────────────────────── */}
-      <div className="flex items-center gap-3 flex-shrink-0">
-        <Tabs value={folder} onValueChange={handleFolderChange}>
-          <TabsList className="bg-[#14151f] border border-white/[0.07] h-9">
-            <TabsTrigger
-              value="inbox"
-              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-gray-400 h-7"
+      {/* ── Center List ────────────────────────────────────────────────────── */}
+      <div
+        className={`
+          w-full md:w-[400px] flex-shrink-0 flex flex-col border-r border-zinc-800 bg-zinc-950
+          ${mobileView === "viewer" ? "hidden md:flex" : "flex"}
+        `}
+      >
+        {/* List header */}
+        <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-zinc-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <h1 className="text-base font-semibold text-white capitalize">
+              {folder === "pending" ? "Pending Approval" : folder}
+            </h1>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={loadEmails}
+              disabled={loadingEmails}
+              className="text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900 h-7 w-7 p-0"
             >
-              Inbox
-              {unreadCount > 0 && (
-                <Badge className="ml-1.5 bg-blue-500/30 text-blue-300 border-none text-[10px] px-1.5 h-4">
-                  {unreadCount}
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger
-              value="sent"
-              className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-gray-400 h-7"
-            >
-              Sent
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingEmails ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
 
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
-          <Input
-            placeholder="Search emails…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 bg-[#14151f] border-white/[0.07] text-white placeholder:text-gray-600 h-9 focus-visible:ring-blue-500/40"
-          />
-        </div>
-      </div>
-
-      {/* ── Error banner ────────────────────────────────────────── */}
-      {error && (
-        <div className="flex-shrink-0 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2.5">
-          {error.message}
-        </div>
-      )}
-
-      {/* ── Split view ──────────────────────────────────────────── */}
-      <div className="flex-1 flex gap-4 overflow-hidden min-h-0">
-
-        {/* Email list — hidden on mobile when viewing an email */}
-        <Card
-          className={`
-            bg-[#14151f] border-white/[0.07] overflow-y-auto flex-shrink-0
-            md:w-96 w-full
-            ${mobileView === "viewer" ? "hidden md:flex md:flex-col" : "flex flex-col"}
-          `}
-        >
-          <CardContent className="p-0">
-            {isLoading ? (
-              <EmailListSkeleton />
-            ) : filteredEmails.length === 0 ? (
-              <div className="p-10 text-center text-gray-500">
-                <Mail className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                <p className="text-sm">
-                  {searchQuery ? "No emails match your search" : "No emails yet"}
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-white/5">
-                {filteredEmails.map((email) => (
-                  <EmailItem
-                    key={email.uid}
-                    email={email}
-                    folder={folder}
-                    isSelected={selectedEmail?.uid === email.uid}
-                    onClick={() => handleSelectEmail(email)}
-                  />
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Email viewer — hidden on mobile when on list */}
-        <Card
-          className={`
-            bg-[#14151f] border-white/[0.07] overflow-hidden flex-1
-            ${mobileView === "list" ? "hidden md:flex md:flex-col" : "flex flex-col"}
-          `}
-        >
-          <CardContent className="p-0 flex-1 overflow-hidden flex flex-col">
-            <EmailViewer
-              email={selectedEmail}
-              onReply={handleReply}
-              onDelete={(email) => setDeleteTarget(email)}
-              onBack={() => setMobileView("list")}
-              showBack={mobileView === "viewer"}
+          {/* Search */}
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-600 pointer-events-none" />
+            <Input
+              placeholder="Search…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 bg-zinc-900 border-zinc-800 text-white placeholder:text-zinc-600 h-8 text-sm focus-visible:ring-blue-500/30"
             />
-          </CardContent>
-        </Card>
+          </div>
+
+          {/* Filters */}
+          <div className="flex gap-1 flex-wrap">
+            {filters.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setFilter(id)}
+                className={`px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
+                  filter === id
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-800/70 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Email list */}
+        <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/50">
+          {loadingEmails ? (
+            <EmailListSkeleton />
+          ) : filteredEmails.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-zinc-600">
+              <Mail className="w-10 h-10 opacity-30" />
+              <p className="text-sm text-zinc-500">
+                {searchQuery ? "No emails match your search" : "No emails here"}
+              </p>
+            </div>
+          ) : (
+            filteredEmails.map((email) => (
+              <EmailListItem
+                key={email.uid}
+                email={email}
+                isSelected={selectedEmail?.uid === email.uid}
+                onClick={() => handleSelectEmail(email)}
+              />
+            ))
+          )}
+        </div>
       </div>
 
-      {/* ── Compose Dialog ──────────────────────────────────────── */}
+      {/* ── Right Detail ───────────────────────────────────────────────────── */}
+      <div
+        className={`
+          flex-1 min-w-0 flex flex-col bg-zinc-950
+          ${mobileView === "list" ? "hidden md:flex" : "flex"}
+        `}
+      >
+        <EmailViewer
+          email={selectedEmail}
+          agents={agents}
+          onReply={handleReply}
+          onForward={handleForward}
+          onDelete={(email) => setDeleteTarget(email)}
+          onFlag={handleFlag}
+          onApprove={handleApprove}
+          onReject={handleReject}
+          onRegenerate={handleRegenerate}
+          onAssign={handleAssign}
+          onBack={() => setMobileView("list")}
+          showBack={mobileView === "viewer"}
+        />
+      </div>
+
+      {/* ── Compose Dialog ─────────────────────────────────────────────────── */}
       <ComposeDialog
         open={showCompose}
         onOpenChange={setShowCompose}
         defaultTo={replyDefaults.to}
         defaultSubject={replyDefaults.subject}
         onSent={() => {
-          if (folder === "sent") mutate();
+          if (folder === "sent") loadEmails();
         }}
       />
 
-      {/* ── Delete Confirmation ─────────────────────────────────── */}
+      {/* ── Delete Confirm ─────────────────────────────────────────────────── */}
       <AlertDialog
         open={!!deleteTarget}
-        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
       >
-        <AlertDialogContent className="bg-[#14151f] border-white/10 text-white">
+        <AlertDialogContent className="bg-zinc-900 border-zinc-800 text-white">
           <AlertDialogHeader>
             <AlertDialogTitle>Delete email?</AlertDialogTitle>
-            <AlertDialogDescription className="text-gray-400">
+            <AlertDialogDescription className="text-zinc-400">
               &ldquo;{deleteTarget?.subject || "(no subject)"}&rdquo; will be permanently deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel className="bg-transparent border-white/10 text-gray-300 hover:bg-white/10 hover:text-white">
+            <AlertDialogCancel className="bg-transparent border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white">
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
@@ -618,11 +1270,7 @@ export default function EmailPage() {
               disabled={deleting}
               className="bg-red-600 hover:bg-red-500 text-white gap-2"
             >
-              {deleting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Trash2 className="w-4 h-4" />
-              )}
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
               Delete
             </AlertDialogAction>
           </AlertDialogFooter>

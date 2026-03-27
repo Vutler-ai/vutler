@@ -61,7 +61,8 @@ mount('/tools',           'tools',       '../../app/custom/api/tools');
 mount('/templates',       'templates',   '../../api/templates');
 
 // ── Sandbox ─────────────────────────────────────────────────────────────────
-mount('/sandbox',         'sandbox',     '../../api/sandbox');
+mount('/sandbox',           'sandbox',       '../../api/sandbox');
+mount('/sandbox/workspace', 'cloud_sandbox', '../../api/sandbox-workspace');
 
 // ── Deployments ─────────────────────────────────────────────────────────────
 mount('/deployments',     'deployments', '../../api/deployments');
@@ -89,5 +90,10 @@ mount('/local-agent',     'agents',      '../../api/local-agent');
 
 // ── VPS ─────────────────────────────────────────────────────────────────────
 mount('/vps',             'agents',      '../../api/vps');
+
+// ── Email ────────────────────────────────────────────────────────────────────
+mount('/email/routes',    'agents',      '../../api/email-routes');
+mount('/email/domains',   'agents',      '../../api/email-domains');
+mount('/email/groups',    'agents',      '../../api/email-groups');
 
 module.exports = router;
