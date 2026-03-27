@@ -383,8 +383,8 @@ export default function PricingPage() {
             },
             {
               icon: '🔀',
-              title: '200+ AI models',
-              desc: 'OpenRouter integration gives you access to Claude, GPT-4, Gemini, and 200+ other models.',
+              title: '300+ AI models',
+              desc: 'OpenRouter integration gives you access to Claude, GPT-4, Gemini, and 300+ other models.',
             },
             {
               icon: '📦',
@@ -394,7 +394,7 @@ export default function PricingPage() {
             {
               icon: '🔑',
               title: 'Bring Your Own Key (BYOK)',
-              desc: 'Connect your own OpenRouter, Anthropic, or OpenAI key. No token limits on any plan. Don\'t have a key? Purchase LLM Credits separately.',
+              desc: 'Connect your own OpenRouter, Anthropic, or OpenAI key. No token limits on any plan — you pay your provider directly. Usage tracking is for monitoring only.',
             },
             {
               icon: '🔒',
