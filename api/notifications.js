@@ -60,7 +60,7 @@ router.get("/", async (req, res) => {
     const workspaceId = getWorkspaceId(req);
 
     const result = await pool.query(
-      `SELECT id, user_id, workspace_id, type, title, message, read, created_at, read_at
+      `SELECT id, user_id, workspace_id, type, title, message, read, created_at
          FROM tenant_vutler.notifications
         WHERE (user_id = $1 OR user_id IS NULL)
           AND (workspace_id = $2 OR workspace_id IS NULL)
@@ -95,7 +95,7 @@ router.put("/:id/read", async (req, res) => {
 
     await pool.query(
       `UPDATE tenant_vutler.notifications
-          SET read = TRUE, read_at = NOW()
+          SET read = TRUE
         WHERE id = $1
           AND (user_id = $2 OR user_id IS NULL)`,
       [req.params.id, userId]
@@ -124,7 +124,7 @@ router.put("/read-all", async (req, res) => {
 
     await pool.query(
       `UPDATE tenant_vutler.notifications
-          SET read = TRUE, read_at = NOW()
+          SET read = TRUE
         WHERE (user_id = $1 OR user_id IS NULL)
           AND (workspace_id = $2 OR workspace_id IS NULL)
           AND read = FALSE`,
