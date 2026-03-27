@@ -235,6 +235,13 @@ export default function IntegrationsPage() {
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Device Auth state (for ChatGPT)
+  const [deviceAuth, setDeviceAuth] = useState<{
+    user_code: string;
+    verification_url: string;
+    polling: boolean;
+  } | null>(null);
+
   const fetchConnected = useCallback(async () => {
     try {
       setLoading(true);
@@ -294,6 +301,27 @@ export default function IntegrationsPage() {
       setError(null);
       setSuccessMsg(null);
 
+      // ChatGPT uses Device Auth flow (no redirect)
+      if (oauthProvider === "chatgpt") {
+        const res = await authFetch(`/api/v1/integrations/chatgpt/connect`, { method: "POST" });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to start ChatGPT device auth");
+        }
+        const data = await res.json();
+        if (data.mode === "device_auth" && data.user_code) {
+          setDeviceAuth({
+            user_code: data.user_code,
+            verification_url: data.verification_url || "https://auth.openai.com/codex/device",
+            polling: true,
+          });
+          // Start polling for completion
+          pollDeviceAuth();
+        }
+        return;
+      }
+
+      // Standard OAuth redirect flow for other providers
       const res = await authFetch(`/api/v1/integrations/${oauthProvider}/connect`);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -301,7 +329,6 @@ export default function IntegrationsPage() {
       }
       const data = await res.json();
       if (data.authUrl) {
-        // Redirect to provider's OAuth page
         window.location.href = data.authUrl;
       } else {
         throw new Error("No auth URL returned from server");
@@ -310,6 +337,37 @@ export default function IntegrationsPage() {
       setError(err instanceof Error ? err.message : `Failed to connect ${providerConfig.name}`);
       setConnecting(null);
     }
+  };
+
+  const pollDeviceAuth = async () => {
+    const maxAttempts = 180; // 15 min at 5s intervals
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      try {
+        const res = await authFetch(`/api/v1/integrations/chatgpt/poll`, { method: "POST" });
+        const data = await res.json();
+        if (data.status === "connected") {
+          setDeviceAuth(null);
+          setConnecting(null);
+          setSuccessMsg("ChatGPT connected successfully!");
+          await fetchConnected();
+          return;
+        }
+        if (!data.success && res.status === 410) {
+          // Expired
+          setDeviceAuth(null);
+          setConnecting(null);
+          setError("Device auth session expired. Please try again.");
+          return;
+        }
+        // status === "pending" → keep polling
+      } catch {
+        // Network error, keep trying
+      }
+    }
+    setDeviceAuth(null);
+    setConnecting(null);
+    setError("Device auth timed out. Please try again.");
   };
 
   const handleDisconnect = async (providerConfig: Provider) => {
@@ -368,6 +426,7 @@ export default function IntegrationsPage() {
     communication: "bg-green-500/10 text-green-400",
     knowledge: "bg-amber-500/10 text-amber-400",
     "project-management": "bg-rose-500/10 text-rose-400",
+    ai: "bg-emerald-500/10 text-emerald-400",
   };
 
   const providerIconBg: Record<string, string> = {
@@ -381,6 +440,7 @@ export default function IntegrationsPage() {
     notion: "bg-white",
     linear: "bg-[#5E6AD2]",
     jira: "bg-[#0052CC]",
+    chatgpt: "bg-[#10a37f]",
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -394,6 +454,46 @@ export default function IntegrationsPage() {
           Connect external tools and services to your workspace. Agents can then use these connections to take actions on your behalf.
         </p>
       </div>
+
+      {/* Device Auth Modal (ChatGPT) */}
+      {deviceAuth && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl p-8 max-w-md w-full mx-4 text-center space-y-6">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-[#10a37f] to-[#065f46] flex items-center justify-center">
+              <ChatGPTIcon />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white mb-2">Connect ChatGPT</h2>
+              <p className="text-[#9ca3af] text-sm">
+                Open the link below and enter this code to connect your ChatGPT account.
+              </p>
+            </div>
+            <div className="bg-[#1f2028] border border-[rgba(255,255,255,0.1)] rounded-xl p-4">
+              <p className="text-xs text-[#6b7280] mb-2">Your code</p>
+              <p className="text-3xl font-mono font-bold text-white tracking-widest">{deviceAuth.user_code}</p>
+            </div>
+            <a
+              href={deviceAuth.verification_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-[#10a37f] hover:bg-[#0d8a6b] text-white rounded-lg font-medium transition-colors"
+            >
+              Open {deviceAuth.verification_url.replace("https://", "")}
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+            </a>
+            <div className="flex items-center gap-3 justify-center text-[#9ca3af] text-sm">
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+              Waiting for confirmation...
+            </div>
+            <button
+              onClick={() => { setDeviceAuth(null); setConnecting(null); }}
+              className="text-[#6b7280] hover:text-white text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Alerts */}
       {error && (

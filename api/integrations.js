@@ -27,12 +27,14 @@ const APP_BASE = process.env.APP_BASE_URL || process.env.GOOGLE_REDIRECT_URI?.re
 const GOOGLE_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/google/callback`;
 const GITHUB_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/github/callback`;
 
-// ChatGPT / Codex OAuth (PKCE public client — no client_secret needed)
+// ChatGPT / Codex OAuth — Device Auth Flow (no redirect URI needed)
 const CHATGPT_CLIENT_ID = process.env.CHATGPT_CLIENT_ID || '';
-const CHATGPT_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/chatgpt/callback`;
-const CHATGPT_OAUTH_AUTHORIZE = process.env.CHATGPT_OAUTH_AUTHORIZE || 'https://auth.openai.com/authorize';
-const CHATGPT_OAUTH_TOKEN_URL = process.env.CHATGPT_OAUTH_TOKEN_URL || 'https://auth.openai.com/oauth/token';
-const CHATGPT_INTEGRATION_SCOPES = 'openid profile email offline_access';
+const CHATGPT_API_BASE = 'https://auth.openai.com/api/accounts';
+const CHATGPT_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
+const CHATGPT_DEVICE_CALLBACK = 'https://auth.openai.com/deviceauth/callback';
+
+// In-memory store for pending device auth sessions: workspaceId → { device_auth_id, user_code, interval, expires_at }
+const deviceAuthSessions = new Map();
 
 // OAuth scopes for workspace integrations (broader than login scopes)
 const GOOGLE_INTEGRATION_SCOPES = [
@@ -763,139 +765,215 @@ router.get('/github/callback', async (req, res) => {
   }
 });
 
-// ── ChatGPT OAuth (PKCE public client) ─────────────────────────────────────
+// ── ChatGPT Device Auth Flow ────────────────────────────────────────────────
 
-// GET /api/v1/integrations/chatgpt/connect — initiate ChatGPT OAuth with PKCE
-router.get('/chatgpt/connect', (req, res) => {
+// Helper: JSON POST to auth.openai.com
+function httpsPostJson(urlStr, body) {
+  const u = new URL(urlStr);
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = https.request({
+      hostname: u.hostname,
+      path: u.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'User-Agent': 'Vutler/1.0',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, data: JSON.parse(buf) }); }
+        catch (_) { resolve({ status: res.statusCode, data: buf }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+// POST /api/v1/integrations/chatgpt/connect — start Device Auth flow
+router.post('/chatgpt/connect', async (req, res) => {
   if (!CHATGPT_CLIENT_ID) {
     return res.status(500).json({ success: false, error: 'ChatGPT OAuth not configured (CHATGPT_CLIENT_ID missing)' });
   }
 
-  const state = crypto.randomBytes(32).toString('hex');
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
-  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
-
-  oauthStateStore.set(state, {
-    workspaceId,
-    provider: 'chatgpt',
-    codeVerifier,
-    createdAt: Date.now(),
-  });
-
-  const params = new URLSearchParams({
-    client_id: CHATGPT_CLIENT_ID,
-    redirect_uri: CHATGPT_INTEGRATION_REDIRECT,
-    response_type: 'code',
-    scope: CHATGPT_INTEGRATION_SCOPES,
-    state,
-    code_challenge: codeChallenge,
-    code_challenge_method: 'S256',
-  });
-
-  const authUrl = `${CHATGPT_OAUTH_AUTHORIZE}?${params}`;
-  res.json({ success: true, authUrl, provider: 'chatgpt' });
-});
-
-// GET /api/v1/integrations/chatgpt/callback — exchange code with PKCE verifier
-router.get('/chatgpt/callback', async (req, res) => {
-  const { code, state, error } = req.query;
-
-  if (error) {
-    console.error('[INTEGRATIONS] ChatGPT OAuth error:', error);
-    return res.redirect('/integrations?error=oauth_cancelled&provider=chatgpt');
-  }
-
-  if (!code || !state || !oauthStateStore.has(state)) {
-    return res.redirect('/integrations?error=oauth_invalid&provider=chatgpt');
-  }
-
-  const stateData = oauthStateStore.get(state);
-  oauthStateStore.delete(state);
-  const { workspaceId, codeVerifier } = stateData;
+  const workspaceId = getWorkspaceId(req);
 
   try {
+    // Step 1: Request a device code from OpenAI
+    const resp = await httpsPostJson(`${CHATGPT_API_BASE}/deviceauth/usercode`, {
+      client_id: CHATGPT_CLIENT_ID,
+    });
+
+    if (resp.status !== 200 || !resp.data?.user_code) {
+      console.error('[INTEGRATIONS] ChatGPT device code request failed:', resp.status, resp.data);
+      return res.status(502).json({ success: false, error: 'Failed to get device code from OpenAI' });
+    }
+
+    const { device_auth_id, user_code, interval } = resp.data;
+
+    // Store the session so we can poll for it
+    deviceAuthSessions.set(workspaceId, {
+      device_auth_id,
+      user_code,
+      interval: interval || 5,
+      created_at: Date.now(),
+      expires_at: Date.now() + 15 * 60 * 1000, // 15 min expiry
+    });
+
+    res.json({
+      success: true,
+      provider: 'chatgpt',
+      mode: 'device_auth',
+      user_code,
+      verification_url: 'https://auth.openai.com/codex/device',
+      expires_in: 900,
+      poll_interval: interval || 5,
+    });
+  } catch (err) {
+    console.error('[INTEGRATIONS] ChatGPT device auth error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/chatgpt/connect — compatibility redirect (shows instructions)
+router.get('/chatgpt/connect', (req, res) => {
+  res.redirect('/integrations?action=device_auth&provider=chatgpt');
+});
+
+// POST /api/v1/integrations/chatgpt/poll — poll for device auth completion
+router.post('/chatgpt/poll', async (req, res) => {
+  const workspaceId = getWorkspaceId(req);
+  const session = deviceAuthSessions.get(workspaceId);
+
+  if (!session) {
+    return res.status(404).json({ success: false, error: 'No pending device auth session. Start with POST /chatgpt/connect.' });
+  }
+
+  if (Date.now() > session.expires_at) {
+    deviceAuthSessions.delete(workspaceId);
+    return res.status(410).json({ success: false, error: 'Device auth session expired. Please start again.' });
+  }
+
+  try {
+    // Step 2: Poll for token
+    const pollResp = await httpsPostJson(`${CHATGPT_API_BASE}/deviceauth/token`, {
+      device_auth_id: session.device_auth_id,
+      user_code: session.user_code,
+    });
+
+    // 403/404 = user hasn't confirmed yet
+    if (pollResp.status === 403 || pollResp.status === 404) {
+      return res.json({ success: true, status: 'pending', message: 'Waiting for user to confirm...' });
+    }
+
+    if (pollResp.status !== 200 || !pollResp.data) {
+      return res.json({ success: true, status: 'pending', message: 'Waiting...' });
+    }
+
+    // Step 3: We got an auth code — exchange for tokens
+    const { code, code_verifier } = pollResp.data;
+
+    if (!code) {
+      // Maybe we got tokens directly
+      if (pollResp.data.access_token) {
+        // Direct token response
+        await storeChatGPTTokens(workspaceId, pollResp.data, req.user?.email);
+        deviceAuthSessions.delete(workspaceId);
+        return res.json({ success: true, status: 'connected', message: 'ChatGPT connected!' });
+      }
+      return res.json({ success: true, status: 'pending', message: 'Waiting...' });
+    }
+
+    // Exchange code for tokens
     const tokenUrl = new URL(CHATGPT_OAUTH_TOKEN_URL);
     const postBody = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: CHATGPT_CLIENT_ID,
       code,
-      redirect_uri: CHATGPT_INTEGRATION_REDIRECT,
-      code_verifier: codeVerifier,
+      code_verifier: code_verifier || '',
+      redirect_uri: CHATGPT_DEVICE_CALLBACK,
     }).toString();
 
     const tokenResp = await httpsPost({
       hostname: tokenUrl.hostname,
       path: tokenUrl.pathname,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
     }, postBody);
 
     if (!tokenResp.access_token) {
       console.error('[INTEGRATIONS] ChatGPT token exchange failed:', tokenResp);
-      return res.redirect('/integrations?error=oauth_token_failed&provider=chatgpt');
+      deviceAuthSessions.delete(workspaceId);
+      return res.status(502).json({ success: false, error: 'Token exchange failed' });
     }
 
-    const expiresAt = tokenResp.expires_in
-      ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
-      : null;
-
-    await ensureReady();
-    await pool.query(
-      `INSERT INTO ${SCHEMA}.workspace_integrations
-        (workspace_id, provider, source, connected, status, access_token, refresh_token, token_expires_at,
-         scopes, metadata, connected_at, disconnected_at, connected_by, updated_at)
-       VALUES ($1, 'chatgpt', 'oauth', TRUE, 'connected', $2, $3, $4,
-         $5::jsonb, $6::jsonb, NOW(), NULL, $7, NOW())
-       ON CONFLICT (workspace_id, provider) DO UPDATE SET
-         source = 'oauth',
-         connected = TRUE,
-         status = 'connected',
-         access_token = EXCLUDED.access_token,
-         refresh_token = COALESCE(EXCLUDED.refresh_token, ${SCHEMA}.workspace_integrations.refresh_token),
-         token_expires_at = EXCLUDED.token_expires_at,
-         scopes = EXCLUDED.scopes,
-         metadata = EXCLUDED.metadata,
-         connected_at = NOW(),
-         disconnected_at = NULL,
-         connected_by = EXCLUDED.connected_by,
-         updated_at = NOW()`,
-      [
-        workspaceId,
-        tokenResp.access_token,
-        tokenResp.refresh_token || null,
-        expiresAt,
-        JSON.stringify(CHATGPT_INTEGRATION_SCOPES.split(' ')),
-        JSON.stringify({ id_token: tokenResp.id_token || null }),
-        req.user?.email || 'oauth',
-      ]
-    );
-
-    // Auto-provision a "codex" LLM provider so agents can select it immediately
-    try {
-      await pool.query(
-        `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
-         VALUES ($1, 'codex', 'oauth:chatgpt', 'https://api.openai.com/v1', TRUE, FALSE, '{"source":"chatgpt_oauth"}'::jsonb)
-         ON CONFLICT DO NOTHING`,
-        [workspaceId]
-      );
-    } catch (autoErr) {
-      console.warn('[INTEGRATIONS] Failed to auto-provision codex provider:', autoErr.message);
-    }
-
-    await addLog({ workspaceId, provider: 'chatgpt', action: 'oauth_connect' });
-    console.log(`[INTEGRATIONS] ChatGPT connected for workspace ${workspaceId}`);
-    res.redirect('/integrations?connected=chatgpt');
+    await storeChatGPTTokens(workspaceId, tokenResp, req.user?.email);
+    deviceAuthSessions.delete(workspaceId);
+    res.json({ success: true, status: 'connected', message: 'ChatGPT connected!' });
   } catch (err) {
-    console.error('[INTEGRATIONS] ChatGPT callback error:', err.message);
-    res.redirect('/integrations?error=oauth_server_error&provider=chatgpt');
+    console.error('[INTEGRATIONS] ChatGPT poll error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// GET /api/v1/integrations/chatgpt/token-status — check if ChatGPT is connected (no token exposed)
+// Shared: store tokens + auto-provision codex provider
+async function storeChatGPTTokens(workspaceId, tokenResp, userEmail) {
+  const expiresAt = tokenResp.expires_in
+    ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
+    : null;
+
+  await ensureReady();
+  await pool.query(
+    `INSERT INTO ${SCHEMA}.workspace_integrations
+      (workspace_id, provider, source, connected, status, access_token, refresh_token, token_expires_at,
+       scopes, metadata, connected_at, disconnected_at, connected_by, updated_at)
+     VALUES ($1, 'chatgpt', 'oauth', TRUE, 'connected', $2, $3, $4,
+       $5::jsonb, $6::jsonb, NOW(), NULL, $7, NOW())
+     ON CONFLICT (workspace_id, provider) DO UPDATE SET
+       source = 'oauth',
+       connected = TRUE,
+       status = 'connected',
+       access_token = EXCLUDED.access_token,
+       refresh_token = COALESCE(EXCLUDED.refresh_token, ${SCHEMA}.workspace_integrations.refresh_token),
+       token_expires_at = EXCLUDED.token_expires_at,
+       scopes = EXCLUDED.scopes,
+       metadata = EXCLUDED.metadata,
+       connected_at = NOW(),
+       disconnected_at = NULL,
+       connected_by = EXCLUDED.connected_by,
+       updated_at = NOW()`,
+    [
+      workspaceId,
+      tokenResp.access_token,
+      tokenResp.refresh_token || null,
+      expiresAt,
+      JSON.stringify(['openid', 'profile', 'email', 'offline_access']),
+      JSON.stringify({ id_token: tokenResp.id_token || null }),
+      userEmail || 'oauth',
+    ]
+  );
+
+  // Auto-provision a "codex" LLM provider
+  try {
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
+       VALUES ($1, 'codex', 'oauth:chatgpt', 'https://api.openai.com/v1', TRUE, FALSE, '{"source":"chatgpt_oauth"}'::jsonb)
+       ON CONFLICT DO NOTHING`,
+      [workspaceId]
+    );
+  } catch (_) {}
+
+  await addLog({ workspaceId, provider: 'chatgpt', action: 'device_auth_connect' });
+  console.log(`[INTEGRATIONS] ChatGPT connected via device auth for workspace ${workspaceId}`);
+}
+
+// GET /api/v1/integrations/chatgpt/token-status — check if ChatGPT is connected
 router.get('/chatgpt/token-status', async (req, res) => {
   try {
     await ensureReady();
@@ -932,10 +1010,9 @@ async function refreshChatGPTToken(workspaceId) {
   const row = result.rows?.[0];
   if (!row || !row.refresh_token) return null;
 
-  // Only refresh if token is expired or expires within 5 minutes
   const expiresAt = row.token_expires_at ? new Date(row.token_expires_at) : null;
   if (expiresAt && expiresAt.getTime() > Date.now() + 5 * 60 * 1000) {
-    return null; // Still valid, no refresh needed
+    return null; // Still valid
   }
 
   const tokenUrl = new URL(CHATGPT_OAUTH_TOKEN_URL);
@@ -949,10 +1026,7 @@ async function refreshChatGPTToken(workspaceId) {
     hostname: tokenUrl.hostname,
     path: tokenUrl.pathname,
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
   }, postBody);
 
   if (!tokenResp.access_token) {
@@ -977,11 +1051,14 @@ async function refreshChatGPTToken(workspaceId) {
   return tokenResp.access_token;
 }
 
-// Clean up expired state entries every 10 minutes
+// Clean up expired state entries and device auth sessions every 10 minutes
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [key, val] of oauthStateStore.entries()) {
     if (val.createdAt < cutoff) oauthStateStore.delete(key);
+  }
+  for (const [key, val] of deviceAuthSessions.entries()) {
+    if (Date.now() > val.expires_at) deviceAuthSessions.delete(key);
   }
 }, 10 * 60 * 1000);
 
@@ -1304,7 +1381,7 @@ router.post('/n8n/workflows/:id/trigger', async (req, res) => {
 // POST /api/v1/integrations/:provider/callback (fallback for other providers)
 router.post('/:provider/callback', async (req, res) => {
   const { provider } = req.params;
-  // google, github, and chatgpt have dedicated GET callback routes above
+  // google and github have dedicated GET callback routes above; chatgpt uses device auth (no callback)
   if (['google', 'github', 'chatgpt'].includes(provider)) {
     return res.status(405).json({ success: false, error: `Use GET /api/v1/integrations/${provider}/callback` });
   }
