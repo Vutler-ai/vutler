@@ -134,6 +134,9 @@ router.post("/providers", async (req, res) => {
       return res.status(400).json({ success: false, error: "unsupported provider" });
     }
 
+    // SECURITY TODO: api_key is stored as plain text. Add column-level encryption
+    // (e.g. pgcrypto's pgp_sym_encrypt) or an envelope encryption scheme before
+    // this service handles production multi-tenant workloads.
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
        VALUES ($1, $2, $3, $4, $5, $6, $7)

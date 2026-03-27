@@ -3,6 +3,18 @@
 // Load .env before anything else
 require('dotenv').config();
 
+// ── Security boot checks ───────────────────────────────────────────────────
+const PLACEHOLDER_SECRETS = new Set(['secret', 'change-me', 'changeme', 'MISSING-SET-JWT_SECRET-ENV']);
+if (process.env.NODE_ENV === 'production') {
+  if (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.has(process.env.JWT_SECRET)) {
+    console.error('[FATAL] JWT_SECRET is not set or is a placeholder. Set a strong random secret before running in production.');
+    process.exit(1);
+  }
+} else if (!process.env.JWT_SECRET || PLACEHOLDER_SECRETS.has(process.env.JWT_SECRET)) {
+  console.warn('[WARN] JWT_SECRET is not set or is a placeholder. This is insecure — set JWT_SECRET in your .env file.');
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 /**
  * Vutler API Server — Monorepo Entry Point
  *

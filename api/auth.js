@@ -8,6 +8,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const https = require('https');
 const router = express.Router();
 const coordinatorPrompt = require('../services/coordinatorPrompt');
@@ -24,15 +25,47 @@ const TOKEN_TTL_HOURS = 24;
 
 // --- Helpers ---
 
-function hashPassword(password, salt) {
-  if (!salt) salt = crypto.randomBytes(32).toString('hex');
-  const hash = crypto.createHash('sha256').update(salt + password).digest('hex');
-  return { hash, salt };
+const BCRYPT_COST = 12;
+
+/**
+ * Hash a password with bcrypt (cost factor 12).
+ * Returns { hash, salt: null } — bcrypt embeds the salt in the hash.
+ */
+async function hashPassword(password) {
+  const hash = await bcrypt.hash(password, BCRYPT_COST);
+  return { hash, salt: null };
 }
 
-function verifyPassword(password, storedHash, salt) {
-  const { hash } = hashPassword(password, salt);
-  if (hash.length !== storedHash.length) return false; try { return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(storedHash, "hex")); } catch(e) { return hash === storedHash; }
+/**
+ * Verify a password against a stored hash.
+ * Supports both bcrypt hashes (new) and SHA-256 hashes (legacy migration).
+ *
+ * @param {string} password  — plaintext password
+ * @param {string} storedHash
+ * @param {string|null} salt — present only for legacy salted-SHA-256 hashes
+ * @returns {Promise<boolean>}
+ */
+async function verifyPassword(password, storedHash, salt) {
+  // Bcrypt hashes always start with '$2'
+  if (storedHash.startsWith('$2')) {
+    return bcrypt.compare(password, storedHash);
+  }
+  // Legacy: salted SHA-256 (64 hex chars)
+  if (salt) {
+    const legacyHash = crypto.createHash('sha256').update(salt + password).digest('hex');
+    try {
+      return crypto.timingSafeEqual(Buffer.from(legacyHash, 'hex'), Buffer.from(storedHash, 'hex'));
+    } catch (_) {
+      return legacyHash === storedHash;
+    }
+  }
+  // Legacy: unsalted SHA-256
+  const legacyHash = crypto.createHash('sha256').update(password).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(legacyHash, 'hex'), Buffer.from(storedHash, 'hex'));
+  } catch (_) {
+    return legacyHash === storedHash;
+  }
 }
 
 function generateJWT(user) {
@@ -420,23 +453,17 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    let valid = false;
-    if (user.salt) {
-      // New format: salted SHA-256
-      valid = verifyPassword(password, user.password_hash, user.salt);
-    } else {
-      // Legacy: unsalted SHA-256 (migrate on success)
-      const legacyHash = crypto.createHash('sha256').update(password).digest('hex');
-      valid = (legacyHash === user.password_hash);
-      if (valid) {
-        // Migrate to salted hash
-        const { hash, salt } = hashPassword(password);
-        await pool.query(
-          `UPDATE ${SCHEMA}.users_auth SET password_hash = $1, salt = $2 WHERE id = $3`,
-          [hash, salt, user.id]
-        );
-        console.log(`[AUTH] Migrated ${email} to salted hash`);
-      }
+    // Verify password — supports bcrypt (new) and SHA-256 (legacy migration)
+    const valid = await verifyPassword(password, user.password_hash, user.salt || null);
+
+    if (valid && !user.password_hash.startsWith('$2')) {
+      // Migrate legacy SHA-256 hash to bcrypt on successful login
+      const { hash } = await hashPassword(password);
+      await pool.query(
+        `UPDATE ${SCHEMA}.users_auth SET password_hash = $1, salt = NULL WHERE id = $2`,
+        [hash, user.id]
+      );
+      console.log(`[AUTH] Migrated ${email} from SHA-256 to bcrypt`);
     }
 
     if (!valid) {
@@ -486,7 +513,7 @@ async function registerHandler(req, res) {
     const existing = await pool.query(`SELECT id FROM ${SCHEMA}.users_auth WHERE email = $1`, [cleanEmail]);
     if (existing.rows.length) return res.status(409).json({ success: false, error: 'User already exists' });
 
-    const { hash, salt } = hashPassword(password);
+    const { hash, salt } = await hashPassword(password);
     const client = await pool.connect();
     let user;
     try {
@@ -503,9 +530,9 @@ async function registerHandler(req, res) {
 
       const userRes = await client.query(
         `INSERT INTO ${SCHEMA}.users_auth (email, password_hash, salt, name, role, workspace_id, created_at)
-         VALUES ($1, $2, $3, $4, 'user', $5, NOW())
+         VALUES ($1, $2, NULL, $3, 'user', $4, NOW())
          RETURNING id, email, name, role, workspace_id`,
-        [cleanEmail, hash, salt, name || cleanEmail.split('@')[0], workspaceId]
+        [cleanEmail, hash, name || cleanEmail.split('@')[0], workspaceId]
       );
       user = userRes.rows[0];
 
@@ -599,18 +626,16 @@ router.put('/me/password', async (req, res) => {
     }
 
     const user = result.rows[0];
-    const valid = user.salt
-      ? verifyPassword(currentPassword, user.password_hash, user.salt)
-      : crypto.createHash('sha256').update(currentPassword).digest('hex') === user.password_hash;
+    const valid = await verifyPassword(currentPassword, user.password_hash, user.salt || null);
 
     if (!valid) {
       return res.status(401).json({ success: false, error: 'Current password is incorrect' });
     }
 
-    const { hash, salt } = hashPassword(newPassword);
+    const { hash } = await hashPassword(newPassword);
     await pool.query(
-      `UPDATE ${SCHEMA}.users_auth SET password_hash = $1, salt = $2 WHERE id = $3`,
-      [hash, salt, user.id]
+      `UPDATE ${SCHEMA}.users_auth SET password_hash = $1, salt = NULL WHERE id = $2`,
+      [hash, user.id]
     );
 
     console.log(`[AUTH] Password changed for user ${user.id}`);

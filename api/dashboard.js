@@ -11,9 +11,9 @@ router.get('/', async (req, res) => {
   try {
     const pg = await getPg();
     const [agentsRes, tokensRes, messagesRes] = await Promise.all([
-      pg.query('SELECT id, name, username, email, status, type, role, avatar, mbti, model FROM agents ORDER BY name'),
-      pg.query('SELECT COALESCE(SUM(tokens), 0)::bigint as total FROM token_usage').catch(() => ({ rows: [{ total: 0 }] })),
-      pg.query("SELECT COUNT(*)::int as count FROM chat_messages WHERE created_at >= CURRENT_DATE").catch(() => ({ rows: [{ count: 0 }] })),
+      pg.query('SELECT id, name, username, email, status, type, role, avatar, mbti, model FROM tenant_vutler.agents ORDER BY name'),
+      pg.query('SELECT COALESCE(SUM(tokens), 0)::bigint as total FROM tenant_vutler.token_usage').catch(() => ({ rows: [{ total: 0 }] })),
+      pg.query("SELECT COUNT(*)::int as count FROM tenant_vutler.chat_messages WHERE created_at >= CURRENT_DATE").catch(() => ({ rows: [{ count: 0 }] })),
     ]);
 
     const agents = agentsRes.rows.map(a => ({

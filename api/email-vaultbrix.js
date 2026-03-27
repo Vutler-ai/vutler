@@ -10,7 +10,7 @@ const SCHEMA = 'tenant_vutler';
 
 // Postal configuration
 const POSTAL_API_URL = process.env.POSTAL_API_URL || 'http://localhost:8082';
-const POSTAL_API_KEY = process.env.POSTAL_API_KEY || 'aa91f11a58ea9771d5036ed6429073f709a716bf-v2';
+const POSTAL_API_KEY = process.env.POSTAL_API_KEY;
 const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.vutler.ai';
 
 /**
