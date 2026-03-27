@@ -291,7 +291,7 @@ router.get('/drive/folders/tree', authenticateAgent, requireCorePermission('driv
  */
 router.post('/drive/folders', authenticateAgent, requireCorePermission('drive.createFolder'), async (req, res) => {
   try {
-    const parentPath = req.body?.path || '/';
+    const parentPath = req.body?.parentPath || req.body?.path || '/';
     const folderName = String(req.body?.name || '').trim();
     const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
     const uploadedBy = req.userId || req.headers['x-user-id'];
@@ -314,9 +314,9 @@ router.post('/drive/folders', authenticateAgent, requireCorePermission('drive.cr
     
     // Insert folder metadata into database
     await pool.query(
-      `INSERT INTO tenant_vutler.drive_files 
-       (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted)
-       VALUES ($1, $2, $3, $4, $5, 'inode/directory', 0, $6, NULL, false)`,
+      `INSERT INTO tenant_vutler.drive_files
+       (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted, type)
+       VALUES ($1, $2, $3, $4, $5, 'inode/directory', 0, $6, NULL, false, 'folder')`,
       [fileId, workspaceId, folderName, targetVirtualPath, normalized, uploadedBy]
     );
     
@@ -375,10 +375,10 @@ router.post('/drive/upload', authenticateAgent, requireCorePermission('drive.upl
     // Save metadata to database
     const itemPath = normalized === '/' ? `/${cleanName}` : `${normalized}/${cleanName}`;
     await pool.query(
-      `INSERT INTO tenant_vutler.drive_files 
-       (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false)`,
-      [fileId, workspaceId, cleanName, itemPath, normalized, req.file.mimetype || 'application/octet-stream', 
+      `INSERT INTO tenant_vutler.drive_files
+       (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted, type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, 'file')`,
+      [fileId, workspaceId, cleanName, itemPath, normalized, req.file.mimetype || 'application/octet-stream',
        req.file.size, uploadedBy, s3Key]
     );
     
