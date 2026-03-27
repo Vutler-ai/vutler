@@ -121,6 +121,9 @@ const { globalLimiter, apiLimiter, llmLimiter, authLimiter } = require('./lib/ra
 
 app.use(globalLimiter);
 
+// Snipara webhook receiver (before auth — uses HMAC signature verification)
+app.use('/api/v1/webhooks/snipara', require('./api/sniparaWebhook'));
+
 // Auth middleware (API key + admin session)
 app.use(require('./api/middleware/auth'));
 
