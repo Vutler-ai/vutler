@@ -567,6 +567,7 @@ try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
 try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}
 try { app.use('/api/v1/email', require('./api/email-vaultbrix')); } catch (_) {}
+try { app.use('/api/v1', require('./api/memory')); } catch (_) {}  // memory routes (no gate)
 
 // Rate limiters AFTER route mounts (won't block route matching)
 app.use('/api/v1/chat/send', llmLimiter);

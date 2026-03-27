@@ -312,6 +312,25 @@ router.put("/:id/config", async (req, res) => {
   }
 });
 
+// GET /api/v1/agents/:id/executions
+router.get("/:id/executions", async (req, res) => {
+  try {
+    const agentId = req.params.id;
+    const result = await pool.query(
+      `SELECT id, agent_id, input, output, status, model, duration_ms, created_at
+       FROM ${SCHEMA}.agent_executions
+       WHERE agent_id::text = $1 AND workspace_id = $2
+       ORDER BY created_at DESC LIMIT 50`,
+      [agentId, req.workspaceId || '00000000-0000-0000-0000-000000000001']
+    );
+    res.json({ success: true, executions: result.rows });
+  } catch (err) {
+    // Table may not exist yet
+    if (err.code === '42P01') return res.json({ success: true, executions: [] });
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/v1/agents/:id/llm-config
 router.get("/:id/llm-config", async (req, res) => {
   try {
