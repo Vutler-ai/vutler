@@ -222,10 +222,12 @@ class SwarmCoordinator {
     const recalled = await this.recallWorkspaceContext(text);
     const subtasks = await this.decomposeWithLLM(`${text}\n\nContexte workspace:\n${recalled || ''}`, channelAgents);
     const created = [];
+    const { getWorkflowModeSelector } = require('./workflowMode');
     for (const s of subtasks) {
       const agent = this.resolveAgentForSubtask(s, channelAgents);
-      const enrichedDescription = `${s.description || ''}\n\n[Workspace context]\n${String(recalled || '').slice(0, 1200)}`;
-      const res = await this.createTask({ title: s.title, description: enrichedDescription, priority: s.priority || "medium", for_agent_id: agent });
+      const workflow = getWorkflowModeSelector().score(s);
+      const enrichedDescription = `${s.description || ''}\n\n[Workflow: ${workflow.mode}]\n[Workspace context]\n${String(recalled || '').slice(0, 1200)}`;
+      const res = await this.createTask({ title: s.title, description: enrichedDescription, priority: s.priority || "medium", for_agent_id: agent, metadata: { workflow_mode: workflow.mode, workflow_score: workflow.score } });
       created.push({ ...res, subtask: s, agent });
       await this.postAgentInbox(agent, s.title, s.priority || "medium");
     }

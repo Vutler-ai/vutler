@@ -102,7 +102,13 @@ class VerificationEngine {
       return;
     }
 
-    if (verdict.overall_pass || verdict.overall_score >= this.passThreshold) {
+    // Adjust threshold based on workflow mode (FULL = stricter, LITE = more lenient)
+    const meta = typeof task.metadata === 'string' ? JSON.parse(task.metadata || '{}') : (task.metadata || {});
+    const threshold = meta.workflow_mode === 'FULL'
+      ? Math.max(this.passThreshold, 8)
+      : Math.min(this.passThreshold, 6);
+
+    if (verdict.overall_pass || verdict.overall_score >= threshold) {
       console.log(`[Verifier] Task ${task.id} PASSED (score: ${verdict.overall_score}/10)`);
       await this._accept(task, data, verdict);
     } else {

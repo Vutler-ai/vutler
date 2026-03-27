@@ -60,6 +60,14 @@ class AgentWatchdog {
     console.log(`[Watchdog] Found ${result.rows.length} stalled task(s)`);
 
     for (const task of result.rows) {
+      // FULL mode tasks get more time before being considered stalled
+      const meta = typeof task.metadata === 'string' ? JSON.parse(task.metadata || '{}') : (task.metadata || {});
+      if (meta.workflow_mode === 'FULL') {
+        const fullThreshold = this.stallThresholdMs * 3; // 30 min for FULL vs 10 min for LITE
+        const elapsed = Date.now() - new Date(task.updated_at).getTime();
+        if (elapsed < fullThreshold) continue;
+      }
+
       const nudgeCount = this._nudgeCounts.get(task.id) || 0;
 
       if (nudgeCount < this.maxNudges) {
