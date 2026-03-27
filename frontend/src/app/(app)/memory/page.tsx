@@ -40,6 +40,15 @@ function getAgentInitials(name: string): string {
     .slice(0, 2) || '?';
 }
 
+function getAvatarImageUrl(avatar: string | undefined): string | null {
+  if (!avatar) return null;
+  if (avatar.startsWith('/static/') || avatar.startsWith('/sprites/')) return avatar;
+  if (avatar.startsWith('http')) return avatar;
+  if (/\.(png|svg|jpg|jpeg|webp)$/i.test(avatar)) return avatar;
+  if (/^[a-z0-9-]+$/.test(avatar)) return `/static/avatars/${avatar}.png`;
+  return null;
+}
+
 // ─── Section Header ───────────────────────────────────────────────────────────
 
 function SectionHeader({
@@ -152,6 +161,38 @@ interface AgentMemoryCardProps {
   agent: Agent;
 }
 
+function AgentAvatarDisplay({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
+  const [imgError, setImgError] = useState(false);
+  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar) : null;
+
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={agent.name}
+        onError={() => setImgError(true)}
+        className="w-9 h-9 rounded-full object-cover shrink-0"
+      />
+    );
+  }
+
+  // Emoji avatar
+  if (agent.avatar && !imageUrl) {
+    return (
+      <div className="w-9 h-9 rounded-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-lg shrink-0">
+        {agent.avatar}
+      </div>
+    );
+  }
+
+  // Initials fallback
+  return (
+    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a855f7] to-[#3b82f6] flex items-center justify-center text-white font-semibold text-xs shrink-0">
+      {getAgentInitials(agent.name)}
+    </div>
+  );
+}
+
 function AgentMemoryCard({ agent }: AgentMemoryCardProps) {
   const router = useRouter();
   const { data: memories, isLoading } = useApi<{ count?: number; memories?: unknown[] }>(
@@ -170,9 +211,7 @@ function AgentMemoryCard({ agent }: AgentMemoryCardProps) {
       className="bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 text-left hover:border-[rgba(255,255,255,0.14)] hover:bg-[#111221] transition-all group"
     >
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a855f7] to-[#3b82f6] flex items-center justify-center text-white font-semibold text-xs flex-shrink-0">
-          {getAgentInitials(agent.name)}
-        </div>
+        <AgentAvatarDisplay agent={agent} />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-white truncate">{agent.name}</p>
           {agent.platform && (
