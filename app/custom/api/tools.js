@@ -129,18 +129,16 @@ router.get('/tools/:id', authenticateAgent, async (req, res) => {
 router.post('/tools/:id/execute', authenticateAgent, async (req, res) => {
   try {
     const { id } = req.params;
-    const { params } = req.body;
-    
+    const { params = {} } = req.body;
+
     const tool = BUILT_IN_TOOLS.find(t => t.id === id);
-    
+
     if (!tool) {
       return res.status(404).json({
         success: false,
         error: 'Tool not found'
       });
     }
-    
-    const { params = {} } = req.body;
     let result;
 
     switch (id) {
