@@ -42,6 +42,17 @@ async function ensureSandboxTable() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Add any columns that may be missing from older table versions
+    const alterations = [
+      `ALTER TABLE ${SCHEMA}.sandbox_executions ADD COLUMN IF NOT EXISTS workspace_id UUID`,
+      `ALTER TABLE ${SCHEMA}.sandbox_executions ADD COLUMN IF NOT EXISTS duration_ms INTEGER`,
+      `ALTER TABLE ${SCHEMA}.sandbox_executions ADD COLUMN IF NOT EXISTS batch_id UUID`,
+      `ALTER TABLE ${SCHEMA}.sandbox_executions ADD COLUMN IF NOT EXISTS batch_index INTEGER`,
+      `ALTER TABLE ${SCHEMA}.sandbox_executions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending'`,
+    ];
+    for (const sql of alterations) {
+      await pool.query(sql).catch(() => {});
+    }
   } catch (err) {
     console.warn('[Sandbox] ensureSandboxTable warning:', err.message);
   }

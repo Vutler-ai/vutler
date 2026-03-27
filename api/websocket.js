@@ -45,7 +45,23 @@ const connections = new Map();
  * @returns {WebSocketServer}
  */
 function setupWebSocket(server, app) {
-  const wss = new WebSocketServer({ server, path: '/ws/chat' });
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Handle upgrade manually so /ws/chat and /ws/chat-pro can coexist.
+  // Using { server, path } would cause ws to destroy non-matching upgrades,
+  // preventing the chat-pro handler from ever running.
+  server.on('upgrade', (req, socket, head) => {
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (url.pathname !== '/ws/chat') return; // let other handlers (ws-chat) take it
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    } catch (err) {
+      console.error('[WS] Upgrade error for /ws/chat:', err.message);
+      socket.destroy();
+    }
+  });
 
   console.log('✅ WebSocket server initialized on ws://…/ws/chat');
 
