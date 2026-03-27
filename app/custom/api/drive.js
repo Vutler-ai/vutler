@@ -404,54 +404,81 @@ router.post('/drive/upload', authenticateAgent, requireCorePermission('drive.upl
 });
 
 /**
+ * Resolve MIME type for inline preview based on file extension (fallback when DB value is generic)
+ */
+function resolveInlineMime(name, dbMime) {
+  if (dbMime && dbMime !== 'application/octet-stream') return dbMime;
+  const ext = path.extname(name || '').toLowerCase();
+  const map = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+    '.md': 'text/plain', '.txt': 'text/plain', '.csv': 'text/plain',
+    '.html': 'text/html', '.htm': 'text/html',
+    '.json': 'application/json',
+  };
+  return map[ext] || dbMime || 'application/octet-stream';
+}
+
+/**
+ * Returns true for MIME types that should be displayed inline in the browser.
+ */
+function isInlineMime(mime) {
+  return (
+    mime.startsWith('image/') ||
+    mime === 'application/pdf' ||
+    mime.startsWith('text/') ||
+    mime === 'application/json'
+  );
+}
+
+/**
  * GET /api/v1/drive/download/:id
- * Download file from S3 by file ID
+ * Download file from S3 by file ID.
+ * Pass ?inline=true (or let the server auto-detect for images/PDF/text) to display in browser.
  */
 router.get('/drive/download/:id', authenticateAgent, requireCorePermission('drive.download'), async (req, res) => {
   try {
     const fileId = req.params.id;
     const requestedPath = req.query.path;
+    const forceInline = req.query.inline === 'true';
     const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
-    
+
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
     }
-    
+
     let fileRecord;
-    
-    if (fileId && fileId !== 'unused' && !requestedPath) {
-      // Download by file ID
+
+    // Always try by UUID first, then fall back to path lookup.
+    // (Previously, providing ?path= would skip the ID lookup entirely, causing 404
+    //  when the frontend passes both the UUID and a folder path.)
+    if (fileId && fileId !== 'unused') {
       const result = await pool.query(
-        `SELECT id, name, mime_type, size_bytes, s3_key 
-         FROM tenant_vutler.drive_files 
+        `SELECT id, name, mime_type, size_bytes, s3_key
+         FROM tenant_vutler.drive_files
          WHERE id = $1 AND workspace_id = $2 AND is_deleted = false`,
         [fileId, workspaceId]
       );
-      
-      if (result.rows.length === 0) {
-        return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File not found');
-      }
-      
-      fileRecord = result.rows[0];
-    } else if (requestedPath) {
-      // Download by path (backward compatibility)
+      if (result.rows.length > 0) fileRecord = result.rows[0];
+    }
+
+    if (!fileRecord && requestedPath) {
+      // Fall back to path-based lookup (backward compatibility)
       const normalized = normalizeVirtualPath(requestedPath);
       const result = await pool.query(
-        `SELECT id, name, mime_type, size_bytes, s3_key 
-         FROM tenant_vutler.drive_files 
+        `SELECT id, name, mime_type, size_bytes, s3_key
+         FROM tenant_vutler.drive_files
          WHERE path = $1 AND workspace_id = $2 AND is_deleted = false`,
         [normalized, workspaceId]
       );
-      
-      if (result.rows.length === 0) {
-        return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File not found');
-      }
-      
-      fileRecord = result.rows[0];
-    } else {
-      return sendDriveError(res, 400, 'INVALID_REQUEST', 'File ID or path is required');
+      if (result.rows.length > 0) fileRecord = result.rows[0];
     }
-    
+
+    if (!fileRecord) {
+      return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File not found');
+    }
+
     // Guard: s3_key must be present (folders and legacy records may lack one)
     if (!fileRecord.s3_key) {
       return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File has no stored content (missing S3 key)');
@@ -462,9 +489,15 @@ router.get('/drive/download/:id', authenticateAgent, requireCorePermission('driv
     // Download from S3
     const s3Result = await s3Driver.download(bucket, s3Driver.prefixKey(fileRecord.s3_key));
 
-    // Set response headers
-    res.setHeader('Content-Type', fileRecord.mime_type || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.name}"`);
+    // Determine content type and disposition
+    const mime = resolveInlineMime(fileRecord.name, fileRecord.mime_type);
+    const inline = forceInline || isInlineMime(mime);
+    const disposition = inline
+      ? `inline; filename="${fileRecord.name}"`
+      : `attachment; filename="${fileRecord.name}"`;
+
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', disposition);
     if (fileRecord.size_bytes) res.setHeader('Content-Length', fileRecord.size_bytes);
 
     // Stream to response — AWS SDK v3 returns body as s3Result.Body (a ReadableStream / Readable)
@@ -479,13 +512,112 @@ router.get('/drive/download/:id', authenticateAgent, requireCorePermission('driv
       res.end(body);
     }
 
-    console.log(`[DriveAPI] File downloaded: ${fileRecord.name} from S3`);
+    console.log(`[DriveAPI] File ${inline ? 'previewed' : 'downloaded'}: ${fileRecord.name} from S3`);
   } catch (error) {
     console.error('[DriveAPI] Download error:', error);
     if (error.message === 'File not found') {
       return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File not found');
     }
     return sendDriveError(res, 500, 'DRIVE_DOWNLOAD_FAILED', 'Download failed', { reason: error.message });
+  }
+});
+
+/**
+ * GET /api/v1/drive/preview/:id
+ * Preview file inline in browser (images, PDF, text, markdown rendered as HTML).
+ * For other types, falls back to download.
+ */
+router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive.download'), async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const requestedPath = req.query.path;
+    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+
+    if (!workspaceId) {
+      return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
+    }
+
+    let fileRecord;
+
+    if (fileId && fileId !== 'unused') {
+      const result = await pool.query(
+        `SELECT id, name, mime_type, size_bytes, s3_key
+         FROM tenant_vutler.drive_files
+         WHERE id = $1 AND workspace_id = $2 AND is_deleted = false`,
+        [fileId, workspaceId]
+      );
+      if (result.rows.length > 0) fileRecord = result.rows[0];
+    }
+
+    if (!fileRecord && requestedPath) {
+      const normalized = normalizeVirtualPath(requestedPath);
+      const result = await pool.query(
+        `SELECT id, name, mime_type, size_bytes, s3_key
+         FROM tenant_vutler.drive_files
+         WHERE path = $1 AND workspace_id = $2 AND is_deleted = false`,
+        [normalized, workspaceId]
+      );
+      if (result.rows.length > 0) fileRecord = result.rows[0];
+    }
+
+    if (!fileRecord) {
+      return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File not found');
+    }
+
+    if (!fileRecord.s3_key) {
+      return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File has no stored content (missing S3 key)');
+    }
+
+    const mime = resolveInlineMime(fileRecord.name, fileRecord.mime_type);
+    const bucket = await getWorkspaceBucket(workspaceId);
+    const s3Result = await s3Driver.download(bucket, s3Driver.prefixKey(fileRecord.s3_key));
+
+    const body = s3Result.Body;
+    let buffer;
+    if (body && typeof body.transformToByteArray === 'function') {
+      buffer = Buffer.from(await body.transformToByteArray());
+    } else if (body && typeof body.pipe === 'function') {
+      buffer = await new Promise((resolve, reject) => {
+        const chunks = [];
+        body.on('data', c => chunks.push(c));
+        body.on('end', () => resolve(Buffer.concat(chunks)));
+        body.on('error', reject);
+      });
+    } else {
+      buffer = Buffer.from(body || '');
+    }
+
+    // Markdown → render as simple HTML
+    const ext = path.extname(fileRecord.name || '').toLowerCase();
+    if (ext === '.md' || ext === '.mdx') {
+      const escaped = buffer.toString('utf8')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+        <title>${fileRecord.name}</title>
+        <style>body{font-family:sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem;line-height:1.6}
+        pre{background:#f4f4f4;padding:1rem;overflow:auto}code{background:#f4f4f4;padding:.2em .4em}</style>
+        </head><body><pre style="white-space:pre-wrap">${escaped}</pre></body></html>`;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Disposition', `inline; filename="${fileRecord.name}"`);
+      return res.end(html);
+    }
+
+    // Images, PDF, plain text — send inline
+    if (isInlineMime(mime)) {
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `inline; filename="${fileRecord.name}"`);
+      if (fileRecord.size_bytes) res.setHeader('Content-Length', fileRecord.size_bytes);
+      return res.end(buffer);
+    }
+
+    // Fallback: force download for unsupported preview types
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.name}"`);
+    if (fileRecord.size_bytes) res.setHeader('Content-Length', fileRecord.size_bytes);
+    return res.end(buffer);
+  } catch (error) {
+    console.error('[DriveAPI] Preview error:', error);
+    return sendDriveError(res, 500, 'DRIVE_PREVIEW_FAILED', 'Preview failed', { reason: error.message });
   }
 });
 
