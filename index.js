@@ -567,7 +567,12 @@ try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
 try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}
 try { app.use('/api/v1/email', require('./api/email-vaultbrix')); } catch (_) {}
-try { app.use('/api/v1', require('./api/memory')); } catch (_) {}  // memory routes (no gate)
+// Memory routes — mounted at both /memory/* and /agents/:id/memories
+try {
+  const memoryRouter = require('./api/memory');
+  app.use('/api/v1/memory', memoryRouter);  // /memory/workspace-knowledge, /memory/templates, /memory/search
+  app.use('/api/v1', memoryRouter);          // /agents/:id/memories, /promote
+} catch (e) { console.warn('[BOOT] Memory routes failed:', e.message); }
 
 // Rate limiters AFTER route mounts (won't block route matching)
 app.use('/api/v1/chat/send', llmLimiter);

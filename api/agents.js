@@ -317,11 +317,11 @@ router.get("/:id/executions", async (req, res) => {
   try {
     const agentId = req.params.id;
     const result = await pool.query(
-      `SELECT id, agent_id, input, output, status, model, duration_ms, created_at
+      `SELECT id, agent_id, input, output, model, provider, tokens_used, latency_ms, created_at
        FROM ${SCHEMA}.agent_executions
-       WHERE agent_id::text = $1 AND workspace_id = $2
+       WHERE agent_id::text = $1
        ORDER BY created_at DESC LIMIT 50`,
-      [agentId, req.workspaceId || '00000000-0000-0000-0000-000000000001']
+      [agentId]
     );
     res.json({ success: true, executions: result.rows });
   } catch (err) {
