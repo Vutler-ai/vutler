@@ -176,7 +176,17 @@ class SwarmCoordinator {
 
   async createTask(task = {}) {
     if (!this.swarmId) throw new Error("SNIPARA_SWARM_ID missing");
-    const agentId = task.for_agent_id || this.pickBestAgent(task);
+    let agentId = task.for_agent_id;
+    if (!agentId) {
+      try {
+        const { getSmartDispatcher } = require('../../../services/smartDispatcher');
+        const result = await getSmartDispatcher().dispatch(task);
+        agentId = result.agentId;
+      } catch (err) {
+        console.warn('[SwarmCoordinator] Smart dispatch failed, falling back to keyword:', err.message);
+        agentId = this.pickBestAgent(task);
+      }
+    }
     const payload = {
       swarm_id: this.swarmId,
       title: task.title || "Nouvelle tâche",

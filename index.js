@@ -661,9 +661,15 @@ async function start() {
       console.log(`Health: http://localhost:${port}/api/v1/health`);
     });
 
+    // Start watchdog for stalled task detection
+    const { getWatchdog } = require('./services/watchdog');
+    const watchdog = getWatchdog();
+    watchdog.start();
+
     // Graceful shutdown
     const shutdown = (signal) => {
       console.log(`${signal} received, shutting down...`);
+      watchdog.stop();
       server.close(() => process.exit(0));
       setTimeout(() => process.exit(1), 10000);
     };
