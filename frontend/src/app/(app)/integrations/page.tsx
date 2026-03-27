@@ -107,9 +107,25 @@ function DiscordIcon() {
   );
 }
 
+function ChatGPTIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor">
+      <path d="M22.282 9.821a5.985 5.985 0 00-.516-4.91 6.046 6.046 0 00-6.51-2.9A6.065 6.065 0 0011.5.5a6.037 6.037 0 00-5.736 4.12 5.975 5.975 0 00-3.996 2.9 6.04 6.04 0 00.748 7.09 5.98 5.98 0 00.51 4.911 6.05 6.05 0 006.515 2.9A5.999 5.999 0 0013.5 23.5a6.04 6.04 0 005.733-4.12 5.98 5.98 0 003.996-2.9 6.043 6.043 0 00-.947-6.66z" />
+    </svg>
+  );
+}
+
 // ─── Provider config ──────────────────────────────────────────────────────────
 
 const PROVIDERS: Provider[] = [
+  {
+    provider: "chatgpt",
+    name: "ChatGPT",
+    description: "Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex models — no API key needed.",
+    category: "ai",
+    oauthReady: true,
+    icon: <ChatGPTIcon />,
+  },
   {
     provider: "google-calendar",
     name: "Google Calendar",
@@ -205,6 +221,7 @@ const OAUTH_PROVIDER_MAP: Record<string, string> = {
   "google-calendar": "google",
   "google-drive": "google",
   github: "github",
+  chatgpt: "chatgpt",
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────

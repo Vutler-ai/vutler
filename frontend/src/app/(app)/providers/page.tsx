@@ -116,6 +116,12 @@ const PROVIDER_META: Record<
     models: ["llama3", "mistral", "phi3", "gemma", "codellama"],
     gradient: "from-[#6b7280] to-[#4b5563]",
   },
+  codex: {
+    label: "Codex (ChatGPT)",
+    description: "Use your ChatGPT subscription — no API key needed. Connect via Integrations.",
+    models: ["gpt-4o", "gpt-4o-mini", "o3"],
+    gradient: "from-[#10a37f] to-[#065f46]",
+  },
 };
 
 function fallbackMeta(provider: string) {
@@ -179,6 +185,11 @@ function ProviderCard({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {record.provider === "codex" && (
+              <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
+                via ChatGPT
+              </Badge>
+            )}
             <Badge
               variant="outline"
               className={
@@ -354,7 +365,7 @@ function ConfigureDialog({
 
 // ─── Add Provider Dialog ──────────────────────────────────────────────────────
 
-const PROVIDER_OPTIONS = ["openai", "anthropic", "openrouter", "groq", "mistral", "ollama", "other"];
+const PROVIDER_OPTIONS = ["openai", "anthropic", "openrouter", "groq", "mistral", "codex", "ollama", "other"];
 
 function AddProviderDialog({
   open,
@@ -384,7 +395,7 @@ function AddProviderDialog({
 
   const handleAdd = async () => {
     if (!form.name.trim()) { setError("Name is required"); return; }
-    if (!form.api_key.trim() && form.provider !== "ollama") {
+    if (!form.api_key.trim() && form.provider !== "ollama" && form.provider !== "codex") {
       setError("API key is required");
       return;
     }
@@ -445,18 +456,27 @@ function AddProviderDialog({
             </select>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-[#d1d5db]">
-              API Key{form.provider === "ollama" ? " (optional)" : ""}
-            </Label>
-            <Input
-              type="password"
-              value={form.api_key}
-              onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-              placeholder="sk-…"
-              className="bg-[#1f2028] border-[rgba(255,255,255,0.07)] text-white placeholder-[#6b7280] focus-visible:ring-[#3b82f6]"
-            />
-          </div>
+          {form.provider === "codex" ? (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-lg text-sm">
+              Codex uses your ChatGPT subscription. Make sure you&apos;ve connected ChatGPT in{" "}
+              <a href="/integrations" className="underline font-medium hover:text-emerald-300">
+                Integrations
+              </a>.
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label className="text-[#d1d5db]">
+                API Key{form.provider === "ollama" ? " (optional)" : ""}
+              </Label>
+              <Input
+                type="password"
+                value={form.api_key}
+                onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                placeholder="sk-…"
+                className="bg-[#1f2028] border-[rgba(255,255,255,0.07)] text-white placeholder-[#6b7280] focus-visible:ring-[#3b82f6]"
+              />
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="text-[#d1d5db]">Base URL (optional)</Label>

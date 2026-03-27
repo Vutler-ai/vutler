@@ -22,6 +22,7 @@ const INTEGRATIONS_META: Record<string, { icon: string; name: string; descriptio
   linear: { icon: "🟣", name: "Linear", description: "Issue tracking, cycles, and product roadmaps" },
   n8n: { icon: "⚡", name: "n8n", description: "Workflow automation and custom integrations" },
   microsoft365: { icon: "🟦", name: "Microsoft 365", description: "Outlook, Teams, OneDrive, and SharePoint" },
+  chatgpt: { icon: "🤖", name: "ChatGPT", description: "Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex" },
 };
 
 const COMING_SOON = ["microsoft365"];

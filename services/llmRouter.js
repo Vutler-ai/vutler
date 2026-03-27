@@ -77,6 +77,13 @@ const PROVIDERS = {
     defaultModel: 'llama-3.3-70b-versatile',
     defaultHeaders: {},
   },
+  codex: {
+    baseURL: 'https://api.openai.com/v1',
+    path: '/chat/completions',
+    format: 'openai',
+    defaultModel: 'gpt-4o',
+    defaultHeaders: {},
+  },
 };
 
 function detectProvider(model) {
@@ -108,6 +115,40 @@ async function resolveWorkspaceProvider(db, workspaceId, providerName) {
     return r.rows?.[0] || null;
   } catch (err) {
     console.warn('[LLM Router] resolveWorkspaceProvider failed:', err.message);
+    return null;
+  }
+}
+
+// Resolve OAuth token for the "codex" provider from workspace_integrations (ChatGPT OAuth)
+async function resolveCodexOAuthToken(db, workspaceId) {
+  if (!db || !workspaceId) return null;
+  try {
+    const r = await db.query(
+      `SELECT access_token, refresh_token, token_expires_at
+       FROM tenant_vutler.workspace_integrations
+       WHERE workspace_id = $1 AND provider = 'chatgpt' AND connected = TRUE
+       LIMIT 1`,
+      [workspaceId]
+    );
+    const row = r.rows?.[0];
+    if (!row?.access_token) return null;
+
+    // Check if token is expired or about to expire (within 5 min)
+    const expiresAt = row.token_expires_at ? new Date(row.token_expires_at) : null;
+    if (expiresAt && expiresAt.getTime() < Date.now() + 5 * 60 * 1000) {
+      try {
+        const { refreshChatGPTToken } = require('../api/integrations');
+        const newToken = await refreshChatGPTToken(workspaceId);
+        return newToken || row.access_token; // Fall back to existing token
+      } catch (refreshErr) {
+        console.warn('[LLM Router] ChatGPT token refresh failed:', refreshErr.message);
+        return row.access_token; // Try the existing token anyway
+      }
+    }
+
+    return row.access_token;
+  } catch (err) {
+    console.warn('[LLM Router] resolveCodexOAuthToken failed:', err.message);
     return null;
   }
 }
@@ -339,9 +380,20 @@ async function chat(agent, messages, db) {
       continue;
     }
 
-    const row = await resolveWorkspaceProvider(db, workspaceId, a.provider);
-    const api_key = row?.api_key || process.env[`${a.provider.toUpperCase()}_API_KEY`] || process.env.OPENAI_API_KEY;
-    const base_url = row?.base_url || providerCfg.baseURL;
+    let api_key, base_url;
+    if (a.provider === 'codex') {
+      // Codex uses OAuth token from workspace_integrations (ChatGPT OAuth)
+      api_key = await resolveCodexOAuthToken(db, workspaceId);
+      base_url = providerCfg.baseURL;
+      if (!api_key) {
+        lastErr = new Error('ChatGPT not connected. Connect via Integrations > ChatGPT.');
+        continue;
+      }
+    } else {
+      const row = await resolveWorkspaceProvider(db, workspaceId, a.provider);
+      api_key = row?.api_key || process.env[`${a.provider.toUpperCase()}_API_KEY`] || process.env.OPENAI_API_KEY;
+      base_url = row?.base_url || providerCfg.baseURL;
+    }
 
     const attempt = {
       ...agent,
