@@ -569,6 +569,9 @@ try { app.use('/api/v1/tasks', require('./api/tasks')); } catch (_) {}
 try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
 try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}
+try { app.use('/api/v1/goals', require('./api/goals')); } catch (_) {}
+try { app.use('/api/v1/automations', require('./api/automations')); } catch (_) {}
+try { app.use('/api/v1/analytics', require('./api/analytics-api')); } catch (_) {}
 // NOTE: email is served by packages/office/routes.js → app/custom/api/email.js
 // The email-vaultbrix fallback is mounted at /email/vaultbrix in office routes.
 // Memory routes — mounted at both /memory/* and /agents/:id/memories

@@ -507,12 +507,17 @@ export default function BillingPage() {
                 Bring your own OpenRouter or Anthropic key, or purchase credits to use Vutler&apos;s managed LLM pool.
               </p>
             </div>
-            <Button
-              className="bg-[#3b82f6] hover:bg-[#2563eb] shrink-0"
-              onClick={() => window.alert('LLM Credits coming soon — $10 ≈ 1M tokens')}
-            >
-              Buy Credits — $10 / 1M tokens
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs bg-[#1e293b] text-[#64748b] border border-[rgba(255,255,255,0.08)] px-2 py-1 rounded-md">
+                Coming soon
+              </span>
+              <Button
+                className="bg-[#3b82f6] hover:bg-[#2563eb] opacity-50 cursor-not-allowed"
+                disabled
+              >
+                Buy Credits — $10 / 1M tokens
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-4">

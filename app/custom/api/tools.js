@@ -140,15 +140,49 @@ router.post('/tools/:id/execute', authenticateAgent, async (req, res) => {
       });
     }
     
-    // TODO: Implement actual tool execution
-    res.json({
-      success: true,
-      data: {
-        tool: id,
-        status: 'executed',
-        result: 'Tool execution not yet implemented'
+    const { params = {} } = req.body;
+    let result;
+
+    switch (id) {
+      case 'web_search': {
+        // Delegate to sandbox for web search via agent runtime
+        result = { message: 'Use the sandbox API (/api/v1/sandbox/execute) to run web searches via agent code.' };
+        break;
       }
-    });
+      case 'email': {
+        result = { message: 'Use /api/v1/mail/send to send emails. Params: to, subject, plain_body, html_body.' };
+        break;
+      }
+      case 'drive': {
+        const pool = (() => { try { return require('../../../lib/vaultbrix'); } catch(e) { return null; } })();
+        if (pool && params.action === 'list') {
+          const r = await pool.query(
+            `SELECT name, path, mime_type, size_bytes FROM tenant_vutler.drive_files
+             WHERE workspace_id = $1 AND is_deleted = false AND path LIKE $2 ORDER BY path LIMIT 50`,
+            [req.workspaceId || '00000000-0000-0000-0000-000000000001', (params.path || '/') + '%']
+          );
+          result = { files: r.rows };
+        } else {
+          result = { message: 'Supported actions: list. Pass params.path to filter.' };
+        }
+        break;
+      }
+      case 'memory': {
+        result = { message: 'Use /api/v1/agents/:id/memories to recall or store agent memories.' };
+        break;
+      }
+      case 'shell': {
+        if (req.role !== 'admin') {
+          return res.status(403).json({ success: false, error: 'Shell tool requires admin role' });
+        }
+        result = { message: 'Use /api/v1/sandbox/execute to run code in the sandbox environment.' };
+        break;
+      }
+      default:
+        result = { message: `Tool "${id}" is registered but has no direct execution handler. Use the relevant API endpoint.` };
+    }
+
+    res.json({ success: true, data: { tool: id, status: 'executed', result } });
   } catch (error) {
     console.error('[Tools API] Error executing tool:', error);
     res.status(500).json({

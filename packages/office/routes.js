@@ -40,7 +40,7 @@ mount('/vchat', 'chat', '../../api/vchat');
 mountRoot('drive', '../../app/custom/api/drive', 'drive');
 mount('/drive-s3', 'drive', '../../app/custom/api/drive-s3');
 mount('/drive-chat', 'drive', '../../api/drive-chat');
-mount('/vdrive', 'drive', '../../api/vdrive');
+// vdrive (legacy encrypted drive) removed — use /drive (S3-backed)
 
 // ── Email (full-path: /email, /email/send) ──────────────────────────────────
 mountRoot('email', '../../app/custom/api/email', 'email');
