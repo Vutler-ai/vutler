@@ -34,6 +34,11 @@ const MODEL_CATALOG = {
     { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", tier: "fast", context: 128000 },
     { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", tier: "ultra-fast", context: 128000 },
     { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", tier: "fast", context: 32768 }
+  ],
+  codex: [
+    { id: "gpt-4o", name: "GPT-4o (ChatGPT)", tier: "premium", context: 128000 },
+    { id: "gpt-4o-mini", name: "GPT-4o Mini (ChatGPT)", tier: "budget", context: 128000 },
+    { id: "o3", name: "o3 (ChatGPT)", tier: "reasoning", context: 200000 }
   ]
 };
 
@@ -42,7 +47,8 @@ const DEFAULT_BASE_URLS = {
   anthropic: "https://api.anthropic.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
   mistral: "https://api.mistral.ai/v1",
-  groq: "https://api.groq.com/openai/v1"
+  groq: "https://api.groq.com/openai/v1",
+  codex: "https://api.openai.com/v1"
 };
 
 const getWorkspaceId = (req) => req.workspaceId || req.headers["x-workspace-id"] || req.query.workspace_id || DEFAULT_WORKSPACE;

@@ -27,6 +27,13 @@ const APP_BASE = process.env.APP_BASE_URL || process.env.GOOGLE_REDIRECT_URI?.re
 const GOOGLE_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/google/callback`;
 const GITHUB_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/github/callback`;
 
+// ChatGPT / Codex OAuth (PKCE public client — no client_secret needed)
+const CHATGPT_CLIENT_ID = process.env.CHATGPT_CLIENT_ID || '';
+const CHATGPT_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/chatgpt/callback`;
+const CHATGPT_OAUTH_AUTHORIZE = process.env.CHATGPT_OAUTH_AUTHORIZE || 'https://auth.openai.com/authorize';
+const CHATGPT_OAUTH_TOKEN_URL = process.env.CHATGPT_OAUTH_TOKEN_URL || 'https://auth.openai.com/oauth/token';
+const CHATGPT_INTEGRATION_SCOPES = 'openid profile email offline_access';
+
 // OAuth scopes for workspace integrations (broader than login scopes)
 const GOOGLE_INTEGRATION_SCOPES = [
   'openid',
@@ -55,6 +62,15 @@ function httpsPost(options, body) {
     if (body) req.write(body);
     req.end();
   });
+}
+
+// PKCE helpers for ChatGPT OAuth
+function generateCodeVerifier() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function generateCodeChallenge(verifier) {
+  return crypto.createHash('sha256').update(verifier).digest('base64url');
 }
 
 // In-memory state store for CSRF protection (keyed by state param)
@@ -135,6 +151,15 @@ const INTERNAL_CATALOG = [
     category: 'productivity',
     actions: ['send_mail', 'list_events'],
     scopes: ['mail.read', 'calendars.read'],
+  },
+  {
+    provider: 'chatgpt',
+    name: 'ChatGPT',
+    description: 'Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex models',
+    icon: '🤖',
+    category: 'ai',
+    actions: ['llm_chat', 'code_generation'],
+    scopes: ['model.request.all'],
   },
 ];
 
@@ -738,6 +763,220 @@ router.get('/github/callback', async (req, res) => {
   }
 });
 
+// ── ChatGPT OAuth (PKCE public client) ─────────────────────────────────────
+
+// GET /api/v1/integrations/chatgpt/connect — initiate ChatGPT OAuth with PKCE
+router.get('/chatgpt/connect', (req, res) => {
+  if (!CHATGPT_CLIENT_ID) {
+    return res.status(500).json({ success: false, error: 'ChatGPT OAuth not configured (CHATGPT_CLIENT_ID missing)' });
+  }
+
+  const state = crypto.randomBytes(32).toString('hex');
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+
+  oauthStateStore.set(state, {
+    workspaceId,
+    provider: 'chatgpt',
+    codeVerifier,
+    createdAt: Date.now(),
+  });
+
+  const params = new URLSearchParams({
+    client_id: CHATGPT_CLIENT_ID,
+    redirect_uri: CHATGPT_INTEGRATION_REDIRECT,
+    response_type: 'code',
+    scope: CHATGPT_INTEGRATION_SCOPES,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+
+  const authUrl = `${CHATGPT_OAUTH_AUTHORIZE}?${params}`;
+  res.json({ success: true, authUrl, provider: 'chatgpt' });
+});
+
+// GET /api/v1/integrations/chatgpt/callback — exchange code with PKCE verifier
+router.get('/chatgpt/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    console.error('[INTEGRATIONS] ChatGPT OAuth error:', error);
+    return res.redirect('/integrations?error=oauth_cancelled&provider=chatgpt');
+  }
+
+  if (!code || !state || !oauthStateStore.has(state)) {
+    return res.redirect('/integrations?error=oauth_invalid&provider=chatgpt');
+  }
+
+  const stateData = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+  const { workspaceId, codeVerifier } = stateData;
+
+  try {
+    const tokenUrl = new URL(CHATGPT_OAUTH_TOKEN_URL);
+    const postBody = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: CHATGPT_CLIENT_ID,
+      code,
+      redirect_uri: CHATGPT_INTEGRATION_REDIRECT,
+      code_verifier: codeVerifier,
+    }).toString();
+
+    const tokenResp = await httpsPost({
+      hostname: tokenUrl.hostname,
+      path: tokenUrl.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+    }, postBody);
+
+    if (!tokenResp.access_token) {
+      console.error('[INTEGRATIONS] ChatGPT token exchange failed:', tokenResp);
+      return res.redirect('/integrations?error=oauth_token_failed&provider=chatgpt');
+    }
+
+    const expiresAt = tokenResp.expires_in
+      ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
+      : null;
+
+    await ensureReady();
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, source, connected, status, access_token, refresh_token, token_expires_at,
+         scopes, metadata, connected_at, disconnected_at, connected_by, updated_at)
+       VALUES ($1, 'chatgpt', 'oauth', TRUE, 'connected', $2, $3, $4,
+         $5::jsonb, $6::jsonb, NOW(), NULL, $7, NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         source = 'oauth',
+         connected = TRUE,
+         status = 'connected',
+         access_token = EXCLUDED.access_token,
+         refresh_token = COALESCE(EXCLUDED.refresh_token, ${SCHEMA}.workspace_integrations.refresh_token),
+         token_expires_at = EXCLUDED.token_expires_at,
+         scopes = EXCLUDED.scopes,
+         metadata = EXCLUDED.metadata,
+         connected_at = NOW(),
+         disconnected_at = NULL,
+         connected_by = EXCLUDED.connected_by,
+         updated_at = NOW()`,
+      [
+        workspaceId,
+        tokenResp.access_token,
+        tokenResp.refresh_token || null,
+        expiresAt,
+        JSON.stringify(CHATGPT_INTEGRATION_SCOPES.split(' ')),
+        JSON.stringify({ id_token: tokenResp.id_token || null }),
+        req.user?.email || 'oauth',
+      ]
+    );
+
+    // Auto-provision a "codex" LLM provider so agents can select it immediately
+    try {
+      await pool.query(
+        `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
+         VALUES ($1, 'codex', 'oauth:chatgpt', 'https://api.openai.com/v1', TRUE, FALSE, '{"source":"chatgpt_oauth"}'::jsonb)
+         ON CONFLICT DO NOTHING`,
+        [workspaceId]
+      );
+    } catch (autoErr) {
+      console.warn('[INTEGRATIONS] Failed to auto-provision codex provider:', autoErr.message);
+    }
+
+    await addLog({ workspaceId, provider: 'chatgpt', action: 'oauth_connect' });
+    console.log(`[INTEGRATIONS] ChatGPT connected for workspace ${workspaceId}`);
+    res.redirect('/integrations?connected=chatgpt');
+  } catch (err) {
+    console.error('[INTEGRATIONS] ChatGPT callback error:', err.message);
+    res.redirect('/integrations?error=oauth_server_error&provider=chatgpt');
+  }
+});
+
+// GET /api/v1/integrations/chatgpt/token-status — check if ChatGPT is connected (no token exposed)
+router.get('/chatgpt/token-status', async (req, res) => {
+  try {
+    await ensureReady();
+    const workspaceId = getWorkspaceId(req);
+    const result = await pool.query(
+      `SELECT connected, status, token_expires_at, connected_at
+       FROM ${SCHEMA}.workspace_integrations
+       WHERE workspace_id = $1 AND provider = 'chatgpt'
+       LIMIT 1`,
+      [workspaceId]
+    );
+    const row = result.rows?.[0];
+    const connected = row?.connected === true;
+    const expired = row?.token_expires_at
+      ? new Date(row.token_expires_at).getTime() < Date.now()
+      : false;
+
+    res.json({ success: true, connected, expired, connected_at: row?.connected_at || null });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Refresh a ChatGPT OAuth token (exported for use by llmRouter)
+async function refreshChatGPTToken(workspaceId) {
+  const result = await pool.query(
+    `SELECT id, access_token, refresh_token, token_expires_at
+     FROM ${SCHEMA}.workspace_integrations
+     WHERE workspace_id = $1 AND provider = 'chatgpt' AND connected = TRUE
+     LIMIT 1`,
+    [workspaceId]
+  );
+
+  const row = result.rows?.[0];
+  if (!row || !row.refresh_token) return null;
+
+  // Only refresh if token is expired or expires within 5 minutes
+  const expiresAt = row.token_expires_at ? new Date(row.token_expires_at) : null;
+  if (expiresAt && expiresAt.getTime() > Date.now() + 5 * 60 * 1000) {
+    return null; // Still valid, no refresh needed
+  }
+
+  const tokenUrl = new URL(CHATGPT_OAUTH_TOKEN_URL);
+  const postBody = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: CHATGPT_CLIENT_ID,
+    refresh_token: row.refresh_token,
+  }).toString();
+
+  const tokenResp = await httpsPost({
+    hostname: tokenUrl.hostname,
+    path: tokenUrl.pathname,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+  }, postBody);
+
+  if (!tokenResp.access_token) {
+    console.warn('[INTEGRATIONS] ChatGPT token refresh failed:', tokenResp);
+    return null;
+  }
+
+  const newExpiresAt = tokenResp.expires_in
+    ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
+    : null;
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.workspace_integrations
+     SET access_token = $1,
+         refresh_token = COALESCE($2, refresh_token),
+         token_expires_at = $3,
+         updated_at = NOW()
+     WHERE workspace_id = $4 AND provider = 'chatgpt'`,
+    [tokenResp.access_token, tokenResp.refresh_token || null, newExpiresAt, workspaceId]
+  );
+
+  return tokenResp.access_token;
+}
+
 // Clean up expired state entries every 10 minutes
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
@@ -1065,8 +1304,8 @@ router.post('/n8n/workflows/:id/trigger', async (req, res) => {
 // POST /api/v1/integrations/:provider/callback (fallback for other providers)
 router.post('/:provider/callback', async (req, res) => {
   const { provider } = req.params;
-  // google and github have dedicated GET callback routes above
-  if (['google', 'github'].includes(provider)) {
+  // google, github, and chatgpt have dedicated GET callback routes above
+  if (['google', 'github', 'chatgpt'].includes(provider)) {
     return res.status(405).json({ success: false, error: `Use GET /api/v1/integrations/${provider}/callback` });
   }
   return res.status(409).json({
@@ -1086,3 +1325,4 @@ router.post('/submissions', async (_req, res) => {
 });
 
 module.exports = router;
+module.exports.refreshChatGPTToken = refreshChatGPTToken;
