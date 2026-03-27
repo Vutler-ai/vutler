@@ -311,8 +311,12 @@ async function chat(agent, messages, db) {
   const fallbackProvider = agent?.fallback_provider || agent?.fallback?.provider || null;
   const fallbackModel = agent?.fallback_model || agent?.fallback?.model || null;
 
-  // Determine memory scope — prefer snipara_instance_id, fall back to memory_scope, then agent id
-  const memoryScope = agent?.snipara_instance_id || agent?.memory_scope || null;
+  // Determine memory scope — prefer snipara_instance_id, fall back to memory_scope,
+  // then username (the Snipara scope used by sniparaClient), then null
+  const memoryScope = agent?.snipara_instance_id || agent?.memory_scope
+    || agent?.username
+    || (agent?.name ? agent.name.toLowerCase().replace(/\s+/g, '-') : null)
+    || null;
 
   // Inject memory tools and augment system prompt when memory is configured
   const memoryTools = memoryScope ? MEMORY_TOOLS : null;

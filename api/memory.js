@@ -6,10 +6,34 @@
 const express = require("express");
 const router = express.Router();
 
-const SNIPARA_URL = "https://api.snipara.com/mcp/test-workspace-api-vutler";
-const SNIPARA_KEY = process.env.SNIPARA_API_KEY || "";
+const SNIPARA_URL = process.env.SNIPARA_MCP_URL || process.env.SNIPARA_API_URL || "https://api.snipara.com/mcp/test-workspace-api-vutler";
+const SNIPARA_KEY = process.env.SNIPARA_API_KEY || process.env.RLM_TOKEN || "REDACTED_SNIPARA_KEY_2";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the Snipara memory scope for an agent.
+ * Prefers username, falls back to name-slug, then the raw agentId.
+ * This matches how sniparaClient.remember() stores memories (scope = username/slug).
+ */
+async function resolveAgentScope(req, agentId) {
+  const pg = req.app?.locals?.pg;
+  if (pg) {
+    try {
+      const wsId = req.workspaceId || "00000000-0000-0000-0000-000000000001";
+      const result = await pg.query(
+        `SELECT username, name FROM tenant_vutler.agents
+         WHERE (id::text = $1 OR username = $1) AND workspace_id = $2 LIMIT 1`,
+        [agentId, wsId]
+      );
+      if (result.rows[0]) {
+        const { username, name } = result.rows[0];
+        return username || name.toLowerCase().replace(/\s+/g, '-');
+      }
+    } catch (_) { /* table may not exist / agent not found */ }
+  }
+  return agentId; // fallback to whatever was passed (UUID or slug)
+}
 
 function normalizeRole(role) {
   return String(role || "general")
@@ -82,13 +106,22 @@ router.get("/agents/:agentId/memories", async (req, res) => {
       return res.json({ success: true, memories: [], meta: { snipara: false } });
     }
 
-    const recalled = await sniparaCall("rlm_recall", {
-      query: q || `agent ${agentId} memories`,
-      agent_id: agentId,
-      scope: "agent",
-      category: agentId,
-      limit: parseInt(limit) || 20,
-    });
+    // Resolve the real Snipara scope (username/slug, not UUID)
+    const agentScope = await resolveAgentScope(req, agentId);
+
+    // Use rlm_memories (listing) when no query, rlm_recall (semantic) when searching
+    const recalled = q
+      ? await sniparaCall("rlm_recall", {
+          query: q,
+          scope: agentScope,
+          agent_id: agentScope,
+          limit: parseInt(limit) || 20,
+        })
+      : await sniparaCall("rlm_memories", {
+          agent: agentScope,
+          agent_id: agentScope,
+          limit: parseInt(limit) || 20,
+        });
 
     const memories = normalizeMemories(recalled, "agent");
     return res.json({ success: true, memories });
@@ -198,14 +231,16 @@ router.post("/agents/:agentId/memories", async (req, res) => {
       return res.status(503).json({ success: false, error: "Snipara not configured" });
     }
 
+    const agentScope = await resolveAgentScope(req, agentId);
+
     await sniparaCall("rlm_remember", {
       text,
       type,
       importance: Math.min(1, Math.max(0, Number(importance) || 0.5)),
-      scope: "agent",
-      category: agentId,
+      scope: agentScope,
+      agent_id: agentScope,
       metadata: {
-        agent_id: agentId,
+        agent_id: agentScope,
         source: "vutler-dashboard",
         created_at: new Date().toISOString(),
       },
