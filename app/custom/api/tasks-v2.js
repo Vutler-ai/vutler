@@ -17,15 +17,17 @@ const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 async function ensureParentIdColumn() {
   try {
+    const { rows } = await pool.query(`
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema=$1 AND table_name='tasks' AND column_name='parent_id'
+    `, [SCHEMA]);
+    if (rows.length > 0) return; // already exists, skip ALTER
     await pool.query(`
       ALTER TABLE ${SCHEMA}.tasks
-      ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES ${SCHEMA}.tasks(id) ON DELETE CASCADE
+      ADD COLUMN parent_id UUID REFERENCES ${SCHEMA}.tasks(id) ON DELETE CASCADE
     `);
   } catch (err) {
-    // Column may already exist or table may not be ready yet — non-fatal
-    if (!String(err.message).includes('already exists')) {
-      console.warn('[Tasks API] Could not add parent_id column:', err.message);
-    }
+    console.warn('[Tasks API] Could not add parent_id column:', err.message);
   }
 }
 
