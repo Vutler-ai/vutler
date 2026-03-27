@@ -369,38 +369,141 @@ Each dispatch creates memories for continuity:
 
 ---
 
-## 7. Implementation Phases
+## 7. User Experience — How It Works From Chat
 
-### Phase 1 — MVP (2 weeks)
-- [ ] Sandbox workspace endpoints (create, exec-in-context, cleanup)
-- [ ] `sandbox_workspaces` table migration
-- [ ] Local daemon Node.js package (WebSocket + git sync)
-- [ ] `code.ready` event type in `/ws/chat`
-- [ ] Basic dispatch router (local only)
-- [ ] Feature gate middleware
+### Key Concept: The daemon is invisible
 
-### Phase 2 — Robustness (2 weeks)
-- [ ] Daemon reconnection (exponential backoff)
-- [ ] Local queue (SQLite) for offline message buffering
-- [ ] Streaming progress updates (sandbox → chat)
-- [ ] Workspace git conflict detection
-- [ ] launchd/systemd service files for daemon
+The user **does NOT talk to the daemon**. The user talks to their normal agents (Mike, Michael, etc.) in the Vutler chat. The agent handles everything:
 
-### Phase 3 — Enterprise (2 weeks)
-- [ ] Enterprise nexus webhook dispatch
-- [ ] Callback endpoint for async results
-- [ ] Enterprise node health monitoring
-- [ ] Multi-node load balancing
+```
+User (phone):  "Mike, fix the auth bug in login.js"
+     │
+     ▼
+Mike (cloud agent) receives the message
+     │  WorkflowModeSelector scores the task → LITE or FULL
+     │
+     ├─ LITE: Mike fixes it in sandbox, returns diff in chat
+     │        Optional: auto-dispatches single file to Mac
+     │
+     └─ FULL: Mike creates sandbox workspace
+              → clones repo, creates branch
+              → iterates (code → test → fix → test)
+              → validates → dispatches to Mac daemon
+              → reports back in chat: "Done. Branch: fix/auth-bug, 2 files changed"
+     │
+     ▼
+Mac daemon (background): receives files, writes them, commits
+     │
+     ▼
+User can open their IDE and see the branch ready
+```
 
-### Phase 4 — Polish (1 week)
-- [ ] Mobile UX: workspace status cards in chat
-- [ ] Daemon CLI installer (`npm install -g @vutler/local-daemon`)
-- [ ] Dashboard: active workspaces, daemon connections
-- [ ] Snipara memory optimization (prune old workspace memories)
+### What the user sees in chat
+
+```
+[You]   Mike, fix the login validation — it accepts empty passwords
+
+[Mike]  Looking into it. Creating workspace for auth fix...
+        📁 Workspace created: ws_abc123 (branch: fix/empty-password)
+
+[Mike]  Found the issue in src/api/auth.js:42 — missing check.
+        Testing fix in sandbox...
+        ✅ Tests pass (3/3)
+
+[Mike]  Code validated. Dispatching to your Mac...
+        📤 Dispatched: 2 files → fix/empty-password
+
+        Changes:
+        - src/api/auth.js: added password length check
+        - tests/auth.test.js: added empty password test case
+
+[Mac daemon receives files silently in background]
+```
+
+### What the user does NOT need to do
+
+- ❌ Talk to a different agent for local vs cloud
+- ❌ Manually pull code from somewhere
+- ❌ Configure anything per-request
+- ❌ Know that a daemon exists (it's transparent)
+
+### Daemon setup (one-time)
+
+```bash
+npm install -g @vutler/local-daemon
+vutler-daemon init          # creates ~/.vutler/daemon.json
+# Edit the config: set API key + allowed repos
+vutler-daemon start         # connects to cloud, runs in background
+```
+
+After that, it's always connected and ready.
 
 ---
 
-## 8. Security Considerations
+## 8. Implementation Status
+
+### Phase 1 — MVP ✅ DONE (commit 1186fc5)
+- [x] `services/sandboxWorkspace.js` — workspace service + auto-create table
+- [x] `api/sandbox-workspace.js` — 8 REST endpoints
+- [x] `packages/local-daemon/` — WebSocket git-sync client + CLI
+- [x] `services/dispatchRouter.js` — routes to local/enterprise/cloud
+- [x] `api/websocket.js` — `code.ready`, `dispatch.result`, `agent.register` handlers
+- [x] `packages/core/middleware/featureGate.js` — `cloud_sandbox`, `mobile_dispatch`, `enterprise_nexus` features
+- [x] `packages/agents/routes.js` — mount `/sandbox/workspace`
+- [x] `index.js` — init DispatchRouter at boot
+
+### Phase 2 — Integration (next)
+
+What needs to happen to make Phase 1 actually work end-to-end:
+
+- [ ] **ChatRuntime integration** — When an agent receives a coding task in chat,
+      the ChatRuntime must:
+      1. Call `WorkflowModeSelector.score(task)` to decide LITE/FULL
+      2. For FULL: call `sandboxWorkspace.createWorkspace()`
+      3. Use sandbox exec to iterate on code
+      4. Call `sandboxWorkspace.updateWorkspaceStatus(id, 'validated')`
+      5. Call `dispatchRouter.dispatch(workspace)`
+      6. Post result summary back to chat channel
+      This is the **glue** between chat and the new workspace system.
+
+- [ ] **Daemon token generation** — The `/api/v1/nexus/tokens/local` endpoint
+      exists but needs to generate tokens that the daemon can authenticate with
+      via the WebSocket `/ws/chat` handshake.
+
+- [ ] **Agent dispatch_target config** — Each agent needs a way to specify
+      where its code should go. Options:
+      - Per-agent setting: `dispatch_target: 'local'` in agent config
+      - Per-workspace setting: default dispatch target
+      - Per-request: user specifies in chat ("push this to my Mac")
+
+- [ ] **Sandbox workspace file persistence** — Current sandbox runs stateless
+      scripts. Workspace needs actual file system support:
+      - Temp directory per workspace
+      - Git clone into temp dir
+      - Execute code within that context
+      - Track modified files back to `files_snapshot`
+
+### Phase 3 — Robustness
+- [ ] Daemon: SQLite offline queue for missed messages
+- [ ] Daemon: streaming progress updates via WebSocket
+- [ ] Daemon: launchd plist for macOS auto-start
+- [ ] Workspace: git conflict detection before dispatch
+- [ ] Workspace: TTL / auto-cleanup of stale workspaces
+
+### Phase 4 — Enterprise
+- [ ] Enterprise nexus webhook dispatch (REST callback)
+- [ ] Enterprise node health monitoring
+- [ ] Multi-node load balancing
+
+### Phase 5 — Polish
+- [ ] Mobile UX: workspace status cards in chat
+- [ ] Dashboard: active workspaces, daemon connections
+- [ ] Snipara memory: persist dispatch decisions for continuity
+- [ ] `npm publish @vutler/local-daemon`
+
+---
+
+## 9. Security Considerations
 
 1. **Local daemon scope:** ONLY git + file write. No shell execution, no network calls from daemon.
 2. **Token rotation:** Local tokens expire after 30 days, renewable via CLI.
@@ -411,9 +514,10 @@ Each dispatch creates memories for continuity:
 
 ---
 
-## 9. Open Questions
+## 10. Open Questions
 
-- [ ] Should the daemon support multiple repos simultaneously?
+- [ ] Should the daemon support multiple repos simultaneously? (currently yes via config)
 - [ ] Do we need a "dry run" mode where code is shown but not written?
 - [ ] Should enterprise nodes support bidirectional git sync (not just push)?
 - [ ] Rate limiting on sandbox workspaces per workspace plan tier?
+- [ ] Should the user be able to reject a dispatch from chat before it hits the Mac?
