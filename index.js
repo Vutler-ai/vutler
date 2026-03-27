@@ -622,6 +622,15 @@ async function start() {
     const { loadTemplates } = require('./seeds/loadTemplates');
     loadTemplates().catch(err => console.warn('Template load failed:', err.message));
 
+    // Dispatch Router (mobile dispatch — cloud sandbox → local daemon)
+    try {
+      const { getDispatchRouter } = require('./services/dispatchRouter');
+      app.locals.dispatchRouter = getDispatchRouter(app);
+      console.log('Dispatch router initialized');
+    } catch (e) {
+      console.warn('[BOOT] Dispatch router skipped:', e.message);
+    }
+
     // WebSocket
     setupWebSocket(server, app);
     try { const { setupChatWebSocket } = require('./api/ws-chat'); setupChatWebSocket(server, app); } catch (_) {}

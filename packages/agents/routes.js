@@ -61,7 +61,8 @@ mount('/tools',           'tools',       '../../app/custom/api/tools');
 mount('/templates',       'templates',   '../../api/templates');
 
 // ── Sandbox ─────────────────────────────────────────────────────────────────
-mount('/sandbox',         'sandbox',     '../../api/sandbox');
+mount('/sandbox',           'sandbox',       '../../api/sandbox');
+mount('/sandbox/workspace', 'cloud_sandbox', '../../api/sandbox-workspace');
 
 // ── Deployments ─────────────────────────────────────────────────────────────
 mount('/deployments',     'deployments', '../../api/deployments');

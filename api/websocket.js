@@ -12,6 +12,9 @@
  *   message.send       — agent sends message to a channel
  *   subscribe          — subscribe to agent/channel events
  *   unsubscribe        — unsubscribe
+ *   agent.register     — local daemon registers mode + capabilities
+ *   dispatch.result    — local daemon reports code sync result
+ *   git.pull.result    — local daemon reports git pull result
  *
  * Message types (outbound):
  *   pong               — keepalive response
@@ -21,6 +24,8 @@
  *   message.sent       — confirmation message was sent
  *   error              — error message
  *   event.activity     — real-time activity feed event
+ *   code.ready         — dispatch validated code to local daemon
+ *   agent.registered   — confirmation of daemon registration
  */
 
 const crypto = require('crypto');
@@ -214,6 +219,32 @@ async function dispatch(connection, { type, data = {} }, app) {
         connection.subscriptions.delete(data.topic);
         send(connection.ws, 'unsubscribed', { topic: data.topic });
       }
+      break;
+
+    // ── Local daemon registration ──────────────────────────────────────
+    case 'agent.register':
+      connection.mode = data.mode || 'agent';
+      connection.capabilities = data.capabilities || [];
+      console.log(`[WS] Agent "${connection.agentId}" registered as ${connection.mode} (caps: ${connection.capabilities.join(', ')})`);
+      send(connection.ws, 'agent.registered', { mode: connection.mode, capabilities: connection.capabilities });
+      break;
+
+    // ── Dispatch result from local daemon ───────────────────────────────
+    case 'dispatch.result':
+      console.log(`[WS] Dispatch result from "${connection.agentId}": ${data.success ? 'OK' : data.error}`);
+      pushActivityEvent({
+        type: 'dispatch.result',
+        agent_id: connection.agentId,
+        agent_name: connection.agentName,
+        summary: data.success
+          ? `Code synced to local: branch ${data.branch}, commit ${data.commit_sha}`
+          : `Dispatch failed: ${data.error}`,
+      });
+      break;
+
+    // ── Git pull result from local daemon ───────────────────────────────
+    case 'git.pull.result':
+      console.log(`[WS] Git pull result from "${connection.agentId}": ${data.success ? 'OK' : data.error}`);
       break;
 
     default:
