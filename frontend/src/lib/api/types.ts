@@ -197,6 +197,8 @@ export interface CreateFolderPayload {
 
 // ─── Calendar ─────────────────────────────────────────────────────────────────
 
+export type EventSource = 'manual' | 'agent' | 'goal' | 'billing' | string;
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -204,6 +206,10 @@ export interface CalendarEvent {
   end: string;
   description?: string;
   color: string;
+  source?: EventSource;
+  sourceId?: string | null;
+  readOnly?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreateEventPayload {
@@ -212,6 +218,9 @@ export interface CreateEventPayload {
   end: string;
   description?: string;
   color: string;
+  source?: string;
+  source_id?: string;
+  metadata?: Record<string, unknown>;
 }
 
 // ─── Billing ──────────────────────────────────────────────────────────────────
