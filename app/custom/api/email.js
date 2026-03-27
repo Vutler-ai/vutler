@@ -77,7 +77,6 @@ router.get('/email', async (req, res) => {
       htmlBody: e.html_body,
       isRead: e.is_read || false,
       folder: e.folder || 'inbox',
-      status: e.status || null,
       agentId: e.agent_id,
       date: e.created_at,
     }));
@@ -149,12 +148,12 @@ router.get('/email/drafts', async (req, res) => {
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
     const r = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' OR status = 'pending_approval' ORDER BY created_at DESC LIMIT 100`
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' ORDER BY created_at DESC LIMIT 100`
     );
     const emails = r.rows.map(e => ({
       id: e.id, from: e.from_addr, to: e.to_addr,
       subject: e.subject, body: e.body, htmlBody: e.html_body,
-      status: e.status || 'pending_approval',
+      status: 'pending_approval',
       agentId: e.agent_id, date: e.created_at,
     }));
 
@@ -212,8 +211,8 @@ router.post('/email/send', async (req, res) => {
     if (pg) {
       try {
         const r = await pg.query(
-          `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, status, is_read, agent_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, 'sent', 'sent', true, $6, NOW()) RETURNING id`,
+          `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, 'sent', true, $6, NOW()) RETURNING id`,
           [sender, to, subject, body || '', htmlBody || null, agentId || null]
         );
         emailId = r.rows[0]?.id;
@@ -266,8 +265,8 @@ router.post('/email/draft', async (req, res) => {
     sender = sender || `noreply@${EMAIL_DOMAIN}`;
 
     const r = await pg.query(
-      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, status, is_read, agent_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'drafts', 'pending_approval', false, $6, NOW()) RETURNING id`,
+      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'drafts', false, $6, NOW()) RETURNING id`,
       [sender, to, subject, body || '', htmlBody || null, agentId || null]
     );
 
@@ -294,7 +293,7 @@ router.post('/email/approve/:id', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     const emailRow = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND status = 'pending_approval' LIMIT 1`,
+      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND folder = 'drafts' LIMIT 1`,
       [req.params.id]
     );
 
@@ -322,9 +321,9 @@ router.post('/email/approve/:id', async (req, res) => {
       });
     }
 
-    // Update status to sent
+    // Update folder to sent
     await pg.query(
-      `UPDATE ${SCHEMA}.emails SET folder = 'sent', status = 'sent', is_read = true WHERE id = $1`,
+      `UPDATE ${SCHEMA}.emails SET folder = 'sent', is_read = true WHERE id = $1`,
       [req.params.id]
     );
 
@@ -347,13 +346,37 @@ router.delete('/email/draft/:id', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     await pg.query(
-      `UPDATE ${SCHEMA}.emails SET status = 'rejected', folder = 'trash' WHERE id = $1`,
+      `UPDATE ${SCHEMA}.emails SET folder = 'trash' WHERE id = $1`,
       [req.params.id]
     );
 
     res.json({ success: true });
   } catch (err) {
     console.error('[EMAIL] Draft delete error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/v1/email/:uid — delete an email (move to trash)
+ */
+router.delete('/email/:uid', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+
+    const result = await pg.query(
+      `DELETE FROM ${SCHEMA}.emails WHERE id = $1 RETURNING id`,
+      [req.params.uid]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ success: false, error: 'Email not found' });
+    }
+
+    res.json({ success: true, deleted: req.params.uid });
+  } catch (err) {
+    console.error('[EMAIL] Delete error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -455,8 +478,8 @@ router.post('/email/incoming', async (req, res) => {
     // Store incoming email in inbox
     const insertResult = await pg.query(
       `INSERT INTO ${SCHEMA}.emails
-         (from_addr, to_addr, subject, body, html_body, folder, status, is_read, agent_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'inbox', 'received', false, $6, NOW())
+         (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, NOW())
        RETURNING id`,
       [sender, recipient, subject, body, htmlBody, agentId || null]
     );
@@ -481,15 +504,14 @@ router.post('/email/incoming', async (req, res) => {
 
       await pg.query(
         `INSERT INTO ${SCHEMA}.emails
-           (from_addr, to_addr, subject, body, folder, status, is_read, agent_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, false, $7, NOW())`,
+           (from_addr, to_addr, subject, body, folder, is_read, agent_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, $6, NOW())`,
         [
           agentEmail,
           sender,
           `Re: ${subject}`,
           `Thank you for your email. ${approvalRequired ? 'Your reply is pending approval.' : 'We will be in touch shortly.'}`,
           replyFolder,
-          replyStatus,
           agentId,
         ]
       );

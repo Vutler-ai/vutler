@@ -6,8 +6,18 @@ export async function getEmails(folder: EmailFolder = 'inbox'): Promise<Email[]>
     folder === 'sent'
       ? '/api/v1/email/sent'
       : `/api/v1/email?folder=${encodeURIComponent(folder)}`;
-  const data = await apiFetch<{ data?: Email[] } | Email[]>(url);
-  return Array.isArray(data) ? data : (data.data ?? []);
+  const data = await apiFetch<{ emails?: Email[]; data?: Email[] } | Email[]>(url);
+  if (Array.isArray(data)) return data;
+  // Backend returns { success, emails } shape
+  if ('emails' in data && Array.isArray(data.emails)) {
+    return data.emails.map((e: Email & { isRead?: boolean; htmlBody?: string }) => ({
+      ...e,
+      // Normalise field names from backend
+      unread: !e.isRead,
+      html: e.htmlBody,
+    }));
+  }
+  return (data as { data?: Email[] }).data ?? [];
 }
 
 export async function markRead(uid: string): Promise<SuccessResponse> {

@@ -241,18 +241,43 @@ function findMentionedAgent(content, agents) {
 
 async function getRecentHistory(channelId, limit = 10) {
   const result = await pool.query(
-    `SELECT sender_name, content FROM ${SCHEMA}.chat_messages
+    `SELECT sender_id, sender_name, content FROM ${SCHEMA}.chat_messages
      WHERE channel_id = $1
      ORDER BY created_at DESC LIMIT $2`,
     [channelId, limit]
   );
+  // Determine role: rows with sender_id matching any agent are 'assistant', others are 'user'
+  const agentIds = new Set((agentCache || []).map(a => String(a.id)));
   return result.rows.reverse().map(m => ({
-    role: m.sender_name === 'User' ? 'user' : (m.sender_id === 'user' ? 'user' : 'assistant'),
+    role: agentIds.has(String(m.sender_id)) ? 'assistant' : 'user',
     content: `${m.sender_name}: ${m.content}`
   }));
 }
 
 async function processMessage(msg) {
+  // Optimistic lock: mark as processed immediately to prevent duplicate processing
+  // from concurrent poll loop + triggerAgentResponse calls.
+  // Only skip UUID messages (e.g. fake IDs in tests won't have a DB row).
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (msg.id && uuidRegex.test(msg.id)) {
+    try {
+      const lockResult = await pool.query(
+        `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW()
+         WHERE id = $1 AND processed_at IS NULL
+         RETURNING id`,
+        [msg.id]
+      );
+      // If no row was updated, another process already claimed this message — skip.
+      if (lockResult.rowCount === 0) {
+        console.log(`[ChatRuntime] Message ${msg.id} already claimed — skipping`);
+        return;
+      }
+    } catch (lockErr) {
+      // Non-UUID or missing column — proceed anyway (will fail gracefully later)
+      console.warn(`[ChatRuntime] Could not lock message ${msg.id}:`, lockErr.message);
+    }
+  }
+
   try {
     let channelAgents = await getChannelAgents(msg.channel_id);
     if (channelAgents.length === 0) {
@@ -278,11 +303,6 @@ async function processMessage(msg) {
               `Bien reçu. J'orchestre l'équipe et on lance l'exécution. (${routing.created_count} tâche(s) distribuée(s))`,
               DEFAULT_WORKSPACE
             ]
-          );
-
-          await pool.query(
-            `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW() WHERE id = $1`,
-            [msg.id]
           );
           return;
         }
@@ -325,12 +345,6 @@ async function processMessage(msg) {
       [msg.channel_id, targetAgent.id, targetAgent.name, response.content, DEFAULT_WORKSPACE]
     );
 
-    // Mark original message as processed
-    await pool.query(
-      `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW() WHERE id = $1`,
-      [msg.id]
-    );
-
     console.log(`[ChatRuntime] ${targetAgent.name} replied (${response.latency_ms}ms, ${response.provider}/${response.model}, soul: ${soul.length} chars)`);
 
     // Remember this interaction in Snipara (async)
@@ -339,10 +353,6 @@ async function processMessage(msg) {
 
   } catch (err) {
     console.error(`[ChatRuntime] Error processing message ${msg.id}:`, err.message);
-    await pool.query(
-      `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW() WHERE id = $1`,
-      [msg.id]
-    ).catch(() => {});
     processedIds.add(msg.id);
   }
 }

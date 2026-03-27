@@ -1,17 +1,65 @@
 'use strict';
 
 /**
- * Integrations API (internal catalog mode)
- * Workspace-scoped, PostgreSQL-backed persistence.
+ * Integrations API
+ * Supports internal catalog mode + real OAuth for Google (Calendar/Drive) and GitHub (repos).
  */
 
 const express = require('express');
+const https = require('https');
+const crypto = require('crypto');
 const pool = require('../lib/vaultbrix');
 
 const router = express.Router();
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+// OAuth config — reuse the same client IDs used for login auth
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+
+// Callback base — the backend's public URL, e.g. https://app.vutler.ai
+const APP_BASE = process.env.APP_BASE_URL || process.env.GOOGLE_REDIRECT_URI?.replace('/api/v1/auth/google/callback', '') || 'https://app.vutler.ai';
+
+const GOOGLE_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/google/callback`;
+const GITHUB_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/github/callback`;
+
+// OAuth scopes for workspace integrations (broader than login scopes)
+const GOOGLE_INTEGRATION_SCOPES = [
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/drive.file',
+].join(' ');
+
+const GITHUB_INTEGRATION_SCOPES = 'repo read:user';
+
+// Simple HTTPS request helper (mirrors auth.js pattern)
+function httpsPost(options, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        try {
+          resolve(res.headers['content-type']?.includes('application/json') ? JSON.parse(data) : data);
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+// In-memory state store for CSRF protection (keyed by state param)
+// In production this should be Redis or DB-backed
+const oauthStateStore = new Map();
 
 let initPromise = null;
 
@@ -127,9 +175,13 @@ async function ensureReady() {
               source TEXT NOT NULL DEFAULT 'internal',
               connected BOOLEAN NOT NULL DEFAULT FALSE,
               status TEXT NOT NULL DEFAULT 'disconnected',
+              access_token TEXT,
+              refresh_token TEXT,
+              token_expires_at TIMESTAMPTZ,
               config JSONB NOT NULL DEFAULT '{}'::jsonb,
               scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
               credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
+              metadata JSONB DEFAULT '{}'::jsonb,
               connected_at TIMESTAMPTZ,
               disconnected_at TIMESTAMPTZ,
               connected_by TEXT,
@@ -138,6 +190,15 @@ async function ensureReady() {
               UNIQUE(workspace_id, provider)
             );
           `);
+        } else {
+          // Idempotently add OAuth token columns if the table already exists
+          await pool.query(`
+            ALTER TABLE ${SCHEMA}.workspace_integrations
+              ADD COLUMN IF NOT EXISTS access_token TEXT,
+              ADD COLUMN IF NOT EXISTS refresh_token TEXT,
+              ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ,
+              ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+          `).catch(() => {}); // Ignore if already exists or no permission
         }
 
         const check3 = await pool.query(
@@ -474,6 +535,219 @@ router.post('/:provider/execute', async (req, res) => {
   }
 });
 
+// ─── Real OAuth Flows ─────────────────────────────────────────────────────────
+
+// GET /api/v1/integrations/google/connect — initiate Google OAuth
+router.get('/google/connect', (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ success: false, error: 'Google OAuth not configured (GOOGLE_CLIENT_ID missing)' });
+  }
+
+  const state = crypto.randomBytes(32).toString('hex');
+  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+  // Store state → workspaceId mapping for callback verification
+  oauthStateStore.set(state, { workspaceId, provider: 'google', createdAt: Date.now() });
+
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_INTEGRATION_REDIRECT,
+    response_type: 'code',
+    scope: GOOGLE_INTEGRATION_SCOPES,
+    state,
+    access_type: 'offline',
+    prompt: 'consent',
+  });
+
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  res.json({ success: true, authUrl, provider: 'google' });
+});
+
+// GET /api/v1/integrations/google/callback — exchange code, store tokens
+router.get('/google/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    console.error('[INTEGRATIONS] Google OAuth error:', error);
+    return res.redirect('/integrations?error=oauth_cancelled&provider=google');
+  }
+
+  if (!code || !state || !oauthStateStore.has(state)) {
+    return res.redirect('/integrations?error=oauth_invalid&provider=google');
+  }
+
+  const stateData = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+  const workspaceId = stateData.workspaceId;
+
+  try {
+    const postBody = new URLSearchParams({
+      code,
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uri: GOOGLE_INTEGRATION_REDIRECT,
+      grant_type: 'authorization_code',
+    }).toString();
+
+    const tokenResp = await httpsPost({
+      hostname: 'oauth2.googleapis.com',
+      path: '/token',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    }, postBody);
+
+    if (!tokenResp.access_token) {
+      console.error('[INTEGRATIONS] Google token exchange failed:', tokenResp);
+      return res.redirect('/integrations?error=oauth_token_failed&provider=google');
+    }
+
+    const expiresAt = tokenResp.expires_in
+      ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
+      : null;
+
+    await ensureReady();
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, source, connected, status, access_token, refresh_token, token_expires_at,
+         scopes, connected_at, disconnected_at, connected_by, updated_at)
+       VALUES ($1, 'google', 'oauth', TRUE, 'connected', $2, $3, $4,
+         $5::jsonb, NOW(), NULL, $6, NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         source = 'oauth',
+         connected = TRUE,
+         status = 'connected',
+         access_token = EXCLUDED.access_token,
+         refresh_token = COALESCE(EXCLUDED.refresh_token, ${SCHEMA}.workspace_integrations.refresh_token),
+         token_expires_at = EXCLUDED.token_expires_at,
+         scopes = EXCLUDED.scopes,
+         connected_at = NOW(),
+         disconnected_at = NULL,
+         connected_by = EXCLUDED.connected_by,
+         updated_at = NOW()`,
+      [
+        workspaceId,
+        tokenResp.access_token,
+        tokenResp.refresh_token || null,
+        expiresAt,
+        JSON.stringify(GOOGLE_INTEGRATION_SCOPES.split(' ')),
+        req.user?.email || 'oauth',
+      ]
+    );
+
+    await addLog({ workspaceId, provider: 'google', action: 'oauth_connect' });
+    console.log(`[INTEGRATIONS] Google connected for workspace ${workspaceId}`);
+    res.redirect('/integrations?connected=google');
+  } catch (err) {
+    console.error('[INTEGRATIONS] Google callback error:', err.message);
+    res.redirect('/integrations?error=oauth_server_error&provider=google');
+  }
+});
+
+// GET /api/v1/integrations/github/connect — initiate GitHub OAuth
+router.get('/github/connect', (req, res) => {
+  if (!GITHUB_CLIENT_ID) {
+    return res.status(500).json({ success: false, error: 'GitHub OAuth not configured (GITHUB_CLIENT_ID missing)' });
+  }
+
+  const state = crypto.randomBytes(32).toString('hex');
+  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+  oauthStateStore.set(state, { workspaceId, provider: 'github', createdAt: Date.now() });
+
+  const params = new URLSearchParams({
+    client_id: GITHUB_CLIENT_ID,
+    redirect_uri: GITHUB_INTEGRATION_REDIRECT,
+    scope: GITHUB_INTEGRATION_SCOPES,
+    state,
+  });
+
+  const authUrl = `https://github.com/login/oauth/authorize?${params}`;
+  res.json({ success: true, authUrl, provider: 'github' });
+});
+
+// GET /api/v1/integrations/github/callback — exchange code, store tokens
+router.get('/github/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    console.error('[INTEGRATIONS] GitHub OAuth error:', error);
+    return res.redirect('/integrations?error=oauth_cancelled&provider=github');
+  }
+
+  if (!code || !state || !oauthStateStore.has(state)) {
+    return res.redirect('/integrations?error=oauth_invalid&provider=github');
+  }
+
+  const stateData = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+  const workspaceId = stateData.workspaceId;
+
+  try {
+    const postBody = new URLSearchParams({
+      client_id: GITHUB_CLIENT_ID,
+      client_secret: GITHUB_CLIENT_SECRET,
+      code,
+      redirect_uri: GITHUB_INTEGRATION_REDIRECT,
+    }).toString();
+
+    const tokenResp = await httpsPost({
+      hostname: 'github.com',
+      path: '/login/oauth/access_token',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+        'User-Agent': 'Vutler-App',
+      },
+    }, postBody);
+
+    if (!tokenResp.access_token) {
+      console.error('[INTEGRATIONS] GitHub token exchange failed:', tokenResp);
+      return res.redirect('/integrations?error=oauth_token_failed&provider=github');
+    }
+
+    await ensureReady();
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, source, connected, status, access_token, refresh_token,
+         scopes, connected_at, disconnected_at, connected_by, updated_at)
+       VALUES ($1, 'github', 'oauth', TRUE, 'connected', $2, NULL,
+         $3::jsonb, NOW(), NULL, $4, NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         source = 'oauth',
+         connected = TRUE,
+         status = 'connected',
+         access_token = EXCLUDED.access_token,
+         scopes = EXCLUDED.scopes,
+         connected_at = NOW(),
+         disconnected_at = NULL,
+         connected_by = EXCLUDED.connected_by,
+         updated_at = NOW()`,
+      [
+        workspaceId,
+        tokenResp.access_token,
+        JSON.stringify(GITHUB_INTEGRATION_SCOPES.split(' ')),
+        req.user?.email || 'oauth',
+      ]
+    );
+
+    await addLog({ workspaceId, provider: 'github', action: 'oauth_connect' });
+    console.log(`[INTEGRATIONS] GitHub connected for workspace ${workspaceId}`);
+    res.redirect('/integrations?connected=github');
+  } catch (err) {
+    console.error('[INTEGRATIONS] GitHub callback error:', err.message);
+    res.redirect('/integrations?error=oauth_server_error&provider=github');
+  }
+});
+
+// Clean up expired state entries every 10 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [key, val] of oauthStateStore.entries()) {
+    if (val.createdAt < cutoff) oauthStateStore.delete(key);
+  }
+}, 10 * 60 * 1000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // POST /api/v1/integrations/:provider/connect
 router.post('/:provider/connect', async (req, res) => {
   try {
@@ -788,13 +1062,17 @@ router.post('/n8n/workflows/:id/trigger', async (req, res) => {
   res.json({ success: true, message: `Workflow ${id} trigger accepted`, executionId: `exec-${Date.now()}` });
 });
 
-// POST /api/v1/integrations/:provider/callback
+// POST /api/v1/integrations/:provider/callback (fallback for other providers)
 router.post('/:provider/callback', async (req, res) => {
   const { provider } = req.params;
+  // google and github have dedicated GET callback routes above
+  if (['google', 'github'].includes(provider)) {
+    return res.status(405).json({ success: false, error: `Use GET /api/v1/integrations/${provider}/callback` });
+  }
   return res.status(409).json({
     success: false,
-    error: `OAuth callback for ${provider} is disabled in internal-only mode`,
-    code: 'INTERNAL_ONLY_MODE',
+    error: `OAuth callback for ${provider} is not yet supported`,
+    code: 'NOT_SUPPORTED',
   });
 });
 

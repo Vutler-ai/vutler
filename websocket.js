@@ -45,9 +45,20 @@ const connections = new Map();
  * @returns {WebSocketServer}
  */
 function setupWebSocket(server, app) {
-  const wss = new WebSocketServer({ server, path: '/ws/chat' });
+  const wss = new WebSocketServer({ noServer: true });
 
   console.log('✅ WebSocket server initialized on ws://…/ws/chat');
+
+  // Route /ws/chat upgrades to this server.
+  // Using noServer mode so that other upgrade listeners (e.g. /ws/chat-pro)
+  // are not killed by the ws library's abortHandshake when path doesn't match.
+  server.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    if (url.pathname !== '/ws/chat') return; // let other listeners handle it
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  });
 
   wss.on('connection', async (ws, req) => {
     await handleConnection(ws, req, app);

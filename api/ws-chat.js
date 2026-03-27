@@ -70,10 +70,12 @@ function setupChatWebSocket(server, app) {
       const token = url.searchParams.get('token') || null;
       const decoded = parseJWT(token);
       if (!decoded?.userId) {
+        console.warn('[WS-Chat] Rejected /ws/chat-pro connection: invalid or missing JWT token');
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
       }
+      console.log(`[WS-Chat] Accepted /ws/chat-pro connection for userId=${decoded.userId}`);
 
       req.wsUser = {
         userId: decoded.userId,
@@ -84,7 +86,8 @@ function setupChatWebSocket(server, app) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });
-    } catch {
+    } catch (err) {
+      console.error('[WS-Chat] Upgrade error for /ws/chat-pro:', err?.message || err);
       socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
       socket.destroy();
     }
