@@ -16,10 +16,13 @@ export async function getEvents(
   );
   const raw = Array.isArray(data) ? data : (data.events ?? []);
   // Normalise start_time/end_time aliases from the backend
-  return raw.map((e: CalendarEvent & { start_time?: string; end_time?: string }) => ({
+  return raw.map((e: CalendarEvent & { start_time?: string; end_time?: string; source_id?: string }) => ({
     ...e,
     start: e.start_time ?? e.start,
     end: e.end_time ?? e.end,
+    source: e.source ?? 'manual',
+    sourceId: e.source_id ?? e.sourceId ?? null,
+    readOnly: e.readOnly ?? false,
   }));
 }
 
