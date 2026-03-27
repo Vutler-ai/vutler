@@ -101,6 +101,92 @@ class DispatchRouter {
     }
   }
 
+  // ─── Command Dispatch (Phase 2) ───────────────────────
+
+  /**
+   * Dispatch a command to a local daemon for execution.
+   * The daemon will validate the command against its whitelist.
+   *
+   * @param {object} options
+   * @param {string} options.targetId — daemon agent ID
+   * @param {string} options.repo — repo name or URL
+   * @param {string} options.command — command to execute (e.g. "npm test")
+   * @param {string} [options.requestId] — optional correlation ID
+   * @param {number} [options.timeout] — execution timeout in ms
+   * @returns {{ success: boolean, error?: string }}
+   */
+  async dispatchCommand({ targetId, repo, command, requestId, timeout }) {
+    try {
+      const wsConnections = this.app.locals.wsConnections;
+      if (!wsConnections) {
+        return { success: false, error: 'WebSocket connections unavailable' };
+      }
+
+      let targetWs = null;
+      for (const [, conn] of wsConnections) {
+        if (conn.agentId === targetId) {
+          targetWs = conn.ws;
+          break;
+        }
+      }
+
+      if (!targetWs || targetWs.readyState !== 1) {
+        console.log('[DispatchRouter] Local daemon offline for cmd.exec:', targetId);
+        return { success: false, error: 'Local daemon offline' };
+      }
+
+      // Check daemon capabilities
+      const connEntry = [...wsConnections.values()].find(c => c.agentId === targetId);
+      if (connEntry && connEntry.capabilities && !connEntry.capabilities.includes('cmd-exec')) {
+        return { success: false, error: 'Local daemon does not support command execution. Update daemon config.' };
+      }
+
+      const message = {
+        type: 'cmd.exec',
+        payload: {
+          repo,
+          command,
+          request_id: requestId || `cmd_${Date.now()}`,
+          timeout: timeout || 300000,
+        },
+      };
+
+      targetWs.send(JSON.stringify(message));
+      console.log(`[DispatchRouter] Dispatched command "${command}" to local daemon:`, targetId);
+      return { success: true, dispatched_at: new Date().toISOString() };
+    } catch (err) {
+      console.error('[DispatchRouter] dispatchCommand error:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Combined dispatch: send code AND run a post-dispatch command.
+   * Common flow: write files then run "npm test".
+   */
+  async dispatchWithCommand(workspace, command) {
+    // Step 1: dispatch code
+    const codeResult = await this.dispatch(workspace);
+    if (!codeResult.success) return codeResult;
+
+    // Step 2: dispatch command (only for local targets)
+    if (workspace.dispatch_target !== 'local') {
+      return { ...codeResult, command_skipped: true, reason: 'Commands only supported on local targets' };
+    }
+
+    const cmdResult = await this.dispatchCommand({
+      targetId: workspace.dispatch_target_id,
+      repo: workspace.repo_url,
+      command,
+    });
+
+    return {
+      ...codeResult,
+      command_dispatched: cmdResult.success,
+      command_error: cmdResult.error,
+    };
+  }
+
   async dispatchToCloud(workspace) {
     try {
       const broadcastToAgent = this.app.locals.broadcastToAgent;

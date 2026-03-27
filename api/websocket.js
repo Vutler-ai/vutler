@@ -225,7 +225,8 @@ async function dispatch(connection, { type, data = {} }, app) {
     case 'agent.register':
       connection.mode = data.mode || 'agent';
       connection.capabilities = data.capabilities || [];
-      console.log(`[WS] Agent "${connection.agentId}" registered as ${connection.mode} (caps: ${connection.capabilities.join(', ')})`);
+      connection.repos = data.repos || [];  // Phase 2: repos with allowed commands
+      console.log(`[WS] Agent "${connection.agentId}" registered as ${connection.mode} (caps: ${connection.capabilities.join(', ')}, repos: ${connection.repos.length})`);
       send(connection.ws, 'agent.registered', { mode: connection.mode, capabilities: connection.capabilities });
       break;
 
@@ -239,6 +240,28 @@ async function dispatch(connection, { type, data = {} }, app) {
         summary: data.success
           ? `Code synced to local: branch ${data.branch}, commit ${data.commit_sha}`
           : `Dispatch failed: ${data.error}`,
+      });
+      break;
+
+    // ── Command execution result from local daemon ────────────────────
+    case 'cmd.exec.result':
+      console.log(`[WS] cmd.exec result from "${connection.agentId}": "${data.command}" exit=${data.exitCode} (${data.durationMs}ms)`);
+      pushActivityEvent({
+        type: 'cmd.exec.result',
+        agent_id: connection.agentId,
+        agent_name: connection.agentName,
+        summary: data.success
+          ? `Command "${data.command}" passed in ${data.repo} (${data.durationMs}ms)`
+          : `Command "${data.command}" failed in ${data.repo}: exit ${data.exitCode}`,
+        details: {
+          repo: data.repo,
+          command: data.command,
+          exitCode: data.exitCode,
+          stdout: data.stdout?.slice(0, 2000),  // truncate for activity feed
+          stderr: data.stderr?.slice(0, 2000),
+          durationMs: data.durationMs,
+          request_id: data.request_id,
+        },
       });
       break;
 

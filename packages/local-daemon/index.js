@@ -4,6 +4,7 @@ const WebSocket = require('ws');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { CommandRunner } = require('./src/command-runner');
 
 const LOG_PREFIX = '[VutlerDaemon]';
 
@@ -11,8 +12,17 @@ class VutlerDaemon {
   constructor(config) {
     this.wsUrl = config.wsUrl || 'wss://api.vutler.com/ws/chat';
     this.apiKey = config.apiKey;
+
+    // Legacy flat config support
     this.reposDir = config.reposDir || path.join(process.env.HOME, 'Developer');
-    this.allowedRepos = config.allowedRepos || []; // whitelist
+    this.allowedRepos = config.allowedRepos || [];
+
+    // New structured repos config (Phase 2)
+    // If config.repos exists, build the CommandRunner from it
+    // Otherwise fall back to legacy allowedRepos (git-sync only, no commands)
+    this.reposConfig = config.repos || {};
+    this.commandRunner = new CommandRunner(this.reposConfig);
+
     this.ws = null;
     this.reconnectDelay = 1000;
     this.maxReconnectDelay = 30000;
@@ -22,7 +32,16 @@ class VutlerDaemon {
   start() {
     this.running = true;
     this.connect();
+
+    const repoCount = Object.keys(this.reposConfig).length;
+    const cmdCount = Object.values(this.reposConfig).reduce(
+      (sum, r) => sum + (r.allowedCommands?.length || 0), 0
+    );
+
     console.log(`${LOG_PREFIX} Started. Connecting to ${this.wsUrl}`);
+    if (repoCount > 0) {
+      console.log(`${LOG_PREFIX} Command runner: ${repoCount} repo(s), ${cmdCount} whitelisted command(s)`);
+    }
   }
 
   stop() {
@@ -40,9 +59,22 @@ class VutlerDaemon {
 
     this.ws.on('open', () => {
       console.log(`${LOG_PREFIX} Connected to Vutler cloud`);
-      this.reconnectDelay = 1000; // reset backoff
-      // Register as local daemon
-      this.send({ type: 'agent.register', data: { mode: 'local-daemon', capabilities: ['git-sync'] } });
+      this.reconnectDelay = 1000;
+
+      // Register with capabilities
+      const capabilities = ['git-sync'];
+      if (Object.keys(this.reposConfig).length > 0) {
+        capabilities.push('cmd-exec');
+      }
+
+      this.send({
+        type: 'agent.register',
+        data: {
+          mode: 'local-daemon',
+          capabilities,
+          repos: this.commandRunner.listAllRepos(),
+        }
+      });
     });
 
     this.ws.on('message', (raw) => {
@@ -81,12 +113,16 @@ class VutlerDaemon {
         await this.handleCodeReady(msg.payload || msg.data);
         break;
 
+      case 'cmd.exec':
+        await this.handleCmdExec(msg.payload || msg.data);
+        break;
+
       case 'git.pull':
         await this.handleGitPull(msg.payload || msg.data);
         break;
 
       case 'status.request':
-        this.send({ type: 'status.response', data: { status: 'online', repos_dir: this.reposDir, allowed_repos: this.allowedRepos } });
+        this.handleStatusRequest();
         break;
 
       default:
@@ -94,17 +130,35 @@ class VutlerDaemon {
     }
   }
 
+  // ─── Status ──────────────────────────────────────────
+
+  handleStatusRequest() {
+    this.send({
+      type: 'status.response',
+      data: {
+        status: 'online',
+        repos_dir: this.reposDir,
+        allowed_repos: this.allowedRepos,
+        repos: this.commandRunner.listAllRepos(),
+        capabilities: Object.keys(this.reposConfig).length > 0
+          ? ['git-sync', 'cmd-exec']
+          : ['git-sync'],
+      }
+    });
+  }
+
+  // ─── Code Dispatch (Phase 1) ─────────────────────────
+
   async handleCodeReady({ repo, branch, base_branch, files }) {
     const repoName = repo.split('/').pop().replace('.git', '');
 
-    // Security: check whitelist
-    if (this.allowedRepos.length > 0 && !this.allowedRepos.includes(repoName)) {
-      console.error(`${LOG_PREFIX} Repo "${repoName}" not in whitelist. Rejecting.`);
-      this.send({ type: 'dispatch.result', data: { success: false, error: `Repo "${repoName}" not whitelisted` } });
+    // Security: check whitelist (legacy + new)
+    const repoDir = this._resolveRepoDir(repoName);
+    if (!repoDir) {
+      console.error(`${LOG_PREFIX} Repo "${repoName}" not configured. Rejecting.`);
+      this.send({ type: 'dispatch.result', data: { success: false, error: `Repo "${repoName}" not configured` } });
       return;
     }
-
-    const repoDir = path.join(this.reposDir, repoName);
 
     try {
       if (!fs.existsSync(repoDir)) {
@@ -113,18 +167,15 @@ class VutlerDaemon {
         return;
       }
 
-      // Fetch + create branch
       console.log(`${LOG_PREFIX} Syncing ${files.length} files to ${repoName}/${branch}`);
       execSync(`git fetch origin`, { cwd: repoDir, stdio: 'pipe' });
 
       try {
         execSync(`git checkout -b ${branch} origin/${base_branch || 'main'}`, { cwd: repoDir, stdio: 'pipe' });
       } catch {
-        // Branch might already exist
         execSync(`git checkout ${branch}`, { cwd: repoDir, stdio: 'pipe' });
       }
 
-      // Write files
       for (const file of files) {
         const filePath = path.join(repoDir, file.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -132,7 +183,6 @@ class VutlerDaemon {
         console.log(`${LOG_PREFIX}   Wrote ${file.path}`);
       }
 
-      // Stage + commit
       execSync(`git add -A`, { cwd: repoDir, stdio: 'pipe' });
       execSync(`git commit -m "cloud-sandbox: ${branch}"`, { cwd: repoDir, stdio: 'pipe' });
 
@@ -147,9 +197,38 @@ class VutlerDaemon {
     }
   }
 
+  // ─── Command Execution (Phase 2) ─────────────────────
+
+  async handleCmdExec({ repo, command, request_id, timeout }) {
+    const repoName = repo?.split('/').pop().replace('.git', '') || repo;
+
+    console.log(`${LOG_PREFIX} cmd.exec request: "${command}" in ${repoName}`);
+
+    const result = await this.commandRunner.exec(repoName, command, {
+      timeout: timeout || 300_000,
+    });
+
+    this.send({
+      type: 'cmd.exec.result',
+      data: {
+        request_id,
+        repo: repoName,
+        command,
+        ...result,
+      }
+    });
+  }
+
+  // ─── Git Pull ────────────────────────────────────────
+
   async handleGitPull({ repo }) {
     const repoName = repo.split('/').pop().replace('.git', '');
-    const repoDir = path.join(this.reposDir, repoName);
+    const repoDir = this._resolveRepoDir(repoName);
+
+    if (!repoDir) {
+      this.send({ type: 'git.pull.result', data: { success: false, error: `Repo "${repoName}" not configured` } });
+      return;
+    }
 
     try {
       execSync(`git pull --rebase`, { cwd: repoDir, stdio: 'pipe' });
@@ -158,6 +237,25 @@ class VutlerDaemon {
     } catch (err) {
       this.send({ type: 'git.pull.result', data: { success: false, error: err.message } });
     }
+  }
+
+  // ─── Helpers ─────────────────────────────────────────
+
+  /**
+   * Resolve repo directory from either new config.repos or legacy config.
+   */
+  _resolveRepoDir(repoName) {
+    // Try new structured config first
+    if (this.reposConfig[repoName]?.path) {
+      return this.reposConfig[repoName].path;
+    }
+
+    // Fall back to legacy flat config
+    if (this.allowedRepos.length === 0 || this.allowedRepos.includes(repoName)) {
+      return path.join(this.reposDir, repoName);
+    }
+
+    return null;
   }
 }
 
