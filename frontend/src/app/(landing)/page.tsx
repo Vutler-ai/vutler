@@ -103,7 +103,7 @@ function HeroSection() {
 
             <div className="flex flex-wrap gap-4 mb-12">
               <Button size="lg" className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-8 text-base font-semibold shadow-lg shadow-blue-600/25" asChild>
-                <Link href="/register">Get Started Free</Link>
+                <a href="https://app.vutler.ai/register">Get Started Free</a>
               </Button>
               <Button size="lg" variant="outline" className="h-12 px-8 text-base border-white/20 text-white/80 hover:text-white hover:border-white/40 hover:bg-white/5" asChild>
                 <a href="https://github.com/Vutler-ai/vutler" target="_blank" rel="noopener noreferrer">
@@ -251,7 +251,7 @@ function ProductsSection() {
               ))}
             </ul>
             <Button className="bg-blue-600 hover:bg-blue-500 text-white w-full" asChild>
-              <Link href="/register">Try Office Free →</Link>
+              <a href="https://app.vutler.ai/register">Try Office Free →</a>
             </Button>
           </div>
         </div>
@@ -760,7 +760,7 @@ function CTASection() {
         </p>
         <div className="flex flex-wrap gap-4 justify-center">
           <Button size="lg" className="bg-blue-600 hover:bg-blue-500 text-white h-13 px-10 text-lg font-semibold shadow-xl shadow-blue-600/25" asChild>
-            <Link href="/register">Get Started Free</Link>
+            <a href="https://app.vutler.ai/register">Get Started Free</a>
           </Button>
           <Button size="lg" variant="outline" className="h-13 px-10 text-lg border-white/20 text-white/70 hover:text-white hover:border-white/40" asChild>
             <Link href="/pricing">View Pricing</Link>

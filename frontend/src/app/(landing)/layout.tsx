@@ -56,10 +56,10 @@ function LandingNavbar() {
           {/* Desktop CTAs */}
           <div className="hidden md:flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
-              <Link href="/login">Sign In</Link>
+              <a href="https://app.vutler.ai/login">Sign In</a>
             </Button>
             <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white" asChild>
-              <Link href="/register">Get Started</Link>
+              <a href="https://app.vutler.ai/register">Get Started</a>
             </Button>
           </div>
 
@@ -92,10 +92,10 @@ function LandingNavbar() {
             </a>
             <div className="px-4 pt-2 flex gap-3">
               <Button variant="outline" size="sm" asChild className="flex-1">
-                <Link href="/login">Sign In</Link>
+                <a href="https://app.vutler.ai/login">Sign In</a>
               </Button>
               <Button size="sm" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white" asChild>
-                <Link href="/register">Get Started</Link>
+                <a href="https://app.vutler.ai/register">Get Started</a>
               </Button>
             </div>
           </div>
