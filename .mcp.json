@@ -13,8 +13,8 @@
       "command": "node",
       "args": ["packages/mcp-nexus/index.js"],
       "env": {
-        "VUTLER_API_URL": "http://localhost:3001",
-        "VUTLER_API_KEY": "${VUTLER_API_KEY}"
+        "VUTLER_API_URL": "https://app.vutler.ai",
+        "VUTLER_API_KEY": "vt_9fab832bba42375bc9fa8645a18311b13d60f5d75f4bf3c8"
       }
     }
   }

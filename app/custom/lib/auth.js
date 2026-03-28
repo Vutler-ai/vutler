@@ -18,7 +18,7 @@ function setAdminSessions(sessions) { _adminSessions = sessions; }
 async function authenticateAgent(req, res, next) {
   try {
     // If global auth middleware already decoded JWT, trust it
-    if (req.user && req.authType === "jwt") {
+    if (req.user) {
       const isAdmin = req.user.role === "admin";
       req.agent = {
         id: req.user.id,
