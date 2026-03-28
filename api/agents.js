@@ -4,6 +4,8 @@
  */
 const express = require("express");
 const pool = require("../lib/vaultbrix");
+const { CryptoService } = require("../services/crypto");
+const crypto = new CryptoService();
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
@@ -282,6 +284,7 @@ router.get("/:id/config", async (req, res) => {
       type: row.type,
       role: row.role,
       permissions: extra.permissions || { file_access: false, network_access: false, code_execution: false, web_search: false, tool_use: false },
+      secrets: (extra.secrets || []).map(s => ({ key: s.key })),  // keys only, never values
     };
     // Spread cfg at top level so frontend `...data` picks up fields directly
     res.json({ success: true, ...cfg, config: cfg });
@@ -293,7 +296,7 @@ router.get("/:id/config", async (req, res) => {
 // PUT /api/v1/agents/:id/config — updates agent config
 router.put("/:id/config", async (req, res) => {
   try {
-    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, permissions } = req.body;
+    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, permissions, secrets } = req.body;
     const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
@@ -334,7 +337,63 @@ router.put("/:id/config", async (req, res) => {
       }
     }
 
+    // Persist secrets (encrypted) in agent_configs JSONB
+    if (secrets && Array.isArray(secrets) && secrets.length > 0) {
+      const wsId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+      // Encrypt each secret value, keep key in plaintext
+      const encryptedSecrets = secrets
+        .filter(s => s.key && s.value)
+        .map(s => ({ key: s.key.trim(), value: crypto.encrypt(s.value) }));
+      if (encryptedSecrets.length > 0) {
+        // Merge with existing secrets (add new, update existing keys)
+        const existingCfg = await pool.query(`SELECT id, config FROM ${SCHEMA}.agent_configs WHERE agent_id = $1 LIMIT 1`, [row.id]);
+        let currentSecrets = [];
+        if (existingCfg.rows.length > 0) {
+          currentSecrets = existingCfg.rows[0].config?.secrets || [];
+        }
+        // Merge: new secrets overwrite existing by key
+        const secretMap = new Map(currentSecrets.map(s => [s.key, s]));
+        for (const s of encryptedSecrets) secretMap.set(s.key, s);
+        const mergedSecrets = Array.from(secretMap.values());
+
+        if (existingCfg.rows.length > 0) {
+          await pool.query(
+            `UPDATE ${SCHEMA}.agent_configs SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('secrets', $1::jsonb), updated_at = NOW() WHERE agent_id = $2`,
+            [JSON.stringify(mergedSecrets), row.id]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO ${SCHEMA}.agent_configs (id, workspace_id, agent_id, config, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, jsonb_build_object('secrets', $3::jsonb), NOW(), NOW())`,
+            [wsId, row.id, JSON.stringify(encryptedSecrets)]
+          );
+        }
+      }
+    }
+
     res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [] } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/v1/agents/:id/secrets/:key — remove a specific secret
+router.delete("/:id/secrets/:key", async (req, res) => {
+  try {
+    const agent = await pool.query(`SELECT id FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    if (agent.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const agentId = agent.rows[0].id;
+    const secretKey = req.params.key;
+
+    const cfgRow = await pool.query(`SELECT config FROM ${SCHEMA}.agent_configs WHERE agent_id = $1 LIMIT 1`, [agentId]);
+    if (cfgRow.rows.length === 0) return res.json({ success: true });
+
+    const currentSecrets = cfgRow.rows[0].config?.secrets || [];
+    const filtered = currentSecrets.filter(s => s.key !== secretKey);
+    await pool.query(
+      `UPDATE ${SCHEMA}.agent_configs SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('secrets', $1::jsonb), updated_at = NOW() WHERE agent_id = $2`,
+      [JSON.stringify(filtered), agentId]
+    );
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

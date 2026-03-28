@@ -347,6 +347,8 @@ export default function AgentConfigPage() {
   const [success, setSuccess] = useState(false);
   const [newSecretKey, setNewSecretKey] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
+  const [savedSecretKeys, setSavedSecretKeys] = useState<string[]>([]);
+  const [deletingSecret, setDeletingSecret] = useState<string | null>(null);
   const [agentType, setAgentType] = useState<string | null>(null);
   const [showAllPerms, setShowAllPerms] = useState(false);
 
@@ -383,8 +385,9 @@ export default function AgentConfigPage() {
         if (res.ok) {
           const data = await res.json();
           const cfg = data.config ?? data;
-          setConfig(prev => ({ ...prev, ...cfg }));
+          setConfig(prev => ({ ...prev, ...cfg, secrets: [] }));  // secrets from DB are keys-only, don't put in form
           if (cfg.type) setAgentType(cfg.type.toLowerCase());
+          if (cfg.secrets?.length) setSavedSecretKeys(cfg.secrets.map((s: any) => s.key));
         }
       } catch {
         // Use defaults
@@ -466,6 +469,15 @@ export default function AgentConfigPage() {
   const removeSecret = (idx: number) =>
     setConfig(prev => ({ ...prev, secrets: prev.secrets.filter((_, i) => i !== idx) }));
 
+  const deleteSavedSecret = async (key: string) => {
+    setDeletingSecret(key);
+    try {
+      await authFetch(`/api/v1/agents/${agentId}/secrets/${encodeURIComponent(key)}`, { method: 'DELETE' });
+      setSavedSecretKeys(prev => prev.filter(k => k !== key));
+    } catch { /* silent */ }
+    setDeletingSecret(null);
+  };
+
   const save = async () => {
     setSaving(true);
     setError(null);
@@ -476,6 +488,11 @@ export default function AgentConfigPage() {
         body: JSON.stringify(config),
       });
       if (!res.ok) throw new Error('Failed to save configuration');
+      // Move newly added secrets to saved list (they're now persisted)
+      if (config.secrets.length > 0) {
+        setSavedSecretKeys(prev => [...prev, ...config.secrets.map(s => s.key)]);
+        setConfig(prev => ({ ...prev, secrets: [] }));
+      }
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
@@ -714,16 +731,39 @@ export default function AgentConfigPage() {
             <p className="text-xs text-[#6b7280] mt-1 leading-relaxed">
               API keys and credentials this agent can use at runtime (e.g. CRM API key, SMTP password, third-party tokens).
               <br />
-              <span className="text-amber-400/70">Stored locally on your device — never sent to Vutler cloud.</span>
+              <span className="text-amber-400/70">Encrypted at rest — values are never exposed after saving.</span>
             </p>
           </div>
 
+          {/* Saved secrets (from DB — keys only, values masked) */}
+          {savedSecretKeys.length > 0 && (
+            <div className="space-y-2 mb-4">
+              {savedSecretKeys.map(key => (
+                <div key={key} className="flex items-center gap-3 p-3 bg-[#0e0f1a] rounded-lg">
+                  <span className="size-2 rounded-full bg-green-500 shrink-0" title="Saved" />
+                  <span className="text-sm text-blue-400 font-mono shrink-0">{key}</span>
+                  <span className="text-sm text-[#6b7280] flex-1 font-mono">••••••••</span>
+                  <button
+                    onClick={() => deleteSavedSecret(key)}
+                    disabled={deletingSecret === key}
+                    className="text-red-400 hover:text-red-300 text-sm transition-colors disabled:opacity-50"
+                  >
+                    {deletingSecret === key ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* New secrets (not yet saved — will be encrypted on Save) */}
           {config.secrets.length > 0 && (
             <div className="space-y-2 mb-4">
               {config.secrets.map((s, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 bg-[#0e0f1a] rounded-lg">
+                <div key={i} className="flex items-center gap-3 p-3 bg-[#0e0f1a] rounded-lg border border-blue-500/20">
+                  <span className="size-2 rounded-full bg-blue-500 shrink-0" title="Unsaved" />
                   <span className="text-sm text-blue-400 font-mono shrink-0">{s.key}</span>
                   <span className="text-sm text-[#6b7280] flex-1 font-mono">••••••••</span>
+                  <span className="text-xs text-blue-400/60">unsaved</span>
                   <button
                     onClick={() => removeSecret(i)}
                     className="text-red-400 hover:text-red-300 text-sm transition-colors"
