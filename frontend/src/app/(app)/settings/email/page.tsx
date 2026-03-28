@@ -58,6 +58,28 @@ interface Agent {
   avatar?: string;
 }
 
+interface EmailGroupMember {
+  id: string;
+  memberType: 'agent' | 'human';
+  agentId?: string;
+  agentName?: string;
+  agentUsername?: string;
+  humanEmail?: string;
+  humanName?: string;
+  role: 'owner' | 'member';
+}
+
+interface EmailGroup {
+  id: string;
+  name: string;
+  emailAddress: string;
+  description?: string;
+  autoReply: boolean;
+  approvalRequired: boolean;
+  memberCount: number;
+  members?: EmailGroupMember[];
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -249,6 +271,18 @@ export default function EmailSettingsPage() {
   const [addingRoute, setAddingRoute] = useState(false);
   const [routeError, setRouteError] = useState('');
 
+  // Email groups state
+  const [emailGroups, setEmailGroups] = useState<EmailGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupPrefix, setNewGroupPrefix] = useState('');
+  const [addingGroup, setAddingGroup] = useState(false);
+  const [groupError, setGroupError] = useState('');
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  const [newMemberAgentId, setNewMemberAgentId] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+  const [addingMember, setAddingMember] = useState(false);
+
   // ---------------------------------------------------------------------------
   // Load data
   // ---------------------------------------------------------------------------
@@ -288,11 +322,30 @@ export default function EmailSettingsPage() {
       .catch(() => setAgents([]));
   }, []);
 
+  const loadGroups = useCallback(() => {
+    setGroupsLoading(true);
+    authFetch('/api/v1/email/groups')
+      .then(r => r.json())
+      .then(data => setEmailGroups(data.groups || data || []))
+      .catch(() => setEmailGroups([]))
+      .finally(() => setGroupsLoading(false));
+  }, []);
+
+  const loadGroupMembers = useCallback(async (groupId: string) => {
+    try {
+      const res = await authFetch(`/api/v1/email/groups/${groupId}`);
+      const data = await res.json();
+      const group = data.group || data;
+      setEmailGroups(prev => prev.map(g => g.id === groupId ? { ...g, members: group.members || [] } : g));
+    } catch { /* silent */ }
+  }, []);
+
   useEffect(() => {
     loadDomains();
     loadRoutes();
     loadAgents();
-  }, [loadDomains, loadRoutes, loadAgents]);
+    loadGroups();
+  }, [loadDomains, loadRoutes, loadAgents, loadGroups]);
 
   // ---------------------------------------------------------------------------
   // Notification handlers
@@ -413,6 +466,73 @@ export default function EmailSettingsPage() {
     } catch {
       /* silent */
     }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Group handlers
+  // ---------------------------------------------------------------------------
+
+  const addGroup = async () => {
+    if (!newGroupName.trim() || !newGroupPrefix.trim()) return;
+    setGroupError('');
+    setAddingGroup(true);
+    try {
+      const res = await authFetch('/api/v1/email/groups', {
+        method: 'POST',
+        body: JSON.stringify({ name: newGroupName.trim(), email_prefix: newGroupPrefix.trim() }),
+      });
+      const data = await res.json();
+      if (!data.success && data.error) throw new Error(data.error);
+      setNewGroupName('');
+      setNewGroupPrefix('');
+      loadGroups();
+    } catch (err: unknown) {
+      setGroupError(err instanceof Error ? err.message : 'Failed to create group');
+    }
+    setAddingGroup(false);
+  };
+
+  const deleteGroup = async (id: string) => {
+    if (!confirm('Delete this email group? Members will no longer receive emails at this address.')) return;
+    try {
+      await authFetch(`/api/v1/email/groups/${id}`, { method: 'DELETE' });
+      loadGroups();
+    } catch { /* silent */ }
+  };
+
+  const toggleGroupExpand = async (groupId: string) => {
+    if (expandedGroupId === groupId) {
+      setExpandedGroupId(null);
+    } else {
+      setExpandedGroupId(groupId);
+      await loadGroupMembers(groupId);
+    }
+  };
+
+  const addMemberToGroup = async (groupId: string, memberType: 'agent' | 'human') => {
+    setAddingMember(true);
+    try {
+      const body = memberType === 'agent'
+        ? { member_type: 'agent', agent_id: newMemberAgentId }
+        : { member_type: 'human', email: newMemberEmail.trim() };
+      await authFetch(`/api/v1/email/groups/${groupId}/members`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      setNewMemberAgentId('');
+      setNewMemberEmail('');
+      await loadGroupMembers(groupId);
+      loadGroups();
+    } catch { /* silent */ }
+    setAddingMember(false);
+  };
+
+  const removeMember = async (groupId: string, memberId: string) => {
+    try {
+      await authFetch(`/api/v1/email/groups/${groupId}/members/${memberId}`, { method: 'DELETE' });
+      await loadGroupMembers(groupId);
+      loadGroups();
+    } catch { /* silent */ }
   };
 
   // When an agent is selected for a new route, pre-fill the prefix from their username
@@ -621,6 +741,156 @@ export default function EmailSettingsPage() {
                   >
                     Remove
                   </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* ── Email Groups ─────────────────────────────────────────────── */}
+        <section>
+          <h2 className="text-2xl font-bold mb-2">Email Groups</h2>
+          <p className="text-[#94a3b8] mb-6">
+            Create shared email addresses (e.g. <span className="text-white font-mono">info@yourcompany.com</span>) and assign agents or team members to receive and respond.
+          </p>
+
+          {/* Add group */}
+          <div className="bg-[#1e293b] rounded-xl border border-[rgba(255,255,255,0.07)] p-4 mb-6">
+            <p className="text-sm font-medium text-[#94a3b8] mb-3">Create new group</p>
+            <div className="flex gap-3 flex-wrap">
+              <input
+                type="text"
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                placeholder="Group name (e.g. Support)"
+                className="flex-1 min-w-[180px] px-3 py-2.5 bg-[#0f172a] border border-[rgba(255,255,255,0.1)] rounded-lg text-white placeholder-[#64748b] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+              />
+              <input
+                type="text"
+                value={newGroupPrefix}
+                onChange={e => setNewGroupPrefix(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addGroup()}
+                placeholder="email prefix (e.g. info)"
+                className="flex-1 min-w-[140px] px-3 py-2.5 bg-[#0f172a] border border-[rgba(255,255,255,0.1)] rounded-lg text-white placeholder-[#64748b] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+              />
+              <button
+                onClick={addGroup}
+                disabled={addingGroup || !newGroupName.trim() || !newGroupPrefix.trim()}
+                className="px-5 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 rounded-lg font-medium transition-colors cursor-pointer"
+              >
+                {addingGroup ? 'Creating...' : 'Create Group'}
+              </button>
+            </div>
+            {groupError && <p className="mt-2 text-sm text-red-400">{groupError}</p>}
+            <p className="mt-2 text-xs text-[#475569]">
+              The address will be <span className="font-mono text-[#94a3b8]">prefix@your-domain-or-workspace.vutler.ai</span>
+            </p>
+          </div>
+
+          {/* Group list */}
+          {groupsLoading ? (
+            <p className="text-[#64748b] text-sm">Loading groups...</p>
+          ) : emailGroups.length === 0 ? (
+            <div className="p-6 text-center bg-[#1e293b] rounded-xl border border-[rgba(255,255,255,0.07)]">
+              <p className="text-[#64748b]">No email groups created yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {emailGroups.map(g => (
+                <div key={g.id} className="bg-[#1e293b] rounded-xl border border-[rgba(255,255,255,0.07)] overflow-hidden">
+                  {/* Group header */}
+                  <div className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="font-medium text-white">{g.name}</p>
+                      <p className="text-sm font-mono text-[#3b82f6]">{g.emailAddress}</p>
+                      <p className="text-xs text-[#64748b] mt-1">{g.memberCount} member{g.memberCount !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => toggleGroupExpand(g.id)}
+                        className="px-3 py-1.5 text-xs bg-[#334155] hover:bg-[#475569] rounded-lg transition-colors cursor-pointer"
+                      >
+                        {expandedGroupId === g.id ? 'Hide' : 'Manage'} members
+                      </button>
+                      <button
+                        onClick={() => deleteGroup(g.id)}
+                        className="px-3 py-1.5 text-xs bg-red-900/30 hover:bg-red-800/50 text-red-400 rounded-lg transition-colors cursor-pointer"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded: members management */}
+                  {expandedGroupId === g.id && (
+                    <div className="px-4 pb-4 border-t border-[rgba(255,255,255,0.05)] pt-3 space-y-3">
+                      {/* Current members */}
+                      {g.members && g.members.length > 0 ? (
+                        <div className="space-y-2">
+                          {g.members.map(m => (
+                            <div key={m.id} className="flex items-center justify-between py-1.5 px-2 bg-[#0f172a] rounded-lg">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${m.memberType === 'agent' ? 'bg-violet-900/40 text-violet-300' : 'bg-blue-900/40 text-blue-300'}`}>
+                                  {m.memberType === 'agent' ? 'Agent' : 'Human'}
+                                </span>
+                                <span className="text-sm text-white">
+                                  {m.memberType === 'agent' ? (m.agentName || m.agentUsername || 'Agent') : (m.humanName || m.humanEmail || 'Member')}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => removeMember(g.id, m.id)}
+                                className="text-xs text-red-400 hover:text-red-300 cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-[#64748b]">No members yet.</p>
+                      )}
+
+                      {/* Add agent member */}
+                      <div className="flex gap-2 items-center">
+                        <select
+                          value={newMemberAgentId}
+                          onChange={e => setNewMemberAgentId(e.target.value)}
+                          className="flex-1 px-2 py-2 bg-[#0f172a] border border-[rgba(255,255,255,0.1)] rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#3b82f6] cursor-pointer"
+                        >
+                          <option value="">Add an agent...</option>
+                          {agents.map(a => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => addMemberToGroup(g.id, 'agent')}
+                          disabled={addingMember || !newMemberAgentId}
+                          className="px-3 py-2 text-xs bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 rounded-lg font-medium transition-colors cursor-pointer"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      {/* Add human member */}
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="email"
+                          value={newMemberEmail}
+                          onChange={e => setNewMemberEmail(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && newMemberEmail.trim() && addMemberToGroup(g.id, 'human')}
+                          placeholder="Add a human email..."
+                          className="flex-1 px-2 py-2 bg-[#0f172a] border border-[rgba(255,255,255,0.1)] rounded-lg text-sm text-white placeholder-[#64748b] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+                        />
+                        <button
+                          onClick={() => addMemberToGroup(g.id, 'human')}
+                          disabled={addingMember || !newMemberEmail.trim()}
+                          className="px-3 py-2 text-xs bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 rounded-lg font-medium transition-colors cursor-pointer"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

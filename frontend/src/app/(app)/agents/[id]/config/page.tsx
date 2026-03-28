@@ -336,6 +336,13 @@ export default function AgentConfigPage() {
   const [newSecretKey, setNewSecretKey] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
 
+  // Email state
+  const [agentEmail, setAgentEmail] = useState<string | null>(null);
+  const [emailRouteId, setEmailRouteId] = useState<string | null>(null);
+  const [emailEnabled, setEmailEnabled] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(true);
+  const [emailToggling, setEmailToggling] = useState(false);
+
   // Load models
   useEffect(() => {
     authFetch('/api/v1/llm/models')
@@ -372,6 +379,54 @@ export default function AgentConfigPage() {
     };
     load();
   }, [agentId]);
+
+  // Load agent email route
+  useEffect(() => {
+    const loadEmailRoute = async () => {
+      try {
+        const res = await authFetch('/api/v1/email/routes');
+        const data = await res.json();
+        const routes = data.routes || [];
+        const route = routes.find((r: any) => r.agentId === agentId);
+        if (route) {
+          setAgentEmail(route.emailAddress);
+          setEmailRouteId(route.id);
+          setEmailEnabled(true);
+        }
+      } catch { /* silent */ }
+      setEmailLoading(false);
+    };
+    loadEmailRoute();
+  }, [agentId]);
+
+  const toggleEmail = async () => {
+    setEmailToggling(true);
+    try {
+      if (emailEnabled && emailRouteId) {
+        await authFetch(`/api/v1/email/routes/${emailRouteId}`, { method: 'DELETE' });
+        setAgentEmail(null);
+        setEmailRouteId(null);
+        setEmailEnabled(false);
+      } else {
+        // Get agent info for the username
+        const agentRes = await authFetch(`/api/v1/agents/${agentId}`);
+        const agentData = await agentRes.json();
+        const agent = agentData.agent || agentData;
+        const prefix = agent.username || agent.name?.toLowerCase().replace(/\s+/g, '.');
+        const res = await authFetch('/api/v1/email/routes', {
+          method: 'POST',
+          body: JSON.stringify({ agent_id: agentId, email_prefix: prefix }),
+        });
+        const data = await res.json();
+        if (data.route) {
+          setAgentEmail(data.route.emailAddress || data.route.email_address);
+          setEmailRouteId(data.route.id);
+          setEmailEnabled(true);
+        }
+      }
+    } catch { /* silent */ }
+    setEmailToggling(false);
+  };
 
   const groupedModels = models.reduce((acc, m) => {
     const p = m.provider || 'other';
@@ -555,6 +610,42 @@ export default function AgentConfigPage() {
                 />
               )}
             </>
+          )}
+        </section>
+
+        {/* Email */}
+        <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+          <h3 className="text-base font-semibold text-white mb-1">Email Address</h3>
+          <p className="text-xs text-[#6b7280] mb-4">
+            Enable to assign an email address to this agent. Incoming emails will be routed to it.
+          </p>
+          {emailLoading ? (
+            <Skeleton className="h-10 w-full" />
+          ) : (
+            <div className="space-y-3">
+              <label className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer">
+                <div>
+                  <div className="text-white text-sm font-medium">Enable email</div>
+                  <div className="text-xs text-[#6b7280]">
+                    {emailEnabled && agentEmail
+                      ? agentEmail
+                      : 'Assign username@domain or username@workspace.vutler.ai'}
+                  </div>
+                </div>
+                <button
+                  onClick={toggleEmail}
+                  disabled={emailToggling}
+                  className={`relative w-12 h-6 rounded-full transition-colors cursor-pointer ${emailEnabled ? 'bg-blue-600' : 'bg-[#334155]'} ${emailToggling ? 'opacity-50' : ''}`}
+                >
+                  <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                </button>
+              </label>
+              {emailEnabled && agentEmail && (
+                <div className="px-3 py-2 bg-[#0e0f1a] rounded-lg border border-[rgba(255,255,255,0.05)]">
+                  <span className="text-sm font-mono text-blue-400">{agentEmail}</span>
+                </div>
+              )}
+            </div>
           )}
         </section>
 
