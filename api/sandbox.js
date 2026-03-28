@@ -61,6 +61,14 @@ async function ensureSandboxTable() {
 // Run once on module load
 ensureSandboxTable().catch(() => {});
 
+// SECURITY: require authentication for all sandbox routes (audit 2026-03-28)
+router.use((req, res, next) => {
+  if (!req.user || !req.userId) {
+    return res.status(401).json({ success: false, error: 'Authentication required for sandbox execution' });
+  }
+  next();
+});
+
 // ── POST /execute ─────────────────────────────────────────────────────────────
 
 router.post('/execute', async (req, res) => {
