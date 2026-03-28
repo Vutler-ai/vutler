@@ -119,8 +119,9 @@ export interface EmailGroup {
 }
 
 export async function getEmailGroups(): Promise<EmailGroup[]> {
-  const data = await apiFetch<{ groups: EmailGroup[] }>('/api/v1/email/groups');
-  return data.groups ?? [];
+  const data = await apiFetch<{ groups?: EmailGroup[] } | EmailGroup[]>('/api/v1/email/groups');
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.groups) ? data.groups : [];
 }
 
 export async function createEmailGroup(payload: {

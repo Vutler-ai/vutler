@@ -300,8 +300,8 @@ export default function EmailSettingsPage() {
   const loadDomains = useCallback(() => {
     setDomainsLoading(true);
     authFetch('/api/v1/email/domains')
-      .then(r => r.json())
-      .then(data => setDomains(data.domains || []))
+      .then(r => r.ok ? r.json() : Promise.reject('not ok'))
+      .then(data => setDomains(Array.isArray(data?.domains) ? data.domains : []))
       .catch(() => setDomains([]))
       .finally(() => setDomainsLoading(false));
   }, []);
@@ -309,8 +309,8 @@ export default function EmailSettingsPage() {
   const loadRoutes = useCallback(() => {
     setRoutesLoading(true);
     authFetch('/api/v1/email/routes')
-      .then(r => r.json())
-      .then(data => setRoutes(data.routes || []))
+      .then(r => r.ok ? r.json() : Promise.reject('not ok'))
+      .then(data => setRoutes(Array.isArray(data?.routes) ? data.routes : []))
       .catch(() => setRoutes([]))
       .finally(() => setRoutesLoading(false));
   }, []);
@@ -325,8 +325,11 @@ export default function EmailSettingsPage() {
   const loadGroups = useCallback(() => {
     setGroupsLoading(true);
     authFetch('/api/v1/email/groups')
-      .then(r => r.json())
-      .then(data => setEmailGroups(data.groups || data || []))
+      .then(r => r.ok ? r.json() : Promise.reject('not ok'))
+      .then(data => {
+        const list = Array.isArray(data) ? data : Array.isArray(data?.groups) ? data.groups : [];
+        setEmailGroups(list);
+      })
       .catch(() => setEmailGroups([]))
       .finally(() => setGroupsLoading(false));
   }, []);
@@ -334,9 +337,11 @@ export default function EmailSettingsPage() {
   const loadGroupMembers = useCallback(async (groupId: string) => {
     try {
       const res = await authFetch(`/api/v1/email/groups/${groupId}`);
+      if (!res.ok) return;
       const data = await res.json();
       const group = data.group || data;
-      setEmailGroups(prev => prev.map(g => g.id === groupId ? { ...g, members: group.members || [] } : g));
+      const members = Array.isArray(group?.members) ? group.members : [];
+      setEmailGroups(prev => prev.map(g => g.id === groupId ? { ...g, members } : g));
     } catch { /* silent */ }
   }, []);
 
