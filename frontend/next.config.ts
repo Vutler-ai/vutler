@@ -25,6 +25,10 @@ const nextConfig: NextConfig = {
         source: '/ws/:path*',
         destination: `${wsBase}/ws/:path*`,
       },
+      {
+        source: '/static/:path*',
+        destination: `${backendBase}/static/:path*`,
+      },
     ];
   },
 };
