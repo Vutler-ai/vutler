@@ -852,6 +852,18 @@ router.post('/chatgpt/poll', async (req, res) => {
   const session = deviceAuthSessions.get(workspaceId);
 
   if (!session) {
+    // No pending session — check if already connected (previous poll succeeded)
+    try {
+      await ensureReady();
+      const check = await pool.query(
+        `SELECT connected FROM ${SCHEMA}.workspace_integrations
+         WHERE workspace_id = $1 AND provider = 'chatgpt' AND connected = TRUE LIMIT 1`,
+        [workspaceId]
+      );
+      if (check.rows[0]) {
+        return res.json({ success: true, status: 'connected', message: 'ChatGPT already connected!' });
+      }
+    } catch (_) {}
     return res.status(404).json({ success: false, error: 'No pending device auth session. Start with POST /chatgpt/connect.' });
   }
 
