@@ -201,15 +201,13 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
   // Responses API format (used by Codex via chatgpt.com/backend-api)
   if (cfg.format === 'responses') {
     const input = [];
-    if (systemPrompt) {
-      input.push({ role: 'developer', content: systemPrompt });
-    }
     for (const m of messages.filter(m => m.role !== 'system')) {
       input.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
     }
 
     const body = {
       model: model || cfg.defaultModel,
+      instructions: systemPrompt || 'You are a helpful AI assistant.',
       input,
     };
 
