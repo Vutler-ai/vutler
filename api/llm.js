@@ -36,9 +36,11 @@ const MODEL_CATALOG = {
     { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", tier: "fast", context: 32768 }
   ],
   codex: [
-    { id: "gpt-4o", name: "GPT-4o (ChatGPT)", tier: "premium", context: 128000 },
-    { id: "gpt-4o-mini", name: "GPT-4o Mini (ChatGPT)", tier: "budget", context: 128000 },
-    { id: "o3", name: "o3 (ChatGPT)", tier: "reasoning", context: 200000 }
+    { id: "codex/gpt-4o", name: "GPT-4o (Codex)", tier: "premium", context: 128000 },
+    { id: "codex/gpt-4o-mini", name: "GPT-4o Mini (Codex)", tier: "budget", context: 128000 },
+    { id: "codex/o3", name: "o3 (Codex)", tier: "reasoning", context: 200000 },
+    { id: "codex/gpt-4.1", name: "GPT-4.1 (Codex)", tier: "premium", context: 1000000 },
+    { id: "codex/gpt-4.1-mini", name: "GPT-4.1 Mini (Codex)", tier: "standard", context: 1000000 }
   ]
 };
 

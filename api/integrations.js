@@ -978,6 +978,116 @@ async function storeChatGPTTokens(workspaceId, tokenResp, userEmail) {
   console.log(`[INTEGRATIONS] ChatGPT connected via device auth for workspace ${workspaceId}`);
 }
 
+// ── Codex model mapping by agent role ───────────────────────────────────────
+
+const CODEX_MODEL_MAP = {
+  // Reasoning-heavy roles → o3
+  reasoning: 'codex/o3',
+  // Premium conversational → gpt-4o
+  premium: 'codex/gpt-4o',
+  // Budget / simple tasks → gpt-4o-mini
+  budget: 'codex/gpt-4o-mini',
+};
+
+const ROLE_TO_TIER = {
+  // Reasoning tier — complex analysis, code, data, legal
+  'code-review': 'reasoning', devops: 'reasoning', engineering: 'reasoning',
+  'data-analysis': 'reasoning', analytics: 'reasoning', finance: 'reasoning',
+  legal: 'reasoning', compliance: 'reasoning', security: 'reasoning',
+  qa: 'reasoning', architecture: 'reasoning',
+  // Premium tier — conversational, creative, strategic
+  coordinator: 'premium', assistant: 'premium', sales: 'premium',
+  marketing: 'premium', content: 'premium', product: 'premium',
+  hr: 'premium', community: 'premium', recruiter: 'premium',
+  // Budget tier — simple, high-volume, routine
+  support: 'budget', 'customer-support': 'budget', 'customer_support': 'budget',
+  operations: 'budget', admin: 'budget', automation: 'budget',
+  monitoring: 'budget', helpdesk: 'budget',
+};
+
+function codexModelForRole(role) {
+  const tier = ROLE_TO_TIER[String(role || '').toLowerCase()] || 'premium';
+  return CODEX_MODEL_MAP[tier];
+}
+
+// POST /api/v1/integrations/chatgpt/provision-agents — switch all agents to Codex
+router.post('/chatgpt/provision-agents', async (req, res) => {
+  try {
+    await ensureReady();
+    const workspaceId = getWorkspaceId(req);
+
+    // Verify ChatGPT is connected
+    const conn = await pool.query(
+      `SELECT connected FROM ${SCHEMA}.workspace_integrations
+       WHERE workspace_id = $1 AND provider = 'chatgpt' AND connected = TRUE LIMIT 1`,
+      [workspaceId]
+    );
+    if (!conn.rows[0]) {
+      return res.status(400).json({ success: false, error: 'ChatGPT not connected' });
+    }
+
+    // Get all agents for this workspace
+    const agents = await pool.query(
+      `SELECT id, name, role, type, provider, model FROM ${SCHEMA}.agents WHERE workspace_id = $1`,
+      [workspaceId]
+    );
+
+    const updates = [];
+    for (const agent of agents.rows) {
+      const newModel = codexModelForRole(agent.role || agent.type);
+      updates.push({
+        id: agent.id,
+        name: agent.name,
+        old_provider: agent.provider,
+        old_model: agent.model,
+        new_provider: 'codex',
+        new_model: newModel,
+        role: agent.role || agent.type,
+      });
+
+      await pool.query(
+        `UPDATE ${SCHEMA}.agents SET provider = 'codex', model = $1, updated_at = NOW()
+         WHERE id = $2 AND workspace_id = $3`,
+        [newModel, agent.id, workspaceId]
+      );
+    }
+
+    await addLog({ workspaceId, provider: 'chatgpt', action: 'provision_agents', payload: { count: updates.length } });
+    console.log(`[INTEGRATIONS] Provisioned ${updates.length} agents with Codex for workspace ${workspaceId}`);
+
+    res.json({ success: true, provisioned: updates.length, agents: updates });
+  } catch (err) {
+    console.error('[INTEGRATIONS] Provision agents error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/chatgpt/provision-preview — preview what would change
+router.get('/chatgpt/provision-preview', async (req, res) => {
+  try {
+    await ensureReady();
+    const workspaceId = getWorkspaceId(req);
+
+    const agents = await pool.query(
+      `SELECT id, name, role, type, provider, model FROM ${SCHEMA}.agents WHERE workspace_id = $1`,
+      [workspaceId]
+    );
+
+    const preview = agents.rows.map((a) => ({
+      id: a.id,
+      name: a.name,
+      role: a.role || a.type,
+      current: `${a.provider || 'none'}/${a.model || 'none'}`,
+      proposed: `codex/${codexModelForRole(a.role || a.type)}`,
+      changed: a.provider !== 'codex',
+    }));
+
+    res.json({ success: true, agents: preview });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/v1/integrations/chatgpt/token-status — check if ChatGPT is connected
 router.get('/chatgpt/token-status', async (req, res) => {
   try {
