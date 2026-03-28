@@ -137,6 +137,13 @@ export const AGENT_TYPES: AgentTypeDefinition[] = [
     description: 'Insurance verification, patient intake',
     recommendedSkills: ['insurance_verification', 'patient_intake'],
   },
+  {
+    key: 'integration',
+    label: 'Integration',
+    icon: '🔗',
+    description: 'CRM sync, API connectors, data pipelines',
+    recommendedSkills: ['crm_sync', 'etl_pipelines', 'data_quality'],
+  },
 ];
 
 // ─── Skill Limits ────────────────────────────────────────────────────────────
