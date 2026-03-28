@@ -895,12 +895,38 @@ function ApiKeysTab({ onToast }: { onToast: (msg: string, type: "success" | "err
         <CardHeader>
           <CardTitle className="text-white text-base">Using Your API Key</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-[#9ca3af] text-sm">Include your key as a Bearer token in the Authorization header:</p>
-          <pre className="bg-[#0a0b14] border border-[rgba(255,255,255,0.05)] rounded-lg p-4 text-xs text-[#6b7280] font-mono overflow-x-auto">
-            {`curl https://api.vutler.ai/v1/agents \\
-  -H "Authorization: Bearer vt_your_key_here"`}
-          </pre>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-[#9ca3af] text-sm font-medium">REST API</p>
+            <p className="text-[#6b7280] text-xs">Use either header format:</p>
+            <pre className="bg-[#0a0b14] border border-[rgba(255,255,255,0.05)] rounded-lg p-4 text-xs text-[#6b7280] font-mono overflow-x-auto">
+              {`# Bearer token
+curl https://app.vutler.ai/api/v1/agents \\
+  -H "Authorization: Bearer vt_your_key_here"
+
+# X-API-Key header
+curl https://app.vutler.ai/api/v1/agents \\
+  -H "X-API-Key: vt_your_key_here"`}
+            </pre>
+          </div>
+          <div className="space-y-2">
+            <p className="text-[#9ca3af] text-sm font-medium">MCP Integration (Claude Code, Cursor)</p>
+            <p className="text-[#6b7280] text-xs">Add to your <code className="text-purple-400">.mcp.json</code> to connect AI tools to your Vutler agents:</p>
+            <pre className="bg-[#0a0b14] border border-purple-500/10 rounded-lg p-4 text-xs text-purple-300/70 font-mono overflow-x-auto">
+              {`{
+  "mcpServers": {
+    "vutler-nexus": {
+      "command": "npx",
+      "args": ["-y", "@vutler/mcp-nexus"],
+      "env": {
+        "VUTLER_API_URL": "https://app.vutler.ai",
+        "VUTLER_API_KEY": "vt_your_key_here"
+      }
+    }
+  }
+}`}
+            </pre>
+          </div>
         </CardContent>
       </Card>
     </div>
