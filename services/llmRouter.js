@@ -232,6 +232,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       model: model || cfg.defaultModel,
       instructions: systemPrompt || 'You are a helpful AI assistant.',
       input,
+      store: false,
     };
 
     return {
