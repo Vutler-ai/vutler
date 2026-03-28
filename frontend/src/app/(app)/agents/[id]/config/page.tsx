@@ -169,6 +169,7 @@ function SkillsSection({
     }
   };
 
+  const selectedCount = selectedSkills.length;
   const limitStatus = getSkillLimitStatus(selectedCount);
   const limitMessage = getSkillLimitMessage(selectedCount);
   const atLimit = selectedCount >= SKILL_LIMITS.max;
@@ -200,8 +201,6 @@ function SkillsSection({
   }
 
   if (allSkills.length === 0) return null;
-
-  const selectedCount = selectedSkills.length;
 
   return (
     <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
