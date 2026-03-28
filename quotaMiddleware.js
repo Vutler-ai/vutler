@@ -44,8 +44,8 @@ function checkQuota(resource) {
       
       if (quotaStatus.error) {
         console.error(`[quota] Error checking ${resource} quota:`, quotaStatus.error);
-        // Fail open - allow the request if we can't check quota
-        return next();
+        // SECURITY: fail closed (audit 2026-03-28)
+        return res.status(503).json({ success: false, error: 'Quota check unavailable, please retry' });
       }
       
       const resourceAllowed = quotaStatus.allowed[resource];
@@ -94,8 +94,8 @@ function checkQuota(resource) {
       
     } catch (err) {
       console.error(`[quota] ${resource} check error:`, err.message);
-      // Fail open - don't block the request due to quota check errors
-      next();
+      // SECURITY: fail closed (audit 2026-03-28)
+      return res.status(503).json({ success: false, error: 'Quota check unavailable, please retry' });
     }
   };
 }

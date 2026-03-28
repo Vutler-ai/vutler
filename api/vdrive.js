@@ -245,7 +245,7 @@ router.get('/files/:fileId/download', [
       const decryptedPath = await decryptFile(fileData);
       
       res.setHeader('Content-Type', fileData.mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileData.filename}"`);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileData.filename)}`);
       res.setHeader('X-Encryption-Status', 'decrypted');
       res.setHeader('X-Original-Size', fileData.size.toString());
       
@@ -260,7 +260,7 @@ router.get('/files/:fileId/download', [
     } else {
       // Send file directly
       res.setHeader('Content-Type', fileData.mimeType);
-      res.setHeader('Content-Disposition', `attachment; filename="${fileData.filename}"`);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileData.filename)}`);
       
       const stream = fs.createReadStream(fileData.encryptedPath);
       stream.pipe(res);

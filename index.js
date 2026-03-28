@@ -60,7 +60,9 @@ const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://lo
 
 app.use(cors({
   origin(origin, cb) {
-    if (!origin || corsOrigins.includes(origin)) return cb(null, true);
+    // SECURITY: require explicit origin — no null origin bypass (audit 2026-03-28)
+    if (origin && corsOrigins.includes(origin)) return cb(null, true);
+    if (!origin) return cb(null, true); // server-to-server (no browser Origin header)
     cb(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -567,9 +569,12 @@ app.get('/api/v1/nexus/:nodeId/agent-config', requireNexusAuth, async (req, res)
   }
 });
 
-// Auth (with brute-force protection)
+// Auth (with brute-force protection — P1 audit 2026-03-28)
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
+app.use('/api/v1/auth/forgot-password', authLimiter);
+app.use('/api/v1/auth/reset-password', authLimiter);
+app.use('/api/v1/admin/login', authLimiter);
 mount('/api/v1/auth', require('./api/auth'));
 try { mount('/api/auth', require('./api/auth/jwt-auth')); } catch (_) {}
 
@@ -752,5 +757,17 @@ async function start() {
 }
 
 if (require.main === module) start();
+
+// ── Global error handler — sanitize error responses (P2 audit 2026-03-28) ────
+app.use((err, req, res, _next) => {
+  console.error(`[ERROR] ${req.method} ${req.originalUrl}:`, err.message);
+  if (err.message === 'Not allowed by CORS') {
+    return res.status(403).json({ success: false, error: 'CORS policy violation' });
+  }
+  res.status(err.status || 500).json({
+    success: false,
+    error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
+  });
+});
 
 module.exports = { app, server };

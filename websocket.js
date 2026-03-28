@@ -203,6 +203,10 @@ async function dispatch(connection, { type, data = {} }, app) {
     // ── Subscribe to a channel / topic ────────────────────────────────────
     case 'subscribe':
       if (data.topic) {
+        // SECURITY: scope activity subscriptions to own workspace (audit 2026-03-28)
+        if (data.topic === 'activity' || data.topic.startsWith('activity:')) {
+          data.topic = `activity:ws:${connection.workspaceId || 'default'}`;
+        }
         connection.subscriptions.add(data.topic);
         send(connection.ws, 'subscribed', { topic: data.topic });
       }

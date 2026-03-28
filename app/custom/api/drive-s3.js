@@ -101,13 +101,13 @@ router.get('/download/:id', async (req, res) => {
       const s3Key = file.path.startsWith('/') ? file.path.slice(1) : file.path;
       const resp = await s3.download(bucket, s3Key);
       res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
       resp.Body.pipe(res);
     } else {
       // Legacy: serve from DB blob
       if (!file.file_data) return res.status(404).json({ success: false, error: 'No file data' });
       res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
       res.send(file.file_data);
     }
   } catch (err) {

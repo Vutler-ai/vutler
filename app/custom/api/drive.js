@@ -598,21 +598,21 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
         pre{background:#f4f4f4;padding:1rem;overflow:auto}code{background:#f4f4f4;padding:.2em .4em}</style>
         </head><body><pre style="white-space:pre-wrap">${escaped}</pre></body></html>`;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Content-Disposition', `inline; filename="${fileRecord.name}"`);
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileRecord.name)}`);
       return res.end(html);
     }
 
     // Images, PDF, plain text — send inline
     if (isInlineMime(mime)) {
       res.setHeader('Content-Type', mime);
-      res.setHeader('Content-Disposition', `inline; filename="${fileRecord.name}"`);
+      res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileRecord.name)}`);
       if (fileRecord.size_bytes) res.setHeader('Content-Length', fileRecord.size_bytes);
       return res.end(buffer);
     }
 
     // Fallback: force download for unsupported preview types
     res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Disposition', `attachment; filename="${fileRecord.name}"`);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(fileRecord.name)}`);
     if (fileRecord.size_bytes) res.setHeader('Content-Length', fileRecord.size_bytes);
     return res.end(buffer);
   } catch (error) {

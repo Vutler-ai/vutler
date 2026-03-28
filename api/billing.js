@@ -390,19 +390,22 @@ router.post('/billing/change-plan', async (req, res) => {
       )).rows[0];
     }
 
-    if (subRow?.stripe_subscription_id) {
-      const stripe = getStripe();
-      const interval = subRow.interval || 'monthly';
-      const newPriceId = getStripePriceId(planId, interval);
-      if (!newPriceId) return res.status(400).json({ success: false, error: `No Stripe price configured for ${planId}/${interval}` });
-
-      const stripeSub = await stripe.subscriptions.retrieve(subRow.stripe_subscription_id, {}, { stripeAccount: STRIPE_ACCOUNT_ID });
-      await stripe.subscriptions.update(
-        subRow.stripe_subscription_id,
-        { items: [{ id: stripeSub.items.data[0].id, price: newPriceId }], proration_behavior: 'create_prorations' },
-        { stripeAccount: STRIPE_ACCOUNT_ID }
-      );
+    // SECURITY: require active Stripe subscription for plan changes (audit 2026-03-28)
+    if (!subRow?.stripe_subscription_id) {
+      return res.status(402).json({ success: false, error: 'No active subscription. Please subscribe via checkout first.', redirect: '/billing' });
     }
+
+    const stripe = getStripe();
+    const interval = subRow.interval || 'monthly';
+    const newPriceId = getStripePriceId(planId, interval);
+    if (!newPriceId) return res.status(400).json({ success: false, error: `No Stripe price configured for ${planId}/${interval}` });
+
+    const stripeSub = await stripe.subscriptions.retrieve(subRow.stripe_subscription_id, {}, { stripeAccount: STRIPE_ACCOUNT_ID });
+    await stripe.subscriptions.update(
+      subRow.stripe_subscription_id,
+      { items: [{ id: stripeSub.items.data[0].id, price: newPriceId }], proration_behavior: 'create_prorations' },
+      { stripeAccount: STRIPE_ACCOUNT_ID }
+    );
 
     if (pool && workspaceId) {
       await pool.query(

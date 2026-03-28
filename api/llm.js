@@ -82,6 +82,22 @@ async function testConnection({ provider, apiKey, baseUrl }) {
   if (!model) throw new Error("Unsupported provider");
 
   const base = (baseUrl || DEFAULT_BASE_URLS[provider] || "").replace(/\/$/, "");
+
+  // SECURITY: block SSRF via private/internal IPs (audit 2026-03-28)
+  try {
+    const url = new URL(base);
+    const hostname = url.hostname;
+    const BLOCKED_PATTERNS = [
+      /^localhost$/i, /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./,
+      /^169\.254\./, /^0\./, /^\[::1\]$/, /^\[fe80:/i, /^\[fd/i, /^\[fc/i,
+    ];
+    if (BLOCKED_PATTERNS.some(p => p.test(hostname))) {
+      throw new Error(`Blocked: base_url points to private/internal address (${hostname})`);
+    }
+  } catch (e) {
+    if (e.message.startsWith('Blocked:')) throw e;
+    throw new Error('Invalid base_url');
+  }
   const msg = "Say hello";
 
   if (provider === "anthropic") {
