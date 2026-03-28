@@ -596,9 +596,69 @@ router.post('/logout', (_req, res) => {
 // GET /api/v1/auth/me
 router.get('/me', (req, res) => {
   if (req.user) {
-    res.json({ success: true, user: req.user });
+    res.json({
+      success: true,
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        display_name: req.user.name || req.user.email,
+        avatar_url: req.user.avatarUrl || null,
+        role: req.user.role,
+      },
+    });
   } else {
     res.status(401).json({ success: false, error: 'Not authenticated' });
+  }
+});
+
+// PUT /api/v1/auth/me — update profile (display_name, avatar_url)
+router.put('/me', async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+    const { display_name, avatar_url } = req.body;
+    if (!display_name && avatar_url === undefined) {
+      return res.status(400).json({ success: false, error: 'Nothing to update' });
+    }
+
+    const pool = getPool();
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+    if (display_name) {
+      sets.push(`name = $${idx++}`);
+      vals.push(display_name);
+    }
+    if (avatar_url !== undefined) {
+      // ensure column exists
+      await pool.query(`ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS avatar_url TEXT`).catch(() => {});
+      sets.push(`avatar_url = $${idx++}`);
+      vals.push(avatar_url);
+    }
+    vals.push(req.user.id);
+
+    const result = await pool.query(
+      `UPDATE ${SCHEMA}.users_auth SET ${sets.join(', ')} WHERE id = $${idx} RETURNING id, email, name, role, workspace_id, avatar_url`,
+      vals
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    const u = result.rows[0];
+    res.json({
+      success: true,
+      user: {
+        id: u.id,
+        email: u.email,
+        display_name: u.name,
+        avatar_url: u.avatar_url || null,
+        role: u.role,
+      },
+    });
+  } catch (err) {
+    console.error('[AUTH] Profile update error:', err.message);
+    res.status(500).json({ success: false, error: 'Profile update failed' });
   }
 });
 
