@@ -42,11 +42,20 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
 
     const messages = [{ role: 'user', content: taskPrompt }];
 
-    // 4. Call LLM
+    // 4. Call LLM — try agent's provider first, fallback to Anthropic if OAuth-dependent
+    const OAUTH_PROVIDERS = ['codex', 'chatgpt'];
+    const needsFallback = OAUTH_PROVIDERS.includes((agent.provider || '').toLowerCase());
+    const model = needsFallback ? 'claude-sonnet-4-20250514' : (agent.model || 'claude-sonnet-4-20250514');
+    const provider = needsFallback ? 'anthropic' : (agent.provider || undefined);
+
+    if (needsFallback) {
+      console.log(`[TaskExecutor] Agent ${agent.name} uses ${agent.provider}, falling back to Anthropic`);
+    }
+
     const llmResult = await llmRouter.chat(
       {
-        model: agent.model || 'claude-sonnet-4-20250514',
-        provider: agent.provider || undefined,
+        model,
+        provider,
         system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
         temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
         max_tokens: agent.max_tokens || 4096,

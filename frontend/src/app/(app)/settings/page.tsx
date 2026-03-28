@@ -298,7 +298,8 @@ function WorkspaceTab({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const payload: any = {
         settings: {
           workspace_name: { value: wsName, type: "text" },
           workspace_description: { value: wsDesc, type: "text" },
@@ -308,10 +309,10 @@ function WorkspaceTab({
       };
       // Only send Snipara fields if they contain real values (not masked)
       if (sniparaKey && !sniparaKey.includes("••")) {
-        (payload as Record<string, unknown>).snipara_api_key = sniparaKey;
+        payload.snipara_api_key = sniparaKey;
       }
       if (sniparaProjectId) {
-        (payload as Record<string, unknown>).snipara_project_id = sniparaProjectId;
+        payload.snipara_project_id = sniparaProjectId;
       }
       await updateSettings(payload);
       onToast("Workspace settings saved", "success");
