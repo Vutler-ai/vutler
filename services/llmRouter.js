@@ -89,12 +89,18 @@ const PROVIDERS = {
 function detectProvider(model) {
   if (!model) return 'openrouter'; // default to OpenRouter auto
   const m = String(model).toLowerCase();
+  if (m.startsWith('codex/')) return 'codex';
   if (m.includes('claude') || m.includes('sonnet') || m.includes('haiku') || m.includes('opus')) return 'anthropic';
   if (m.includes('/')) return 'openrouter';
   if (m.includes('mistral')) return 'mistral';
   if (m.includes('llama') || m.includes('mixtral') || m.includes('groq')) return 'groq';
   if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3')) return 'openai';
   return 'openrouter'; // fallback to OpenRouter auto for unknown models
+}
+
+// Strip codex/ prefix to get the real OpenAI model ID
+function resolveCodexModel(model) {
+  return String(model).replace(/^codex\//, '');
 }
 
 function parseUrl(baseURL) {
@@ -395,10 +401,15 @@ async function chat(agent, messages, db) {
       base_url = row?.base_url || providerCfg.baseURL;
     }
 
+    // For codex provider, strip the codex/ prefix to get the real OpenAI model ID
+    const resolvedModel = a.provider === 'codex'
+      ? resolveCodexModel(a.model || providerCfg.defaultModel)
+      : (a.model || providerCfg.defaultModel);
+
     const attempt = {
       ...agent,
       provider: a.provider,
-      model: a.model || providerCfg.defaultModel,
+      model: resolvedModel,
       api_key,
       base_url,
       system_prompt: effectiveSystemPrompt,

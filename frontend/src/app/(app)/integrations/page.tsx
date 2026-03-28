@@ -242,6 +242,13 @@ export default function IntegrationsPage() {
     polling: boolean;
   } | null>(null);
 
+  // Provision agents modal (shown after ChatGPT connects)
+  const [showProvisionModal, setShowProvisionModal] = useState(false);
+  const [provisionPreview, setProvisionPreview] = useState<
+    { id: string; name: string; role: string; current: string; proposed: string; changed: boolean }[]
+  >([]);
+  const [provisioning, setProvisioning] = useState(false);
+
   const fetchConnected = useCallback(async () => {
     try {
       setLoading(true);
@@ -351,6 +358,17 @@ export default function IntegrationsPage() {
           setConnecting(null);
           setSuccessMsg("ChatGPT connected successfully!");
           await fetchConnected();
+          // Show provision modal
+          try {
+            const previewRes = await authFetch("/api/v1/integrations/chatgpt/provision-preview");
+            if (previewRes.ok) {
+              const previewData = await previewRes.json();
+              if (previewData.agents?.length > 0) {
+                setProvisionPreview(previewData.agents);
+                setShowProvisionModal(true);
+              }
+            }
+          } catch { /* ignore */ }
           return;
         }
         if (!data.success && res.status === 410) {
@@ -491,6 +509,70 @@ export default function IntegrationsPage() {
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Provision Agents Modal */}
+      {showProvisionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl p-8 max-w-lg w-full mx-4 space-y-5">
+            <div className="text-center">
+              <h2 className="text-xl font-bold text-white mb-1">Switch agents to Codex?</h2>
+              <p className="text-[#9ca3af] text-sm">
+                Your ChatGPT subscription is connected. We can switch your agents to use Codex models — optimized by role.
+              </p>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {provisionPreview.map((a) => (
+                <div key={a.id} className="flex items-center justify-between px-3 py-2 bg-[#1f2028] rounded-lg text-sm">
+                  <div>
+                    <span className="text-white font-medium">{a.name}</span>
+                    <span className="text-[#6b7280] ml-2">({a.role})</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-[#6b7280]">{a.current}</span>
+                    <span className="text-[#6b7280]">&rarr;</span>
+                    <span className="text-emerald-400 font-medium">{a.proposed}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-[#1f2028] border border-[rgba(255,255,255,0.06)] rounded-lg p-3 text-xs text-[#9ca3af]">
+              <strong className="text-white">Model selection by role:</strong>{" "}
+              Reasoning roles (code, analytics, legal) → <span className="text-amber-400">codex/o3</span> ·{" "}
+              Creative/strategic roles → <span className="text-blue-400">codex/gpt-4o</span> ·{" "}
+              Support/routine roles → <span className="text-green-400">codex/gpt-4o-mini</span>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowProvisionModal(false)}
+                className="flex-1 px-4 py-2.5 border border-[rgba(255,255,255,0.1)] text-[#9ca3af] hover:text-white rounded-lg text-sm transition-colors"
+              >
+                Keep current
+              </button>
+              <button
+                onClick={async () => {
+                  setProvisioning(true);
+                  try {
+                    const res = await authFetch("/api/v1/integrations/chatgpt/provision-agents", { method: "POST" });
+                    const data = await res.json();
+                    if (data.success) {
+                      setSuccessMsg(`${data.provisioned} agent(s) switched to Codex!`);
+                    }
+                  } catch { /* ignore */ }
+                  setProvisioning(false);
+                  setShowProvisionModal(false);
+                }}
+                disabled={provisioning}
+                className="flex-1 px-4 py-2.5 bg-[#10a37f] hover:bg-[#0d8a6b] text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {provisioning ? "Switching..." : "Switch all to Codex"}
+              </button>
+            </div>
           </div>
         </div>
       )}

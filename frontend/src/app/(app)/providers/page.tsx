@@ -119,7 +119,7 @@ const PROVIDER_META: Record<
   codex: {
     label: "Codex (ChatGPT)",
     description: "Use your ChatGPT subscription — no API key needed. Connect via Integrations.",
-    models: ["gpt-4o", "gpt-4o-mini", "o3"],
+    models: ["codex/gpt-4o", "codex/o3", "codex/gpt-4.1", "codex/gpt-4.1-mini", "codex/gpt-4o-mini"],
     gradient: "from-[#10a37f] to-[#065f46]",
   },
 };
