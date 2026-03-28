@@ -50,6 +50,7 @@ mount('/emails', 'email', '../../api/emails');
 // ── Agent Email System ───────────────────────────────────────────────────────
 mount('/email/domains', 'email', '../../api/email-domains');
 mount('/email/routes', 'email', '../../api/email-routes');
+mount('/email/groups', 'email', '../../api/email-groups');
 
 // ── Tasks (full-path: /tasks-v2, /tasks-v2/:id) ────────────────────────────
 mountRoot('tasks', '../../app/custom/api/tasks-v2', 'tasks-v2');
