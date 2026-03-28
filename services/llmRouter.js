@@ -233,6 +233,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       instructions: systemPrompt || 'You are a helpful AI assistant.',
       input,
       store: false,
+      stream: true,
     };
 
     return {
@@ -288,6 +289,64 @@ function httpPost(hostname, path, headers, body, timeoutMs = 60000) {
         }
         if (res.statusCode >= 400) return reject(new Error(`LLM HTTP ${res.statusCode}: ${JSON.stringify(obj)}`));
         resolve(obj);
+      });
+    });
+
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('LLM timeout')));
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+// Stream SSE response from Codex/Responses API and collect the final response object
+function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    headers['Content-Length'] = Buffer.byteLength(data);
+
+    const req = https.request({ hostname, port: 443, path, method: 'POST', headers }, (res) => {
+      if (res.statusCode >= 400) {
+        let raw = '';
+        res.on('data', c => { raw += c; });
+        res.on('end', () => {
+          try { reject(new Error(`LLM HTTP ${res.statusCode}: ${raw}`)); }
+          catch { reject(new Error(`LLM HTTP ${res.statusCode}`)); }
+        });
+        return;
+      }
+
+      let raw = '';
+      let lastResponseObj = null;
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        // Parse SSE events: collect all "response.completed" or last "response.*" event
+        const lines = raw.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const payload = line.slice(6).trim();
+            if (!payload || payload === '[DONE]') continue;
+            try {
+              const evt = JSON.parse(payload);
+              // Prefer the completed response event
+              if (evt.type === 'response.completed' && evt.response) {
+                lastResponseObj = evt.response;
+              } else if (evt.type === 'response.done' && evt.response) {
+                lastResponseObj = evt.response;
+              } else if (evt.output_text !== undefined) {
+                // Some endpoints return the final object directly
+                lastResponseObj = evt;
+              }
+            } catch (_) {}
+          }
+        }
+        if (lastResponseObj) {
+          resolve(lastResponseObj);
+        } else {
+          // Fallback: try to parse the entire raw as JSON (non-streaming response)
+          try { resolve(JSON.parse(raw)); }
+          catch { reject(new Error(`LLM stream parse error: no valid response event found`)); }
+        }
       });
     });
 
@@ -410,7 +469,9 @@ async function runOnce(attempt, messages, tools) {
     baseURL: attempt.base_url,
     tools: tools || null,
   });
-  const result = await httpPost(req.hostname, req.path, req.headers, req.body);
+  const cfg = PROVIDERS[attempt.provider];
+  const poster = (cfg && cfg.format === 'responses') ? httpPostStream : httpPost;
+  const result = await poster(req.hostname, req.path, req.headers, req.body);
   return normalizeResponse(attempt.provider, attempt.model, result, Date.now() - start);
 }
 
