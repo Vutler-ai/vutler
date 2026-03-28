@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { useApi } from '@/hooks/use-api';
 import { getAgent } from '@/lib/api/endpoints/agents';
+import { authFetch } from '@/lib/api/client';
 import type { Agent } from '@/lib/api/types';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getAvatarImageUrl } from '@/lib/avatar';
@@ -106,6 +107,25 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
     () => getAgent(agentId),
   );
 
+  // Fallback: load model from config endpoint if agent.model is empty
+  const [configModel, setConfigModel] = useState<string | null>(null);
+  const [configProvider, setConfigProvider] = useState<string | null>(null);
+  useEffect(() => {
+    if (agent && !agent.model) {
+      authFetch(`/api/v1/agents/${agentId}/config`)
+        .then(r => r.json())
+        .then(data => {
+          const cfg = data.config ?? data;
+          if (cfg.model) setConfigModel(cfg.model);
+          if (cfg.provider) setConfigProvider(cfg.provider);
+        })
+        .catch(() => {});
+    }
+  }, [agent, agentId]);
+
+  const effectiveModel = agent?.model || configModel || undefined;
+  const effectiveProvider = agent?.provider || configProvider || undefined;
+
   const activeTab = TABS.find(t => pathname.endsWith(`/${t.path}`))?.path ?? 'config';
 
   return (
@@ -144,10 +164,10 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
               <div>
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <h1 className="text-xl font-bold text-white leading-tight">{agent.name}</h1>
-                  <StatusBadge status={agent.status} model={agent.model} />
+                  <StatusBadge status={agent.status} model={effectiveModel} />
                 </div>
                 <p className="text-xs text-[#6b7280] mt-0.5">
-                  {[agent.model, agent.provider].filter(Boolean).join(' · ') || 'No model configured'}
+                  {[effectiveModel, effectiveProvider].filter(Boolean).join(' · ') || 'No model configured'}
                 </p>
               </div>
             </>

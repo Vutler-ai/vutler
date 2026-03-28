@@ -63,13 +63,25 @@ const FALLBACK_MODELS: LLMModel[] = [
   { provider: 'custom', model_name: 'custom' },
 ];
 
-const PERMISSIONS = [
+const ALL_PERMISSIONS = [
   { key: 'file_access' as const, label: 'File Access', desc: 'Read/write files on the system' },
   { key: 'network_access' as const, label: 'Network Access', desc: 'Make HTTP requests' },
   { key: 'code_execution' as const, label: 'Code Execution', desc: 'Execute code in sandbox' },
   { key: 'web_search' as const, label: 'Web Search', desc: 'Search the internet' },
   { key: 'tool_use' as const, label: 'Tool Use', desc: 'Use external tools and APIs' },
 ];
+
+// Permissions relevant per agent type — types not listed get all permissions
+const PERMISSIONS_BY_TYPE: Record<string, string[]> = {
+  sales:      ['network_access', 'web_search', 'tool_use'],
+  marketing:  ['network_access', 'web_search', 'tool_use'],
+  content:    ['network_access', 'web_search', 'tool_use'],
+  support:    ['network_access', 'web_search', 'tool_use'],
+  finance:    ['network_access', 'tool_use'],
+  legal:      ['network_access', 'tool_use'],
+  operations: ['network_access', 'web_search', 'tool_use'],
+  // Technical types get all permissions (default)
+};
 
 const PROVIDER_NAMES: Record<string, string> = {
   openai: 'OpenAI',
@@ -463,6 +475,8 @@ export default function AgentConfigPage() {
   const [success, setSuccess] = useState(false);
   const [newSecretKey, setNewSecretKey] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
+  const [agentType, setAgentType] = useState<string | null>(null);
+  const [showAllPerms, setShowAllPerms] = useState(false);
 
   // Email state
   const [agentEmail, setAgentEmail] = useState<string | null>(null);
@@ -498,6 +512,7 @@ export default function AgentConfigPage() {
           const data = await res.json();
           const cfg = data.config ?? data;
           setConfig(prev => ({ ...prev, ...cfg }));
+          if (cfg.type) setAgentType(cfg.type.toLowerCase());
         }
       } catch {
         // Use defaults
@@ -779,43 +794,56 @@ export default function AgentConfigPage() {
 
         {/* Permissions */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Permissions</h3>
-          <div className="space-y-2">
-            {PERMISSIONS.map(perm => (
-              <label
-                key={perm.key}
-                className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer"
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-semibold text-white">Permissions</h3>
+            {agentType && PERMISSIONS_BY_TYPE[agentType] && (
+              <button
+                type="button"
+                onClick={() => setShowAllPerms(p => !p)}
+                className="text-xs text-[#6b7280] hover:text-white transition-colors"
               >
-                <div>
-                  <div className="text-white text-sm font-medium">{perm.label}</div>
-                  <div className="text-xs text-[#6b7280]">{perm.desc}</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={config.permissions[perm.key]}
-                  onChange={e => setPerm(perm.key, e.target.checked)}
-                  className="size-5 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
-                />
-              </label>
-            ))}
+                {showAllPerms ? 'Show recommended' : 'Show all'}
+              </button>
+            )}
+          </div>
+          <div className="space-y-2">
+            {(() => {
+              const relevantKeys = agentType && PERMISSIONS_BY_TYPE[agentType] && !showAllPerms
+                ? PERMISSIONS_BY_TYPE[agentType]
+                : null;
+              const permsToShow = relevantKeys
+                ? ALL_PERMISSIONS.filter(p => relevantKeys.includes(p.key))
+                : ALL_PERMISSIONS;
+              return permsToShow.map(perm => (
+                <label
+                  key={perm.key}
+                  className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer"
+                >
+                  <div>
+                    <div className="text-white text-sm font-medium">{perm.label}</div>
+                    <div className="text-xs text-[#6b7280]">{perm.desc}</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={config.permissions[perm.key]}
+                    onChange={e => setPerm(perm.key, e.target.checked)}
+                    className="size-5 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
+                  />
+                </label>
+              ));
+            })()}
           </div>
         </section>
 
         {/* Secrets */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <div className="mb-4">
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-white">Secrets</h3>
-              <span
-                className="text-[#6b7280] hover:text-[#9ca3af] cursor-help transition-colors"
-                title="API keys and credentials this agent can use at runtime (e.g. CRM API key, SMTP password, third-party tokens). Stored locally — never sent to Vutler cloud."
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="size-4">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM8.94 6.94a.75.75 0 1 1-1.061-1.061 3 3 0 1 1 2.871 5.026v.345a.75.75 0 0 1-1.5 0v-.5c0-.72.57-1.172 1.081-1.287A1.5 1.5 0 1 0 8.94 6.94ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
-                </svg>
-              </span>
-            </div>
-            <p className="text-xs text-[#6b7280] mt-0.5">Local-only — never synced to cloud</p>
+            <h3 className="text-base font-semibold text-white">Secrets</h3>
+            <p className="text-xs text-[#6b7280] mt-1 leading-relaxed">
+              API keys and credentials this agent can use at runtime (e.g. CRM API key, SMTP password, third-party tokens).
+              <br />
+              <span className="text-amber-400/70">Stored locally on your device — never sent to Vutler cloud.</span>
+            </p>
           </div>
 
           {config.secrets.length > 0 && (

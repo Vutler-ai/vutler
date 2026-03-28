@@ -37,6 +37,8 @@ export interface Agent {
   lastActive?: string;
   model?: string;
   provider?: string;
+  type?: string;
+  role?: string;
   autoApproveEmail?: boolean;
   auto_approve_email?: boolean;
   config?: Record<string, unknown>;
