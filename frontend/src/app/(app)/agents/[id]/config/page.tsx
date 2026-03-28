@@ -10,7 +10,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SKILL_LIMITS, getSkillLimitStatus, getSkillLimitMessage } from '@/lib/agent-types';
+import {
+  AGENT_TYPES,
+  SKILL_LIMITS,
+  getSkillLimitStatus,
+  getSkillLimitMessage,
+  getRecommendedSkills,
+} from '@/lib/agent-types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +35,7 @@ interface AgentConfig {
   system_prompt: string;
   mbti?: string;
   skills?: string[];
+  type?: string;
 }
 
 interface LLMModel {
@@ -134,6 +141,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   system_prompt: '',
   mbti: '',
   skills: [],
+  type: '',
 };
 
 // ─── Skill category labels ─────────────────────────────────────────────────────
@@ -151,19 +159,64 @@ const SKILL_CATEGORY_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+// ─── Skill checkbox ────────────────────────────────────────────────────────────
+
+function SkillCheckbox({
+  skill,
+  isSelected,
+  isDisabled,
+  onToggle,
+  highlight,
+}: {
+  skill: AgentSkill;
+  isSelected: boolean;
+  isDisabled: boolean;
+  onToggle: () => void;
+  highlight?: boolean;
+}) {
+  return (
+    <label
+      className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+        isDisabled
+          ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+          : isSelected
+            ? 'border-blue-500/40 bg-blue-500/10 cursor-pointer'
+            : highlight
+              ? 'border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/5 cursor-pointer'
+              : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)] cursor-pointer'
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={isSelected}
+        disabled={isDisabled}
+        onChange={onToggle}
+        className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0 disabled:opacity-50"
+      />
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-white leading-tight">{skill.name}</div>
+        <div className="text-xs text-[#6b7280] mt-0.5 leading-snug line-clamp-2">{skill.description}</div>
+      </div>
+    </label>
+  );
+}
+
 // ─── Skills Section ────────────────────────────────────────────────────────────
 
 function SkillsSection({
   selectedSkills,
   onChange,
+  agentType,
 }: {
   selectedSkills: string[];
   onChange: (skills: string[]) => void;
+  agentType?: string;
 }) {
   const [allSkills, setAllSkills] = useState<AgentSkill[]>([]);
   const [grouped, setGrouped] = useState<Record<string, AgentSkill[]>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     getSkills()
@@ -183,23 +236,48 @@ function SkillsSection({
     }
   };
 
+  const toggleCategory = (cat: string) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat); else next.add(cat);
+      return next;
+    });
+  };
+
   const selectedCount = selectedSkills.length;
   const limitStatus = getSkillLimitStatus(selectedCount);
   const limitMessage = getSkillLimitMessage(selectedCount);
   const atLimit = selectedCount >= SKILL_LIMITS.max;
 
-  const filteredGrouped = search.trim()
-    ? Object.entries(grouped).reduce((acc, [cat, skills]) => {
-        const q = search.toLowerCase();
-        const matched = skills.filter(
-          s =>
-            s.name.toLowerCase().includes(q) ||
-            s.description.toLowerCase().includes(q)
-        );
-        if (matched.length > 0) acc[cat] = matched;
-        return acc;
-      }, {} as Record<string, AgentSkill[]>)
-    : grouped;
+  // 3-tier split: recommended → same category → others (by category, collapsible)
+  const recommendedKeys = new Set(agentType ? getRecommendedSkills(agentType) : []);
+  const isSearching = search.trim().length > 0;
+  const searchQ = search.toLowerCase();
+
+  const getFilteredSkills = () => {
+    const recommended: AgentSkill[] = [];
+    const sameCategory: AgentSkill[] = [];
+    const othersByCategory: Record<string, AgentSkill[]> = {};
+
+    for (const skill of allSkills) {
+      if (isSearching && !skill.name.toLowerCase().includes(searchQ) && !skill.description.toLowerCase().includes(searchQ)) continue;
+
+      if (recommendedKeys.has(skill.key)) {
+        recommended.push(skill);
+      } else if (agentType && skill.category === agentType) {
+        sameCategory.push(skill);
+      } else {
+        const cat = skill.category || 'other';
+        if (!othersByCategory[cat]) othersByCategory[cat] = [];
+        othersByCategory[cat].push(skill);
+      }
+    }
+
+    return { recommended, sameCategory, othersByCategory };
+  };
+
+  const { recommended, sameCategory, othersByCategory } = getFilteredSkills();
+  const selectedType = AGENT_TYPES.find(t => t.key === agentType);
 
   if (loading) {
     return (
@@ -223,7 +301,9 @@ function SkillsSection({
           <div>
             <h3 className="text-base font-semibold text-white">Skills</h3>
             <p className="text-xs text-[#6b7280] mt-0.5">
-              Select capabilities for this agent (max {SKILL_LIMITS.max})
+              {agentType && selectedType
+                ? `Recommended for ${selectedType.label} (max ${SKILL_LIMITS.max})`
+                : `Select capabilities (max ${SKILL_LIMITS.max})`}
             </p>
           </div>
           <span className={`text-xs font-medium ${
@@ -268,49 +348,97 @@ function SkillsSection({
       />
 
       <div className="space-y-5">
-        {Object.entries(filteredGrouped).map(([cat, skills]) => (
-          <div key={cat}>
-            <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
-              {SKILL_CATEGORY_LABELS[cat] ?? cat}
+        {/* Tier 1: Recommended skills */}
+        {recommended.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-2">
+              Recommended
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {skills.map(skill => {
-                const isSelected = selectedSkills.includes(skill.key);
-                const isDisabled = atLimit && !isSelected;
-                return (
-                  <label
-                    key={skill.key}
-                    className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-                      isDisabled
-                        ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
-                        : isSelected
-                          ? 'border-blue-500/40 bg-blue-500/10 cursor-pointer'
-                          : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)] cursor-pointer'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      disabled={isDisabled}
-                      onChange={() => toggle(skill.key)}
-                      className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0 disabled:opacity-50"
-                    />
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-white leading-tight">
-                        {skill.name}
-                      </div>
-                      <div className="text-xs text-[#6b7280] mt-0.5 leading-snug line-clamp-2">
-                        {skill.description}
-                      </div>
-                    </div>
-                  </label>
-                );
-              })}
+              {recommended.map(skill => (
+                <SkillCheckbox
+                  key={skill.key}
+                  skill={skill}
+                  isSelected={selectedSkills.includes(skill.key)}
+                  isDisabled={atLimit && !selectedSkills.includes(skill.key)}
+                  onToggle={() => toggle(skill.key)}
+                  highlight
+                />
+              ))}
             </div>
           </div>
-        ))}
+        )}
 
-        {Object.keys(filteredGrouped).length === 0 && (
+        {/* Tier 2: Same category (non-recommended) */}
+        {sameCategory.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
+              More {selectedType?.label} skills
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {sameCategory.map(skill => (
+                <SkillCheckbox
+                  key={skill.key}
+                  skill={skill}
+                  isSelected={selectedSkills.includes(skill.key)}
+                  isDisabled={atLimit && !selectedSkills.includes(skill.key)}
+                  onToggle={() => toggle(skill.key)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tier 3: Other categories — collapsible */}
+        {Object.keys(othersByCategory).length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-[#4b5563] uppercase tracking-wider">
+              Other categories
+            </p>
+            {Object.entries(othersByCategory).map(([cat, skills]) => {
+              const isExpanded = isSearching || expandedCategories.has(cat);
+              const selectedInCat = skills.filter(s => selectedSkills.includes(s.key)).length;
+              return (
+                <div key={cat} className="border border-[rgba(255,255,255,0.05)] rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => toggleCategory(cat)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[rgba(255,255,255,0.03)] transition-colors"
+                  >
+                    <span className="text-sm font-medium text-[#9ca3af]">
+                      {SKILL_CATEGORY_LABELS[cat] ?? cat}
+                      <span className="text-xs text-[#4b5563] ml-2">({skills.length})</span>
+                      {selectedInCat > 0 && (
+                        <span className="text-xs text-blue-400 ml-2">{selectedInCat} selected</span>
+                      )}
+                    </span>
+                    <svg
+                      className={`size-4 text-[#6b7280] transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {isExpanded && (
+                    <div className="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {skills.map(skill => (
+                        <SkillCheckbox
+                          key={skill.key}
+                          skill={skill}
+                          isSelected={selectedSkills.includes(skill.key)}
+                          isDisabled={atLimit && !selectedSkills.includes(skill.key)}
+                          onToggle={() => toggle(skill.key)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {recommended.length === 0 && sameCategory.length === 0 && Object.keys(othersByCategory).length === 0 && (
           <p className="text-sm text-[#6b7280] text-center py-4">
             No skills match your search.
           </p>
@@ -793,10 +921,40 @@ export default function AgentConfigPage() {
           />
         </section>
 
+        {/* Agent Type */}
+        <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+          <h3 className="text-base font-semibold text-white mb-2">Agent Type</h3>
+          <p className="text-xs text-[#6b7280] mb-4">Choose a specialization to get recommended skills</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {AGENT_TYPES.map(type => (
+              <button
+                key={type.key}
+                type="button"
+                onClick={() => {
+                  const recommended = getRecommendedSkills(type.key).slice(0, SKILL_LIMITS.max);
+                  setConfig(prev => ({ ...prev, type: type.key, skills: recommended }));
+                }}
+                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
+                  config.type === type.key
+                    ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
+                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                }`}
+              >
+                <span className="text-xl shrink-0">{type.icon}</span>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-white truncate">{type.label}</div>
+                  <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
         {/* Skills */}
         <SkillsSection
           selectedSkills={config.skills ?? []}
           onChange={skills => setConfig(prev => ({ ...prev, skills }))}
+          agentType={config.type}
         />
       </div>
     </div>

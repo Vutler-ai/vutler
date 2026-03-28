@@ -9,6 +9,8 @@ const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
+const MAX_SKILLS = 8;
+const TOOL_KEYS = new Set(['file_access', 'network_access', 'code_execution', 'web_search', 'tool_use']);
 
 /**
  * Resolve the default email domain for a workspace.
@@ -160,6 +162,13 @@ router.post("/", async (req, res) => {
       finalSystemPrompt = MINIMAL_PROMPT(name);
     }
 
+    // Enforce skill limit
+    const capabilities = req.body.capabilities || [];
+    const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+    if (skillCount > MAX_SKILLS) {
+      return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+    }
+
     // Auto-generate email if not provided
     let finalEmail = email || null;
     if (!finalEmail) {
@@ -171,11 +180,11 @@ router.post("/", async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [name, username, finalEmail, type||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, ws]
+       `/sprites/agent-${username}.png`, ws, capabilities.length > 0 ? capabilities : null]
     );
 
     // Register email route for inbound routing
@@ -273,6 +282,7 @@ router.get("/:id/config", async (req, res) => {
       system_prompt: isCoordinator ? null : row.system_prompt,
       skills: row.capabilities || [],
       tools: row.capabilities || [],
+      type: row.type || null,
       locked_prompt: isCoordinator
     };
     // Spread cfg at top level so frontend `...data` picks up fields directly
@@ -285,7 +295,7 @@ router.get("/:id/config", async (req, res) => {
 // PUT /api/v1/agents/:id/config — updates agent config
 router.put("/:id/config", async (req, res) => {
   try {
-    const { model, provider, temperature, max_tokens, system_prompt, skills, tools } = req.body;
+    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, type } = req.body;
     const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
@@ -294,6 +304,13 @@ router.put("/:id/config", async (req, res) => {
       return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
     }
     const capabilities = skills || tools || undefined;
+    // Enforce skill limit
+    if (capabilities) {
+      const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+      if (skillCount > MAX_SKILLS) {
+        return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+      }
+    }
     const result = await pool.query(
       `UPDATE ${SCHEMA}.agents SET
         model=COALESCE($1,model),
@@ -302,13 +319,14 @@ router.put("/:id/config", async (req, res) => {
         max_tokens=COALESCE($4,max_tokens),
         system_prompt=CASE WHEN $5::text IS NULL THEN system_prompt ELSE $5 END,
         capabilities=COALESCE($6::text[],capabilities),
+        type=COALESCE($8,type),
         updated_at=NOW()
-       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities`,
-      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id]
+       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id, type||null]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
-    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [] } });
+    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [], type: row.type || null } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
