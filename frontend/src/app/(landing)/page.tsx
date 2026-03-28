@@ -377,6 +377,19 @@ const MCP_CONFIG = `{
   }
 }`;
 
+const NEXUS_BRIDGE_CONFIG = `{
+  "mcpServers": {
+    "nexus-bridge": {
+      "command": "node",
+      "args": ["packages/mcp-nexus/index.js"],
+      "env": {
+        "VUTLER_API_URL": "http://localhost:3001",
+        "VUTLER_API_KEY": "your_api_key"
+      }
+    }
+  }
+}`;
+
 const MCP_TOOLS = [
   'list_agents', 'run_agent', 'stop_agent',
   'send_email', 'list_emails', 'read_email',
@@ -387,40 +400,148 @@ const MCP_TOOLS = [
   'list_clients', 'create_client',
 ];
 
+const NEXUS_TOOLS = [
+  { name: 'nexus_delegate_task', desc: 'Delegate work to an agent' },
+  { name: 'nexus_list_agents', desc: 'Discover available agents' },
+  { name: 'nexus_resolve_routing', desc: 'Auto-pick the right agent' },
+  { name: 'nexus_wait_task', desc: 'Wait for task completion' },
+  { name: 'nexus_get_task', desc: 'Check task status & output' },
+  { name: 'nexus_list_tasks', desc: 'Browse delegated tasks' },
+  { name: 'nexus_cancel_task', desc: 'Abort a running task' },
+];
+
+const DELEGATION_FLOW = [
+  { step: '01', label: 'Discover', detail: 'Claude Code lists available agents and their capabilities' },
+  { step: '02', label: 'Delegate', detail: 'A task is created with code context and assigned to the right agent' },
+  { step: '03', label: 'Execute', detail: 'The agent runs on Nexus — local, cloud, or sandboxed on Codex' },
+  { step: '04', label: 'Return', detail: 'Results flow back to Claude Code for integration into your workflow' },
+];
+
 function MCPSection() {
+  const [activeTab, setActiveTab] = useState<'office' | 'nexus'>('office');
+
   return (
     <Section id="mcp" className="bg-[#08090f]">
-      <div className="grid lg:grid-cols-2 gap-12 items-center">
-        <div>
-          <Badge className="mb-4 bg-green-600/20 text-green-400 border-green-500/30 border">MCP Protocol</Badge>
-          <h2 className="text-3xl sm:text-4xl font-bold mb-4">Connect your AI tools</h2>
-          <p className="text-white/50 text-lg mb-6 leading-relaxed">
-            Vutler exposes a full MCP server. Connect Claude Desktop, Cursor, or any MCP-compatible client
-            and let your tools control your AI workforce directly.
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {MCP_TOOLS.map((tool) => (
-              <div key={tool} className="flex items-center gap-2 text-sm text-white/50">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
-                <code className="font-mono text-xs">{tool}</code>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div>
-          <div className="rounded-xl border border-white/10 bg-[#0e0f1a] overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-[#0a0b11]">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
-              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
-              <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-              <span className="ml-2 text-xs text-white/30 font-mono">claude_desktop_config.json</span>
-            </div>
-            <pre className="p-5 text-sm font-mono text-green-400 leading-relaxed overflow-x-auto">
-              {MCP_CONFIG}
-            </pre>
-          </div>
+      {/* Tab switcher */}
+      <div className="flex items-center gap-3 mb-10">
+        <Badge className="bg-green-600/20 text-green-400 border-green-500/30 border">MCP Protocol</Badge>
+        <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-[#0e0f1a] p-1">
+          <button
+            onClick={() => setActiveTab('office')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              activeTab === 'office'
+                ? 'bg-white/10 text-white'
+                : 'text-white/40 hover:text-white/60'
+            }`}
+          >
+            Office Tools
+          </button>
+          <button
+            onClick={() => setActiveTab('nexus')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              activeTab === 'nexus'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'text-white/40 hover:text-white/60'
+            }`}
+          >
+            Claude Code + Nexus
+          </button>
         </div>
       </div>
+
+      {activeTab === 'office' ? (
+        /* ── Office MCP tab ─────────────────────────────────────────────── */
+        <div className="grid lg:grid-cols-2 gap-12 items-center">
+          <div>
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4">Connect your AI tools</h2>
+            <p className="text-white/50 text-lg mb-6 leading-relaxed">
+              Vutler exposes a full MCP server. Connect Claude Desktop, Cursor, or any MCP-compatible client
+              and let your tools control your AI workforce directly.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {MCP_TOOLS.map((tool) => (
+                <div key={tool} className="flex items-center gap-2 text-sm text-white/50">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0" />
+                  <code className="font-mono text-xs">{tool}</code>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="rounded-xl border border-white/10 bg-[#0e0f1a] overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-[#0a0b11]">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
+                <span className="ml-2 text-xs text-white/30 font-mono">claude_desktop_config.json</span>
+              </div>
+              <pre className="p-5 text-sm font-mono text-green-400 leading-relaxed overflow-x-auto">
+                {MCP_CONFIG}
+              </pre>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ── Nexus Bridge tab ───────────────────────────────────────────── */
+        <div className="space-y-12">
+          <div className="grid lg:grid-cols-2 gap-12 items-start">
+            <div>
+              <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+                Delegate from <span className="text-purple-400">Claude Code</span> to your agents
+              </h2>
+              <p className="text-white/50 text-lg mb-6 leading-relaxed">
+                The Nexus Bridge MCP connects Claude Code directly to your Vutler agents.
+                Delegate code tasks, reviews, deployments, and migrations to specialized agents
+                running locally, in the cloud, or sandboxed on Codex.
+              </p>
+
+              {/* Delegation flow */}
+              <div className="space-y-4">
+                {DELEGATION_FLOW.map((item) => (
+                  <div key={item.step} className="flex items-start gap-4">
+                    <span className="text-xs font-mono text-purple-400/60 mt-1 shrink-0">{item.step}</span>
+                    <div>
+                      <div className="text-sm font-semibold text-white">{item.label}</div>
+                      <div className="text-xs text-white/40">{item.detail}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {/* Config preview */}
+              <div className="rounded-xl border border-purple-500/20 bg-[#0e0f1a] overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 bg-[#0a0b11]">
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
+                  <span className="ml-2 text-xs text-white/30 font-mono">.mcp.json</span>
+                </div>
+                <pre className="p-5 text-sm font-mono text-purple-400 leading-relaxed overflow-x-auto">
+                  {NEXUS_BRIDGE_CONFIG}
+                </pre>
+              </div>
+
+              {/* Nexus tools grid */}
+              <div className="rounded-xl border border-white/10 bg-[#0e0f1a] p-4">
+                <div className="text-xs font-medium text-white/30 uppercase tracking-wider mb-3">Available Tools</div>
+                <div className="space-y-2">
+                  {NEXUS_TOOLS.map((tool) => (
+                    <div key={tool.name} className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 shrink-0" />
+                        <code className="font-mono text-xs text-purple-300">{tool.name}</code>
+                      </div>
+                      <span className="text-xs text-white/30">{tool.desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
