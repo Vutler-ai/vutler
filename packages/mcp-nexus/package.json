@@ -1,0 +1,21 @@
+{
+  "name": "@vutler/mcp-nexus",
+  "version": "1.0.0",
+  "description": "MCP server for Vutler Nexus Bridge — delegate tasks to Vutler agents from Claude Code",
+  "main": "index.js",
+  "bin": {
+    "vutler-mcp-nexus": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": ["mcp", "vutler", "nexus", "agents", "delegation", "claude-code"],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

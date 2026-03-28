@@ -8,6 +8,14 @@
         "SNIPARA_PROJECT_ID": "cmmfdy2up0002o1colc66rxs2",
         "SNIPARA_PROJECT_SLUG": "test-workspace-api-vutler"
       }
+    },
+    "mcp-nexus": {
+      "command": "node",
+      "args": ["packages/mcp-nexus/index.js"],
+      "env": {
+        "VUTLER_API_URL": "http://localhost:3001",
+        "VUTLER_API_KEY": "${VUTLER_API_KEY}"
+      }
     }
   }
 }
