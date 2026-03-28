@@ -42,18 +42,36 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
 
     const messages = [{ role: 'user', content: taskPrompt }];
 
-    // 4. Call LLM
-    const llmResult = await llmRouter.chat(
-      {
-        model: agent.model || 'claude-sonnet-4-20250514',
-        provider: agent.provider || undefined,
-        system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
-        temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
-        max_tokens: agent.max_tokens || 4096,
-        workspace_id: workspaceId,
-      },
-      messages
-    );
+    // 4. Call LLM — try agent's native provider, fallback to Anthropic if it fails
+    let llmResult;
+    try {
+      llmResult = await llmRouter.chat(
+        {
+          model: agent.model || 'claude-sonnet-4-20250514',
+          provider: agent.provider || undefined,
+          system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
+          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
+          max_tokens: agent.max_tokens || 4096,
+          workspace_id: workspaceId,
+        },
+        messages,
+        pool // pass db for OAuth token resolution (codex/chatgpt)
+      );
+    } catch (primaryErr) {
+      console.log(`[TaskExecutor] Primary provider failed (${primaryErr.message}), falling back to Anthropic`);
+      llmResult = await llmRouter.chat(
+        {
+          model: 'claude-sonnet-4-20250514',
+          provider: 'anthropic',
+          system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
+          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
+          max_tokens: agent.max_tokens || 4096,
+          workspace_id: workspaceId,
+        },
+        messages,
+        pool
+      );
+    }
 
     console.log(`[TaskExecutor] Task ${taskId} completed by ${agent.name} (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
 
