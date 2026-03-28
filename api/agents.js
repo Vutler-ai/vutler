@@ -265,7 +265,7 @@ router.get("/:id/config", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
     const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
-    res.json({ success: true, config: {
+    const cfg = {
       model: row.model,
       provider: row.provider,
       temperature: row.temperature,
@@ -274,7 +274,9 @@ router.get("/:id/config", async (req, res) => {
       skills: row.capabilities || [],
       tools: row.capabilities || [],
       locked_prompt: isCoordinator
-    }});
+    };
+    // Spread cfg at top level so frontend `...data` picks up fields directly
+    res.json({ success: true, ...cfg, config: cfg });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
