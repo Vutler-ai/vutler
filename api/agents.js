@@ -255,15 +255,20 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools)
+// GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools, permissions)
 router.get("/:id/config", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT model, provider, temperature, max_tokens, system_prompt, capabilities, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
+      `SELECT a.id, a.model, a.provider, a.temperature, a.max_tokens, a.system_prompt, a.capabilities, a.type, a.role,
+              ac.config AS extra_config
+       FROM ${SCHEMA}.agents a
+       LEFT JOIN ${SCHEMA}.agent_configs ac ON ac.agent_id = a.id
+       WHERE (a.id::text = $1 OR a.username = $1) LIMIT 1`,
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
+    const extra = row.extra_config || {};
     const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
     const cfg = {
       model: row.model,
@@ -273,7 +278,10 @@ router.get("/:id/config", async (req, res) => {
       system_prompt: isCoordinator ? null : row.system_prompt,
       skills: row.capabilities || [],
       tools: row.capabilities || [],
-      locked_prompt: isCoordinator
+      locked_prompt: isCoordinator,
+      type: row.type,
+      role: row.role,
+      permissions: extra.permissions || { file_access: false, network_access: false, code_execution: false, web_search: false, tool_use: false },
     };
     // Spread cfg at top level so frontend `...data` picks up fields directly
     res.json({ success: true, ...cfg, config: cfg });
@@ -285,7 +293,7 @@ router.get("/:id/config", async (req, res) => {
 // PUT /api/v1/agents/:id/config — updates agent config
 router.put("/:id/config", async (req, res) => {
   try {
-    const { model, provider, temperature, max_tokens, system_prompt, skills, tools } = req.body;
+    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, permissions } = req.body;
     const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
@@ -303,11 +311,29 @@ router.put("/:id/config", async (req, res) => {
         system_prompt=CASE WHEN $5::text IS NULL THEN system_prompt ELSE $5 END,
         capabilities=COALESCE($6::text[],capabilities),
         updated_at=NOW()
-       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities`,
+       WHERE (id::text = $7 OR username = $7) RETURNING id, model, provider, temperature, max_tokens, system_prompt, capabilities`,
       [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
+
+    // Persist permissions in agent_configs JSONB (upsert)
+    if (permissions) {
+      const wsId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+      const existingCfg = await pool.query(`SELECT id FROM ${SCHEMA}.agent_configs WHERE agent_id = $1 LIMIT 1`, [row.id]);
+      if (existingCfg.rows.length > 0) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.agent_configs SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('permissions', $1::jsonb), updated_at = NOW() WHERE agent_id = $2`,
+          [JSON.stringify(permissions), row.id]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO ${SCHEMA}.agent_configs (id, workspace_id, agent_id, config, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, jsonb_build_object('permissions', $3::jsonb), NOW(), NOW())`,
+          [wsId, row.id, JSON.stringify(permissions)]
+        );
+      }
+    }
+
     res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [] } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
