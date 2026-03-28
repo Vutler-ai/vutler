@@ -76,7 +76,9 @@ router.post('/login', async (req, res) => {
     }
 
     // Create JWT token
-    const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED_JWT_FALLBACK';
+    // SECURITY: no fallback — fail hard if JWT_SECRET missing (audit 2026-03-28)
+    const JWT_SECRET = process.env.JWT_SECRET;
+    if (!JWT_SECRET) return res.status(500).json({ success: false, error: 'Server configuration error' });
     const header = Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
     const payload = Buffer.from(JSON.stringify({
       userId: user.id,
@@ -122,8 +124,8 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Apply admin middleware to all routes below
-// router.use(requireAdmin); // TEMP DISABLED - should be after login
+// Apply admin middleware to all routes below (re-enabled: security audit 2026-03-28)
+router.use(requireAdmin);
 
 /**
  * GET /api/v1/admin/stats

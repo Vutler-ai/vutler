@@ -86,11 +86,12 @@ router.post('/upload', upload_mw.single('file'), async (req, res) => {
 router.get('/download/:id', async (req, res) => {
   try {
     const pool = req.app.locals.pg;
-    const { bucket } = await _getWorkspaceBucket(req);
+    const { bucket, wsId } = await _getWorkspaceBucket(req);
 
+    // SECURITY: filter by workspace_id to prevent cross-tenant file access (audit 2026-03-28)
     const result = await pool.query(
-      'SELECT name, path, mime_type, storage_backend, file_data FROM tenant_vutler.drive_files WHERE id = $1',
-      [req.params.id]
+      'SELECT name, path, mime_type, storage_backend, file_data FROM tenant_vutler.drive_files WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, wsId]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
 
@@ -119,11 +120,12 @@ router.get('/download/:id', async (req, res) => {
 router.delete('/files/:id', async (req, res) => {
   try {
     const pool = req.app.locals.pg;
-    const { bucket } = await _getWorkspaceBucket(req);
+    const { bucket, wsId } = await _getWorkspaceBucket(req);
 
+    // SECURITY: filter by workspace_id to prevent cross-tenant file deletion (audit 2026-03-28)
     const result = await pool.query(
-      'SELECT path, storage_backend, type FROM tenant_vutler.drive_files WHERE id = $1',
-      [req.params.id]
+      'SELECT path, storage_backend, type FROM tenant_vutler.drive_files WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, wsId]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
 
@@ -135,8 +137,8 @@ router.delete('/files/:id', async (req, res) => {
       try { await s3.remove(bucket, s3Key); } catch (e) { console.warn('[DriveAPI] S3 delete warn:', e.message); }
     }
 
-    // Delete from PG
-    await pool.query('DELETE FROM tenant_vutler.drive_files WHERE id = $1', [req.params.id]);
+    // Delete from PG (scoped by workspace)
+    await pool.query('DELETE FROM tenant_vutler.drive_files WHERE id = $1 AND workspace_id = $2', [req.params.id, wsId]);
 
     console.log(`[DriveAPI] Deleted: ${file.path}`);
     res.json({ success: true, message: 'File deleted' });

@@ -9,13 +9,14 @@ DATE=$(date +%Y%m%d-%H%M%S)
 BACKUP_FILE="${BACKUP_DIR}/vutler-backup-${DATE}.sql.gz"
 KEEP_BACKUPS=7
 
-# Database connection (from .env)
-DB_HOST="REDACTED_DB_HOST"
-DB_PORT="6543"
-DB_NAME="postgres"
-DB_USER="REDACTED_DB_USER"
-DB_PASSWORD="REDACTED_DB_PASSWORD"
-DB_SCHEMA="tenant_vutler"
+# SECURITY: Database connection from environment (audit 2026-03-28)
+# All credentials MUST be set via env vars or .env file
+DB_HOST="${BACKUP_DB_HOST:?ERROR: BACKUP_DB_HOST not set}"
+DB_PORT="${BACKUP_DB_PORT:-6543}"
+DB_NAME="${BACKUP_DB_NAME:-postgres}"
+DB_USER="${BACKUP_DB_USER:?ERROR: BACKUP_DB_USER not set}"
+DB_PASSWORD="${BACKUP_DB_PASSWORD:?ERROR: BACKUP_DB_PASSWORD not set}"
+DB_SCHEMA="${BACKUP_DB_SCHEMA:-tenant_vutler}"
 
 # Create backup directory if it doesn't exist
 mkdir -p ${BACKUP_DIR}

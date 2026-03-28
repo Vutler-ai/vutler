@@ -4,8 +4,9 @@ import sys
 import json
 import subprocess
 
-TOKEN = "REDACTED_LINKEDIN_TOKEN"
-PERSON_URN = "urn:li:person:V0AvEdU-Ol"
+import os
+TOKEN = os.environ.get("LINKEDIN_ACCESS_TOKEN", "")
+PERSON_URN = os.environ.get("LINKEDIN_PERSON_URN", "urn:li:person:V0AvEdU-Ol")
 
 def post_linkedin(text):
     payload = json.dumps({

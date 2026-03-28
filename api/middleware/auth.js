@@ -47,10 +47,11 @@ const PUBLIC_FULL_PATHS = [
   '/api/v1/billing/webhook',
   '/api/v1/billing/plans',
   '/api/v1/mail',
-  '/api/v1/sandbox',
-  '/api/v1/drive/download',
-  '/api/v1/nexus/register',
-  '/api/v1/nexus/cli/tokens',
+  // SECURITY: sandbox, drive/download, nexus/register removed from public paths (audit 2026-03-28)
+  // '/api/v1/sandbox',        — RCE without auth
+  // '/api/v1/drive/download', — cross-tenant file access
+  // '/api/v1/nexus/register', — unauthenticated node registration
+  // '/api/v1/nexus/cli/tokens', — token generation without auth
 ];
 
 function isPublicPath(fullPath) {
@@ -188,7 +189,7 @@ async function authMiddleware(req, res, next) {
 
   // Public paths — still decode JWT if present for optional context
   if (isPublicPath(fullPath)) {
-    if (!req.workspaceId) req.workspaceId = DEFAULT_WORKSPACE;
+    // SECURITY: do NOT assign default workspace to unauthenticated requests (audit 2026-03-28)
     tryDecodeJWT(req);
     return next();
   }
@@ -248,17 +249,24 @@ async function authMiddleware(req, res, next) {
   }
 
   // ── No auth provided ──
-  if (!req.workspaceId) req.workspaceId = DEFAULT_WORKSPACE;
   return res.status(401).json({ error: 'Authentication required (Bearer token or X-API-Key)' });
 }
 
 module.exports = authMiddleware;
 
-// API Key middleware for runtime endpoints
-module.exports.requireApiKey = (req, res, next) => {
+// API Key middleware for runtime endpoints — validates against stored keys (audit 2026-03-28)
+module.exports.requireApiKey = async (req, res, next) => {
   const key = req.headers['x-api-key'] || req.query.apiKey;
   if (!key) return res.status(401).json({ success: false, error: 'API key required' });
-  // TODO: validate against stored keys
-  next();
+
+  try {
+    const keyData = await resolveApiKey(req, key);
+    if (!keyData) return res.status(401).json({ success: false, error: 'Invalid API key' });
+    attachIdentity(req, keyData);
+    next();
+  } catch (err) {
+    console.error('[AUTH] requireApiKey validation error:', err.message);
+    return res.status(500).json({ success: false, error: 'API key validation failed' });
+  }
 };
 module.exports.verifyApiKey = module.exports.requireApiKey;

@@ -101,8 +101,8 @@ app.use((req, res, next) => {
       }
     } catch (_) { /* invalid token — continue unauthenticated */ }
   }
-  // Default workspace fallback
-  if (!req.workspaceId) req.workspaceId = '00000000-0000-0000-0000-000000000001';
+  // SECURITY: do NOT set default workspace for unauthenticated requests (audit 2026-03-28)
+  // req.workspaceId stays undefined if no valid JWT — routes must check explicitly
   next();
 });
 
@@ -218,13 +218,17 @@ app.post('/api/v1/nexus/register', async (req, res) => {
   }
 });
 
-// ── Nexus Token Generation endpoints (before auth middleware) ────────────────
+// ── Nexus Token Generation endpoints (require JWT auth — audit 2026-03-28) ───
 app.post('/api/v1/nexus/tokens/local', async (req, res) => {
+  // SECURITY: token generation requires authenticated user
+  if (!req.user || req.authType !== 'jwt') {
+    return res.status(401).json({ success: false, error: 'Authentication required to generate deploy tokens' });
+  }
   const { agentId, permissions, llmConfig } = req.body;
   if (!agentId) return res.status(400).json({ success: false, error: 'agentId required' });
 
   const pg = app.locals.pg;
-  const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+  const workspaceId = req.workspaceId;
 
   // Look up agent to get name and snipara instance ID
   let agentName = 'Unknown Agent';
@@ -255,10 +259,14 @@ app.post('/api/v1/nexus/tokens/local', async (req, res) => {
 });
 
 app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
+  // SECURITY: token generation requires authenticated user
+  if (!req.user || req.authType !== 'jwt') {
+    return res.status(401).json({ success: false, error: 'Authentication required to generate deploy tokens' });
+  }
   const { name, clientName, role, filesystemRoot, allowedDirs, permissions, shellConfig, offlineConfig } = req.body;
   if (!name || !clientName) return res.status(400).json({ success: false, error: 'name and clientName required' });
 
-  const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+  const workspaceId = req.workspaceId;
 
   const { generateEnterpriseToken } = require('./services/tokenService');
   const result = generateEnterpriseToken({ name, clientName, workspaceId, role, filesystemRoot, allowedDirs, permissions, shellConfig, offlineConfig });
@@ -281,16 +289,62 @@ app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
   res.json({ success: true, ...result, mode: 'enterprise', clientName });
 });
 
-// ── Nexus Task + Heartbeat endpoints (before auth middleware) ────────────────
-app.get('/api/v1/nexus/:nodeId/tasks', async (req, res) => {
+// ── Nexus node auth middleware (deploy token or API key required) ─────────────
+// SECURITY: all Nexus endpoints require authentication (audit 2026-03-28)
+async function requireNexusAuth(req, res, next) {
+  const pg = app.locals.pg;
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  // Already authenticated via JWT (from global decode above)?
+  if (req.user && req.authType === 'jwt') return next();
+
+  // Check deploy token in Authorization header
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.headers['x-api-key'];
+  if (!token) return res.status(401).json({ success: false, error: 'Authentication required (Bearer token or X-API-Key)' });
+
+  const crypto = require('crypto');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  try {
+    // Check nexus_nodes deploy_token_hash
+    const nodeResult = await pg.query(
+      'SELECT id, workspace_id FROM tenant_vutler.nexus_nodes WHERE id = $1 AND deploy_token_hash = $2 AND status != $3',
+      [req.params.nodeId, tokenHash, 'revoked']
+    );
+    if (nodeResult.rows[0]) {
+      req.workspaceId = nodeResult.rows[0].workspace_id;
+      return next();
+    }
+
+    // Check workspace_api_keys
+    const keyResult = await pg.query(
+      'SELECT workspace_id FROM tenant_vutler.workspace_api_keys WHERE key_hash = $1 AND revoked_at IS NULL LIMIT 1',
+      [tokenHash]
+    );
+    if (keyResult.rows[0]) {
+      req.workspaceId = keyResult.rows[0].workspace_id;
+      return next();
+    }
+
+    return res.status(401).json({ success: false, error: 'Invalid deploy token or API key' });
+  } catch (err) {
+    console.error('[NEXUS] Auth check failed:', err.message);
+    return res.status(500).json({ success: false, error: 'Auth verification failed' });
+  }
+}
+
+// ── Nexus Task + Heartbeat endpoints (now require auth) ──────────────────────
+app.get('/api/v1/nexus/:nodeId/tasks', requireNexusAuth, async (req, res) => {
   try {
     const pg = app.locals.pg;
     if (!pg) return res.json({ success: true, tasks: [] });
+    // SECURITY: use authenticated workspace_id, not query param (audit 2026-03-28)
     const result = await pg.query(
       `SELECT id, title, description, status, priority, metadata FROM tenant_vutler.tasks
        WHERE workspace_id = $1 AND status IN ('pending', 'assigned')
        ORDER BY priority DESC, created_at ASC LIMIT 10`,
-      [req.query.workspace_id || '00000000-0000-0000-0000-000000000001']
+      [req.workspaceId]
     );
     res.json({ success: true, tasks: result.rows });
   } catch (err) {
@@ -299,7 +353,7 @@ app.get('/api/v1/nexus/:nodeId/tasks', async (req, res) => {
   }
 });
 
-app.post('/api/v1/nexus/:nodeId/tasks/:taskId/status', async (req, res) => {
+app.post('/api/v1/nexus/:nodeId/tasks/:taskId/status', requireNexusAuth, async (req, res) => {
   try {
     const { status, output, error: taskError } = req.body || {};
     const pg = app.locals.pg;
@@ -333,7 +387,7 @@ app.post('/api/v1/nexus/:nodeId/tasks/:taskId/status', async (req, res) => {
   }
 });
 
-app.post('/api/v1/nexus/:nodeId/connect', async (req, res) => {
+app.post('/api/v1/nexus/:nodeId/connect', requireNexusAuth, async (req, res) => {
   try {
     const pg = app.locals.pg;
     if (pg) {
@@ -346,7 +400,7 @@ app.post('/api/v1/nexus/:nodeId/connect', async (req, res) => {
   } catch (_) { res.json({ success: true }); }
 });
 
-app.get('/api/v1/nexus/:nodeId/memory/recall', async (req, res) => {
+app.get('/api/v1/nexus/:nodeId/memory/recall', requireNexusAuth, async (req, res) => {
   try {
     const pg = app.locals.pg;
     const { q, scope, limit } = req.query;
@@ -376,7 +430,7 @@ app.get('/api/v1/nexus/:nodeId/memory/recall', async (req, res) => {
   }
 });
 
-app.post('/api/v1/nexus/:nodeId/memory/remember', async (req, res) => {
+app.post('/api/v1/nexus/:nodeId/memory/remember', requireNexusAuth, async (req, res) => {
   try {
     const { content, type, tags, importance } = req.body;
     if (!content) return res.status(400).json({ error: 'content required' });
@@ -409,7 +463,7 @@ app.post('/api/v1/nexus/:nodeId/memory/remember', async (req, res) => {
 });
 
 // Promotes a learning from instance → template scope (shared with all agents of same role)
-app.post('/api/v1/nexus/:nodeId/memory/promote', async (req, res) => {
+app.post('/api/v1/nexus/:nodeId/memory/promote', requireNexusAuth, async (req, res) => {
   try {
     const { content, role: overrideRole } = req.body;
     if (!content) return res.status(400).json({ error: 'content required' });
@@ -442,7 +496,7 @@ app.post('/api/v1/nexus/:nodeId/memory/promote', async (req, res) => {
 });
 
 // Returns the shared context docs (SOUL.md, MEMORY.md, USER.md) + template memories for this role
-app.get('/api/v1/nexus/:nodeId/memory/context', async (req, res) => {
+app.get('/api/v1/nexus/:nodeId/memory/context', requireNexusAuth, async (req, res) => {
   try {
     const pg = app.locals.pg;
     let role = 'general', instanceId = null;
@@ -469,7 +523,7 @@ app.get('/api/v1/nexus/:nodeId/memory/context', async (req, res) => {
 });
 
 // GET /api/v1/nexus/:nodeId/agent-config — sync agent personality for local mode
-app.get('/api/v1/nexus/:nodeId/agent-config', async (req, res) => {
+app.get('/api/v1/nexus/:nodeId/agent-config', requireNexusAuth, async (req, res) => {
   try {
     const pg = app.locals.pg;
     if (!pg) return res.json({ success: false, error: 'DB unavailable' });

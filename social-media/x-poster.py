@@ -4,10 +4,11 @@ import sys
 import json
 from requests_oauthlib import OAuth1Session
 
-CONSUMER_KEY = "REDACTED_X_CONSUMER_KEY"
-CONSUMER_SECRET = "REDACTED_X_CONSUMER_SECRET"
-ACCESS_TOKEN = "REDACTED_X_ACCESS_TOKEN"
-ACCESS_SECRET = "REDACTED_X_ACCESS_SECRET"
+import os
+CONSUMER_KEY = os.environ.get("X_CONSUMER_KEY", "")
+CONSUMER_SECRET = os.environ.get("X_CONSUMER_SECRET", "")
+ACCESS_TOKEN = os.environ.get("X_ACCESS_TOKEN", "")
+ACCESS_SECRET = os.environ.get("X_ACCESS_SECRET", "")
 
 def post_tweet(text):
     oauth = OAuth1Session(CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_SECRET)

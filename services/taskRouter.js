@@ -134,8 +134,13 @@ async function createTask({ title, description, source, source_ref, priority, du
   }
 }
 
-async function getTask(taskId) {
+async function getTask(taskId, workspaceId) {
   try {
+    // SECURITY: always scope by workspace_id (audit 2026-03-28)
+    if (workspaceId) {
+      const result = await pool.query(`SELECT * FROM ${SCHEMA}.tasks WHERE id = $1 AND workspace_id = $2`, [taskId, workspaceId]);
+      return result.rows[0] || null;
+    }
     const result = await pool.query(`SELECT * FROM ${SCHEMA}.tasks WHERE id = $1`, [taskId]);
     return result.rows[0] || null;
   } catch (err) {
@@ -166,7 +171,7 @@ async function listTasks({ status, assigned_agent, workspace_id } = {}) {
   }
 }
 
-async function updateTask(taskId, updates) {
+async function updateTask(taskId, updates, workspaceId) {
   try {
     const allowed = ['title', 'description', 'status', 'priority', 'assigned_agent', 'due_date', 'reminder_at', 'escalation_at', 'metadata'];
     const sets = [];
@@ -189,8 +194,16 @@ async function updateTask(taskId, updates) {
     params.push(new Date());
     params.push(taskId);
 
+    // SECURITY: scope update by workspace_id when available (audit 2026-03-28)
+    let whereClause = `WHERE id = $${idx}`;
+    if (workspaceId) {
+      params.push(workspaceId);
+      idx++;
+      whereClause += ` AND workspace_id = $${idx}`;
+    }
+
     const result = await pool.query(
-      `UPDATE ${SCHEMA}.tasks SET ${sets.join(', ')} WHERE id = $${idx} RETURNING *`,
+      `UPDATE ${SCHEMA}.tasks SET ${sets.join(', ')} ${whereClause} RETURNING *`,
       params
     );
 

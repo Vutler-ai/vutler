@@ -42,37 +42,18 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
 
     const messages = [{ role: 'user', content: taskPrompt }];
 
-    // 4. Call LLM — try agent's native provider first, fallback to Anthropic if it fails
-    let llmResult;
-    try {
-      llmResult = await llmRouter.chat(
-        {
-          model: agent.model || 'claude-sonnet-4-20250514',
-          provider: agent.provider || undefined,
-          system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
-          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
-          max_tokens: agent.max_tokens || 4096,
-          workspace_id: workspaceId,
-        },
-        messages,
-        pool // pass db for OAuth token resolution (codex/chatgpt)
-      );
-    } catch (primaryErr) {
-      // Fallback to Anthropic if primary provider fails (e.g. OAuth not connected)
-      console.log(`[TaskExecutor] Primary provider failed (${primaryErr.message}), falling back to Anthropic`);
-      llmResult = await llmRouter.chat(
-        {
-          model: 'claude-sonnet-4-20250514',
-          provider: 'anthropic',
-          system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
-          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
-          max_tokens: agent.max_tokens || 4096,
-          workspace_id: workspaceId,
-        },
-        messages,
-        pool
-      );
-    }
+    // 4. Call LLM
+    const llmResult = await llmRouter.chat(
+      {
+        model: agent.model || 'claude-sonnet-4-20250514',
+        provider: agent.provider || undefined,
+        system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
+        temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
+        max_tokens: agent.max_tokens || 4096,
+        workspace_id: workspaceId,
+      },
+      messages
+    );
 
     console.log(`[TaskExecutor] Task ${taskId} completed by ${agent.name} (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
 
@@ -95,16 +76,24 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
 
 async function _updateTask(taskId, status, metadataPatch) {
   try {
-    const updates = [`status = '${status}'`, `updated_at = NOW()`];
+    // SECURITY: parameterized status to prevent SQL injection (audit 2026-03-28)
+    const ALLOWED_STATUSES = ['pending', 'in_progress', 'completed', 'done', 'failed', 'cancelled'];
+    if (!ALLOWED_STATUSES.includes(status)) {
+      console.error(`[TaskExecutor] Invalid status: ${status}`);
+      return;
+    }
+
+    const params = [taskId, status];
+    const updates = [`status = $2`, `updated_at = NOW()`];
     if (status === 'completed' || status === 'done') {
       updates.push(`resolved_at = NOW()`);
     }
     if (metadataPatch) {
-      updates.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb`);
+      params.push(JSON.stringify(metadataPatch));
+      updates.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${params.length}::jsonb`);
     }
 
     const query = `UPDATE ${SCHEMA}.tasks SET ${updates.join(', ')} WHERE id = $1 RETURNING id, status`;
-    const params = metadataPatch ? [taskId, JSON.stringify(metadataPatch)] : [taskId];
     await pool.query(query, params);
   } catch (err) {
     console.error(`[TaskExecutor] Failed to update task ${taskId}:`, err.message);
