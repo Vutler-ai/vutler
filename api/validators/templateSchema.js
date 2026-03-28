@@ -33,7 +33,7 @@ function validateTemplateSchemaV1(config) {
       errors.push(_err('template_config.runtime.provider', 'invalid_enum', 'runtime.provider is invalid', 'Use openrouter|anthropic|openai|gemini', 'openai'));
     }
     if (!config.runtime.model || typeof config.runtime.model !== 'string') {
-      errors.push(_err('template_config.runtime.model', 'required', 'runtime.model is required', 'Set model identifier', 'gpt-4o-mini'));
+      errors.push(_err('template_config.runtime.model', 'required', 'runtime.model is required', 'Set model identifier', 'gpt-5.4-mini'));
     }
   }
 

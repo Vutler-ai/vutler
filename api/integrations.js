@@ -995,10 +995,12 @@ async function storeChatGPTTokens(workspaceId, tokenResp, userEmail) {
 const CODEX_MODEL_MAP = {
   // Reasoning-heavy roles → o3
   reasoning: 'codex/o3',
-  // Premium conversational → gpt-4o
-  premium: 'codex/gpt-4o',
-  // Budget / simple tasks → gpt-4o-mini
-  budget: 'codex/gpt-4o-mini',
+  // Coding roles → gpt-5.3-codex
+  coding: 'codex/gpt-5.3-codex',
+  // Premium conversational → gpt-5.4
+  premium: 'codex/gpt-5.4',
+  // Budget / simple tasks → gpt-5.4-mini
+  budget: 'codex/gpt-5.4-mini',
 };
 
 const ROLE_TO_TIER = {

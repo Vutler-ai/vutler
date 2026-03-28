@@ -82,20 +82,20 @@ const PROVIDER_META: Record<
 > = {
   openai: {
     label: "OpenAI",
-    description: "GPT-4o, GPT-4 Turbo, GPT-3.5, and the o1 reasoning series.",
-    models: ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "o1", "o1-mini"],
+    description: "GPT-5.4, GPT-5.3 Codex, and the o3 reasoning series.",
+    models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "o3"],
     gradient: "from-[#10a37f] to-[#0d8a6b]",
   },
   anthropic: {
     label: "Anthropic",
-    description: "Claude 3.5 Sonnet, Claude 3 Haiku, and the Claude 3 Opus family.",
-    models: ["claude-3-5-sonnet", "claude-3-haiku", "claude-3-opus"],
+    description: "Claude Opus 4, Claude Sonnet 4, and Claude Haiku 4.5.",
+    models: ["claude-opus-4", "claude-sonnet-4", "claude-haiku-4-5"],
     gradient: "from-[#d97757] to-[#b85a3a]",
   },
   openrouter: {
     label: "OpenRouter",
     description: "Unified API gateway — access 200+ models from OpenAI, Anthropic, Google, Meta, Mistral and more through a single API.",
-    models: ["auto (recommended)", "gpt-4o", "claude-sonnet-4", "gemini-2.5-pro", "llama-3.3-70b", "mixtral-8x22b"],
+    models: ["auto (recommended)", "gpt-5.4", "claude-sonnet-4", "gemini-2.5-pro", "llama-3.3-70b", "mixtral-8x22b"],
     gradient: "from-[#7c3aed] to-[#3b82f6]",
   },
   groq: {
@@ -119,7 +119,7 @@ const PROVIDER_META: Record<
   codex: {
     label: "Codex (ChatGPT)",
     description: "Use your ChatGPT subscription — no API key needed. Connect via Integrations.",
-    models: ["codex/gpt-4o", "codex/o3", "codex/gpt-4.1", "codex/gpt-4.1-mini", "codex/gpt-4o-mini"],
+    models: ["codex/gpt-5.4", "codex/gpt-5.4-mini", "codex/gpt-5.3-codex", "codex/gpt-5.3-codex-spark", "codex/o3"],
     gradient: "from-[#10a37f] to-[#065f46]",
   },
 };

@@ -21,9 +21,11 @@ router.get('/llm/providers', authenticateAgent, async (req, res) => {
         provider: 'openai',
         name: 'OpenAI',
         models: [
-          { id: 'gpt-5.2', name: 'GPT-5.2' },
-          { id: 'o3', name: 'O3' },
-          { id: 'o4-mini', name: 'O4-Mini' }
+          { id: 'gpt-5.4', name: 'GPT-5.4' },
+          { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' },
+          { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+          { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
+          { id: 'o3', name: 'O3' }
         ],
         status: 'active'
       },
@@ -32,9 +34,9 @@ router.get('/llm/providers', authenticateAgent, async (req, res) => {
         provider: 'anthropic',
         name: 'Anthropic',
         models: [
-          { id: 'claude-opus-4.6', name: 'Opus 4.6' },
-          { id: 'claude-sonnet-4.5', name: 'Sonnet 4.5' },
-          { id: 'claude-sonnet-4', name: 'Sonnet 4' }
+          { id: 'claude-opus-4-20250514', name: 'Opus 4' },
+          { id: 'claude-sonnet-4-20250514', name: 'Sonnet 4' },
+          { id: 'claude-haiku-4-5', name: 'Haiku 4.5' }
         ],
         status: 'active'
       },
@@ -65,18 +67,20 @@ router.get('/llm/providers', authenticateAgent, async (req, res) => {
 
 const MODEL_CATALOG = {
   openai: [
-    { id: "gpt-4o", name: "GPT-4o", tier: "premium", context: 128000 },
-    { id: "gpt-4o-mini", name: "GPT-4o Mini", tier: "budget", context: 128000 },
+    { id: "gpt-5.4", name: "GPT-5.4", tier: "premium", context: 1000000 },
+    { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", tier: "budget", context: 1000000 },
+    { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", tier: "coding", context: 1000000 },
+    { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", tier: "fast-coding", context: 128000 },
     { id: "o3", name: "o3", tier: "reasoning", context: 200000 }
   ],
   anthropic: [
     { id: "claude-opus-4-20250514", name: "Claude Opus 4", tier: "premium", context: 200000 },
     { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", tier: "standard", context: 200000 },
-    { id: "claude-3-5-haiku-latest", name: "Claude 3.5 Haiku", tier: "budget", context: 200000 }
+    { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tier: "budget", context: 200000 }
   ],
   openrouter: [
     { id: "openrouter/auto", name: "Auto (best model per prompt)", tier: "auto", context: 200000 },
-    { id: "openai/gpt-4o", name: "GPT-4o (OpenRouter)", tier: "premium", context: 128000 },
+    { id: "openai/gpt-5.4", name: "GPT-5.4 (OpenRouter)", tier: "premium", context: 1000000 },
     { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4 (OpenRouter)", tier: "standard", context: 200000 },
     { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B (OpenRouter)", tier: "budget", context: 131072 },
     { id: "google/gemini-2.5-pro-preview", name: "Gemini 2.5 Pro (OpenRouter)", tier: "premium", context: 1000000 },
@@ -91,6 +95,13 @@ const MODEL_CATALOG = {
     { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", tier: "fast", context: 128000 },
     { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", tier: "ultra-fast", context: 128000 },
     { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", tier: "fast", context: 32768 }
+  ],
+  codex: [
+    { id: "codex/gpt-5.4", name: "GPT-5.4 (Codex)", tier: "premium", context: 1000000 },
+    { id: "codex/gpt-5.4-mini", name: "GPT-5.4 Mini (Codex)", tier: "budget", context: 1000000 },
+    { id: "codex/gpt-5.3-codex", name: "GPT-5.3 Codex (Codex)", tier: "coding", context: 1000000 },
+    { id: "codex/gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark (Codex)", tier: "fast-coding", context: 128000 },
+    { id: "codex/o3", name: "o3 (Codex)", tier: "reasoning", context: 200000 }
   ]
 };
 

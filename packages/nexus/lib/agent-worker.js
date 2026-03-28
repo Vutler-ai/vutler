@@ -3,7 +3,7 @@ class AgentWorker {
     this.id = config.id;
     this.name = config.name || config.username;
     this.systemPrompt = config.system_prompt || '';
-    this.model = config.model || 'gpt-4o';
+    this.model = config.model || 'gpt-5.4';
     this.sniparaScope = config.snipara_instance_id || config.id;
     this.tools = config.tools || ['filesystem', 'shell'];
     this.skills = config.skills || [];

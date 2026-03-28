@@ -75,7 +75,7 @@ async function seedTemplatesToDb(db) {
           tpl.name,
           tpl.description || '',
           tpl.category || 'custom',
-          tpl.model || 'gpt-4o',
+          tpl.model || 'gpt-5.4',
           systemPrompt,
           JSON.stringify(tpl.skills || []),
           JSON.stringify(tpl.tools || []),

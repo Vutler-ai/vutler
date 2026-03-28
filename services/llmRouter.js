@@ -43,7 +43,7 @@ const PROVIDERS = {
     baseURL: 'https://api.openai.com/v1',
     path: '/chat/completions',
     format: 'openai',
-    defaultModel: 'gpt-4o',
+    defaultModel: 'gpt-5.4',
     defaultHeaders: {},
   },
   anthropic: {
@@ -81,7 +81,7 @@ const PROVIDERS = {
     baseURL: 'https://api.openai.com/v1',
     path: '/chat/completions',
     format: 'openai',
-    defaultModel: 'gpt-4o',
+    defaultModel: 'gpt-5.4',
     defaultHeaders: {},
   },
 };
@@ -94,7 +94,7 @@ function detectProvider(model) {
   if (m.includes('/')) return 'openrouter';
   if (m.includes('mistral')) return 'mistral';
   if (m.includes('llama') || m.includes('mixtral') || m.includes('groq')) return 'groq';
-  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3')) return 'openai';
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
   return 'openrouter'; // fallback to OpenRouter auto for unknown models
 }
 
@@ -345,9 +345,24 @@ async function runOnce(attempt, messages, tools) {
 
 async function chat(agent, messages, db) {
   const MODEL_MAP = {
+    // Legacy OpenAI models → current
+    'gpt-4o': 'gpt-5.4',
+    'gpt-4o-mini': 'gpt-5.4-mini',
+    'gpt-4.1': 'gpt-5.4',
+    'gpt-4.1-mini': 'gpt-5.4-mini',
+    'gpt-5.2': 'gpt-5.4',
+    'gpt-5.3': 'gpt-5.4',
+    'o4-mini': 'o3',
+    // Legacy Codex models → current
+    'codex/gpt-4o': 'codex/gpt-5.4',
+    'codex/gpt-4o-mini': 'codex/gpt-5.4-mini',
+    'codex/gpt-4.1': 'codex/gpt-5.4',
+    'codex/gpt-4.1-mini': 'codex/gpt-5.4-mini',
+    // Legacy Anthropic models → current
     'claude-sonnet-4.5': 'claude-sonnet-4-20250514',
     'claude-3.5-sonnet': 'claude-sonnet-4-20250514',
-    'claude-3-opus': 'claude-3-opus-20240229',
+    'claude-3-opus': 'claude-opus-4-20250514',
+    'claude-3-5-haiku-latest': 'claude-haiku-4-5',
   };
 
   const rawModel = agent?.model || 'claude-sonnet-4-20250514';
