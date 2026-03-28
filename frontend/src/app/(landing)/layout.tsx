@@ -160,7 +160,7 @@ function LandingFooter() {
               <li><Link href="/privacy" className="text-sm text-white/40 hover:text-white transition-colors">Privacy Policy</Link></li>
               <li><Link href="/terms" className="text-sm text-white/40 hover:text-white transition-colors">Terms of Service</Link></li>
               <li><Link href="/security" className="text-sm text-white/40 hover:text-white transition-colors">Security</Link></li>
-              <li><a href="mailto:contact@vutler.ai" className="text-sm text-white/40 hover:text-white transition-colors">Contact</a></li>
+              <li><a href="mailto:info@starbox-group.com" className="text-sm text-white/40 hover:text-white transition-colors">Contact</a></li>
             </ul>
           </div>
         </div>
