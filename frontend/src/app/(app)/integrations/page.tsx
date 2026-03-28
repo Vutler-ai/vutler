@@ -213,6 +213,79 @@ const PROVIDERS: Provider[] = [
     comingSoon: true,
     icon: <JiraIcon />,
   },
+  // ── Social Media (Post for Me) ──────────────────────────────────────────
+  {
+    provider: "linkedin",
+    name: "LinkedIn",
+    description: "Publish posts, articles, and updates to your LinkedIn profile or company page.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">💼</span>,
+  },
+  {
+    provider: "twitter",
+    name: "X (Twitter)",
+    description: "Post tweets, threads, and engage with your audience on X.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">🐦</span>,
+  },
+  {
+    provider: "instagram",
+    name: "Instagram",
+    description: "Share images, stories, and reels to your Instagram account.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">📸</span>,
+  },
+  {
+    provider: "facebook",
+    name: "Facebook",
+    description: "Publish posts to your Facebook page or profile.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">📘</span>,
+  },
+  {
+    provider: "tiktok",
+    name: "TikTok",
+    description: "Post short-form videos and content to TikTok.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">🎵</span>,
+  },
+  {
+    provider: "youtube",
+    name: "YouTube",
+    description: "Upload videos and manage your YouTube channel content.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">📺</span>,
+  },
+  {
+    provider: "threads",
+    name: "Threads",
+    description: "Post updates and engage with your audience on Threads.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">🧵</span>,
+  },
+  {
+    provider: "bluesky",
+    name: "Bluesky",
+    description: "Publish posts and connect with your Bluesky community.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">🦋</span>,
+  },
+  {
+    provider: "pinterest",
+    name: "Pinterest",
+    description: "Create and manage pins on your Pinterest boards.",
+    category: "social-media",
+    oauthReady: true,
+    icon: <span className="text-xl">📌</span>,
+  },
 ];
 
 // Map canonical provider names to their OAuth endpoint
@@ -222,6 +295,16 @@ const OAUTH_PROVIDER_MAP: Record<string, string> = {
   "google-drive": "google",
   github: "github",
   chatgpt: "chatgpt",
+  // Social media platforms use Post for Me OAuth flow
+  linkedin: "social:linkedin",
+  twitter: "social:twitter",
+  instagram: "social:instagram",
+  facebook: "social:facebook",
+  tiktok: "social:tiktok",
+  youtube: "social:youtube",
+  threads: "social:threads",
+  bluesky: "social:bluesky",
+  pinterest: "social:pinterest",
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -252,13 +335,29 @@ export default function IntegrationsPage() {
   const fetchConnected = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await authFetch("/api/v1/integrations");
-      if (!res.ok) throw new Error("Failed to load integrations");
-      const data = await res.json();
+      const [intRes, socialRes] = await Promise.all([
+        authFetch("/api/v1/integrations").then((r) => r.json()).catch(() => ({ integrations: [] })),
+        authFetch("/api/v1/social-media/accounts").then((r) => r.json()).catch(() => ({ data: [] })),
+      ]);
       const map: Record<string, ConnectedIntegration> = {};
-      for (const item of data.integrations || []) {
+      for (const item of intRes.integrations || []) {
         if (item.connected) {
           map[item.provider] = item;
+        }
+      }
+      // Map social media accounts to connected integrations
+      const socialAccounts: { platform: string; account_name: string; connected_at: string }[] = socialRes.data || [];
+      const socialPlatforms = new Set<string>();
+      for (const acc of socialAccounts) {
+        if (!socialPlatforms.has(acc.platform)) {
+          socialPlatforms.add(acc.platform);
+          map[acc.platform] = {
+            provider: acc.platform,
+            connected: true,
+            status: "connected",
+            connected_at: acc.connected_at,
+            source: "social-media",
+          };
         }
       }
       setConnectedMap(map);
@@ -307,6 +406,26 @@ export default function IntegrationsPage() {
       setConnecting(providerConfig.provider);
       setError(null);
       setSuccessMsg(null);
+
+      // Social media platforms use Post for Me OAuth flow
+      if (oauthProvider.startsWith("social:")) {
+        const platform = oauthProvider.replace("social:", "");
+        const res = await authFetch(`/api/v1/social-media/auth-url/${platform}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to start ${providerConfig.name} OAuth`);
+        }
+        const data = await res.json();
+        if (data.success && data.data?.url) {
+          window.open(data.data.url, "_blank");
+          // Poll for completion after user finishes OAuth in new tab
+          setSuccessMsg(`Complete the ${providerConfig.name} authorization in the opened tab, then refresh this page.`);
+        } else {
+          throw new Error(data.error || "No auth URL returned");
+        }
+        setConnecting(null);
+        return;
+      }
 
       // ChatGPT uses Device Auth flow (no redirect)
       if (oauthProvider === "chatgpt") {
@@ -398,13 +517,23 @@ export default function IntegrationsPage() {
       setError(null);
       setSuccessMsg(null);
 
-      const res = await authFetch(`/api/v1/integrations/${oauthProvider}/disconnect`, {
-        method: "DELETE",
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Failed to disconnect ${providerConfig.name}`);
+      // Social media platforms — disconnect all accounts for this platform
+      if (oauthProvider.startsWith("social:")) {
+        const res = await authFetch(`/api/v1/social-media/accounts/platform/${providerConfig.provider}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to disconnect ${providerConfig.name}`);
+        }
+      } else {
+        const res = await authFetch(`/api/v1/integrations/${oauthProvider}/disconnect`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to disconnect ${providerConfig.name}`);
+        }
       }
 
       setSuccessMsg(`${providerConfig.name} disconnected.`);
@@ -445,6 +574,7 @@ export default function IntegrationsPage() {
     knowledge: "bg-amber-500/10 text-amber-400",
     "project-management": "bg-rose-500/10 text-rose-400",
     ai: "bg-emerald-500/10 text-emerald-400",
+    "social-media": "bg-pink-500/10 text-pink-400",
   };
 
   const providerIconBg: Record<string, string> = {
@@ -459,6 +589,15 @@ export default function IntegrationsPage() {
     linear: "bg-[#5E6AD2]",
     jira: "bg-[#0052CC]",
     chatgpt: "bg-[#10a37f]",
+    linkedin: "bg-[#0077B5]",
+    twitter: "bg-[#1DA1F2]",
+    instagram: "bg-gradient-to-br from-[#F58529] via-[#DD2A7B] to-[#8134AF]",
+    facebook: "bg-[#1877F2]",
+    tiktok: "bg-black",
+    youtube: "bg-[#FF0000]",
+    threads: "bg-black",
+    bluesky: "bg-[#0085FF]",
+    pinterest: "bg-[#E60023]",
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────

@@ -131,6 +131,27 @@ router.delete('/accounts/:id', async (req, res) => {
 });
 
 /**
+ * DELETE /accounts/platform/:platform — Disconnect all accounts for a specific platform
+ */
+router.delete('/accounts/platform/:platform', async (req, res) => {
+  try {
+    const workspaceId = req.workspaceId;
+    const { platform } = req.params;
+    if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
+
+    const { rowCount } = await pool.query(
+      `DELETE FROM ${SCHEMA}.social_accounts WHERE workspace_id = $1 AND platform = $2`,
+      [workspaceId, platform]
+    );
+
+    res.json({ success: true, deleted: rowCount });
+  } catch (err) {
+    console.error('[SocialMedia] disconnect platform error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * POST /post — Create a social media post
  */
 router.post('/post', async (req, res) => {

@@ -17,6 +17,16 @@ const META: Record<string, { icon: string; name: string }> = {
   slack: { icon: "💬", name: "Slack" },
   google: { icon: "🔵", name: "Google Workspace" },
   github: { icon: "🐙", name: "GitHub" },
+  chatgpt: { icon: "🤖", name: "ChatGPT" },
+  linkedin: { icon: "💼", name: "LinkedIn" },
+  twitter: { icon: "🐦", name: "X (Twitter)" },
+  instagram: { icon: "📸", name: "Instagram" },
+  facebook: { icon: "📘", name: "Facebook" },
+  tiktok: { icon: "🎵", name: "TikTok" },
+  youtube: { icon: "📺", name: "YouTube" },
+  threads: { icon: "🧵", name: "Threads" },
+  bluesky: { icon: "🦋", name: "Bluesky" },
+  pinterest: { icon: "📌", name: "Pinterest" },
 };
 
 export default function AgentIntegrationsPage() {
@@ -30,7 +40,8 @@ export default function AgentIntegrationsPage() {
     Promise.all([
       authFetch("/api/v1/integrations").then((r) => r.json()).catch(() => ({ integrations: [] })),
       authFetch(`/api/v1/agents/${id}/config`).then((r) => r.json()).catch(() => ({ config: { integrations: [] } })),
-    ]).then(([intData, agentData]) => {
+      authFetch("/api/v1/social-media/accounts").then((r) => r.json()).catch(() => ({ data: [] })),
+    ]).then(([intData, agentData, socialData]) => {
       const enabled: string[] = agentData?.config?.integrations || [];
       const connected = (intData.integrations || []).map((i: { provider: string; scopes?: string[] }) => ({
         provider: i.provider,
@@ -39,6 +50,22 @@ export default function AgentIntegrationsPage() {
         enabled: enabled.includes(i.provider),
         scopes: i.scopes || [],
       }));
+      // Add social media platforms (deduplicated by platform)
+      const socialAccounts: { platform: string }[] = socialData.data || [];
+      const seenPlatforms = new Set(connected.map((c: AgentIntegration) => c.provider));
+      const socialPlatforms = new Set<string>();
+      for (const acc of socialAccounts) {
+        if (!seenPlatforms.has(acc.platform) && !socialPlatforms.has(acc.platform)) {
+          socialPlatforms.add(acc.platform);
+          connected.push({
+            provider: acc.platform,
+            name: META[acc.platform]?.name || acc.platform,
+            icon: META[acc.platform]?.icon || "📱",
+            enabled: enabled.includes(acc.platform),
+            scopes: ["post_content"],
+          });
+        }
+      }
       setIntegrations(connected);
       setLoading(false);
     });

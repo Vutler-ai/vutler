@@ -413,6 +413,115 @@ function PlanCard({
   );
 }
 
+// ─── Social Media Post Packs ──────────────────────────────────────────────────
+
+const SOCIAL_PACKS = [
+  { id: "social_posts_100", label: "100 Posts", posts: 100, price: 500, perPost: "€0.05" },
+  { id: "social_posts_500", label: "500 Posts", posts: 500, price: 1900, perPost: "€0.038", popular: true },
+  { id: "social_posts_2000", label: "2,000 Posts", posts: 2000, price: 4900, perPost: "€0.025" },
+];
+
+function SocialPostPacks() {
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  const handleAddonCheckout = async (addonId: string) => {
+    setLoadingId(addonId);
+    setError("");
+    try {
+      const res = await fetch("/api/v1/billing/addon-checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          addonId,
+          successUrl: window.location.href,
+          cancelUrl: window.location.href,
+        }),
+      });
+      const data = await res.json();
+      if (data.url || data.data?.url) {
+        window.location.href = data.url || data.data.url;
+      } else {
+        setError(data.error || "Checkout failed");
+      }
+    } catch {
+      setError("Failed to start checkout");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  return (
+    <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <CardTitle className="text-white flex items-center gap-2">
+              📱 Social Media Posts
+            </CardTitle>
+            <p className="text-sm text-[#9ca3af] mt-1">
+              Purchase post packs to let your agents publish to LinkedIn, X, Instagram, and more via Post for Me.
+            </p>
+          </div>
+          <a
+            href="/integrations"
+            className="text-sm text-[#3b82f6] hover:underline shrink-0"
+          >
+            Manage accounts →
+          </a>
+        </div>
+      </CardHeader>
+      <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5 space-y-4">
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {SOCIAL_PACKS.map((pack) => (
+            <div
+              key={pack.id}
+              className={`relative rounded-xl border p-5 flex flex-col items-center text-center transition-all ${
+                pack.popular
+                  ? "border-[#3b82f6]/40 bg-[#3b82f6]/5"
+                  : "border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.14)]"
+              }`}
+            >
+              {pack.popular && (
+                <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-xs px-3 py-0.5 rounded-full bg-[#3b82f6] text-white font-medium">
+                  Best Value
+                </span>
+              )}
+              <p className="text-white font-semibold text-lg mt-1">{pack.label}</p>
+              <div className="flex items-baseline gap-1 mt-2">
+                <span className="text-2xl font-bold text-white">€{formatPrice(pack.price)}</span>
+                <span className="text-[#6b7280] text-sm">/mo</span>
+              </div>
+              <p className="text-xs text-[#6b7280] mt-1">{pack.perPost}/post</p>
+              <Button
+                onClick={() => handleAddonCheckout(pack.id)}
+                disabled={loadingId === pack.id}
+                size="sm"
+                className={`w-full mt-4 ${
+                  pack.popular
+                    ? "bg-[#3b82f6] hover:bg-[#2563eb]"
+                    : "bg-[#1f2028] hover:bg-[#2a2d3a] text-white border border-[rgba(255,255,255,0.1)]"
+                }`}
+              >
+                {loadingId === pack.id ? "Redirecting…" : "Buy Pack"}
+              </Button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-[#6b7280] text-center">
+          Post packs are billed monthly. Unused posts do not roll over. Includes all 9 platforms: LinkedIn, X, Instagram, Facebook, TikTok, YouTube, Threads, Bluesky, Pinterest.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Plan tabs ─────────────────────────────────────────────────────────────────
 
 type TabKey = "office" | "agents" | "full";
@@ -530,6 +639,9 @@ export default function BillingPage() {
           </p>
         </CardContent>
       </Card>
+
+      {/* Social Media Post Packs */}
+      <SocialPostPacks />
 
       {/* Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
