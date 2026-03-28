@@ -1,155 +1,102 @@
 # Vutler Frontend
 
-Next.js frontend for the Vutler AI Agent Platform.
+Next.js 14 application powering the Vutler platform UI.
 
 ## Tech Stack
 
-- **Next.js 15** with App Router
-- **TypeScript**
-- **Tailwind CSS** with Vutler brand colors
-- **shadcn/ui** component library (dark theme)
-- **Docker** for containerized deployment
+- **Framework:** Next.js 14 (App Router)
+- **Language:** TypeScript (strict mode)
+- **Styling:** Tailwind CSS
+- **Components:** shadcn/ui
+- **Auth:** Supabase Auth (JWT)
 
 ## Getting Started
 
-### Prerequisites
-
-- Node.js 20+
-- npm or yarn
-
-### Installation
-
-1. **Clone and install dependencies:**
-   ```bash
-   npm install
-   ```
-
-2. **Configure environment:**
-   ```bash
-   cp .env.local.example .env.local
-   ```
-   
-   Edit `.env.local` and set:
-   ```
-   NEXT_PUBLIC_API_URL=http://localhost:3001
-   ```
-
-3. **Run development server:**
-   ```bash
-   npm run dev
-   ```
-
-   Open [http://localhost:3000](http://localhost:3000)
-
-## Development
-
-### Project Structure
-
-```
-src/
-├── app/              # Next.js App Router pages
-│   ├── layout.tsx    # Root layout with dark theme
-│   └── globals.css   # Vutler brand styling
-├── lib/              # Utilities and clients
-│   ├── api.ts        # Typed API client
-│   └── utils.ts      # shadcn/ui utilities
-└── components/       # React components (to be added)
-```
-
-### API Client
-
-The typed API client (`src/lib/api.ts`) provides methods for:
-
-```typescript
-import { api } from '@/lib/api';
-
-// Fetch dashboard data
-const dashboard = await api.getDashboard();
-
-// List all agents
-const agents = await api.getAgents();
-
-// Create new agent
-const agent = await api.createAgent({
-  name: 'My Agent',
-  platform: 'discord',
-});
-
-// Health check
-const health = await api.getHealth();
-```
-
-### Brand Colors
-
-Vutler uses a dark theme with:
-
-- **Background:** `#08090f`, `#0e0f1a`, `#14151f`
-- **Primary (Blue):** `#3b82f6`
-- **Secondary (Purple):** `#a855f7`
-- **Success (Green):** `#22c55e`
-- **Warning (Orange):** `#f59e0b`
-- **Border:** `rgba(255,255,255,0.07)`
-
-Colors are available as Tailwind utilities:
-```tsx
-<div className="bg-card border border-border text-foreground">
-  <button className="bg-primary text-primary-foreground">Click</button>
-</div>
-```
-
-## Docker
-
-### Build Production Image
-
 ```bash
-docker build -t vutler-frontend .
+pnpm install
+pnpm dev        # Development server on port 3000
+pnpm build      # Production build
+pnpm start      # Production server
 ```
 
-### Run Container
+## Project Structure
 
-```bash
-docker run -p 3000:3000 \
-  -e NEXT_PUBLIC_API_URL=http://api.vutler.ai \
-  vutler-frontend
+```
+frontend/src/
+├── app/
+│   ├── (app)/                → Authenticated application (app.vutler.ai)
+│   │   ├── agents/           → Agent management (list, config, new)
+│   │   │   ├── [id]/config/  → Agent configuration (model, skills, provider)
+│   │   │   └── new/          → Agent creation wizard
+│   │   ├── dashboard/        → Main dashboard
+│   │   ├── settings/         → Workspace settings
+│   │   ├── integrations/     → Third-party connections (ChatGPT OAuth, etc.)
+│   │   ├── nexus/            → Agent chat & interaction
+│   │   │   └── [id]/         → Individual agent conversation
+│   │   ├── onboarding/       → New user onboarding flow
+│   │   └── providers/        → LLM provider configuration
+│   ├── (landing)/            → Public pages (vutler.ai)
+│   │   ├── page.tsx          → Homepage
+│   │   ├── pricing/          → Pricing grid (8 plans + addon packs)
+│   │   └── layout.tsx        → Landing layout
+│   └── layout.tsx            → Root layout
+├── lib/
+│   └── api/                  → API client & TypeScript types
+└── components/               → Reusable UI components (shadcn/ui)
 ```
 
-### Docker Compose (Optional)
+## Domain Split
 
-```yaml
-version: '3.8'
-services:
-  frontend:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://backend:3001
-    depends_on:
-      - backend
+The frontend serves two distinct surfaces:
+
+| Surface | Domain | Content |
+|---------|--------|---------|
+| **Landing** | `vutler.ai` | Product pages, pricing, onboarding |
+| **Application** | `app.vutler.ai` | Authenticated workspace with agents |
+
+Routing is handled by Next.js route groups: `(landing)/` for public pages, `(app)/` for authenticated pages.
+
+## Key Features
+
+### Agent Management
+- **Agent type wizard** for creating new agents with role-based provisioning
+- **Skill limits**: maximum 8 skills per agent
+- **Model selector** with `codex/*` models (gpt-5.4, gpt-5.3-codex-spark, etc.)
+- **Provider configuration** per agent (Anthropic, Codex, OpenRouter, Mistral, Groq, Google)
+
+### Settings & Configuration
+- **API Keys section** with X-API-Key generation and MCP config examples
+- **Snipara configuration** for workspace context/memory
+- **LLM Providers** management per workspace
+
+### Integrations
+- **ChatGPT OAuth** connect/poll flow for Codex provider
+- **Post for Me** social media integration with Stripe addon packs
+- **MCP Nexus Bridge** tab on landing page with Claude Code examples
+
+### Pricing
+- 8 plan tiers with Stripe checkout
+- Addon packs for social media and advanced features
+
+## API Communication
+
+- API client in `src/lib/api/`
+- Auth: Supabase JWT (Bearer token) + X-API-Key support
+- Standard response format: `{ success: boolean, data?: T, error?: string }`
+- Config endpoint returns fields at top-level for frontend compatibility
+- Static assets proxied via `/static/` to Express backend
+
+## Environment Variables
+
+```env
+NEXT_PUBLIC_API_URL=https://app.vutler.ai
+NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 ```
 
-## Deployment
+## Conventions
 
-### Build for Production
-
-```bash
-npm run build
-npm start
-```
-
-### Environment Variables
-
-- `NEXT_PUBLIC_API_URL` - Backend API endpoint (required)
-
-## Backend Integration
-
-This frontend expects a Vutler Express API running on port 3001 with endpoints:
-
-- `GET /api/v1/dashboard` - Dashboard stats and agents
-- `GET /api/v1/agents` - List agents
-- `POST /api/v1/agents` - Create agent
-- `GET /api/v1/health` - Health check
-
-## License
-
-Proprietary - Vutler Platform
+- TypeScript strict mode on all files
+- shadcn/ui for all UI components
+- Tailwind CSS for styling (no CSS modules)
+- English for code, French for business copy where appropriate

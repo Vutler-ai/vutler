@@ -1,31 +1,55 @@
-# Roadmap — Deferred Noise (Out of Active Production Flow)
+# Roadmap — Vutler Platform
+Last update: 2026-03-28
 
-Last update: 2026-03-20
+## Recently Delivered
+Items shipped in the last ~50 commits:
 
-## Decision
-The following themes are intentionally removed from the current production execution flow and tracked as deferred roadmap work:
+- Codex provider: ChatGPT OAuth, Responses API, SSE streaming
+- MCP Nexus Bridge + Claude Code integration
+- Post for Me social media + Stripe addon packs
+- Security hardening: audit P0/P1/P2 + sandbox auth
+- Domain split: `vutler.ai` / `app.vutler.ai`
+- Agent type wizard + skill limits
+- GPT-5.4 model lineup
+- Documentation rewrite P0
 
-1. LiveKit-related scope
-2. "CLI anything" exploratory scope
-3. Post-prod initiative long-tail items (non-critical for current delivery)
+## Active — Current Sprint
+Current focus, in active delivery flow:
 
-These items are not blockers for current N0/N1 production closure and should not pollute active automation batches.
+- Documentation P1/P2 completion
+- `@vutler/local-daemon` (WebSocket git-sync client)
+- Provider stability monitoring
 
-## Why deferred
-- Low immediate business impact vs current N0/N1 reliability goals
-- Adds noise to dashboards and weakens throughput signal
-- Increases false urgency and assignment drift
+## Planned — Next
+Queued after current sprint, unless priorities change:
 
-## Re-entry criteria (to move back into active flow)
+- Enterprise nexus webhook dispatch + async callback
+- Observability dashboard: streaming SSE + provider health
+- Provider compatibility matrix
+- Public API documentation
+
+## Deferred — Not in Active Flow
+Explicitly not in the current execution lane:
+
+- LiveKit integration  
+  Re-entry only with explicit go from Alex
+- CLI exploratory scope
+- Agent self-evolution (OpenSpace-style)  
+  Revisit when runtime is mature
+
+## Re-entry Criteria
+A deferred item can return to active planning only if:
+
 - Explicit go/no-go from Alex
 - Clear owner (`*-local`) and measurable acceptance criteria
-- No dependency conflict with active N0/N1 reliability pack
+- No dependency conflict with active priorities
 
-## Current active canonical pack (in-flow)
-- N0: `cmmyxgs950074l427oe7rkzfv` — Vutler Automation Priority Pack
-- N1: `cmmyxh0xl016bi4rkqcqw37nl` — Preflight hard-fail guard
-- N1: `cmmyxh3up00duqcrgjan1fxqj` — Postflight verification + rollback alert
-- N1: `cmmyxh5qi00ange652yv0bl9f` — Operator visibility panel
+## Removed
+No longer planned:
 
-## Automation policy
-Rex guardian excludes deferred roadmap themes from active-flow drift checks to avoid noise and ticket churn.
+- Rocket.Chat integration
+- MongoDB stack
+- MiniMax provider
+```
+
+Si tu veux, je peux aussi te faire une version un peu plus “produit/executive”, ou une version plus “engineering roadmap” avec statuts visuels (`Delivered / Active / Planned / Deferred / Removed`).
