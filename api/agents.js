@@ -4,13 +4,29 @@
  */
 const express = require("express");
 const pool = require("../lib/vaultbrix");
-const { CryptoService } = require("../services/crypto");
-const crypto = new CryptoService();
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
+const MAX_SKILLS = 8;
+const TOOL_KEYS = new Set(['file_access', 'network_access', 'code_execution', 'web_search', 'tool_use']);
+
+/** Serialize type for DB: array → JSON string, string → as-is */
+function serializeType(type) {
+  if (Array.isArray(type)) return JSON.stringify(type);
+  return type || null;
+}
+
+/** Deserialize type from DB: JSON array string → array, plain string → wrap */
+function deserializeType(type) {
+  if (!type) return [];
+  try {
+    const parsed = JSON.parse(type);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return type === 'bot' ? [] : [type];
+}
 
 /**
  * Resolve the default email domain for a workspace.
@@ -75,7 +91,7 @@ router.get("/", async (req, res) => {
       username: a.username,
       email: a.email,
       status: a.status || "online",
-      type: a.type || "bot",
+      type: deserializeType(a.type),
       avatar: a.avatar || null,
       description: a.description || "",
       role: a.role,
@@ -115,7 +131,7 @@ router.get("/:id", async (req, res) => {
       success: true,
       agent: {
         id: a.id, name: a.name, username: a.username, email: a.email,
-        status: a.status, type: a.type,
+        status: a.status, type: deserializeType(a.type),
         avatar: a.avatar || null,
         description: a.description || "", role: a.role, mbti: a.mbti,
         model: a.model, provider: a.provider, platform: a.platform || a.role || null,
@@ -143,7 +159,8 @@ router.post("/", async (req, res) => {
 
     const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
     const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
-    if (plan === 'free' && String(type || 'bot').toLowerCase() !== 'coordinator') {
+    const typeStr = Array.isArray(type) ? type.join(',') : String(type || 'bot');
+    if (plan === 'free' && typeStr.toLowerCase() !== 'coordinator') {
       return res.status(403).json({ success: false, error: 'Free plan allows only the Coordinator. Upgrade to Pro to add specialized agents.' });
     }
 
@@ -162,6 +179,13 @@ router.post("/", async (req, res) => {
       finalSystemPrompt = MINIMAL_PROMPT(name);
     }
 
+    // Enforce skill limit
+    const capabilities = req.body.capabilities || [];
+    const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+    if (skillCount > MAX_SKILLS) {
+      return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+    }
+
     // Auto-generate email if not provided
     let finalEmail = email || null;
     if (!finalEmail) {
@@ -173,11 +197,11 @@ router.post("/", async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [name, username, finalEmail, type||"bot", role||null, mbti||null, finalModel, provider||null,
+      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, ws]
+       `/sprites/agent-${username}.png`, ws, capabilities.length > 0 ? capabilities : null]
     );
 
     // Register email route for inbound routing
@@ -257,20 +281,15 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools, permissions)
+// GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools)
 router.get("/:id/config", async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT a.id, a.model, a.provider, a.temperature, a.max_tokens, a.system_prompt, a.capabilities, a.type, a.role,
-              ac.config AS extra_config
-       FROM ${SCHEMA}.agents a
-       LEFT JOIN ${SCHEMA}.agent_configs ac ON ac.agent_id = a.id
-       WHERE (a.id::text = $1 OR a.username = $1) LIMIT 1`,
+      `SELECT model, provider, temperature, max_tokens, system_prompt, capabilities, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
       [req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
-    const extra = row.extra_config || {};
     const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
     const cfg = {
       model: row.model,
@@ -280,11 +299,8 @@ router.get("/:id/config", async (req, res) => {
       system_prompt: isCoordinator ? null : row.system_prompt,
       skills: row.capabilities || [],
       tools: row.capabilities || [],
-      locked_prompt: isCoordinator,
-      type: row.type,
-      role: row.role,
-      permissions: extra.permissions || { file_access: false, network_access: false, code_execution: false, web_search: false, tool_use: false },
-      secrets: (extra.secrets || []).map(s => ({ key: s.key })),  // keys only, never values
+      type: deserializeType(row.type),
+      locked_prompt: isCoordinator
     };
     // Spread cfg at top level so frontend `...data` picks up fields directly
     res.json({ success: true, ...cfg, config: cfg });
@@ -296,7 +312,7 @@ router.get("/:id/config", async (req, res) => {
 // PUT /api/v1/agents/:id/config — updates agent config
 router.put("/:id/config", async (req, res) => {
   try {
-    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, permissions, secrets } = req.body;
+    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, type } = req.body;
     const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
@@ -305,6 +321,13 @@ router.put("/:id/config", async (req, res) => {
       return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
     }
     const capabilities = skills || tools || undefined;
+    // Enforce skill limit
+    if (capabilities) {
+      const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+      if (skillCount > MAX_SKILLS) {
+        return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+      }
+    }
     const result = await pool.query(
       `UPDATE ${SCHEMA}.agents SET
         model=COALESCE($1,model),
@@ -313,87 +336,14 @@ router.put("/:id/config", async (req, res) => {
         max_tokens=COALESCE($4,max_tokens),
         system_prompt=CASE WHEN $5::text IS NULL THEN system_prompt ELSE $5 END,
         capabilities=COALESCE($6::text[],capabilities),
+        type=COALESCE($8,type),
         updated_at=NOW()
-       WHERE (id::text = $7 OR username = $7) RETURNING id, model, provider, temperature, max_tokens, system_prompt, capabilities`,
-      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id]
+       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id, serializeType(type)]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
-
-    // Persist permissions in agent_configs JSONB (upsert)
-    if (permissions) {
-      const wsId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
-      const existingCfg = await pool.query(`SELECT id FROM ${SCHEMA}.agent_configs WHERE agent_id = $1 LIMIT 1`, [row.id]);
-      if (existingCfg.rows.length > 0) {
-        await pool.query(
-          `UPDATE ${SCHEMA}.agent_configs SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('permissions', $1::jsonb), updated_at = NOW() WHERE agent_id = $2`,
-          [JSON.stringify(permissions), row.id]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO ${SCHEMA}.agent_configs (id, workspace_id, agent_id, config, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, jsonb_build_object('permissions', $3::jsonb), NOW(), NOW())`,
-          [wsId, row.id, JSON.stringify(permissions)]
-        );
-      }
-    }
-
-    // Persist secrets (encrypted) in agent_configs JSONB
-    if (secrets && Array.isArray(secrets) && secrets.length > 0) {
-      const wsId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
-      // Encrypt each secret value, keep key in plaintext
-      const encryptedSecrets = secrets
-        .filter(s => s.key && s.value)
-        .map(s => ({ key: s.key.trim(), value: crypto.encrypt(s.value) }));
-      if (encryptedSecrets.length > 0) {
-        // Merge with existing secrets (add new, update existing keys)
-        const existingCfg = await pool.query(`SELECT id, config FROM ${SCHEMA}.agent_configs WHERE agent_id = $1 LIMIT 1`, [row.id]);
-        let currentSecrets = [];
-        if (existingCfg.rows.length > 0) {
-          currentSecrets = existingCfg.rows[0].config?.secrets || [];
-        }
-        // Merge: new secrets overwrite existing by key
-        const secretMap = new Map(currentSecrets.map(s => [s.key, s]));
-        for (const s of encryptedSecrets) secretMap.set(s.key, s);
-        const mergedSecrets = Array.from(secretMap.values());
-
-        if (existingCfg.rows.length > 0) {
-          await pool.query(
-            `UPDATE ${SCHEMA}.agent_configs SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('secrets', $1::jsonb), updated_at = NOW() WHERE agent_id = $2`,
-            [JSON.stringify(mergedSecrets), row.id]
-          );
-        } else {
-          await pool.query(
-            `INSERT INTO ${SCHEMA}.agent_configs (id, workspace_id, agent_id, config, created_at, updated_at) VALUES (gen_random_uuid(), $1, $2, jsonb_build_object('secrets', $3::jsonb), NOW(), NOW())`,
-            [wsId, row.id, JSON.stringify(encryptedSecrets)]
-          );
-        }
-      }
-    }
-
-    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [] } });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// DELETE /api/v1/agents/:id/secrets/:key — remove a specific secret
-router.delete("/:id/secrets/:key", async (req, res) => {
-  try {
-    const agent = await pool.query(`SELECT id FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
-    if (agent.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
-    const agentId = agent.rows[0].id;
-    const secretKey = req.params.key;
-
-    const cfgRow = await pool.query(`SELECT config FROM ${SCHEMA}.agent_configs WHERE agent_id = $1 LIMIT 1`, [agentId]);
-    if (cfgRow.rows.length === 0) return res.json({ success: true });
-
-    const currentSecrets = cfgRow.rows[0].config?.secrets || [];
-    const filtered = currentSecrets.filter(s => s.key !== secretKey);
-    await pool.query(
-      `UPDATE ${SCHEMA}.agent_configs SET config = COALESCE(config, '{}'::jsonb) || jsonb_build_object('secrets', $1::jsonb), updated_at = NOW() WHERE agent_id = $2`,
-      [JSON.stringify(filtered), agentId]
-    );
-    res.json({ success: true });
+    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [], type: deserializeType(row.type) } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   AGENT_TYPES,
   SKILL_LIMITS,
+  MAX_AGENT_TYPES,
   getSkillLimitStatus,
   getSkillLimitMessage,
   getRecommendedSkills,
@@ -35,7 +36,7 @@ interface AgentConfig {
   system_prompt: string;
   mbti?: string;
   skills?: string[];
-  type?: string;
+  type?: string[];
 }
 
 interface LLMModel {
@@ -63,25 +64,13 @@ const FALLBACK_MODELS: LLMModel[] = [
   { provider: 'custom', model_name: 'custom' },
 ];
 
-const ALL_PERMISSIONS = [
+const PERMISSIONS = [
   { key: 'file_access' as const, label: 'File Access', desc: 'Read/write files on the system' },
   { key: 'network_access' as const, label: 'Network Access', desc: 'Make HTTP requests' },
   { key: 'code_execution' as const, label: 'Code Execution', desc: 'Execute code in sandbox' },
   { key: 'web_search' as const, label: 'Web Search', desc: 'Search the internet' },
   { key: 'tool_use' as const, label: 'Tool Use', desc: 'Use external tools and APIs' },
 ];
-
-// Permissions relevant per agent type — types not listed get all permissions
-const PERMISSIONS_BY_TYPE: Record<string, string[]> = {
-  sales:      ['network_access', 'web_search', 'tool_use'],
-  marketing:  ['network_access', 'web_search', 'tool_use'],
-  content:    ['network_access', 'web_search', 'tool_use'],
-  support:    ['network_access', 'web_search', 'tool_use'],
-  finance:    ['network_access', 'tool_use'],
-  legal:      ['network_access', 'tool_use'],
-  operations: ['network_access', 'web_search', 'tool_use'],
-  // Technical types get all permissions (default)
-};
 
 const PROVIDER_NAMES: Record<string, string> = {
   openai: 'OpenAI',
@@ -153,7 +142,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   system_prompt: '',
   mbti: '',
   skills: [],
-  type: '',
+  type: [],
 };
 
 // ─── Skill category labels ─────────────────────────────────────────────────────
@@ -218,11 +207,11 @@ function SkillCheckbox({
 function SkillsSection({
   selectedSkills,
   onChange,
-  agentType,
+  agentTypes,
 }: {
   selectedSkills: string[];
   onChange: (skills: string[]) => void;
-  agentType?: string;
+  agentTypes?: string[];
 }) {
   const [allSkills, setAllSkills] = useState<AgentSkill[]>([]);
   const [grouped, setGrouped] = useState<Record<string, AgentSkill[]>>({});
@@ -262,7 +251,9 @@ function SkillsSection({
   const atLimit = selectedCount >= SKILL_LIMITS.max;
 
   // 3-tier split: recommended → same category → others (by category, collapsible)
-  const recommendedKeys = new Set(agentType ? getRecommendedSkills(agentType) : []);
+  const activeTypes = agentTypes?.filter(Boolean) ?? [];
+  const recommendedKeys = new Set(activeTypes.length > 0 ? getRecommendedSkills(activeTypes) : []);
+  const activeCategorySet = new Set(activeTypes);
   const isSearching = search.trim().length > 0;
   const searchQ = search.toLowerCase();
 
@@ -276,7 +267,7 @@ function SkillsSection({
 
       if (recommendedKeys.has(skill.key)) {
         recommended.push(skill);
-      } else if (agentType && skill.category === agentType) {
+      } else if (activeCategorySet.has(skill.category)) {
         sameCategory.push(skill);
       } else {
         const cat = skill.category || 'other';
@@ -289,7 +280,7 @@ function SkillsSection({
   };
 
   const { recommended, sameCategory, othersByCategory } = getFilteredSkills();
-  const selectedType = AGENT_TYPES.find(t => t.key === agentType);
+  const typeLabels = activeTypes.map(k => AGENT_TYPES.find(t => t.key === k)?.label).filter(Boolean);
 
   if (loading) {
     return (
@@ -313,8 +304,8 @@ function SkillsSection({
           <div>
             <h3 className="text-base font-semibold text-white">Skills</h3>
             <p className="text-xs text-[#6b7280] mt-0.5">
-              {agentType && selectedType
-                ? `Recommended for ${selectedType.label} (max ${SKILL_LIMITS.max})`
+              {typeLabels.length > 0
+                ? `Recommended for ${typeLabels.join(' + ')} (max ${SKILL_LIMITS.max})`
                 : `Select capabilities (max ${SKILL_LIMITS.max})`}
             </p>
           </div>
@@ -385,7 +376,7 @@ function SkillsSection({
         {sameCategory.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
-              More {selectedType?.label} skills
+              More {typeLabels.join(' / ')} skills
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {sameCategory.map(skill => (
@@ -475,17 +466,6 @@ export default function AgentConfigPage() {
   const [success, setSuccess] = useState(false);
   const [newSecretKey, setNewSecretKey] = useState('');
   const [newSecretValue, setNewSecretValue] = useState('');
-  const [savedSecretKeys, setSavedSecretKeys] = useState<string[]>([]);
-  const [deletingSecret, setDeletingSecret] = useState<string | null>(null);
-  const [agentType, setAgentType] = useState<string | null>(null);
-  const [showAllPerms, setShowAllPerms] = useState(false);
-
-  // Email state
-  const [agentEmail, setAgentEmail] = useState<string | null>(null);
-  const [emailRouteId, setEmailRouteId] = useState<string | null>(null);
-  const [emailEnabled, setEmailEnabled] = useState(false);
-  const [emailLoading, setEmailLoading] = useState(true);
-  const [emailToggling, setEmailToggling] = useState(false);
 
   // Load models
   useEffect(() => {
@@ -513,9 +493,11 @@ export default function AgentConfigPage() {
         if (res.ok) {
           const data = await res.json();
           const cfg = data.config ?? data;
-          setConfig(prev => ({ ...prev, ...cfg, secrets: [] }));  // secrets from DB are keys-only, don't put in form
-          if (cfg.type) setAgentType(cfg.type.toLowerCase());
-          if (cfg.secrets?.length) setSavedSecretKeys(cfg.secrets.map((s: any) => s.key));
+          // Backend returns type as array; normalize just in case
+          if (cfg.type && !Array.isArray(cfg.type)) {
+            cfg.type = cfg.type === 'bot' ? [] : [cfg.type];
+          }
+          setConfig(prev => ({ ...prev, ...cfg }));
         }
       } catch {
         // Use defaults
@@ -525,54 +507,6 @@ export default function AgentConfigPage() {
     };
     load();
   }, [agentId]);
-
-  // Load agent email route
-  useEffect(() => {
-    const loadEmailRoute = async () => {
-      try {
-        const res = await authFetch('/api/v1/email/routes');
-        const data = await res.json();
-        const routes = data.routes || [];
-        const route = routes.find((r: any) => r.agentId === agentId);
-        if (route) {
-          setAgentEmail(route.emailAddress);
-          setEmailRouteId(route.id);
-          setEmailEnabled(true);
-        }
-      } catch { /* silent */ }
-      setEmailLoading(false);
-    };
-    loadEmailRoute();
-  }, [agentId]);
-
-  const toggleEmail = async () => {
-    setEmailToggling(true);
-    try {
-      if (emailEnabled && emailRouteId) {
-        await authFetch(`/api/v1/email/routes/${emailRouteId}`, { method: 'DELETE' });
-        setAgentEmail(null);
-        setEmailRouteId(null);
-        setEmailEnabled(false);
-      } else {
-        // Get agent info for the username
-        const agentRes = await authFetch(`/api/v1/agents/${agentId}`);
-        const agentData = await agentRes.json();
-        const agent = agentData.agent || agentData;
-        const prefix = agent.username || agent.name?.toLowerCase().replace(/\s+/g, '.');
-        const res = await authFetch('/api/v1/email/routes', {
-          method: 'POST',
-          body: JSON.stringify({ agent_id: agentId, email_prefix: prefix }),
-        });
-        const data = await res.json();
-        if (data.route) {
-          setAgentEmail(data.route.emailAddress || data.route.email_address);
-          setEmailRouteId(data.route.id);
-          setEmailEnabled(true);
-        }
-      }
-    } catch { /* silent */ }
-    setEmailToggling(false);
-  };
 
   const groupedModels = models.reduce((acc, m) => {
     const p = m.provider || 'other';
@@ -597,15 +531,6 @@ export default function AgentConfigPage() {
   const removeSecret = (idx: number) =>
     setConfig(prev => ({ ...prev, secrets: prev.secrets.filter((_, i) => i !== idx) }));
 
-  const deleteSavedSecret = async (key: string) => {
-    setDeletingSecret(key);
-    try {
-      await authFetch(`/api/v1/agents/${agentId}/secrets/${encodeURIComponent(key)}`, { method: 'DELETE' });
-      setSavedSecretKeys(prev => prev.filter(k => k !== key));
-    } catch { /* silent */ }
-    setDeletingSecret(null);
-  };
-
   const save = async () => {
     setSaving(true);
     setError(null);
@@ -616,11 +541,6 @@ export default function AgentConfigPage() {
         body: JSON.stringify(config),
       });
       if (!res.ok) throw new Error('Failed to save configuration');
-      // Move newly added secrets to saved list (they're now persisted)
-      if (config.secrets.length > 0) {
-        setSavedSecretKeys(prev => [...prev, ...config.secrets.map(s => s.key)]);
-        setConfig(prev => ({ ...prev, secrets: [] }));
-      }
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
@@ -773,125 +693,53 @@ export default function AgentConfigPage() {
           )}
         </section>
 
-        {/* Email */}
-        <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-1">Email Address</h3>
-          <p className="text-xs text-[#6b7280] mb-4">
-            Enable to assign an email address to this agent. Incoming emails will be routed to it.
-          </p>
-          {emailLoading ? (
-            <Skeleton className="h-10 w-full" />
-          ) : (
-            <div className="space-y-3">
-              <label className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer">
-                <div>
-                  <div className="text-white text-sm font-medium">Enable email</div>
-                  <div className="text-xs text-[#6b7280]">
-                    {emailEnabled && agentEmail
-                      ? agentEmail
-                      : 'Assign username@domain or username@workspace.vutler.ai'}
-                  </div>
-                </div>
-                <button
-                  onClick={toggleEmail}
-                  disabled={emailToggling}
-                  className={`relative w-12 h-6 rounded-full transition-colors cursor-pointer ${emailEnabled ? 'bg-blue-600' : 'bg-[#334155]'} ${emailToggling ? 'opacity-50' : ''}`}
-                >
-                  <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
-              {emailEnabled && agentEmail && (
-                <div className="px-3 py-2 bg-[#0e0f1a] rounded-lg border border-[rgba(255,255,255,0.05)]">
-                  <span className="text-sm font-mono text-blue-400">{agentEmail}</span>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
-
         {/* Permissions */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-white">Permissions</h3>
-            {agentType && PERMISSIONS_BY_TYPE[agentType] && (
-              <button
-                type="button"
-                onClick={() => setShowAllPerms(p => !p)}
-                className="text-xs text-[#6b7280] hover:text-white transition-colors"
-              >
-                {showAllPerms ? 'Show recommended' : 'Show all'}
-              </button>
-            )}
-          </div>
+          <h3 className="text-base font-semibold text-white mb-4">Permissions</h3>
           <div className="space-y-2">
-            {(() => {
-              const relevantKeys = agentType && PERMISSIONS_BY_TYPE[agentType] && !showAllPerms
-                ? PERMISSIONS_BY_TYPE[agentType]
-                : null;
-              const permsToShow = relevantKeys
-                ? ALL_PERMISSIONS.filter(p => relevantKeys.includes(p.key))
-                : ALL_PERMISSIONS;
-              return permsToShow.map(perm => (
-                <label
-                  key={perm.key}
-                  className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer"
-                >
-                  <div>
-                    <div className="text-white text-sm font-medium">{perm.label}</div>
-                    <div className="text-xs text-[#6b7280]">{perm.desc}</div>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={config.permissions[perm.key]}
-                    onChange={e => setPerm(perm.key, e.target.checked)}
-                    className="size-5 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
-                  />
-                </label>
-              ));
-            })()}
+            {PERMISSIONS.map(perm => (
+              <label
+                key={perm.key}
+                className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer"
+              >
+                <div>
+                  <div className="text-white text-sm font-medium">{perm.label}</div>
+                  <div className="text-xs text-[#6b7280]">{perm.desc}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={config.permissions[perm.key]}
+                  onChange={e => setPerm(perm.key, e.target.checked)}
+                  className="size-5 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
+                />
+              </label>
+            ))}
           </div>
         </section>
 
         {/* Secrets */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <div className="mb-4">
-            <h3 className="text-base font-semibold text-white">Secrets</h3>
-            <p className="text-xs text-[#6b7280] mt-1 leading-relaxed">
-              API keys and credentials this agent can use at runtime (e.g. CRM API key, SMTP password, third-party tokens).
-              <br />
-              <span className="text-amber-400/70">Encrypted at rest — values are never exposed after saving.</span>
-            </p>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-white">Secrets</h3>
+              <span
+                className="text-[#6b7280] hover:text-[#9ca3af] cursor-help transition-colors"
+                title="API keys and credentials this agent can use at runtime (e.g. CRM API key, SMTP password, third-party tokens). Stored locally — never sent to Vutler cloud."
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="size-4">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM8.94 6.94a.75.75 0 1 1-1.061-1.061 3 3 0 1 1 2.871 5.026v.345a.75.75 0 0 1-1.5 0v-.5c0-.72.57-1.172 1.081-1.287A1.5 1.5 0 1 0 8.94 6.94ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+                </svg>
+              </span>
+            </div>
+            <p className="text-xs text-[#6b7280] mt-0.5">Local-only — never synced to cloud</p>
           </div>
 
-          {/* Saved secrets (from DB — keys only, values masked) */}
-          {savedSecretKeys.length > 0 && (
-            <div className="space-y-2 mb-4">
-              {savedSecretKeys.map(key => (
-                <div key={key} className="flex items-center gap-3 p-3 bg-[#0e0f1a] rounded-lg">
-                  <span className="size-2 rounded-full bg-green-500 shrink-0" title="Saved" />
-                  <span className="text-sm text-blue-400 font-mono shrink-0">{key}</span>
-                  <span className="text-sm text-[#6b7280] flex-1 font-mono">••••••••</span>
-                  <button
-                    onClick={() => deleteSavedSecret(key)}
-                    disabled={deletingSecret === key}
-                    className="text-red-400 hover:text-red-300 text-sm transition-colors disabled:opacity-50"
-                  >
-                    {deletingSecret === key ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* New secrets (not yet saved — will be encrypted on Save) */}
           {config.secrets.length > 0 && (
             <div className="space-y-2 mb-4">
               {config.secrets.map((s, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 bg-[#0e0f1a] rounded-lg border border-blue-500/20">
-                  <span className="size-2 rounded-full bg-blue-500 shrink-0" title="Unsaved" />
+                <div key={i} className="flex items-center gap-3 p-3 bg-[#0e0f1a] rounded-lg">
                   <span className="text-sm text-blue-400 font-mono shrink-0">{s.key}</span>
                   <span className="text-sm text-[#6b7280] flex-1 font-mono">••••••••</span>
-                  <span className="text-xs text-blue-400/60">unsaved</span>
                   <button
                     onClick={() => removeSecret(i)}
                     className="text-red-400 hover:text-red-300 text-sm transition-colors"
@@ -989,32 +837,51 @@ export default function AgentConfigPage() {
           />
         </section>
 
-        {/* Agent Type */}
+        {/* Agent Type (multi-select, max 3) */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-2">Agent Type</h3>
-          <p className="text-xs text-[#6b7280] mb-4">Choose a specialization to get recommended skills</p>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-base font-semibold text-white">Agent Type</h3>
+            <span className="text-xs text-[#6b7280]">
+              {(config.type ?? []).length}/{MAX_AGENT_TYPES}
+            </span>
+          </div>
+          <p className="text-xs text-[#6b7280] mb-4">
+            Combine up to {MAX_AGENT_TYPES} specializations to get merged skill recommendations
+          </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {AGENT_TYPES.map(type => (
-              <button
-                key={type.key}
-                type="button"
-                onClick={() => {
-                  const recommended = getRecommendedSkills(type.key).slice(0, SKILL_LIMITS.max);
-                  setConfig(prev => ({ ...prev, type: type.key, skills: recommended }));
-                }}
-                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
-                  config.type === type.key
-                    ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
-                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
-                }`}
-              >
-                <span className="text-xl shrink-0">{type.icon}</span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-white truncate">{type.label}</div>
-                  <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
-                </div>
-              </button>
-            ))}
+            {AGENT_TYPES.map(type => {
+              const currentTypes = config.type ?? [];
+              const isSelected = currentTypes.includes(type.key);
+              const atTypeLimit = currentTypes.length >= MAX_AGENT_TYPES && !isSelected;
+              return (
+                <button
+                  key={type.key}
+                  type="button"
+                  disabled={atTypeLimit}
+                  onClick={() => {
+                    const prev = config.type ?? [];
+                    const next = isSelected
+                      ? prev.filter(t => t !== type.key)
+                      : [...prev, type.key];
+                    const recommended = getRecommendedSkills(next);
+                    setConfig(p => ({ ...p, type: next, skills: recommended }));
+                  }}
+                  className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
+                    isSelected
+                      ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
+                      : atTypeLimit
+                        ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                        : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                  }`}
+                >
+                  <span className="text-xl shrink-0">{type.icon}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white truncate">{type.label}</div>
+                    <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -1022,7 +889,7 @@ export default function AgentConfigPage() {
         <SkillsSection
           selectedSkills={config.skills ?? []}
           onChange={skills => setConfig(prev => ({ ...prev, skills }))}
-          agentType={config.type}
+          agentTypes={config.type}
         />
       </div>
     </div>
