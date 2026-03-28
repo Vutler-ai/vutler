@@ -16,6 +16,11 @@ const FALLBACK_MODELS = [
   { provider: 'anthropic', model_name: 'claude-haiku-4-5' },
   { provider: 'openai', model_name: 'gpt-4o' },
   { provider: 'openai', model_name: 'gpt-4o-mini' },
+  { provider: 'codex', model_name: 'codex/gpt-4o' },
+  { provider: 'codex', model_name: 'codex/o3' },
+  { provider: 'codex', model_name: 'codex/gpt-4o-mini' },
+  { provider: 'codex', model_name: 'codex/gpt-4.1' },
+  { provider: 'codex', model_name: 'codex/gpt-4.1-mini' },
 ];
 
 const TOOLS = [
@@ -35,6 +40,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   mistral: 'Mistral',
   groq: 'Groq',
   google: 'Google',
+  codex: 'Codex (ChatGPT)',
 };
 
 interface LLMModel {

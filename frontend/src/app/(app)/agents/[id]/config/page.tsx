@@ -45,6 +45,11 @@ const FALLBACK_MODELS: LLMModel[] = [
   { provider: 'anthropic', model_name: 'claude-haiku-4-5' },
   { provider: 'openai', model_name: 'gpt-4o' },
   { provider: 'openai', model_name: 'gpt-4o-mini' },
+  { provider: 'codex', model_name: 'codex/gpt-4o' },
+  { provider: 'codex', model_name: 'codex/o3' },
+  { provider: 'codex', model_name: 'codex/gpt-4o-mini' },
+  { provider: 'codex', model_name: 'codex/gpt-4.1' },
+  { provider: 'codex', model_name: 'codex/gpt-4.1-mini' },
   { provider: 'custom', model_name: 'custom' },
 ];
 
@@ -63,6 +68,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   mistral: 'Mistral',
   groq: 'Groq',
   google: 'Google',
+  codex: 'Codex (ChatGPT)',
   custom: 'Custom Endpoint',
 };
 
@@ -93,11 +99,17 @@ const TECHNICAL_SKILLS = new Set(['code_execution', 'data_analysis', 'vulnerabil
 const CREATIVE_SKILLS = new Set(['content_scheduling', 'article_creation', 'campaign_planning', 'multi_platform_posting', 'search_optimization', 'engagement_monitoring']);
 const SIMPLE_SKILLS = new Set(['ticket_triage', 'appointment_scheduling', 'faq_management', 'satisfaction_tracking', 'onboarding']);
 
-function autoSelectModel(skills: string[]): string {
-  if (!skills.length) return 'openrouter/auto';
+function autoSelectModel(skills: string[], hasCodex = false): string {
+  if (!skills.length) return hasCodex ? 'codex/gpt-4o' : 'openrouter/auto';
   const hasTechnical = skills.some(s => TECHNICAL_SKILLS.has(s));
   const hasCreative = skills.some(s => CREATIVE_SKILLS.has(s));
   const allSimple = skills.every(s => SIMPLE_SKILLS.has(s));
+  if (hasCodex) {
+    if (hasTechnical) return 'codex/o3';
+    if (hasCreative) return 'codex/gpt-4o';
+    if (allSimple) return 'codex/gpt-4o-mini';
+    return 'codex/gpt-4o';
+  }
   if (hasTechnical) return 'claude-sonnet-4-20250514';
   if (hasCreative) return 'gpt-4o';
   if (allSimple) return 'gpt-4o-mini';
