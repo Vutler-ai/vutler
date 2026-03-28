@@ -361,7 +361,8 @@ export default function AgentConfigPage() {
         const res = await authFetch(`/api/v1/agents/${agentId}/config`);
         if (res.ok) {
           const data = await res.json();
-          setConfig(prev => ({ ...prev, ...data }));
+          const cfg = data.config ?? data;
+          setConfig(prev => ({ ...prev, ...cfg }));
         }
       } catch {
         // Use defaults

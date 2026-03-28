@@ -299,10 +299,10 @@ router.put("/:id/config", async (req, res) => {
         temperature=COALESCE($3,temperature),
         max_tokens=COALESCE($4,max_tokens),
         system_prompt=CASE WHEN $5::text IS NULL THEN system_prompt ELSE $5 END,
-        capabilities=COALESCE($6,capabilities),
+        capabilities=COALESCE($6::text[],capabilities),
         updated_at=NOW()
        WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities`,
-      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities ? JSON.stringify(capabilities) : null, req.params.id]
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
