@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -298,15 +297,15 @@ export default function PricingPage() {
                   </Button>
                 ) : isBeta ? (
                   <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" asChild>
-                    <Link href="/register">Join Beta Free</Link>
+                    <a href="https://app.vutler.ai/register">Join Beta Free</a>
                   </Button>
                 ) : plan.price.monthly === 0 ? (
                   <Button variant="outline" className="w-full border-white/20 text-white/60 hover:text-white" asChild>
-                    <Link href="/register">Get Started</Link>
+                    <a href="https://app.vutler.ai/register">Get Started</a>
                   </Button>
                 ) : (
                   <Button className="w-full bg-blue-600 hover:bg-blue-500 text-white" asChild>
-                    <Link href="/register">Start Free Trial</Link>
+                    <a href="https://app.vutler.ai/register">Start Free Trial</a>
                   </Button>
                 )}
               </div>
@@ -410,7 +409,7 @@ export default function PricingPage() {
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
             <Button size="lg" className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-8 text-base font-semibold shadow-xl shadow-blue-600/25" asChild>
-              <Link href="/register">Get Started Free</Link>
+              <a href="https://app.vutler.ai/register">Get Started Free</a>
             </Button>
             <Button size="lg" variant="outline" className="h-12 px-8 text-base border-white/20 text-white/70 hover:text-white" asChild>
               <a href="mailto:sales@vutler.ai">Talk to Sales</a>
