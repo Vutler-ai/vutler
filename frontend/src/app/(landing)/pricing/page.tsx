@@ -18,9 +18,6 @@ interface Plan {
   limits: {
     agents: number;
     storage_gb: number;
-    nexus_nodes?: number;
-    nexus_local?: number;
-    nexus_enterprise?: number;
   };
   features: string[];
   highlight?: boolean;
@@ -33,23 +30,23 @@ const PLANS: Plan[] = [
     label: 'Free',
     tier: 'free',
     price: { monthly: 0, yearly: 0 },
-    limits: { agents: 1, storage_gb: 1 },
-    features: ['context'],
+    limits: { agents: 1, storage_gb: 0.5 },
+    features: ['chat', 'dashboard'],
   },
   {
     id: 'office_starter',
     label: 'Office Starter',
     tier: 'office',
     price: { monthly: 2900, yearly: 29000 },
-    limits: { agents: 0, storage_gb: 10 },
-    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    limits: { agents: 0, storage_gb: 5 },
+    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'pixel-office'],
   },
   {
     id: 'office_team',
-    label: 'Office Team',
+    label: 'Office Pro',
     tier: 'office',
     price: { monthly: 7900, yearly: 79000 },
-    limits: { agents: 0, storage_gb: 100 },
+    limits: { agents: 0, storage_gb: 50 },
     features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
   },
   {
@@ -57,16 +54,16 @@ const PLANS: Plan[] = [
     label: 'Agents Starter',
     tier: 'agents',
     price: { monthly: 2900, yearly: 29000 },
-    limits: { agents: 25, storage_gb: 10, nexus_nodes: 2, nexus_local: 2, nexus_enterprise: 0 },
-    features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    limits: { agents: 10, storage_gb: 5 },
+    features: ['agents', 'nexus', 'sandbox', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
   },
   {
     id: 'agents_pro',
     label: 'Agents Pro',
     tier: 'agents',
     price: { monthly: 7900, yearly: 79000 },
-    limits: { agents: 100, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 3 },
-    features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    limits: { agents: 50, storage_gb: 25 },
+    features: ['agents', 'nexus', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
     highlight: true,
     badge: 'Most Popular',
   },
@@ -75,7 +72,7 @@ const PLANS: Plan[] = [
     label: 'Full Platform',
     tier: 'full',
     price: { monthly: 12900, yearly: 129000 },
-    limits: { agents: 100, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 5 },
+    limits: { agents: 50, storage_gb: 100 },
     features: ['*'],
     badge: 'Best Value',
   },
@@ -83,8 +80,8 @@ const PLANS: Plan[] = [
     id: 'enterprise',
     label: 'Enterprise',
     tier: 'enterprise',
-    price: { monthly: 0, yearly: 0 },
-    limits: { agents: -1, storage_gb: -1, nexus_nodes: -1, nexus_local: -1, nexus_enterprise: -1 },
+    price: { monthly: 19900, yearly: 0 },
+    limits: { agents: 100, storage_gb: 250 },
     features: ['*'],
   },
   {
@@ -92,7 +89,7 @@ const PLANS: Plan[] = [
     label: 'Open Beta',
     tier: 'beta',
     price: { monthly: 0, yearly: 0 },
-    limits: { agents: 50, storage_gb: 50, nexus_nodes: 5, nexus_local: 5, nexus_enterprise: 1 },
+    limits: { agents: 50, storage_gb: 50 },
     features: ['*'],
     badge: 'Current',
   },
@@ -124,23 +121,23 @@ interface ComparisonRow {
 const COMPARISON_ROWS: ComparisonRow[] = [
   { label: 'Max agents', key: 'agents', type: 'limit', getValue: (p) => fmtLimit(p.limits.agents) },
   { label: 'LLM (Bring Your Own Key)', key: 'byok', type: 'custom', getValue: () => true },
-  { label: 'Storage', key: 'storage', type: 'limit', getValue: (p) => p.limits.storage_gb === -1 ? 'Unlimited' : `${p.limits.storage_gb}GB` },
-  { label: 'Nexus nodes', key: 'nexus_nodes', type: 'limit', getValue: (p) => fmtLimit(p.limits.nexus_nodes ?? 0) },
-  { label: 'Enterprise nodes', key: 'nexus_enterprise', type: 'limit', getValue: (p) => fmtLimit(p.limits.nexus_enterprise ?? 0) },
+  { label: 'Storage', key: 'storage', type: 'limit', getValue: (p) => p.limits.storage_gb < 1 ? `${p.limits.storage_gb * 1000}MB` : `${p.limits.storage_gb}GB` },
   { label: 'Chat', key: 'chat', type: 'feature' },
   { label: 'Email', key: 'email', type: 'feature' },
   { label: 'Drive', key: 'drive', type: 'feature' },
   { label: 'Tasks', key: 'tasks', type: 'feature' },
   { label: 'Calendar', key: 'calendar', type: 'feature' },
   { label: 'CRM', key: 'crm', type: 'feature' },
+  { label: 'Goals', key: 'goals', type: 'feature' },
+  { label: 'Integrations', key: 'integrations', type: 'feature' },
+  { label: 'WhatsApp', key: 'whatsapp', type: 'feature' },
   { label: 'Agents', key: 'agents_feature', type: 'feature', getValue: (p) => p.features.includes('*') || p.features.includes('agents') },
   { label: 'Nexus CLI', key: 'nexus', type: 'feature' },
   { label: 'Builder', key: 'builder', type: 'feature' },
   { label: 'Sandbox', key: 'sandbox', type: 'feature' },
-  { label: 'Marketplace', key: 'marketplace', type: 'feature' },
   { label: 'Swarm (multi-agent)', key: 'swarm', type: 'feature' },
   { label: 'Automations', key: 'automations', type: 'feature' },
-  { label: 'Memory & context', key: 'memory', type: 'feature', getValue: (p) => p.features.includes('*') || (Array.isArray(p.features) && p.features.some((f) => f === 'context' || f === 'memory')) },
+  { label: 'Memory (3-level)', key: 'memory', type: 'feature', getValue: (p) => p.features.includes('*') || p.features.includes('agents') },
 ];
 
 function hasFeature(plan: Plan, key: string): boolean {
@@ -251,7 +248,8 @@ export default function PricingPage() {
 
                   {isCustom ? (
                     <div className="flex items-baseline gap-1">
-                      <span className={`text-2xl font-bold ${colors.text}`}>Custom</span>
+                      <span className={`text-2xl font-bold ${colors.text}`}>$199+</span>
+                      <span className="text-white/30 text-sm">/mo</span>
                     </div>
                   ) : isBeta ? (
                     <div className="flex items-baseline gap-1">
@@ -289,14 +287,8 @@ export default function PricingPage() {
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-white/40">Storage</span>
-                    <span className={`font-medium ${colors.text}`}>{plan.limits.storage_gb === -1 ? 'Unlimited' : `${plan.limits.storage_gb}GB`}</span>
+                    <span className={`font-medium ${colors.text}`}>{plan.limits.storage_gb < 1 ? `${plan.limits.storage_gb * 1000}MB` : `${plan.limits.storage_gb}GB`}</span>
                   </div>
-                  {plan.limits.nexus_nodes !== undefined && (
-                    <div className="flex justify-between text-xs">
-                      <span className="text-white/40">Nexus nodes</span>
-                      <span className={`font-medium ${colors.text}`}>{fmtLimit(plan.limits.nexus_nodes)}</span>
-                    </div>
-                  )}
                 </div>
 
                 {/* CTA */}
@@ -373,8 +365,8 @@ export default function PricingPage() {
           {[
             {
               icon: '🔓',
-              title: 'No per-seat pricing',
-              desc: 'Your whole team uses Vutler for a single flat price. No per-user charges, ever.',
+              title: 'Flat pricing',
+              desc: 'Users included in your plan. Extra users available on Office Pro, Full, and Enterprise at +$5/user/mo.',
             },
             {
               icon: '🇨🇭',
@@ -383,23 +375,23 @@ export default function PricingPage() {
             },
             {
               icon: '🔀',
-              title: '200+ AI models',
-              desc: 'OpenRouter integration gives you access to Claude, GPT-4, Gemini, and 200+ other models.',
+              title: '300+ AI models',
+              desc: 'OpenRouter integration gives you access to Claude, GPT-4, Gemini, and 300+ other models.',
+            },
+            {
+              icon: '🔑',
+              title: 'Bring Your Own Key (BYOK)',
+              desc: 'Connect your own OpenRouter, Anthropic, or OpenAI key. No token limits on any plan — you pay your provider directly. Usage tracking is for monitoring only.',
+            },
+            {
+              icon: '🧩',
+              title: 'Nexus add-on',
+              desc: 'Deploy agents on-premise with Nexus Clone ($19/node/mo) or Nexus Runtime ($39/node/mo). Extra agents: +$12/pack of 10.',
             },
             {
               icon: '📦',
               title: 'Open Source core',
               desc: 'Vutler Agents is AGPL-3.0. Self-host for free, or use our managed cloud.',
-            },
-            {
-              icon: '🔑',
-              title: 'Bring Your Own Key (BYOK)',
-              desc: 'Connect your own OpenRouter, Anthropic, or OpenAI key. No token limits on any plan. Don\'t have a key? Purchase LLM Credits separately.',
-            },
-            {
-              icon: '🔒',
-              title: 'Enterprise SLA',
-              desc: 'Custom contracts, SLAs, SSO, and dedicated support for large organizations.',
             },
           ].map((item) => (
             <div key={item.title} className="p-6 rounded-xl border border-white/5 bg-[#14151f]">

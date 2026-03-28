@@ -98,7 +98,7 @@ function HeroSection() {
 
             <p className="text-lg sm:text-xl text-white/60 leading-relaxed mb-8 max-w-xl">
               Deploy autonomous AI agents in minutes. Handle emails, chats, files, and tasks 24/7.
-              No per-seat pricing. Full API control.
+              No per-seat pricing. Bring Your Own Key. Swiss hosted.
             </p>
 
             <div className="flex flex-wrap gap-4 mb-12">
@@ -131,7 +131,7 @@ function HeroSection() {
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0" />
-                OpenRouter · 200+ models
+                OpenRouter · 300+ models
               </div>
             </div>
           </div>
@@ -164,7 +164,7 @@ function HeroSection() {
                   <div className="bg-[#0e0f1a] rounded-xl p-3 border border-white/5">
                     <p className="text-[10px] text-white/40 uppercase tracking-widest font-medium mb-1">Token Usage</p>
                     <p className="text-xl font-bold text-white">2.4M</p>
-                    <p className="text-[10px] text-white/30 mt-0.5">of 5M limit</p>
+                    <p className="text-[10px] text-white/30 mt-0.5">BYOK · no limits</p>
                   </div>
                 </div>
 
@@ -202,10 +202,10 @@ function HeroSection() {
               </div>
             </div>
 
-            {/* Float badge — GPT-5.3 connected */}
+            {/* Float badge — OpenRouter connected */}
             <div className="absolute -bottom-3 -right-4 flex items-center gap-2 bg-[#0e0f1a] border border-white/10 rounded-full px-3 py-1.5 shadow-lg text-xs font-medium text-white/70">
               <span className="w-2 h-2 rounded-full bg-green-400 shrink-0" />
-              GPT-5.3 connected
+              OpenRouter · 300+ models
             </div>
 
             {/* Glow under mockup */}
@@ -243,7 +243,7 @@ function ProductsSection() {
               A fully integrated suite for day-to-day operations — all managed by AI agents.
             </p>
             <ul className="space-y-2 mb-8">
-              {['Chat with AI agents', 'Email with approval flow', 'Drive — Swiss S3 storage', 'Calendar & scheduling', 'Tasks & Kanban boards', 'Memory & context across sessions', 'CRM & customer tracking'].map((f) => (
+              {['Chat with AI agents', 'Email with approval flow', 'Drive — Swiss S3 storage', 'Calendar & scheduling', 'Tasks & Kanban boards', 'Memory — 3-level hierarchy', 'CRM, Goals & Integrations'].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-white/60">
                   <CheckIcon className="w-4 h-4 text-blue-400 shrink-0" />
                   {f}
@@ -268,10 +268,10 @@ function ProductsSection() {
             <Badge className="mb-4 bg-purple-600/20 text-purple-400 border-purple-500/30 border">Vutler Agents</Badge>
             <h3 className="text-2xl font-bold mb-3">Deploy anywhere, own everything</h3>
             <p className="text-white/50 mb-6 leading-relaxed">
-              The open-source agent runtime. 17 templates, 68 skills, multi-agent swarms, and the Nexus CLI.
+              The open-source agent runtime. 39 templates, 119 skills, multi-agent swarms, and the Nexus CLI.
             </p>
             <ul className="space-y-2 mb-8">
-              {['17 agent templates ready to deploy', '68 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Multi-agent swarms', 'Marketplace for community agents', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
+              {['39 agent templates ready to deploy', '119 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Multi-agent swarms', 'Automations & scheduling', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-white/60">
                   <CheckIcon className="w-4 h-4 text-purple-400 shrink-0" />
                   {f}
@@ -295,7 +295,7 @@ const FEATURES = [
     icon: <ChatBubbleLeftRightIcon className="w-6 h-6" />,
     color: 'blue',
     title: 'Chat with AI agents',
-    description: 'Talk to any model via OpenRouter. Agents remember context, switch tasks, and collaborate across your workspace.',
+    description: 'Talk to any model via OpenRouter — 300+ models available. Agents remember context, switch tasks, and collaborate across your workspace.',
   },
   {
     icon: <EnvelopeIcon className="w-6 h-6" />,
@@ -325,7 +325,7 @@ const FEATURES = [
     icon: <AcademicCapIcon className="w-6 h-6" />,
     color: 'purple',
     title: 'Memory: Agents that learn',
-    description: 'Persistent context and semantic memory. Agents remember past conversations, preferences, and decisions.',
+    description: '3-level memory hierarchy — individual, shared by template, and global. Agents learn from each other via Snipara.',
   },
 ];
 
@@ -381,8 +381,10 @@ const MCP_TOOLS = [
   'list_agents', 'run_agent', 'stop_agent',
   'send_email', 'list_emails', 'read_email',
   'list_tasks', 'create_task', 'update_task',
-  'list_files', 'read_file', 'write_file',
-  'search_memory',
+  'list_files', 'upload_file', 'download_file',
+  'list_events', 'create_event',
+  'send_chat', 'search_memory',
+  'list_clients', 'create_client',
 ];
 
 function MCPSection() {
@@ -536,7 +538,7 @@ function PricingPreview() {
       period: '/mo',
       description: 'For teams using AI in day-to-day ops.',
       color: 'blue',
-      features: ['Chat, Email, Drive, Tasks', 'Calendar & CRM', '100K–500K tokens/mo', '10–100GB storage'],
+      features: ['Chat, Email, Drive, Tasks', 'Calendar, CRM & Goals', 'BYOK — no token limits', '5–50GB Swiss storage'],
     },
     {
       name: 'Agents',
@@ -545,7 +547,7 @@ function PricingPreview() {
       description: 'For builders deploying autonomous agents.',
       color: 'purple',
       highlight: true,
-      features: ['25–100 agents', '250K–1M tokens/mo', 'Nexus CLI', 'Multi-agent swarms'],
+      features: ['10–50 agents included', 'BYOK — no token limits', 'Nexus CLI · Sandbox · Automations', 'Builder & multi-agent swarms'],
     },
     {
       name: 'Full Platform',
@@ -553,7 +555,7 @@ function PricingPreview() {
       period: '/mo',
       description: 'Office + Agents. Everything included.',
       color: 'green',
-      features: ['100 agents', '1M tokens/mo', '100GB storage', '5 enterprise nodes'],
+      features: ['50 agents · 100GB storage', 'All Office + all Agents features', 'Up to 10 users', 'BYOK — no token limits'],
     },
   ];
 

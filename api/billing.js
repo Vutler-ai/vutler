@@ -21,8 +21,11 @@ function getStripePriceId(planId, interval) {
 }
 
 const ADDONS = [
-  { id: 'extra_nexus_node', label: 'Extra Nexus Node', price: 1900, unit: 'node/month' },
-  { id: 'extra_agents_10',  label: 'Extra 10 Agents',  price: 1200, unit: '10 agents/month' },
+  { id: 'extra_nexus_clone',   label: 'Nexus Clone Node',    price: 1900, unit: 'node/month' },
+  { id: 'extra_nexus_runtime', label: 'Nexus Runtime Node',  price: 3900, unit: 'node/month' },
+  { id: 'extra_agents_10',     label: 'Extra 10 Agents',     price: 1200, unit: '10 agents/month' },
+  { id: 'extra_user',          label: 'Extra User',          price: 500,  unit: 'user/month' },
+  { id: 'extra_storage_10gb',  label: 'Extra 10GB Storage',  price: 500,  unit: '10GB/month' },
 ];
 
 router.get('/billing/plans', (req, res) => {

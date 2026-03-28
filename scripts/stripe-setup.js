@@ -15,10 +15,11 @@
  *
  * Plans created:
  *   office_starter  $29/mo  $290/yr
- *   office_team     $79/mo  $790/yr
+ *   office_team     $79/mo  $790/yr  (Office Pro)
  *   agents_starter  $29/mo  $290/yr
  *   agents_pro      $79/mo  $790/yr
  *   full           $129/mo $1290/yr
+ *   enterprise     $199/mo  (annual is custom)
  */
 
 const Stripe = require('stripe');
@@ -38,13 +39,14 @@ const stripe = new Stripe(STRIPE_SECRET_KEY);
 // When using an Organization API key the Stripe-Context header (stripeAccount) is required.
 const ACCOUNT_OPTS = { stripeAccount: STRIPE_ACCOUNT_ID };
 
-// Plans to create (free, enterprise, beta have no paid prices)
+// Plans to create (free, beta have no paid prices)
 const PLANS_TO_CREATE = [
   { id: 'office_starter',  label: 'Office Starter',  monthly: 2900,  yearly: 29000  },
-  { id: 'office_team',     label: 'Office Team',      monthly: 7900,  yearly: 79000  },
+  { id: 'office_team',     label: 'Office Pro',       monthly: 7900,  yearly: 79000  },
   { id: 'agents_starter',  label: 'Agents Starter',   monthly: 2900,  yearly: 29000  },
   { id: 'agents_pro',      label: 'Agents Pro',        monthly: 7900,  yearly: 79000  },
   { id: 'full',            label: 'Full Platform',     monthly: 12900, yearly: 129000 },
+  { id: 'enterprise',      label: 'Enterprise',        monthly: 19900, yearly: 0      },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,15 +148,18 @@ async function main() {
       const product = await getOrCreateProduct(plan);
 
       const monthlyPrice = await getOrCreatePrice(product.id, plan.id, plan.monthly, 'month');
-      const yearlyPrice  = await getOrCreatePrice(product.id, plan.id, plan.yearly,  'year');
-
       const monthlyVar = `STRIPE_PRICE_${plan.id.toUpperCase()}_MONTHLY`;
-      const yearlyVar  = `STRIPE_PRICE_${plan.id.toUpperCase()}_YEARLY`;
-
       envLines.push(`${monthlyVar}=${monthlyPrice.id}`);
-      envLines.push(`${yearlyVar}=${yearlyPrice.id}`);
 
-      results.push({ planId: plan.id, monthlyVar, monthlyPriceId: monthlyPrice.id, yearlyVar, yearlyPriceId: yearlyPrice.id });
+      let yearlyPriceId = 'N/A';
+      if (plan.yearly > 0) {
+        const yearlyPrice  = await getOrCreatePrice(product.id, plan.id, plan.yearly,  'year');
+        const yearlyVar  = `STRIPE_PRICE_${plan.id.toUpperCase()}_YEARLY`;
+        envLines.push(`${yearlyVar}=${yearlyPrice.id}`);
+        yearlyPriceId = yearlyPrice.id;
+      }
+
+      results.push({ planId: plan.id, monthlyVar, monthlyPriceId: monthlyPrice.id, yearlyPriceId });
     } catch (err) {
       console.error(`  ERROR processing ${plan.id}:`, err.message);
     }
