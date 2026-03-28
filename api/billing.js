@@ -26,6 +26,9 @@ const ADDONS = [
   { id: 'extra_agents_10',     label: 'Extra 10 Agents',     price: 1200, unit: '10 agents/month' },
   { id: 'extra_user',          label: 'Extra User',          price: 500,  unit: 'user/month' },
   { id: 'extra_storage_10gb',  label: 'Extra 10GB Storage',  price: 500,  unit: '10GB/month' },
+  { id: 'social_posts_100',    label: '100 Social Posts',    price: 500,  unit: '100 posts/month',  posts: 100 },
+  { id: 'social_posts_500',    label: '500 Social Posts',    price: 1900, unit: '500 posts/month',  posts: 500 },
+  { id: 'social_posts_2000',   label: '2000 Social Posts',   price: 4900, unit: '2000 posts/month', posts: 2000 },
 ];
 
 router.get('/billing/plans', (req, res) => {
@@ -116,10 +119,35 @@ router.get('/billing/subscription', async (req, res) => {
 
     const storageGbUsed = parseFloat((storageBytesUsed / (1024 ** 3)).toFixed(3));
 
+    // Social posts usage this month
+    let socialPostsUsed = 0;
+    let socialPostsAddon = 0;
+    if (pool) {
+      try {
+        const spRes = await pool.query(
+          `SELECT COUNT(*) AS cnt FROM ${SCHEMA}.social_posts_usage
+           WHERE workspace_id = $1 AND created_at >= date_trunc('month', NOW())`,
+          [workspaceId]
+        );
+        socialPostsUsed = parseInt(spRes.rows[0]?.cnt || 0, 10);
+      } catch (_) {}
+      try {
+        const addonRes = await pool.query(
+          `SELECT COALESCE(SUM(posts_included), 0) AS total FROM ${SCHEMA}.social_media_addons
+           WHERE workspace_id = $1 AND status = 'active'`,
+          [workspaceId]
+        );
+        socialPostsAddon = parseInt(addonRes.rows[0]?.total || 0, 10);
+      } catch (_) {}
+    }
+
+    const socialPostsLimit = (planDef.limits.social_posts_month ?? 0) + socialPostsAddon;
+
     const usage = {
-      agents:     { used: agentCount,    limit: planDef.limits.agents     ?? 1 },
-      tokens:     { used: tokenUsed,     limit: planDef.limits.tokens_month ?? planDef.limits.tokens ?? 50000 },
-      storage_gb: { used: storageGbUsed, limit: planDef.limits.storage_gb ?? 1 },
+      agents:       { used: agentCount,      limit: planDef.limits.agents     ?? 1 },
+      tokens:       { used: tokenUsed,       limit: planDef.limits.tokens_month ?? planDef.limits.tokens ?? 50000 },
+      storage_gb:   { used: storageGbUsed,   limit: planDef.limits.storage_gb ?? 1 },
+      social_posts: { used: socialPostsUsed, limit: socialPostsLimit, addon: socialPostsAddon },
     };
 
     if (!subRow) {
@@ -273,8 +301,22 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
   try {
     if (event.type === 'checkout.session.completed') {
       const s = event.data.object;
-      const { planId, interval, workspaceId } = s.metadata || {};
-      if (pool && workspaceId && planId) {
+      const { planId, interval, workspaceId, addonId, type } = s.metadata || {};
+
+      if (type === 'addon' && pool && workspaceId && addonId) {
+        // Handle addon purchase (social posts packs, etc.)
+        const addon = ADDONS.find(a => a.id === addonId);
+        if (addon && addon.posts) {
+          await pool.query(
+            `INSERT INTO ${SCHEMA}.social_media_addons
+              (workspace_id, addon_id, posts_included, stripe_subscription_id, status, current_period_start, current_period_end)
+             VALUES ($1, $2, $3, $4, 'active', NOW(), NOW() + INTERVAL '1 month')
+             ON CONFLICT DO NOTHING`,
+            [workspaceId, addonId, addon.posts, s.subscription]
+          ).catch(err => console.error('[Billing] addon insert error:', err.message));
+        }
+        console.log(`[Billing] Addon ${addonId} activated for workspace ${workspaceId}`);
+      } else if (pool && workspaceId && planId) {
         const q = `INSERT INTO ${SCHEMA}.workspace_subscriptions
           (workspace_id,plan_id,interval,status,stripe_customer_id,stripe_subscription_id,current_period_start,current_period_end,cancel_at_period_end)
           VALUES($1,$2,$3,'active',$4,$5,NOW(),NOW()+INTERVAL '1 month',false)
@@ -293,6 +335,11 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
            WHERE stripe_subscription_id=$5`,
           [sub.status, sub.current_period_start, sub.current_period_end, sub.cancel_at_period_end, sub.id]
         );
+        // Also update addon subscriptions
+        await pool.query(
+          `UPDATE ${SCHEMA}.social_media_addons SET status=$1 WHERE stripe_subscription_id=$2`,
+          [sub.status === 'active' ? 'active' : 'canceled', sub.id]
+        ).catch(() => {});
       }
     } else if (event.type === 'customer.subscription.deleted') {
       if (pool) {
@@ -300,6 +347,10 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
           `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
         );
+        await pool.query(
+          `UPDATE ${SCHEMA}.social_media_addons SET status='canceled' WHERE stripe_subscription_id=$1`,
+          [event.data.object.id]
+        ).catch(() => {});
       }
     } else if (event.type === 'invoice.payment_failed') {
       const invoice = event.data.object;
@@ -332,8 +383,20 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
   try {
     if (event.type === 'checkout.session.completed') {
       const s = event.data.object;
-      const { planId, interval, workspaceId } = s.metadata || {};
-      if (pool && workspaceId && planId) {
+      const { planId, interval, workspaceId, addonId, type } = s.metadata || {};
+
+      if (type === 'addon' && pool && workspaceId && addonId) {
+        const addon = ADDONS.find(a => a.id === addonId);
+        if (addon && addon.posts) {
+          await pool.query(
+            `INSERT INTO ${SCHEMA}.social_media_addons
+              (workspace_id, addon_id, posts_included, stripe_subscription_id, status, current_period_start, current_period_end)
+             VALUES ($1, $2, $3, $4, 'active', NOW(), NOW() + INTERVAL '1 month')
+             ON CONFLICT DO NOTHING`,
+            [workspaceId, addonId, addon.posts, s.subscription]
+          ).catch(err => console.error('[Billing] addon insert error:', err.message));
+        }
+      } else if (pool && workspaceId && planId) {
         const q = `INSERT INTO ${SCHEMA}.workspace_subscriptions
           (workspace_id,plan_id,interval,status,stripe_customer_id,stripe_subscription_id,current_period_start,current_period_end,cancel_at_period_end)
           VALUES($1,$2,$3,'active',$4,$5,NOW(),NOW()+INTERVAL '1 month',false)
@@ -352,6 +415,10 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
            WHERE stripe_subscription_id=$5`,
           [sub.status, sub.current_period_start, sub.current_period_end, sub.cancel_at_period_end, sub.id]
         );
+        await pool.query(
+          `UPDATE ${SCHEMA}.social_media_addons SET status=$1 WHERE stripe_subscription_id=$2`,
+          [sub.status === 'active' ? 'active' : 'canceled', sub.id]
+        ).catch(() => {});
       }
     } else if (event.type === 'customer.subscription.deleted') {
       if (pool) {
@@ -359,6 +426,10 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
           `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
         );
+        await pool.query(
+          `UPDATE ${SCHEMA}.social_media_addons SET status='canceled' WHERE stripe_subscription_id=$1`,
+          [event.data.object.id]
+        ).catch(() => {});
       }
     } else if (event.type === 'invoice.payment_failed') {
       const invoice = event.data.object;
@@ -374,6 +445,54 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
   } catch (err) {
     console.error('[Billing] webhook handler error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Add-on checkout (social posts packs, extra agents, etc.) ─────────────────
+router.post('/billing/addon-checkout', async (req, res) => {
+  try {
+    const { addonId, successUrl, cancelUrl } = req.body;
+    const addon = ADDONS.find(a => a.id === addonId);
+    if (!addon) return res.status(400).json({ success: false, error: 'Invalid addonId' });
+
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(500).json({ success: false, error: 'Stripe is not configured' });
+    }
+
+    const priceId = process.env[`STRIPE_PRICE_ADDON_${addonId.toUpperCase()}`];
+    if (!priceId) {
+      return res.status(400).json({ success: false, error: `No Stripe price configured for addon "${addonId}". Run scripts/stripe-setup.js.` });
+    }
+
+    const stripe = getStripe();
+    const email = req.userEmail || req.user?.email;
+    let customerId;
+
+    if (email) {
+      const existing = await stripe.customers.list({ email, limit: 1 }, { stripeAccount: STRIPE_ACCOUNT_ID });
+      customerId = existing.data.length
+        ? existing.data[0].id
+        : (await stripe.customers.create(
+            { email, metadata: { userId: req.userId, workspaceId: req.workspaceId } },
+            { stripeAccount: STRIPE_ACCOUNT_ID }
+          )).id;
+    }
+
+    const params = {
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: successUrl || 'https://app.vutler.ai/billing?addon=success',
+      cancel_url:  cancelUrl  || 'https://app.vutler.ai/billing?addon=canceled',
+      metadata: { addonId, userId: req.userId, workspaceId: req.workspaceId, type: 'addon' },
+    };
+    if (customerId) params.customer = customerId;
+    else if (email) params.customer_email = email;
+
+    const session = await stripe.checkout.sessions.create(params, { stripeAccount: STRIPE_ACCOUNT_ID });
+    res.json({ success: true, data: { url: session.url } });
+  } catch (err) {
+    console.error('[Billing] addon-checkout error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

@@ -155,6 +155,15 @@ const INTERNAL_CATALOG = [
     scopes: ['mail.read', 'calendars.read'],
   },
   {
+    provider: 'social_media',
+    name: 'Social Media',
+    description: 'Post to LinkedIn, X, Instagram, TikTok, and more via Post for Me',
+    icon: '📱',
+    category: 'marketing',
+    actions: ['post_content', 'schedule_post', 'list_accounts'],
+    scopes: [],
+  },
+  {
     provider: 'chatgpt',
     name: 'ChatGPT',
     description: 'Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex models',

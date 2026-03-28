@@ -38,6 +38,29 @@ const MEMORY_TOOLS = [
   },
 ];
 
+// ── Social media tool definition ──────────────────────────────────────────────
+
+const SOCIAL_MEDIA_TOOL = {
+  type: 'function',
+  function: {
+    name: 'vutler_post_social_media',
+    description: 'Post content to connected social media accounts (LinkedIn, X, Instagram, TikTok, etc.). Use when asked to publish or share content on social media.',
+    parameters: {
+      type: 'object',
+      properties: {
+        caption: { type: 'string', description: 'The text content to post' },
+        platforms: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional: specific platforms to post to (e.g. ["linkedin", "twitter"]). If omitted, posts to all connected accounts.',
+        },
+        scheduled_at: { type: 'string', description: 'Optional: ISO 8601 datetime to schedule the post for later' },
+      },
+      required: ['caption'],
+    },
+  },
+};
+
 const PROVIDERS = {
   openai: {
     baseURL: 'https://api.openai.com/v1',
@@ -431,10 +454,21 @@ async function chat(agent, messages, db) {
 
   // Inject memory tools and augment system prompt when memory is configured
   const memoryTools = memoryScope ? MEMORY_TOOLS : null;
+
+  // Inject social media tool when agent has relevant skills
+  const agentSkills = agent?.skills || agent?.tools || [];
+  const hasSocialSkill = Array.isArray(agentSkills) && agentSkills.some(s =>
+    typeof s === 'string' && (s.includes('social') || s.includes('posting') || s.includes('content_scheduling') || s.includes('multi_platform'))
+  );
+  const socialMediaTools = hasSocialSkill ? [SOCIAL_MEDIA_TOOL] : [];
+
   let effectiveSystemPrompt = agent?.system_prompt || '';
   if (memoryScope) {
     const memoryInstruction = '\n\nYou have access to persistent memory. Use remember() to store important information and recall() to search your memory before responding to questions about past context.';
     effectiveSystemPrompt = effectiveSystemPrompt + memoryInstruction;
+  }
+  if (hasSocialSkill) {
+    effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }
 
   const attempts = [
@@ -486,7 +520,8 @@ async function chat(agent, messages, db) {
       const MAX_TOOL_ITERATIONS = 3;
 
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-        llmResult = await runOnce(attempt, currentMessages, memoryTools);
+        const allTools = [...(memoryTools || []), ...socialMediaTools];
+        llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
 
         // No tool calls → we have the final answer
         if (!llmResult.tool_calls || llmResult.tool_calls.length === 0) break;
@@ -523,6 +558,58 @@ async function chat(agent, messages, db) {
               { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
               { role: 'tool', tool_call_id: toolCall.id, name: 'recall', content: recalledText },
             ];
+            continueLoop = true;
+
+          } else if (toolCall.name === 'vutler_post_social_media' && hasSocialSkill) {
+            const caption = args.caption || '';
+            console.log(`[Social] Agent ${agentName} posting: "${caption.slice(0, 100)}"`);
+            try {
+              const POSTFORME_API_URL = process.env.POSTFORME_API_URL || 'https://app.postforme.dev/api/v1';
+              const POSTFORME_API_KEY = process.env.POSTFORME_API_KEY || '';
+              // Get workspace social accounts
+              const externalId = `ws_${workspaceId}`;
+              const accountsRes = await fetch(`${POSTFORME_API_URL}/socials?external_id=${externalId}`, {
+                headers: { 'Authorization': `Bearer ${POSTFORME_API_KEY}` },
+              });
+              const accountsData = await accountsRes.json();
+              const allAccounts = accountsData.data || accountsData.accounts || accountsData || [];
+              let accounts = Array.isArray(allAccounts) ? allAccounts.map(a => a.id || a.social_account_id) : [];
+              // Filter by platform if specified
+              if (args.platforms && args.platforms.length > 0) {
+                const filtered = allAccounts.filter(a => args.platforms.includes(a.platform || a.type));
+                if (filtered.length > 0) accounts = filtered.map(a => a.id || a.social_account_id);
+              }
+              if (accounts.length === 0) throw new Error('No social accounts connected');
+              const postBody = { caption, social_accounts: accounts };
+              if (args.scheduled_at) postBody.scheduled_at = args.scheduled_at;
+              const postRes = await fetch(`${POSTFORME_API_URL}/posts`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${POSTFORME_API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(postBody),
+              });
+              const postData = await postRes.json();
+              // Track usage in DB
+              if (db) {
+                try {
+                  await db.query(
+                    `INSERT INTO tenant_vutler.social_posts_usage (workspace_id, agent_id, platform, post_id, caption, status)
+                     VALUES ($1, $2, 'multi', $3, $4, 'processing')`,
+                    [workspaceId, agent?.id || null, postData.id || null, caption.slice(0, 500)]
+                  );
+                } catch (_) {}
+              }
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
+              ];
+            } catch (socialErr) {
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
+              ];
+            }
             continueLoop = true;
           }
         }
