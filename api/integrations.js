@@ -867,6 +867,8 @@ router.post('/chatgpt/poll', async (req, res) => {
       user_code: session.user_code,
     });
 
+    console.log(`[INTEGRATIONS] ChatGPT poll response: status=${pollResp.status} keys=${typeof pollResp.data === 'object' ? Object.keys(pollResp.data).join(',') : 'n/a'}`);
+
     // 403/404 = user hasn't confirmed yet
     if (pollResp.status === 403 || pollResp.status === 404) {
       return res.json({ success: true, status: 'pending', message: 'Waiting for user to confirm...' });
@@ -876,13 +878,14 @@ router.post('/chatgpt/poll', async (req, res) => {
       return res.json({ success: true, status: 'pending', message: 'Waiting...' });
     }
 
-    // Step 3: We got an auth code — exchange for tokens
-    const { code, code_verifier } = pollResp.data;
+    // Step 3: We got an auth response — exchange for tokens
+    // Response fields: authorization_code, code_verifier, code_challenge
+    const authCode = pollResp.data.authorization_code || pollResp.data.code;
+    const codeVerifier = pollResp.data.code_verifier || '';
 
-    if (!code) {
+    if (!authCode) {
       // Maybe we got tokens directly
       if (pollResp.data.access_token) {
-        // Direct token response
         await storeChatGPTTokens(workspaceId, pollResp.data, req.user?.email);
         deviceAuthSessions.delete(workspaceId);
         return res.json({ success: true, status: 'connected', message: 'ChatGPT connected!' });
@@ -890,13 +893,15 @@ router.post('/chatgpt/poll', async (req, res) => {
       return res.json({ success: true, status: 'pending', message: 'Waiting...' });
     }
 
-    // Exchange code for tokens
+    console.log('[INTEGRATIONS] ChatGPT device auth authorized, exchanging code for tokens...');
+
+    // Exchange authorization_code for tokens
     const tokenUrl = new URL(CHATGPT_OAUTH_TOKEN_URL);
     const postBody = new URLSearchParams({
       grant_type: 'authorization_code',
       client_id: CHATGPT_CLIENT_ID,
-      code,
-      code_verifier: code_verifier || '',
+      code: authCode,
+      code_verifier: codeVerifier,
       redirect_uri: CHATGPT_DEVICE_CALLBACK,
     }).toString();
 
