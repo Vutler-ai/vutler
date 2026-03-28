@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SKILL_LIMITS, getSkillLimitStatus, getSkillLimitMessage } from '@/lib/agent-types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,12 +162,16 @@ function SkillsSection({
   }, []);
 
   const toggle = (key: string) => {
-    onChange(
-      selectedSkills.includes(key)
-        ? selectedSkills.filter(s => s !== key)
-        : [...selectedSkills, key]
-    );
+    if (selectedSkills.includes(key)) {
+      onChange(selectedSkills.filter(s => s !== key));
+    } else if (selectedSkills.length < SKILL_LIMITS.max) {
+      onChange([...selectedSkills, key]);
+    }
   };
+
+  const limitStatus = getSkillLimitStatus(selectedCount);
+  const limitMessage = getSkillLimitMessage(selectedCount);
+  const atLimit = selectedCount >= SKILL_LIMITS.max;
 
   const filteredGrouped = search.trim()
     ? Object.entries(grouped).reduce((acc, [cat, skills]) => {
@@ -200,17 +205,43 @@ function SkillsSection({
 
   return (
     <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-base font-semibold text-white">Skills</h3>
-          <p className="text-xs text-[#6b7280] mt-0.5">
-            Select capabilities for this agent
-          </p>
-        </div>
-        {selectedCount > 0 && (
-          <span className="text-xs text-blue-400 font-medium">
-            {selectedCount} selected
+      <div className="mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-white">Skills</h3>
+            <p className="text-xs text-[#6b7280] mt-0.5">
+              Select capabilities for this agent (max {SKILL_LIMITS.max})
+            </p>
+          </div>
+          <span className={`text-xs font-medium ${
+            limitStatus === 'limit' ? 'text-red-400' :
+            limitStatus === 'warning' ? 'text-orange-400' :
+            'text-blue-400'
+          }`}>
+            {selectedCount}/{SKILL_LIMITS.max}
           </span>
+        </div>
+
+        {/* Progress bar */}
+        <div className="mt-3 h-1.5 bg-[#0e0f1a] rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${
+              limitStatus === 'limit' ? 'bg-red-500' :
+              limitStatus === 'warning' ? 'bg-orange-500' :
+              'bg-blue-500'
+            }`}
+            style={{ width: `${(selectedCount / SKILL_LIMITS.max) * 100}%` }}
+          />
+        </div>
+
+        {limitMessage && (
+          <p className={`mt-2 text-xs ${
+            limitStatus === 'limit' ? 'text-red-400' :
+            limitStatus === 'warning' ? 'text-orange-400' :
+            'text-emerald-400'
+          }`}>
+            {limitMessage}
+          </p>
         )}
       </div>
 
@@ -232,20 +263,24 @@ function SkillsSection({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {skills.map(skill => {
                 const isSelected = selectedSkills.includes(skill.key);
+                const isDisabled = atLimit && !isSelected;
                 return (
                   <label
                     key={skill.key}
-                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'border-blue-500/40 bg-blue-500/10'
-                        : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                    className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                      isDisabled
+                        ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                        : isSelected
+                          ? 'border-blue-500/40 bg-blue-500/10 cursor-pointer'
+                          : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)] cursor-pointer'
                     }`}
                   >
                     <input
                       type="checkbox"
                       checked={isSelected}
+                      disabled={isDisabled}
                       onChange={() => toggle(skill.key)}
-                      className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0"
+                      className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0 disabled:opacity-50"
                     />
                     <div className="min-w-0">
                       <div className="text-sm font-medium text-white leading-tight">

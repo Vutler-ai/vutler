@@ -4,10 +4,19 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/api/client';
 import { createAgent } from '@/lib/api/endpoints/agents';
+import { getSkills } from '@/lib/api/endpoints/marketplace';
+import type { AgentSkill } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import {
+  AGENT_TYPES,
+  SKILL_LIMITS,
+  getSkillLimitStatus,
+  getSkillLimitMessage,
+  getRecommendedSkills,
+} from '@/lib/agent-types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -61,6 +70,12 @@ export default function NewAgentPage() {
   const [loadingModels, setLoadingModels] = useState(true);
   const [models, setModels] = useState<LLMModel[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showAllSkills, setShowAllSkills] = useState(false);
+
+  // Skills data
+  const [allSkills, setAllSkills] = useState<AgentSkill[]>([]);
+  const [groupedSkills, setGroupedSkills] = useState<Record<string, AgentSkill[]>>({});
+  const [loadingSkills, setLoadingSkills] = useState(true);
 
   const [form, setForm] = useState({
     name: '',
@@ -71,6 +86,8 @@ export default function NewAgentPage() {
     system_prompt: '',
     tools: [] as string[],
     avatar: '🤖',
+    agentType: '',
+    skills: [] as string[],
   });
 
   // Load models
@@ -88,6 +105,17 @@ export default function NewAgentPage() {
       .finally(() => setLoadingModels(false));
   }, []);
 
+  // Load skills
+  useEffect(() => {
+    getSkills()
+      .then(res => {
+        setAllSkills(res.skills ?? []);
+        setGroupedSkills(res.grouped ?? {});
+      })
+      .catch(() => {})
+      .finally(() => setLoadingSkills(false));
+  }, []);
+
   const groupedModels = models.reduce((acc, m) => {
     const p = m.provider || 'other';
     if (!acc[p]) acc[p] = [];
@@ -102,6 +130,25 @@ export default function NewAgentPage() {
     set('tools', form.tools.includes(key)
       ? form.tools.filter(t => t !== key)
       : [...form.tools, key]);
+
+  const toggleSkill = (key: string) => {
+    if (form.skills.includes(key)) {
+      set('skills', form.skills.filter(s => s !== key));
+    } else if (form.skills.length < SKILL_LIMITS.max) {
+      set('skills', [...form.skills, key]);
+    }
+  };
+
+  const handleTypeSelect = (typeKey: string) => {
+    const recommended = getRecommendedSkills(typeKey);
+    const typeInfo = AGENT_TYPES.find(t => t.key === typeKey);
+    setForm(prev => ({
+      ...prev,
+      agentType: typeKey,
+      skills: recommended.slice(0, SKILL_LIMITS.max),
+      avatar: typeInfo?.icon || prev.avatar,
+    }));
+  };
 
   const handleModelChange = (modelName: string) => {
     const m = models.find(x => x.model_name === modelName);
@@ -123,9 +170,10 @@ export default function NewAgentPage() {
         model: form.model,
         provider: form.provider,
         system_prompt: form.system_prompt,
-        capabilities: form.tools,
+        capabilities: [...form.tools, ...form.skills],
         avatar: form.avatar,
         platform: 'cloud',
+        type: form.agentType || undefined,
       };
       const agent = await createAgent(payload as any);
       router.push(`/agents/${agent.id}/config`);
@@ -136,6 +184,38 @@ export default function NewAgentPage() {
     }
   };
 
+  // Skill filtering
+  const selectedCount = form.skills.length;
+  const limitStatus = getSkillLimitStatus(selectedCount);
+  const limitMessage = getSkillLimitMessage(selectedCount);
+  const atLimit = selectedCount >= SKILL_LIMITS.max;
+
+  // Separate skills: recommended first, then same category, then others
+  const recommendedKeys = new Set(getRecommendedSkills(form.agentType));
+  const selectedType = AGENT_TYPES.find(t => t.key === form.agentType);
+
+  const getFilteredSkills = () => {
+    if (!form.agentType || allSkills.length === 0) return { recommended: [], sameCategory: [], others: [] };
+
+    const recommended: AgentSkill[] = [];
+    const sameCategory: AgentSkill[] = [];
+    const others: AgentSkill[] = [];
+
+    for (const skill of allSkills) {
+      if (recommendedKeys.has(skill.key)) {
+        recommended.push(skill);
+      } else if (skill.category === form.agentType) {
+        sameCategory.push(skill);
+      } else {
+        others.push(skill);
+      }
+    }
+
+    return { recommended, sameCategory, others };
+  };
+
+  const { recommended: recommendedSkills, sameCategory: sameCategorySkills, others: otherSkills } = getFilteredSkills();
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
       {/* Header */}
@@ -144,7 +224,7 @@ export default function NewAgentPage() {
           onClick={() => router.push('/agents')}
           className="text-[#6b7280] hover:text-white transition-colors text-sm mb-3 flex items-center gap-1"
         >
-          ← Back to Agents
+          &larr; Back to Agents
         </button>
         <h1 className="text-2xl font-bold text-white">Create New Agent</h1>
         <p className="text-sm text-[#9ca3af] mt-1">Build and deploy a new AI agent</p>
@@ -220,6 +300,201 @@ export default function NewAgentPage() {
           </div>
         </section>
 
+        {/* Agent Type */}
+        <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+          <h2 className="text-base font-semibold text-white mb-2">Agent Type</h2>
+          <p className="text-xs text-[#6b7280] mb-5">Choose a specialization to get recommended skills</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+            {AGENT_TYPES.map(type => (
+              <button
+                key={type.key}
+                type="button"
+                onClick={() => handleTypeSelect(type.key)}
+                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
+                  form.agentType === type.key
+                    ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
+                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                }`}
+              >
+                <span className="text-xl shrink-0">{type.icon}</span>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-white truncate">{type.label}</div>
+                  <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* Skills (shown after type selection) */}
+        {form.agentType && !loadingSkills && allSkills.length > 0 && (
+          <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
+            <div className="mb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-white">Skills</h2>
+                  <p className="text-xs text-[#6b7280] mt-0.5">
+                    Recommended for {selectedType?.label} (max {SKILL_LIMITS.max})
+                  </p>
+                </div>
+                <span className={`text-xs font-medium ${
+                  limitStatus === 'limit' ? 'text-red-400' :
+                  limitStatus === 'warning' ? 'text-orange-400' :
+                  'text-blue-400'
+                }`}>
+                  {selectedCount}/{SKILL_LIMITS.max}
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div className="mt-3 h-1.5 bg-[#0e0f1a] rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    limitStatus === 'limit' ? 'bg-red-500' :
+                    limitStatus === 'warning' ? 'bg-orange-500' :
+                    'bg-blue-500'
+                  }`}
+                  style={{ width: `${(selectedCount / SKILL_LIMITS.max) * 100}%` }}
+                />
+              </div>
+
+              {limitMessage && (
+                <p className={`mt-2 text-xs ${
+                  limitStatus === 'limit' ? 'text-red-400' :
+                  limitStatus === 'warning' ? 'text-orange-400' :
+                  'text-emerald-400'
+                }`}>
+                  {limitMessage}
+                </p>
+              )}
+            </div>
+
+            {/* Recommended skills */}
+            {recommendedSkills.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-2">
+                  Recommended
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {recommendedSkills.map(skill => {
+                    const isSelected = form.skills.includes(skill.key);
+                    const isDisabled = atLimit && !isSelected;
+                    return (
+                      <label
+                        key={skill.key}
+                        className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                          isDisabled
+                            ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                            : isSelected
+                              ? 'border-blue-500/40 bg-blue-500/10 cursor-pointer'
+                              : 'border-blue-500/20 hover:border-blue-500/40 hover:bg-blue-500/5 cursor-pointer'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={isDisabled}
+                          onChange={() => toggleSkill(skill.key)}
+                          className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0 disabled:opacity-50"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-white leading-tight">{skill.name}</div>
+                          <div className="text-xs text-[#6b7280] mt-0.5 leading-snug line-clamp-2">{skill.description}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Same category (non-recommended) */}
+            {sameCategorySkills.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
+                  More {selectedType?.label} skills
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {sameCategorySkills.map(skill => {
+                    const isSelected = form.skills.includes(skill.key);
+                    const isDisabled = atLimit && !isSelected;
+                    return (
+                      <label
+                        key={skill.key}
+                        className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                          isDisabled
+                            ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                            : isSelected
+                              ? 'border-blue-500/40 bg-blue-500/10 cursor-pointer'
+                              : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] cursor-pointer'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          disabled={isDisabled}
+                          onChange={() => toggleSkill(skill.key)}
+                          className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0 disabled:opacity-50"
+                        />
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-white leading-tight">{skill.name}</div>
+                          <div className="text-xs text-[#6b7280] mt-0.5 leading-snug line-clamp-2">{skill.description}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Show all toggle */}
+            {otherSkills.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAllSkills(v => !v)}
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  {showAllSkills ? 'Hide other skills' : `Show all skills (+${otherSkills.length})`}
+                </button>
+
+                {showAllSkills && (
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {otherSkills.map(skill => {
+                      const isSelected = form.skills.includes(skill.key);
+                      const isDisabled = atLimit && !isSelected;
+                      return (
+                        <label
+                          key={skill.key}
+                          className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                            isDisabled
+                              ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                              : isSelected
+                                ? 'border-blue-500/40 bg-blue-500/10 cursor-pointer'
+                                : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] cursor-pointer'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            disabled={isDisabled}
+                            onChange={() => toggleSkill(skill.key)}
+                            className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a] shrink-0 disabled:opacity-50"
+                          />
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-white leading-tight">{skill.name}</div>
+                            <div className="text-xs text-[#6b7280] mt-0.5 leading-snug line-clamp-1">{skill.description}</div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Model */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
           <h2 className="text-base font-semibold text-white mb-5">Model</h2>
@@ -235,8 +510,8 @@ export default function NewAgentPage() {
                 {Object.keys(groupedModels).sort().map(provider => (
                   <optgroup key={provider} label={PROVIDER_NAMES[provider] || provider}>
                     {groupedModels[provider].map(m => {
-                      const ctx = m.context_window ? ` · ${(m.context_window / 1000).toFixed(0)}K` : '';
-                      const tier = m.tier ? ` · ${m.tier}` : '';
+                      const ctx = m.context_window ? ` \u00b7 ${(m.context_window / 1000).toFixed(0)}K` : '';
+                      const tier = m.tier ? ` \u00b7 ${m.tier}` : '';
                       return (
                         <option key={`${provider}-${m.model_name}`} value={m.model_name}>
                           {m.model_name}{tier}{ctx}
@@ -255,7 +530,7 @@ export default function NewAgentPage() {
                   sel.context_window && `Context: ${sel.context_window.toLocaleString()} tokens`,
                 ].filter(Boolean);
                 return parts.length > 0
-                  ? <p className="mt-2 text-xs text-[#6b7280]">{parts.join(' · ')}</p>
+                  ? <p className="mt-2 text-xs text-[#6b7280]">{parts.join(' \u00b7 ')}</p>
                   : null;
               })()}
             </>
