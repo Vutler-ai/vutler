@@ -15,7 +15,6 @@ const TABS = [
   { label: 'Executions', path: 'executions' },
   { label: 'Memory', path: 'memory' },
   { label: 'Integrations', path: 'integrations' },
-  { label: 'Publish', path: 'publish' },
 ] as const;
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
