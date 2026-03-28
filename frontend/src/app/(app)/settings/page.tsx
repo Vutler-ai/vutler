@@ -1089,6 +1089,287 @@ function AccountTab({
   );
 }
 
+// ─── Email & Domains Tab ─────────────────────────────────────────────────────
+
+interface EmailDomain { id: string; domain: string; verification: { mx: boolean; spf: boolean; dkim: boolean; dmarc: boolean; fullyVerified: boolean }; dnsRecords: Record<string, { type: string; host: string; value: string; priority?: number }>; createdAt: string }
+interface EmailRoute { id: string; emailAddress: string; agentId: string; agentName: string; agentUsername: string; agentAvatar?: string; autoReply: boolean; approvalRequired: boolean }
+interface EmailGroupItem { id: string; name: string; emailAddress: string; description?: string; memberCount: number; members?: { id: string; memberType: 'agent' | 'human'; agentId?: string; agentName?: string; humanEmail?: string; humanName?: string }[] }
+interface AgentItem { id: string; name: string; username: string; email?: string }
+
+function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error") => void }) {
+  const [domains, setDomains] = useState<EmailDomain[]>([]);
+  const [routes, setRoutes] = useState<EmailRoute[]>([]);
+  const [groups, setGroups] = useState<EmailGroupItem[]>([]);
+  const [agents, setAgents] = useState<AgentItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Domain form
+  const [newDomain, setNewDomain] = useState('');
+  const [addingDomain, setAddingDomain] = useState(false);
+
+  // Route form
+  const [newRouteAgentId, setNewRouteAgentId] = useState('');
+  const [newRoutePrefix, setNewRoutePrefix] = useState('');
+  const [addingRoute, setAddingRoute] = useState(false);
+
+  // Group form
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupPrefix, setNewGroupPrefix] = useState('');
+  const [addingGroup, setAddingGroup] = useState(false);
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
+  const [newMemberAgentId, setNewMemberAgentId] = useState('');
+  const [newMemberEmail, setNewMemberEmail] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [dRes, rRes, gRes, aRes] = await Promise.allSettled([
+        apiFetch<{ domains?: EmailDomain[] }>('/api/v1/email/domains'),
+        apiFetch<{ routes?: EmailRoute[] }>('/api/v1/email/routes'),
+        apiFetch<{ groups?: EmailGroupItem[] } | EmailGroupItem[]>('/api/v1/email/groups'),
+        apiFetch<{ agents?: AgentItem[] } | AgentItem[]>('/api/v1/agents'),
+      ]);
+      if (dRes.status === 'fulfilled') setDomains(Array.isArray(dRes.value?.domains) ? dRes.value.domains : []);
+      if (rRes.status === 'fulfilled') setRoutes(Array.isArray(rRes.value?.routes) ? rRes.value.routes : []);
+      if (gRes.status === 'fulfilled') {
+        const gd = gRes.value;
+        setGroups(Array.isArray(gd) ? gd : Array.isArray((gd as any)?.groups) ? (gd as any).groups : []);
+      }
+      if (aRes.status === 'fulfilled') {
+        const ad = aRes.value;
+        setAgents(Array.isArray(ad) ? ad : Array.isArray((ad as any)?.agents) ? (ad as any).agents : []);
+      }
+    } catch { /* silent */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addDomain = async () => {
+    if (!newDomain.trim()) return;
+    setAddingDomain(true);
+    try {
+      await apiFetch('/api/v1/email/domains', { method: 'POST', body: JSON.stringify({ domain: newDomain.trim() }) });
+      setNewDomain('');
+      onToast('Domain added', 'success');
+      load();
+    } catch { onToast('Failed to add domain', 'error'); }
+    setAddingDomain(false);
+  };
+
+  const verifyDomain = async (id: string) => {
+    try {
+      const data = await apiFetch<{ verification?: { fullyVerified?: boolean } }>(`/api/v1/email/domains/${id}/verify`, { method: 'POST' });
+      onToast(data.verification?.fullyVerified ? 'All records verified!' : 'Some records still missing', data.verification?.fullyVerified ? 'success' : 'error');
+      load();
+    } catch { onToast('Verification failed', 'error'); }
+  };
+
+  const deleteDomain = async (id: string) => {
+    if (!confirm('Remove this domain?')) return;
+    try { await apiFetch(`/api/v1/email/domains/${id}`, { method: 'DELETE' }); load(); } catch { /* silent */ }
+  };
+
+  const addRoute = async () => {
+    if (!newRouteAgentId || !newRoutePrefix.trim()) return;
+    setAddingRoute(true);
+    try {
+      await apiFetch('/api/v1/email/routes', { method: 'POST', body: JSON.stringify({ agent_id: newRouteAgentId, email_prefix: newRoutePrefix.trim() }) });
+      setNewRouteAgentId(''); setNewRoutePrefix('');
+      onToast('Email route created', 'success');
+      load();
+    } catch { onToast('Failed to create route', 'error'); }
+    setAddingRoute(false);
+  };
+
+  const deleteRoute = async (id: string) => {
+    if (!confirm('Remove this email route?')) return;
+    try { await apiFetch(`/api/v1/email/routes/${id}`, { method: 'DELETE' }); load(); } catch { /* silent */ }
+  };
+
+  const addGroup = async () => {
+    if (!newGroupName.trim() || !newGroupPrefix.trim()) return;
+    setAddingGroup(true);
+    try {
+      await apiFetch('/api/v1/email/groups', { method: 'POST', body: JSON.stringify({ name: newGroupName.trim(), email_prefix: newGroupPrefix.trim() }) });
+      setNewGroupName(''); setNewGroupPrefix('');
+      onToast('Group created', 'success');
+      load();
+    } catch { onToast('Failed to create group', 'error'); }
+    setAddingGroup(false);
+  };
+
+  const deleteGroup = async (id: string) => {
+    if (!confirm('Delete this email group?')) return;
+    try { await apiFetch(`/api/v1/email/groups/${id}`, { method: 'DELETE' }); load(); } catch { /* silent */ }
+  };
+
+  const toggleGroupExpand = async (groupId: string) => {
+    if (expandedGroupId === groupId) { setExpandedGroupId(null); return; }
+    setExpandedGroupId(groupId);
+    try {
+      const data = await apiFetch<{ group?: EmailGroupItem } | EmailGroupItem>(`/api/v1/email/groups/${groupId}`);
+      const group = (data as any).group || data;
+      const members = Array.isArray(group?.members) ? group.members : [];
+      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, members } : g));
+    } catch { /* silent */ }
+  };
+
+  const addMember = async (groupId: string, type: 'agent' | 'human') => {
+    const body = type === 'agent' ? { member_type: 'agent', agent_id: newMemberAgentId } : { member_type: 'human', email: newMemberEmail.trim() };
+    try {
+      await apiFetch(`/api/v1/email/groups/${groupId}/members`, { method: 'POST', body: JSON.stringify(body) });
+      setNewMemberAgentId(''); setNewMemberEmail('');
+      toggleGroupExpand(''); toggleGroupExpand(groupId); // reload members
+      load();
+    } catch { /* silent */ }
+  };
+
+  const removeMember = async (groupId: string, memberId: string) => {
+    try { await apiFetch(`/api/v1/email/groups/${groupId}/members/${memberId}`, { method: 'DELETE' }); toggleGroupExpand(''); toggleGroupExpand(groupId); load(); } catch { /* silent */ }
+  };
+
+  const handleAgentSelect = (agentId: string) => {
+    setNewRouteAgentId(agentId);
+    const agent = agents.find(a => a.id === agentId);
+    if (agent) setNewRoutePrefix(agent.username);
+  };
+
+  if (loading) return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-24 rounded-xl bg-[#14151f]" />)}</div>;
+
+  const sectionCx = "bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6";
+  const inputCx = "px-3 py-2.5 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]";
+  const btnPrimary = "px-4 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors";
+  const btnDanger = "px-3 py-1.5 text-xs bg-red-900/30 hover:bg-red-800/50 text-red-400 rounded-lg transition-colors";
+  const btnGhost = "px-3 py-1.5 text-xs bg-[#1f2028] hover:bg-[#334155] rounded-lg transition-colors text-[#9ca3af]";
+
+  return (
+    <div className="space-y-8">
+      {/* ── Custom Domains ─────────────────────────────────────── */}
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <CardTitle className="text-white">Custom Domains</CardTitle>
+          <CardDescription>Use your own domain for agent emails (e.g. <span className="font-mono text-white">jarvis@yourcompany.com</span>)</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-3">
+            <Input value={newDomain} onChange={e => setNewDomain(e.target.value)} onKeyDown={e => e.key === 'Enter' && addDomain()} placeholder="yourcompany.com" className={cx.input} />
+            <Button onClick={addDomain} disabled={addingDomain || !newDomain.trim()} className="bg-[#3b82f6] hover:bg-[#2563eb]">{addingDomain ? 'Adding…' : 'Add Domain'}</Button>
+          </div>
+          {domains.length === 0 ? (
+            <p className="text-sm text-[#6b7280]">No custom domains. Agents use <span className="font-mono">workspace.vutler.ai</span>.</p>
+          ) : domains.map(d => (
+            <div key={d.id} className={sectionCx + " space-y-3"}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-white">{d.domain}</p>
+                  <div className="flex gap-3 mt-1">{(['mx','spf','dkim','dmarc'] as const).map(k => (
+                    <span key={k} className="flex items-center gap-1 text-xs"><span className={`w-2 h-2 rounded-full ${d.verification[k] ? 'bg-green-400' : 'bg-red-400'}`} /><span className="text-[#9ca3af] uppercase">{k}</span></span>
+                  ))}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => verifyDomain(d.id)} className={btnGhost}>Verify DNS</button>
+                  <button onClick={() => deleteDomain(d.id)} className={btnDanger}>Remove</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* ── Agent Email Routes ─────────────────────────────────── */}
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <CardTitle className="text-white">Agent Email Addresses</CardTitle>
+          <CardDescription>Assign emails to agents. Incoming mail will be routed to them.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-3 flex-wrap">
+            <select value={newRouteAgentId} onChange={e => handleAgentSelect(e.target.value)} className={inputCx + " flex-1 min-w-[180px]"}>
+              <option value="">Select agent…</option>
+              {agents.map(a => <option key={a.id} value={a.id}>{a.name} (@{a.username})</option>)}
+            </select>
+            <Input value={newRoutePrefix} onChange={e => setNewRoutePrefix(e.target.value)} placeholder="email-prefix" className={cx.input + " flex-1 min-w-[140px]"} />
+            <Button onClick={addRoute} disabled={addingRoute || !newRouteAgentId || !newRoutePrefix.trim()} className="bg-[#3b82f6] hover:bg-[#2563eb]">{addingRoute ? 'Assigning…' : 'Assign'}</Button>
+          </div>
+          <p className="text-xs text-[#6b7280]">Address: <span className="font-mono text-[#9ca3af]">prefix@your-domain-or-workspace.vutler.ai</span></p>
+          {routes.length === 0 ? (
+            <p className="text-sm text-[#6b7280]">No agent email addresses assigned.</p>
+          ) : routes.map(r => (
+            <div key={r.id} className="flex items-center justify-between p-3 rounded-lg bg-[#1f2028]">
+              <div>
+                <p className="text-sm font-medium text-white">{r.agentName || r.agentUsername}</p>
+                <p className="text-xs font-mono text-[#3b82f6]">{r.emailAddress}</p>
+                <div className="flex gap-3 mt-0.5">
+                  <span className={`text-[10px] ${r.autoReply ? 'text-green-400' : 'text-[#6b7280]'}`}>{r.autoReply ? 'Auto-reply on' : 'Auto-reply off'}</span>
+                  <span className={`text-[10px] ${r.approvalRequired ? 'text-yellow-400' : 'text-green-400'}`}>{r.approvalRequired ? 'Needs approval' : 'Auto-send'}</span>
+                </div>
+              </div>
+              <button onClick={() => deleteRoute(r.id)} className={btnDanger}>Remove</button>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {/* ── Email Groups ─────────────────────────────────────── */}
+      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+        <CardHeader>
+          <CardTitle className="text-white">Email Groups</CardTitle>
+          <CardDescription>Shared addresses (e.g. <span className="font-mono text-white">info@yourcompany.com</span>) with multiple agents or team members.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-3 flex-wrap">
+            <Input value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="Group name" className={cx.input + " flex-1 min-w-[180px]"} />
+            <Input value={newGroupPrefix} onChange={e => setNewGroupPrefix(e.target.value)} onKeyDown={e => e.key === 'Enter' && addGroup()} placeholder="email prefix (e.g. info)" className={cx.input + " flex-1 min-w-[140px]"} />
+            <Button onClick={addGroup} disabled={addingGroup || !newGroupName.trim() || !newGroupPrefix.trim()} className="bg-[#3b82f6] hover:bg-[#2563eb]">{addingGroup ? 'Creating…' : 'Create Group'}</Button>
+          </div>
+          {groups.length === 0 ? (
+            <p className="text-sm text-[#6b7280]">No email groups created.</p>
+          ) : groups.map(g => (
+            <div key={g.id} className="rounded-lg bg-[#1f2028] overflow-hidden">
+              <div className="flex items-center justify-between p-3">
+                <div>
+                  <p className="text-sm font-medium text-white">{g.name}</p>
+                  <p className="text-xs font-mono text-[#3b82f6]">{g.emailAddress}</p>
+                  <p className="text-[10px] text-[#6b7280] mt-0.5">{g.memberCount} member{g.memberCount !== 1 ? 's' : ''}</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => toggleGroupExpand(g.id)} className={btnGhost}>{expandedGroupId === g.id ? 'Hide' : 'Manage'}</button>
+                  <button onClick={() => deleteGroup(g.id)} className={btnDanger}>Delete</button>
+                </div>
+              </div>
+              {expandedGroupId === g.id && (
+                <div className="px-3 pb-3 border-t border-[rgba(255,255,255,0.05)] pt-3 space-y-2">
+                  {g.members && g.members.length > 0 ? g.members.map(m => (
+                    <div key={m.id} className="flex items-center justify-between py-1.5 px-2 bg-[#14151f] rounded-lg text-sm">
+                      <div className="flex items-center gap-2">
+                        <Badge className={m.memberType === 'agent' ? 'bg-violet-900/40 text-violet-300 border-none text-[10px]' : 'bg-blue-900/40 text-blue-300 border-none text-[10px]'}>{m.memberType}</Badge>
+                        <span className="text-white">{m.memberType === 'agent' ? m.agentName : (m.humanName || m.humanEmail)}</span>
+                      </div>
+                      <button onClick={() => removeMember(g.id, m.id)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+                    </div>
+                  )) : <p className="text-xs text-[#6b7280]">No members yet.</p>}
+                  <div className="flex gap-2">
+                    <select value={newMemberAgentId} onChange={e => setNewMemberAgentId(e.target.value)} className={inputCx + " flex-1"}>
+                      <option value="">Add agent…</option>
+                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                    <Button onClick={() => addMember(g.id, 'agent')} disabled={!newMemberAgentId} size="sm" className="bg-[#3b82f6] hover:bg-[#2563eb]">Add</Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Input value={newMemberEmail} onChange={e => setNewMemberEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && newMemberEmail.trim() && addMember(g.id, 'human')} placeholder="human@email.com" className={cx.input + " flex-1"} />
+                    <Button onClick={() => addMember(g.id, 'human')} disabled={!newMemberEmail.trim()} size="sm" className="bg-[#3b82f6] hover:bg-[#2563eb]">Add</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -1171,6 +1452,12 @@ export default function SettingsPage() {
             >
               Account
             </TabsTrigger>
+            <TabsTrigger
+              value="email"
+              className="data-[state=active]:bg-[#3b82f6] data-[state=active]:text-white text-[#9ca3af]"
+            >
+              Email &amp; Domains
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="profile">
@@ -1191,6 +1478,10 @@ export default function SettingsPage() {
 
           <TabsContent value="account">
             <AccountTab onToast={showToast} />
+          </TabsContent>
+
+          <TabsContent value="email">
+            <EmailTab onToast={showToast} />
           </TabsContent>
         </Tabs>
       )}
