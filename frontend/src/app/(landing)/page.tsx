@@ -271,7 +271,7 @@ function ProductsSection() {
               The open-source agent runtime. 39 templates, 119 skills, multi-agent swarms, and the Nexus CLI.
             </p>
             <ul className="space-y-2 mb-8">
-              {['39 agent templates ready to deploy', '119 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Multi-agent swarms', 'Marketplace for community agents', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
+              {['39 agent templates ready to deploy', '119 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Multi-agent swarms', 'Automations & scheduling', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-white/60">
                   <CheckIcon className="w-4 h-4 text-purple-400 shrink-0" />
                   {f}
@@ -538,7 +538,7 @@ function PricingPreview() {
       period: '/mo',
       description: 'For teams using AI in day-to-day ops.',
       color: 'blue',
-      features: ['Chat, Email, Drive, Tasks', 'Calendar, CRM & Goals', 'BYOK — no token limits', '10–100GB Swiss storage'],
+      features: ['Chat, Email, Drive, Tasks', 'Calendar, CRM & Goals', 'BYOK — no token limits', '5–50GB Swiss storage'],
     },
     {
       name: 'Agents',
@@ -547,7 +547,7 @@ function PricingPreview() {
       description: 'For builders deploying autonomous agents.',
       color: 'purple',
       highlight: true,
-      features: ['25–100 agents', 'BYOK — no token limits', 'Nexus CLI · 2–10 nodes', 'Marketplace & multi-agent swarms'],
+      features: ['10–50 agents included', 'BYOK — no token limits', 'Nexus CLI · Sandbox · Automations', 'Builder & multi-agent swarms'],
     },
     {
       name: 'Full Platform',
@@ -555,7 +555,7 @@ function PricingPreview() {
       period: '/mo',
       description: 'Office + Agents. Everything included.',
       color: 'green',
-      features: ['100 agents', '100GB storage · 10 Nexus nodes', 'All Office + all Agents features', 'BYOK — no token limits'],
+      features: ['50 agents · 100GB storage', 'All Office + all Agents features', 'Up to 10 users', 'BYOK — no token limits'],
     },
   ];
 
