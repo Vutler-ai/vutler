@@ -141,6 +141,10 @@ interface SidebarProps {
   agents: AgentEntry[];
   groups: GroupEntry[];
   onCompose: () => void;
+  selectedAgentId: string | null;
+  onSelectAgent: (id: string | null) => void;
+  selectedGroupId: string | null;
+  onSelectGroup: (id: string | null) => void;
 }
 
 function Sidebar({
@@ -151,6 +155,10 @@ function Sidebar({
   agents,
   groups,
   onCompose,
+  selectedAgentId,
+  onSelectAgent,
+  selectedGroupId,
+  onSelectGroup,
 }: SidebarProps) {
   const navFolders = [
     { id: "inbox" as const, label: "Inbox", icon: Inbox, count: unreadCount },
@@ -230,9 +238,14 @@ function Sidebar({
             </p>
             <div className="space-y-0.5">
               {agents.map((agent) => (
-                <div
+                <button
                   key={agent.id}
-                  className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 cursor-default transition-colors"
+                  onClick={() => onSelectAgent(selectedAgentId === agent.id ? null : agent.id)}
+                  className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                    selectedAgentId === agent.id
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+                  }`}
                 >
                   {agent.avatar ? (
                     <img
@@ -245,13 +258,13 @@ function Sidebar({
                       <Bot className="w-3 h-3 text-zinc-400" />
                     </div>
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 text-left">
                     <p className="text-xs truncate">{agent.name}</p>
                     {agent.email && (
                       <p className="text-[10px] text-zinc-600 truncate">{agent.email}</p>
                     )}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -265,16 +278,21 @@ function Sidebar({
             </p>
             <div className="space-y-0.5">
               {groups.map((group) => (
-                <div
+                <button
                   key={group.id}
-                  className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 cursor-default transition-colors"
+                  onClick={() => onSelectGroup(selectedGroupId === group.id ? null : group.id)}
+                  className={`w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                    selectedGroupId === group.id
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+                  }`}
                 >
                   <Users className="w-4 h-4 flex-shrink-0 text-zinc-600" />
-                  <div className="min-w-0">
+                  <div className="min-w-0 text-left">
                     <p className="text-xs truncate">{group.name}</p>
                     <p className="text-[10px] text-zinc-600 truncate">{group.emailAddress}</p>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -917,6 +935,8 @@ export default function EmailPage() {
   const [deleteTarget, setDeleteTarget] = useState<AugmentedEmail | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "viewer">("list");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
 
   // Load emails
   const loadEmails = async () => {
@@ -985,6 +1005,22 @@ export default function EmailPage() {
     setSelectedEmail(null);
     setMobileView("list");
     setFilter("all");
+    setSelectedAgentId(null);
+    setSelectedGroupId(null);
+  };
+
+  const handleSelectAgent = (agentId: string | null) => {
+    setSelectedAgentId(agentId);
+    setSelectedGroupId(null);
+    setSelectedEmail(null);
+    if (agentId && folder !== "inbox") setFolder("inbox");
+  };
+
+  const handleSelectGroup = (groupId: string | null) => {
+    setSelectedGroupId(groupId);
+    setSelectedAgentId(null);
+    setSelectedEmail(null);
+    if (groupId && folder !== "inbox") setFolder("inbox");
   };
 
   const handleSelectEmail = async (email: AugmentedEmail) => {
@@ -1087,6 +1123,28 @@ export default function EmailPage() {
   const filteredEmails = useMemo(() => {
     let list = emails;
 
+    // Filter by selected agent
+    if (selectedAgentId) {
+      const agent = agents.find((a) => a.id === selectedAgentId);
+      const agentEmail = agent?.email?.toLowerCase();
+      list = list.filter(
+        (e) =>
+          e.agentId === selectedAgentId ||
+          (agentEmail && (e.from?.toLowerCase().includes(agentEmail) || e.to?.toLowerCase().includes(agentEmail)))
+      );
+    }
+
+    // Filter by selected group
+    if (selectedGroupId) {
+      const group = groups.find((g) => g.id === selectedGroupId);
+      const groupEmail = group?.emailAddress?.toLowerCase();
+      if (groupEmail) {
+        list = list.filter(
+          (e) => e.from?.toLowerCase().includes(groupEmail) || e.to?.toLowerCase().includes(groupEmail)
+        );
+      }
+    }
+
     // Apply filter
     if (filter === "unread") list = list.filter((e) => e.unread);
     else if (filter === "agent") list = list.filter((e) => e.agentHandled);
@@ -1104,7 +1162,7 @@ export default function EmailPage() {
     }
 
     return list;
-  }, [emails, filter, searchQuery]);
+  }, [emails, filter, searchQuery, selectedAgentId, selectedGroupId, agents, groups]);
 
   const unreadCount = useMemo(
     () => emails.filter((e) => e.unread).length,
@@ -1133,6 +1191,10 @@ export default function EmailPage() {
             setReplyDefaults({ to: "", subject: "" });
             setShowCompose(true);
           }}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={handleSelectAgent}
+          selectedGroupId={selectedGroupId}
+          onSelectGroup={handleSelectGroup}
         />
       </div>
 
@@ -1147,7 +1209,13 @@ export default function EmailPage() {
         <div className="flex-shrink-0 px-4 pt-4 pb-3 border-b border-zinc-800 space-y-3">
           <div className="flex items-center justify-between">
             <h1 className="text-base font-semibold text-white capitalize">
-              {folder === "pending" ? "Pending Approval" : folder}
+              {selectedAgentId
+                ? agents.find((a) => a.id === selectedAgentId)?.name ?? "Agent"
+                : selectedGroupId
+                ? groups.find((g) => g.id === selectedGroupId)?.name ?? "Group"
+                : folder === "pending"
+                ? "Pending Approval"
+                : folder}
             </h1>
             <Button
               variant="ghost"
@@ -1197,7 +1265,13 @@ export default function EmailPage() {
             <div className="flex flex-col items-center justify-center py-16 gap-3 text-zinc-600">
               <Mail className="w-10 h-10 opacity-30" />
               <p className="text-sm text-zinc-500">
-                {searchQuery ? "No emails match your search" : "No emails here"}
+                {searchQuery
+                  ? "No emails match your search"
+                  : selectedAgentId
+                  ? "No emails for this agent yet"
+                  : selectedGroupId
+                  ? "No emails for this group yet"
+                  : "No emails here"}
               </p>
             </div>
           ) : (
