@@ -155,6 +155,9 @@ export const SKILL_LIMITS = {
   recommended: 5,
 } as const;
 
+/** Maximum number of agent types that can be combined */
+export const MAX_AGENT_TYPES = 3;
+
 export type SkillLimitStatus = 'good' | 'warning' | 'limit';
 
 export function getSkillLimitStatus(count: number): SkillLimitStatus {
@@ -177,7 +180,18 @@ export function getAgentType(key: string): AgentTypeDefinition | undefined {
   return AGENT_TYPES.find(t => t.key === key);
 }
 
-/** Get recommended skills for a given agent type */
-export function getRecommendedSkills(typeKey: string): string[] {
-  return getAgentType(typeKey)?.recommendedSkills ?? [];
+/** Get recommended skills for one or multiple agent types (deduplicated) */
+export function getRecommendedSkills(typeKeys: string | string[]): string[] {
+  const keys = Array.isArray(typeKeys) ? typeKeys : [typeKeys];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const key of keys) {
+    for (const skill of getAgentType(key)?.recommendedSkills ?? []) {
+      if (!seen.has(skill)) {
+        seen.add(skill);
+        result.push(skill);
+      }
+    }
+  }
+  return result;
 }

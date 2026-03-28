@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import {
   AGENT_TYPES,
   SKILL_LIMITS,
+  MAX_AGENT_TYPES,
   getSkillLimitStatus,
   getSkillLimitMessage,
   getRecommendedSkills,
@@ -94,7 +95,7 @@ export default function NewAgentPage() {
     system_prompt: '',
     tools: [] as string[],
     avatar: '🤖',
-    agentType: '',
+    agentTypes: [] as string[],
     skills: [] as string[],
   });
 
@@ -147,15 +148,21 @@ export default function NewAgentPage() {
     }
   };
 
-  const handleTypeSelect = (typeKey: string) => {
-    const recommended = getRecommendedSkills(typeKey);
-    const typeInfo = AGENT_TYPES.find(t => t.key === typeKey);
-    setForm(prev => ({
-      ...prev,
-      agentType: typeKey,
-      skills: recommended.slice(0, SKILL_LIMITS.max),
-      avatar: typeInfo?.icon || prev.avatar,
-    }));
+  const handleTypeToggle = (typeKey: string) => {
+    setForm(prev => {
+      const isSelected = prev.agentTypes.includes(typeKey);
+      const next = isSelected
+        ? prev.agentTypes.filter(t => t !== typeKey)
+        : [...prev.agentTypes, typeKey];
+      const recommended = getRecommendedSkills(next);
+      const firstType = next.length > 0 ? AGENT_TYPES.find(t => t.key === next[0]) : null;
+      return {
+        ...prev,
+        agentTypes: next,
+        skills: recommended,
+        avatar: firstType?.icon || prev.avatar,
+      };
+    });
   };
 
   const handleModelChange = (modelName: string) => {
@@ -181,7 +188,7 @@ export default function NewAgentPage() {
         capabilities: [...form.tools, ...form.skills],
         avatar: form.avatar,
         platform: 'cloud',
-        type: form.agentType || undefined,
+        type: form.agentTypes.length > 0 ? form.agentTypes : undefined,
       };
       const agent = await createAgent(payload as any);
       router.push(`/agents/${agent.id}/config`);
@@ -199,11 +206,12 @@ export default function NewAgentPage() {
   const atLimit = selectedCount >= SKILL_LIMITS.max;
 
   // Separate skills: recommended first, then same category, then others
-  const recommendedKeys = new Set(getRecommendedSkills(form.agentType));
-  const selectedType = AGENT_TYPES.find(t => t.key === form.agentType);
+  const recommendedKeys = new Set(getRecommendedSkills(form.agentTypes));
+  const activeCategorySet = new Set(form.agentTypes);
+  const typeLabels = form.agentTypes.map(k => AGENT_TYPES.find(t => t.key === k)?.label).filter(Boolean);
 
   const getFilteredSkills = () => {
-    if (!form.agentType || allSkills.length === 0) return { recommended: [], sameCategory: [], others: [] };
+    if (form.agentTypes.length === 0 || allSkills.length === 0) return { recommended: [], sameCategory: [], others: [] };
 
     const recommended: AgentSkill[] = [];
     const sameCategory: AgentSkill[] = [];
@@ -212,7 +220,7 @@ export default function NewAgentPage() {
     for (const skill of allSkills) {
       if (recommendedKeys.has(skill.key)) {
         recommended.push(skill);
-      } else if (skill.category === form.agentType) {
+      } else if (activeCategorySet.has(skill.category)) {
         sameCategory.push(skill);
       } else {
         others.push(skill);
@@ -308,41 +316,53 @@ export default function NewAgentPage() {
           </div>
         </section>
 
-        {/* Agent Type */}
+        {/* Agent Type (multi-select, max 3) */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h2 className="text-base font-semibold text-white mb-2">Agent Type</h2>
-          <p className="text-xs text-[#6b7280] mb-5">Choose a specialization to get recommended skills</p>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-base font-semibold text-white">Agent Type</h2>
+            <span className="text-xs text-[#6b7280]">
+              {form.agentTypes.length}/{MAX_AGENT_TYPES}
+            </span>
+          </div>
+          <p className="text-xs text-[#6b7280] mb-5">Combine up to {MAX_AGENT_TYPES} specializations for merged skill recommendations</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {AGENT_TYPES.map(type => (
-              <button
-                key={type.key}
-                type="button"
-                onClick={() => handleTypeSelect(type.key)}
-                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
-                  form.agentType === type.key
-                    ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
-                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
-                }`}
-              >
-                <span className="text-xl shrink-0">{type.icon}</span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-white truncate">{type.label}</div>
-                  <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
-                </div>
-              </button>
-            ))}
+            {AGENT_TYPES.map(type => {
+              const isSelected = form.agentTypes.includes(type.key);
+              const atTypeLimit = form.agentTypes.length >= MAX_AGENT_TYPES && !isSelected;
+              return (
+                <button
+                  key={type.key}
+                  type="button"
+                  disabled={atTypeLimit}
+                  onClick={() => handleTypeToggle(type.key)}
+                  className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
+                    isSelected
+                      ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
+                      : atTypeLimit
+                        ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                        : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                  }`}
+                >
+                  <span className="text-xl shrink-0">{type.icon}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white truncate">{type.label}</div>
+                    <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </section>
 
         {/* Skills (shown after type selection) */}
-        {form.agentType && !loadingSkills && allSkills.length > 0 && (
+        {form.agentTypes.length > 0 && !loadingSkills && allSkills.length > 0 && (
           <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
             <div className="mb-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-base font-semibold text-white">Skills</h2>
                   <p className="text-xs text-[#6b7280] mt-0.5">
-                    Recommended for {selectedType?.label} (max {SKILL_LIMITS.max})
+                    Recommended for {typeLabels.join(' + ')} (max {SKILL_LIMITS.max})
                   </p>
                 </div>
                 <span className={`text-xs font-medium ${
@@ -420,7 +440,7 @@ export default function NewAgentPage() {
             {sameCategorySkills.length > 0 && (
               <div className="mb-4">
                 <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
-                  More {selectedType?.label} skills
+                  More {typeLabels.join(' / ')} skills
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {sameCategorySkills.map(skill => {

@@ -12,6 +12,22 @@ const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vut
 const MAX_SKILLS = 8;
 const TOOL_KEYS = new Set(['file_access', 'network_access', 'code_execution', 'web_search', 'tool_use']);
 
+/** Serialize type for DB: array → JSON string, string → as-is */
+function serializeType(type) {
+  if (Array.isArray(type)) return JSON.stringify(type);
+  return type || null;
+}
+
+/** Deserialize type from DB: JSON array string → array, plain string → wrap */
+function deserializeType(type) {
+  if (!type) return [];
+  try {
+    const parsed = JSON.parse(type);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return type === 'bot' ? [] : [type];
+}
+
 /**
  * Resolve the default email domain for a workspace.
  * Prefers the first fully-verified custom domain; falls back to {slug}.vutler.ai.
@@ -75,7 +91,7 @@ router.get("/", async (req, res) => {
       username: a.username,
       email: a.email,
       status: a.status || "online",
-      type: a.type || "bot",
+      type: deserializeType(a.type),
       avatar: a.avatar || null,
       description: a.description || "",
       role: a.role,
@@ -115,7 +131,7 @@ router.get("/:id", async (req, res) => {
       success: true,
       agent: {
         id: a.id, name: a.name, username: a.username, email: a.email,
-        status: a.status, type: a.type,
+        status: a.status, type: deserializeType(a.type),
         avatar: a.avatar || null,
         description: a.description || "", role: a.role, mbti: a.mbti,
         model: a.model, provider: a.provider, platform: a.platform || a.role || null,
@@ -143,7 +159,8 @@ router.post("/", async (req, res) => {
 
     const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
     const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
-    if (plan === 'free' && String(type || 'bot').toLowerCase() !== 'coordinator') {
+    const typeStr = Array.isArray(type) ? type.join(',') : String(type || 'bot');
+    if (plan === 'free' && typeStr.toLowerCase() !== 'coordinator') {
       return res.status(403).json({ success: false, error: 'Free plan allows only the Coordinator. Upgrade to Pro to add specialized agents.' });
     }
 
@@ -182,7 +199,7 @@ router.post("/", async (req, res) => {
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-      [name, username, finalEmail, type||"bot", role||null, mbti||null, finalModel, provider||null,
+      [name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
        `/sprites/agent-${username}.png`, ws, capabilities.length > 0 ? capabilities : null]
     );
@@ -282,7 +299,7 @@ router.get("/:id/config", async (req, res) => {
       system_prompt: isCoordinator ? null : row.system_prompt,
       skills: row.capabilities || [],
       tools: row.capabilities || [],
-      type: row.type || null,
+      type: deserializeType(row.type),
       locked_prompt: isCoordinator
     };
     // Spread cfg at top level so frontend `...data` picks up fields directly
@@ -322,11 +339,11 @@ router.put("/:id/config", async (req, res) => {
         type=COALESCE($8,type),
         updated_at=NOW()
        WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
-      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id, type||null]
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id, serializeType(type)]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
-    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [], type: row.type || null } });
+    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [], type: deserializeType(row.type) } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

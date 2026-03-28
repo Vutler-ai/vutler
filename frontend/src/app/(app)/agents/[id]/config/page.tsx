@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   AGENT_TYPES,
   SKILL_LIMITS,
+  MAX_AGENT_TYPES,
   getSkillLimitStatus,
   getSkillLimitMessage,
   getRecommendedSkills,
@@ -35,7 +36,7 @@ interface AgentConfig {
   system_prompt: string;
   mbti?: string;
   skills?: string[];
-  type?: string;
+  type?: string[];
 }
 
 interface LLMModel {
@@ -141,7 +142,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   system_prompt: '',
   mbti: '',
   skills: [],
-  type: '',
+  type: [],
 };
 
 // ─── Skill category labels ─────────────────────────────────────────────────────
@@ -206,11 +207,11 @@ function SkillCheckbox({
 function SkillsSection({
   selectedSkills,
   onChange,
-  agentType,
+  agentTypes,
 }: {
   selectedSkills: string[];
   onChange: (skills: string[]) => void;
-  agentType?: string;
+  agentTypes?: string[];
 }) {
   const [allSkills, setAllSkills] = useState<AgentSkill[]>([]);
   const [grouped, setGrouped] = useState<Record<string, AgentSkill[]>>({});
@@ -250,7 +251,9 @@ function SkillsSection({
   const atLimit = selectedCount >= SKILL_LIMITS.max;
 
   // 3-tier split: recommended → same category → others (by category, collapsible)
-  const recommendedKeys = new Set(agentType ? getRecommendedSkills(agentType) : []);
+  const activeTypes = agentTypes?.filter(Boolean) ?? [];
+  const recommendedKeys = new Set(activeTypes.length > 0 ? getRecommendedSkills(activeTypes) : []);
+  const activeCategorySet = new Set(activeTypes);
   const isSearching = search.trim().length > 0;
   const searchQ = search.toLowerCase();
 
@@ -264,7 +267,7 @@ function SkillsSection({
 
       if (recommendedKeys.has(skill.key)) {
         recommended.push(skill);
-      } else if (agentType && skill.category === agentType) {
+      } else if (activeCategorySet.has(skill.category)) {
         sameCategory.push(skill);
       } else {
         const cat = skill.category || 'other';
@@ -277,7 +280,7 @@ function SkillsSection({
   };
 
   const { recommended, sameCategory, othersByCategory } = getFilteredSkills();
-  const selectedType = AGENT_TYPES.find(t => t.key === agentType);
+  const typeLabels = activeTypes.map(k => AGENT_TYPES.find(t => t.key === k)?.label).filter(Boolean);
 
   if (loading) {
     return (
@@ -301,8 +304,8 @@ function SkillsSection({
           <div>
             <h3 className="text-base font-semibold text-white">Skills</h3>
             <p className="text-xs text-[#6b7280] mt-0.5">
-              {agentType && selectedType
-                ? `Recommended for ${selectedType.label} (max ${SKILL_LIMITS.max})`
+              {typeLabels.length > 0
+                ? `Recommended for ${typeLabels.join(' + ')} (max ${SKILL_LIMITS.max})`
                 : `Select capabilities (max ${SKILL_LIMITS.max})`}
             </p>
           </div>
@@ -373,7 +376,7 @@ function SkillsSection({
         {sameCategory.length > 0 && (
           <div>
             <p className="text-xs font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
-              More {selectedType?.label} skills
+              More {typeLabels.join(' / ')} skills
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {sameCategory.map(skill => (
@@ -490,6 +493,10 @@ export default function AgentConfigPage() {
         if (res.ok) {
           const data = await res.json();
           const cfg = data.config ?? data;
+          // Backend returns type as array; normalize just in case
+          if (cfg.type && !Array.isArray(cfg.type)) {
+            cfg.type = cfg.type === 'bot' ? [] : [cfg.type];
+          }
           setConfig(prev => ({ ...prev, ...cfg }));
         }
       } catch {
@@ -830,32 +837,51 @@ export default function AgentConfigPage() {
           />
         </section>
 
-        {/* Agent Type */}
+        {/* Agent Type (multi-select, max 3) */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-2">Agent Type</h3>
-          <p className="text-xs text-[#6b7280] mb-4">Choose a specialization to get recommended skills</p>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-base font-semibold text-white">Agent Type</h3>
+            <span className="text-xs text-[#6b7280]">
+              {(config.type ?? []).length}/{MAX_AGENT_TYPES}
+            </span>
+          </div>
+          <p className="text-xs text-[#6b7280] mb-4">
+            Combine up to {MAX_AGENT_TYPES} specializations to get merged skill recommendations
+          </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-            {AGENT_TYPES.map(type => (
-              <button
-                key={type.key}
-                type="button"
-                onClick={() => {
-                  const recommended = getRecommendedSkills(type.key).slice(0, SKILL_LIMITS.max);
-                  setConfig(prev => ({ ...prev, type: type.key, skills: recommended }));
-                }}
-                className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
-                  config.type === type.key
-                    ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
-                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
-                }`}
-              >
-                <span className="text-xl shrink-0">{type.icon}</span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-white truncate">{type.label}</div>
-                  <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
-                </div>
-              </button>
-            ))}
+            {AGENT_TYPES.map(type => {
+              const currentTypes = config.type ?? [];
+              const isSelected = currentTypes.includes(type.key);
+              const atTypeLimit = currentTypes.length >= MAX_AGENT_TYPES && !isSelected;
+              return (
+                <button
+                  key={type.key}
+                  type="button"
+                  disabled={atTypeLimit}
+                  onClick={() => {
+                    const prev = config.type ?? [];
+                    const next = isSelected
+                      ? prev.filter(t => t !== type.key)
+                      : [...prev, type.key];
+                    const recommended = getRecommendedSkills(next);
+                    setConfig(p => ({ ...p, type: next, skills: recommended }));
+                  }}
+                  className={`flex items-center gap-2.5 p-3 rounded-lg border-2 text-left transition-all ${
+                    isSelected
+                      ? 'border-blue-500 bg-blue-500/10 ring-1 ring-blue-500/30'
+                      : atTypeLimit
+                        ? 'border-[rgba(255,255,255,0.04)] opacity-40 cursor-not-allowed'
+                        : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] hover:bg-[rgba(255,255,255,0.02)]'
+                  }`}
+                >
+                  <span className="text-xl shrink-0">{type.icon}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-white truncate">{type.label}</div>
+                    <div className="text-[10px] text-[#6b7280] truncate">{type.description}</div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -863,7 +889,7 @@ export default function AgentConfigPage() {
         <SkillsSection
           selectedSkills={config.skills ?? []}
           onChange={skills => setConfig(prev => ({ ...prev, skills }))}
-          agentType={config.type}
+          agentTypes={config.type}
         />
       </div>
     </div>
