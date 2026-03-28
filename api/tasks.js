@@ -19,11 +19,12 @@ router.get('/', async (req, res) => {
 // POST / — create task
 router.post('/', async (req, res) => {
   try {
-    const { title, description, priority, assignee, due_date, workspace_id } = req.body || {};
+    const { title, description, priority, assignee, assigned_agent, due_date, workspace_id } = req.body || {};
     if (!title) return res.status(400).json({ success: false, error: 'title is required' });
     const task = await taskRouter.createTask({
       title, description, priority: priority || 'medium',
       due_date, created_by: assignee || 'user',
+      assigned_agent: assigned_agent || assignee || undefined,
       workspace_id: workspace_id || '00000000-0000-0000-0000-000000000001'
     });
     res.status(201).json({ success: true, data: task });

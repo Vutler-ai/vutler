@@ -70,10 +70,10 @@ async function createTask({ title, description, source, source_ref, priority, du
     }
 
     const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.tasks (title, description, source, source_ref, priority, assigned_agent, created_by, due_date, reminder_at, escalation_at, workspace_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO ${SCHEMA}.tasks (title, description, source, source_ref, priority, assignee, assigned_agent, created_by, due_date, reminder_at, escalation_at, workspace_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
-      [title, description || null, source || null, source_ref || null, priority, assigned_agent, created_by || null, due_date || null, reminder_at, escalation_at, workspace_id || '00000000-0000-0000-0000-000000000001', JSON.stringify(metadata || {})]
+      [title, description || null, source || null, source_ref || null, priority, created_by || null, assigned_agent, created_by || null, due_date || null, reminder_at, escalation_at, workspace_id || '00000000-0000-0000-0000-000000000001', JSON.stringify(metadata || {})]
     );
 
     const task = result.rows[0];
