@@ -1,139 +1,678 @@
-# VUTLER-TOOLS.md — Shared Agent Tools
+# VUTLER-TOOLS.md
 
-Tous les agents Starbox Group utilisent les outils Vutler pour le travail quotidien.
-**Base URL**: https://app.vutler.ai (ou http://localhost:3001 depuis le VPS)
-**VPS SSH**: `ssh -i .secrets/vps-ssh-key.pem ubuntu@83.228.222.180`
-**DB directe**: host=REDACTED_DB_HOST, port=6543, user=REDACTED_DB_USER, password=REDACTED_DB_PASSWORD, db=postgres, schema=tenant_vutler
-**Workspace ID**: 00000000-0000-0000-0000-000000000001
+Documentation des endpoints API actuels de Vutler, des méthodes d’authentification, et des principaux outils disponibles pour intégrer ou piloter la plateforme.
 
-## 📋 Tasks (Todo)
+---
 
-### Lister les tâches
-```
-curl -sk "https://app.vutler.ai/api/v1/tasks" 
-curl -sk "https://app.vutler.ai/api/v1/tasks?status=todo&assignee=mike"
+## 1. Informations de connexion
+
+### Base URL
+```text
+https://app.vutler.ai
 ```
 
-### Créer une tâche (via DB — l'API requiert auth)
-```sql
-INSERT INTO tenant_vutler.tasks (title, description, status, priority, assignee, due_date, workspace_id)
-VALUES ('Titre', 'Description', 'todo', 'medium', 'mike', '2026-03-07', '00000000-0000-0000-0000-000000000001');
-```
-- **status**: todo, in_progress, done, backlog
-- **priority**: low, medium, high, critical
-- **assignee**: jarvis, mike, philip, luna, andrea, max, victor, oscar, nora, stephen, sentinel, marcus
+### Authentification
+Vutler accepte deux modes d’authentification :
 
-### Mettre à jour une tâche
-```sql
-UPDATE tenant_vutler.tasks SET status = 'done' WHERE id = '<uuid>';
+#### 1. Bearer token Supabase
+À transmettre dans le header HTTP :
+
+```http
+Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
 ```
 
-## 📅 Calendar (Agenda)
+#### 2. API Key
+À transmettre dans le header HTTP :
 
-### Lister les events
-```
-curl -sk "https://app.vutler.ai/api/v1/calendar/events"
-```
-
-### Créer un event
-```sql
-INSERT INTO tenant_vutler.calendar_events (title, description, start_time, end_time, color, workspace_id)
-VALUES ('Sprint Review', 'Revue du sprint', '2026-03-01T09:00:00Z', '2026-03-01T10:00:00Z', '#3b82f6', '00000000-0000-0000-0000-000000000001');
-```
-- **Colors**: #ef4444 (red/deadline), #3b82f6 (blue/meeting), #22c55e (green/milestone), #a855f7 (purple/release)
-
-## 📁 Drive (Fichiers) — OBLIGATOIRE
-**⚠️ Règle absolue : Tout document, brief, code ou rapport généré DOIT être uploadé sur le Drive Synology.**
-- Docs/briefs → `/starbox_drive/agents/<ton-nom>/docs/`
-- Code → `/starbox_drive/agents/<ton-nom>/code/`
-- Rapports partagés → `/starbox_drive/shared/reports/`
-
-### Lister les fichiers
-```
-curl -sk "https://app.vutler.ai/api/v1/drive/files"              # Racine NAS
-curl -sk "https://app.vutler.ai/api/v1/drive/files?path=agents/mike"  # Dossier agent
+```http
+X-API-Key: <VUTLER_API_KEY>
 ```
 
-### Upload un fichier
+### Workspace ID par défaut
+```text
+00000000-0000-0000-0000-000000000001
+```
+
+> Selon l’endpoint et le contexte d’exécution, le workspace actif peut être résolu automatiquement côté backend.
+
+---
+
+## 2. Auth & Profile
+
+### GET `/api/v1/auth/me`
+Retourne le profil de l’utilisateur authentifié.
+
+#### Exemple
 ```bash
-curl -sk -X POST "https://app.vutler.ai/api/v1/drive/upload" -F "file=@monfile.md" -F "path=agents/mike/docs"
+curl -X GET "https://app.vutler.ai/api/v1/auth/me" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
-### Créer un dossier
+---
+
+### PUT `/api/v1/auth/me`
+Met à jour le profil de l’utilisateur authentifié.
+
+#### Exemple
 ```bash
-curl -sk -X POST "https://app.vutler.ai/api/v1/drive/mkdir" -H "Content-Type: application/json" -d '{"name":"nouveau-dossier","path":"agents/mike"}'
-```
-
-### Structure NAS
-```
-/starbox_drive/
-├── agents/          # Un dossier par agent
-│   ├── alex/
-│   ├── jarvis/
-│   ├── mike/
-│   ├── philip/
-│   ├── luna/
-│   └── ...
-├── shared/          # Fichiers partagés
-├── workspaces/      # Workspaces
-└── vdrive/          # Virtual drive
-```
-
-## 📧 Email (Postal)
-
-### Envoyer un email via Postal API
-```bash
-curl -sk -X POST "https://mail.vutler.ai/api/v1/send/message" \
-  -H "X-Server-API-Key: aa91f11a58ea9771d5036ed6429073f709a716bf" \
+curl -X PUT "https://app.vutler.ai/api/v1/auth/me" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
-    "to": ["destinataire@example.com"],
-    "from": "agent@vutler.ai",
-    "subject": "Sujet",
-    "plain_body": "Corps du message"
+    "full_name": "Jean Dupont",
+    "avatar_url": "https://example.com/avatar.png"
   }'
 ```
 
-### Adresses agent
-| Agent | Email |
-|-------|-------|
-| Jarvis | jarvis@vutler.ai |
-| Mike | mike@vutler.ai |
-| Luna | luna@vutler.ai |
-| Philip | philip@vutler.ai |
-| Andrea | andrea@vutler.ai |
-| Max | max@vutler.ai |
-| Victor | victor@vutler.ai |
-| Oscar | oscar@vutler.ai |
-| Nora | nora@vutler.ai |
-| Stephen | stephen@vutler.ai |
-| Contact | contact@vutler.ai |
-| Support | support@vutler.ai |
+---
 
-## 💬 Chat (Vchat / Rocket.Chat)
+### POST `/api/v1/auth/api-keys`
+Génère une nouvelle API key pour l’utilisateur courant.
 
-### Poster dans un channel
+#### Exemple
 ```bash
-ssh -i .secrets/vps-ssh-key.pem ubuntu@83.228.222.180 'curl -s -X POST "http://127.0.0.1:3000/api/v1/chat.sendMessage" \
-  -H "X-Auth-Token: <TOKEN>" -H "X-User-Id: <USER_ID>" \
-  -H "Content-Type: application/json" \
-  -d "{\"message\":{\"rid\":\"<CHANNEL_ID>\",\"msg\":\"Mon message\"}}"'
+curl -X POST "https://app.vutler.ai/api/v1/auth/api-keys" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
-### Channel IDs
-| Channel | ID |
-|---------|-----|
-| general | GENERAL |
-| engineering | 6994cd266dac3d6576c9d4fa |
-| product | 6994cd266dac3d6576c9d501 |
-| design | 6994cd266dac3d6576c9d508 |
-| marketing-growth | 6994cd276dac3d6576c9d50e |
-| ops-jarvis | 6994cd276dac3d6576c9d529 |
+> Conservez la clé retournée immédiatement. Selon l’implémentation, elle peut ne plus être réaffichée ensuite.
 
-## 🔧 Convention d'usage
+---
 
-1. **Quand tu commences une tâche** → mets-la en `in_progress`
-2. **Quand tu finis** → mets-la en `done` + crée les sous-tâches si nécessaire
-3. **Sauvegarde tes livrables** dans ton dossier Drive (`agents/<ton-nom>/`)
-4. **Logge les décisions importantes** en créant une tâche de type note
-5. **Utilise le calendrier** pour les deadlines et milestones
+## 3. Tasks
+
+API de gestion des tâches du workspace.
+
+### Statuts disponibles
+- `todo`
+- `in_progress`
+- `done`
+- `backlog`
+
+### Priorités disponibles
+- `low`
+- `medium`
+- `high`
+- `critical`
+
+### Agents disponibles
+- `jarvis`
+- `mike`
+- `philip`
+- `luna`
+- `andrea`
+- `max`
+- `victor`
+- `oscar`
+- `nora`
+- `stephen`
+- `sentinel`
+- `marcus`
+
+---
+
+### GET `/api/v1/tasks`
+Liste les tâches.
+
+#### Filtres supportés
+- `status`
+- `assignee`
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/tasks?status=todo&assignee=jarvis" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### POST `/api/v1/tasks`
+Crée une tâche.
+
+#### Body
+```json
+{
+  "title": "Corriger la documentation API",
+  "description": "Mettre à jour les endpoints et exemples curl",
+  "assignee": "jarvis",
+  "priority": "high"
+}
+```
+
+#### Important
+Le champ d’entrée public reste `assignee` côté API, avec une valeur correspondant au **username** de l’agent.  
+Le backend mappe automatiquement ce champ vers `assigned_agent`.
+
+#### Exemple
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/tasks" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "title": "Réécrire VUTLER-TOOLS.md",
+    "description": "Documenter les endpoints API actuels",
+    "assignee": "marcus",
+    "priority": "critical"
+  }'
+```
+
+---
+
+### GET `/api/v1/tasks/:id`
+Retourne le détail d’une tâche.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/tasks/123" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### PUT `/api/v1/tasks/:id`
+Met à jour une tâche existante.
+
+#### Exemple
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/tasks/123" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "status": "in_progress",
+    "priority": "critical",
+    "assignee": "luna"
+  }'
+```
+
+> Comme pour la création, `assignee` est accepté côté API et mappé vers `assigned_agent` par le backend.
+
+---
+
+## 4. Agents
+
+Gestion des agents IA du workspace.
+
+### GET `/api/v1/agents`
+Liste les agents du workspace.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/agents" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### GET `/api/v1/agents/:id`
+Retourne le détail d’un agent.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/agents/agent_123" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### PUT `/api/v1/agents/:id`
+Met à jour un agent.
+
+#### Exemple
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/agents/agent_123" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "name": "Marcus",
+    "description": "Agent spécialisé en documentation technique"
+  }'
+```
+
+---
+
+### GET `/api/v1/agents/:id/config`
+Retourne la configuration d’un agent.
+
+Cette configuration peut inclure notamment :
+- `model`
+- `provider`
+- `skills`
+- paramètres de comportement
+- intégrations associées
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/agents/agent_123/config" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### PUT `/api/v1/agents/:id/config`
+Met à jour la configuration d’un agent.
+
+#### Exemple
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/agents/agent_123/config" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "skills": ["documentation", "api", "qa"]
+  }'
+```
+
+### Modèles actuels supportés
+Exemples de modèles/providers actuellement utilisés ou supportés :
+
+- `codex/gpt-5.4` via ChatGPT OAuth
+- `codex/gpt-5.3-codex-spark` via ChatGPT OAuth
+- `claude-sonnet-4-20250514` via Anthropic
+
+Autres providers supportés :
+- Mistral
+- Groq
+- OpenRouter
+- Google
+
+> La liste exacte disponible dépend de la configuration du workspace et des providers connectés.
+
+---
+
+## 5. Chat
+
+Vutler utilise un **WebSocket natif** pour les messages temps réel.
+
+- Pas d’intégration Rocket.Chat pour cette couche
+- Communication temps réel via endpoint WebSocket dédié
+
+### Principe
+Le chat temps réel s’appuie sur une connexion WS authentifiée au backend Vutler.
+
+> L’URL WebSocket exacte peut dépendre de l’environnement de déploiement et de la configuration frontend/backend.
+
+---
+
+## 6. Drive (VDrive)
+
+Gestion des fichiers du workspace.
+
+### GET `/api/v1/vdrive/files`
+Liste les fichiers disponibles.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/vdrive/files" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### POST `/api/v1/vdrive/upload`
+Upload un fichier dans VDrive.
+
+#### Exemple
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/vdrive/upload" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -F "file=@./document.pdf"
+```
+
+### Stockage
+VDrive s’appuie sur **Exoscale SOS (Swiss)** pour le stockage des fichiers.
+
+---
+
+## 7. Settings / Config
+
+Configuration globale du workspace.
+
+### GET `/api/v1/config`
+Retourne la configuration du workspace.
+
+#### Important
+La réponse retourne les champs **au top-level**.  
+Il ne faut plus supposer une ancienne structure imbriquée.
+
+#### Peut inclure
+- configuration Snipara
+- providers LLM
+- intégrations
+- options workspace
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/config" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### PUT `/api/v1/config`
+Met à jour la configuration du workspace.
+
+#### Exemple
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/config" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "snipara": {
+      "enabled": true
+    },
+    "llmProviders": {
+      "anthropic": {
+        "enabled": true
+      }
+    }
+  }'
+```
+
+---
+
+## 8. Integrations
+
+Gestion des intégrations externes.
+
+### GET `/api/v1/integrations`
+Liste les intégrations configurées ou disponibles.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/integrations" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### POST `/api/v1/integrations/chatgpt/connect`
+Initie le flux OAuth de connexion à ChatGPT.
+
+#### Exemple
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/integrations/chatgpt/connect" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### GET `/api/v1/integrations/chatgpt/poll`
+Vérifie le statut de la connexion ChatGPT en cours.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/integrations/chatgpt/poll" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+## 9. LLM Providers
+
+Gestion des providers LLM configurés pour le workspace.
+
+### GET `/api/v1/llm/providers`
+Liste les providers disponibles et/ou configurés.
+
+#### Exemple
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/llm/providers" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+---
+
+### POST `/api/v1/llm/providers`
+Ajoute ou met à jour un provider LLM.
+
+#### Exemple
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/llm/providers" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "provider": "anthropic",
+    "apiKey": "sk-ant-xxx",
+    "enabled": true
+  }'
+```
+
+---
+
+## 10. MCP Nexus Bridge
+
+### Package
+```text
+@vutler/mcp-nexus
+```
+
+### Authentification
+Le bridge MCP utilise l’authentification par :
+
+```http
+X-API-Key: <VUTLER_API_KEY>
+```
+
+### Usage
+Le MCP Nexus Bridge permet de déléguer des tâches aux agents Vutler depuis des environnements compatibles MCP, notamment **Claude Code**.
+
+### Cas d’usage typiques
+- créer et assigner des tâches à des agents
+- interroger l’état des agents
+- déclencher des workflows internes
+- connecter Claude Code à un workspace Vutler
+
+---
+
+## 11. Sandbox
+
+### POST `/api/v1/sandbox/execute`
+Exécute du code dans un environnement sandboxé.
+
+#### Important
+Cet endpoint est désormais **protégé par auth guard**.  
+Il n’est plus accessible anonymement.
+
+Protection ajoutée : **mars 2026**
+
+#### Exemple
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/sandbox/execute" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "language": "javascript",
+    "code": "console.log(\"hello from sandbox\")"
+  }'
+```
+
+---
+
+## 12. Exemples curl
+
+Cette section regroupe les opérations courantes avec authentification via `X-API-Key`.
+
+### Lire son profil
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/auth/me" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Mettre à jour son profil
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/auth/me" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "full_name": "Alice Martin"
+  }'
+```
+
+### Générer une API key
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/auth/api-keys" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Lister les tâches
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/tasks" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Filtrer les tâches par statut et assignee
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/tasks?status=in_progress&assignee=marcus" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Créer une tâche
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/tasks" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "title": "Préparer la release note",
+    "description": "Rédiger le changelog de la version actuelle",
+    "assignee": "nora",
+    "priority": "high"
+  }'
+```
+
+### Mettre à jour une tâche
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/tasks/123" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "status": "done"
+  }'
+```
+
+### Lister les agents
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/agents" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Lire la config d’un agent
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/agents/agent_123/config" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Mettre à jour la config d’un agent
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/agents/agent_123/config" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "provider": "openai",
+    "model": "codex/gpt-5.4"
+  }'
+```
+
+### Lire la config du workspace
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/config" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Mettre à jour la config du workspace
+```bash
+curl -X PUT "https://app.vutler.ai/api/v1/config" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "integrations": {
+      "chatgpt": {
+        "enabled": true
+      }
+    }
+  }'
+```
+
+### Lister les intégrations
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/integrations" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Initier OAuth ChatGPT
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/integrations/chatgpt/connect" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Vérifier l’état de connexion ChatGPT
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/integrations/chatgpt/poll" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Lister les providers LLM
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/llm/providers" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Ajouter ou modifier un provider LLM
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/llm/providers" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "provider": "google",
+    "apiKey": "google-key-xxx",
+    "enabled": true
+  }'
+```
+
+### Lister les fichiers VDrive
+```bash
+curl -X GET "https://app.vutler.ai/api/v1/vdrive/files" \
+  -H "X-API-Key: <VOTRE_API_KEY>"
+```
+
+### Upload un fichier dans VDrive
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/vdrive/upload" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -F "file=@./rapport.pdf"
+```
+
+### Exécuter du code dans la sandbox
+```bash
+curl -X POST "https://app.vutler.ai/api/v1/sandbox/execute" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <VOTRE_API_KEY>" \
+  -d '{
+    "language": "python",
+    "code": "print(\"hello\")"
+  }'
+```
+
+---
+
+## Notes de mise à jour importantes
+
+Cette version corrige les éléments obsolètes suivants :
+
+- anciens endpoints d’authentification supprimés de la doc
+- ajout de `PUT /api/v1/auth/me`
+- documentation explicite du support `X-API-Key`
+- correction de la création de tâche : usage public de `assignee`, mappé côté backend vers `assigned_agent`
+- mise à jour de la forme de `GET /api/v1/config` et `PUT /api/v1/config`
+- mise à jour des modèles LLM dans les exemples
+- clarification sur le chat : WebSocket natif, pas Rocket.Chat
+- clarification sur la sandbox : endpoint désormais protégé par auth guard
+- ajout du bridge `@vutler/mcp-nexus`
+
+---
+```
+
+Si tu veux, je peux aussi te le livrer dans une version encore plus “repo-ready” :
+- avec un ton plus produit/interne,
+- ou plus technique/référence API,
+- ou directement sous forme de diff/gist prêt à coller dans le fichier existant.

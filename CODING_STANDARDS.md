@@ -1,450 +1,631 @@
-# Vutler Coding Standards
+# CODING_STANDARDS.md
 
-> Best practices et conventions pour le développement Vutler
+## Objectif
 
-## Stack Technique
+Ce document définit les standards de développement de Vutler pour la stack actuelle.  
+Son objectif est de garantir :
+
+- une base de code cohérente ;
+- des conventions claires entre backend, frontend et infrastructure ;
+- une meilleure maintenabilité ;
+- un niveau de sécurité adapté aux données et intégrations manipulées ;
+- une intégration simple pour les nouveaux développeurs.
+
+Ce document remplace les anciennes conventions liées à Meteor, DDP, MongoDB, Rocket.Chat, Mongoose, Prisma et autres patterns désormais obsolètes.
+
+---
+
+# 1. Stack technique
+
+## Technologies de référence
 
 | Composant | Technologie |
 |-----------|-------------|
-| Runtime | Node.js 20+ |
-| Language | JavaScript (CommonJS) / TypeScript |
+| Runtime | Node.js 18+ |
+| Language | JavaScript (backend en CommonJS) / TypeScript (frontend) |
 | API | Express.js |
-| Base de données | PostgreSQL (principal) + MongoDB (Rocket.Chat) |
-| Real-time | WebSocket (DDP, WS) |
-| Cache/PubSub | Redis |
+| Base de données | PostgreSQL via Supabase |
+| Real-time | WebSocket natif |
 | Container | Docker |
+| Frontend | Next.js 14, Tailwind CSS, shadcn/ui |
+
+## Principes
+
+- Le backend repose sur **Node.js + Express**, en **JavaScript CommonJS**.
+- Le frontend repose sur **Next.js 14**, en **TypeScript strict**.
+- La base de données de référence est **PostgreSQL**, exposée via **Supabase**.
+- Le temps réel repose sur des **WebSockets natifs**, pas sur DDP ni des abstractions héritées de Meteor.
+- Le code doit rester compatible avec l’architecture Docker du projet.
+
+## Obsolète / interdit
+
+Les technologies ou patterns suivants ne doivent plus apparaître dans le code ou dans la documentation standard :
+
+- MongoDB
+- Mongoose
+- Prisma
+- DDP
+- Meteor patterns
+- conventions Rocket.Chat
+- Redis comme dépendance d’architecture centrale, sauf cas explicitement justifié et documenté
+
+Si Redis existe encore à la marge dans certaines briques historiques, il ne doit pas être présenté comme standard de la plateforme.
 
 ---
 
-## Structure des Dossiers
+# 2. Structure des dossiers
 
-```
-vutler/
-├── api/              # Routes Express (1 fichier = 1 domaine)
-│   ├── agents.js
-│   ├── chat.js
-│   ├── email.js
-│   └── ...
-├── services/         # Business logic & services
-│   ├── agentRuntime.js
-│   ├── agentManager.js
-│   └── ...
-├── lib/              # Utilitaires partagés
-│   ├── auth.js
-│   ├── postgres.js
-│   └── logger.js
-├── seeds/            # Data seeding
-├── scripts/          # Scripts utilitaires
-├── memory/           # Agent memory files
-└── docs/             # Documentation
-```
+## Structure cible
+
+Les conventions de structuration suivantes servent de référence :
+
+- `api/` — routes Express, idéalement **1 fichier = 1 domaine fonctionnel**
+- `services/` — logique métier, orchestration, services applicatifs
+- `frontend/src/app/(app)/` — pages de l’application
+- `frontend/src/lib/api/` — client API, types, helpers d’accès backend
+
+## Règles de découpage
+
+### Backend
+
+- Les fichiers dans `api/` ne doivent contenir que :
+  - définition de routes ;
+  - validation légère ;
+  - appel aux services ;
+  - transformation éventuelle de la réponse HTTP.
+- La logique métier ne doit pas vivre dans les routes.
+- La logique réutilisable doit être déplacée vers `services/`.
+
+### Frontend
+
+- Les pages et layouts vivent dans `frontend/src/app/`.
+- Les appels réseau, helpers API, types DTO et wrappers de fetch doivent vivre dans `frontend/src/lib/api/`.
+- Les composants UI doivent rester découplés de la logique de requête autant que possible.
+
+## Bonne pratique
+
+Un fichier doit avoir une responsabilité claire et unique.  
+Si un fichier mélange route HTTP, accès SQL, logique métier, transformation de données et gestion d’erreur détaillée, il est probablement trop gros.
 
 ---
 
-## Conventions de Nommage
+# 3. Conventions API
 
-### Fichiers
-- **kebab-case** pour les fichiers : `agent-runtime.js`, `llm-router.js`
-- **camelCase** accepté pour legacy : `agentRuntime.js`
-- Suffixes explicites : `*.test.js`, `*.spec.js`, `*.config.js`
+## Format de réponse standard
 
-### Variables & Fonctions
-```javascript
-// Variables: camelCase
-const agentConfig = {};
-const isActive = true;
+Toutes les routes HTTP doivent retourner un format homogène :
 
-// Constantes: SCREAMING_SNAKE_CASE
-const RC_WS_URL = process.env.RC_WS_URL || 'ws://localhost:3000';
-const MAX_RETRY_COUNT = 5;
-
-// Fonctions: camelCase, verbe en premier
-function getAgentById(id) {}
-function createWorkspace(data) {}
-async function fetchMessages() {}
-
-// Fonctions privées: préfixe underscore
-async _loadFromPG() {}
-_handleError(err) {}
+```json
+{
+  "success": true,
+  "data": {}
+}
 ```
 
-### Classes
-```javascript
-// PascalCase pour les classes
-class AgentRuntime {
-  constructor(db, app) {
-    this.db = db;
-    this.app = app;
+ou en cas d’erreur :
+
+```json
+{
+  "success": false,
+  "error": "Message d'erreur"
+}
+```
+
+## Règles
+
+- `success` est **obligatoire**.
+- `data` est présent en cas de succès.
+- `error` est présent en cas d’échec.
+- Éviter les formats de réponse ad hoc selon les endpoints.
+- Un seul format de réponse API doit être utilisé dans tout le projet.
+
+## Versionning
+
+Les routes doivent être versionnées :
+
+- préfixe standard : `/api/v1/...`
+
+Exemples :
+
+- `/api/v1/users`
+- `/api/v1/integrations`
+- `/api/v1/tasks/:id`
+
+## Authentification
+
+Les endpoints doivent accepter l’un des mécanismes suivants selon le cas d’usage :
+
+- `Authorization: Bearer <token>` pour les tokens Supabase
+- `X-API-Key: <key>` pour les intégrations serveur à serveur ou usages techniques
+
+## Compatibilité frontend
+
+Pour certains endpoints de configuration, les champs doivent être retournés **au top-level** si cela est requis pour la compatibilité frontend existante.
+
+Exemple :
+
+```json
+{
+  "success": true,
+  "theme": "dark",
+  "features": ["a", "b"]
+}
+```
+
+au lieu de forcer systématiquement :
+
+```json
+{
+  "success": true,
+  "data": {
+    "theme": "dark",
+    "features": ["a", "b"]
   }
 }
-
-class LLMRouter {}
-class AgentProcessManager {}
 ```
 
-### API Routes
-```javascript
-// RESTful naming, pluriel pour les collections
-router.get('/agents', listAgents);
-router.get('/agents/:id', getAgent);
-router.post('/agents', createAgent);
-router.put('/agents/:id', updateAgent);
-router.delete('/agents/:id', deleteAgent);
+Cette exception doit rester limitée aux endpoints explicitement identifiés comme contraintes de compatibilité.
 
-// Actions spéciales: verbe après l'ID
-router.post('/agents/:id/start', startAgent);
-router.post('/agents/:id/stop', stopAgent);
-```
+## Statuts HTTP
+
+Les statuts HTTP doivent correspondre à la réalité métier :
+
+- `200` : succès standard
+- `201` : ressource créée
+- `204` : succès sans contenu
+- `400` : requête invalide
+- `401` : non authentifié
+- `403` : interdit
+- `404` : ressource introuvable
+- `409` : conflit métier
+- `422` : données valides syntaxiquement mais rejetées fonctionnellement
+- `500` : erreur serveur
+- `502/503/504` : dépendance externe ou indisponibilité infrastructure
+
+Ne pas retourner `200` pour masquer une erreur métier.
 
 ---
 
-## Patterns de Code
+# 4. Base de données
 
-### Module Pattern (CommonJS)
-```javascript
-'use strict';
+## Standard
 
-const dependency = require('./dependency');
+La base de données de référence est **PostgreSQL via Supabase**.
 
-// Constants en haut
-const DEFAULT_TIMEOUT = 5000;
+## Schéma
 
-// Classe ou fonctions principales
-class MyService {
+Le schéma principal utilisé est :
+
+- `tenant_vutler`
+
+Les requêtes SQL doivent cibler explicitement les tables du schéma attendu lorsque nécessaire.
+
+## Connexion
+
+Il doit exister **un seul pool de connexion partagé** pour l’application, via :
+
+- `lib/vaultbrix.js`
+
+## Règles obligatoires
+
+- Utiliser exclusivement des **requêtes paramétrées**.
+- Interdiction absolue de concaténer des entrées utilisateur dans les requêtes SQL.
+- Pas d’ORM.
+- Accès SQL en **raw SQL** via `pool.query()`.
+
+## Exemples
+
+### Correct
+
+```js
+const result = await pool.query(
+  'SELECT * FROM tenant_vutler.users WHERE id = $1',
+  [userId]
+);
+```
+
+### Interdit
+
+```js
+const result = await pool.query(
+  `SELECT * FROM tenant_vutler.users WHERE id = '${userId}'`
+);
+```
+
+## Migrations
+
+Les évolutions de schéma doivent être gérées via des **scripts SQL**.
+
+Règles :
+
+- chaque migration doit être explicite, relisible et idempotente si possible ;
+- éviter les changements manuels non tracés ;
+- documenter tout changement de schéma impactant l’API ou le frontend.
+
+## Accès aux données
+
+- Les accès SQL doivent être regroupés de manière logique.
+- Éviter de disséminer les requêtes partout dans les routes.
+- Les opérations complexes doivent être isolées dans des services ou modules dédiés.
+
+---
+
+# 5. Sécurité
+
+## Principe général
+
+Les routes sont **protégées par défaut**.
+
+Toute route non protégée doit être un choix explicite, justifié et documenté.
+
+## Auth guards
+
+Un guard d’authentification est obligatoire pour les routes sensibles, notamment :
+
+- sandbox
+- intégrations
+- exécution de tâches
+- accès à des données utilisateur
+- endpoints d’administration ou de configuration
+
+## Validation des entrées
+
+Toutes les entrées doivent être validées **avant traitement** :
+
+- `req.params`
+- `req.query`
+- `req.body`
+- headers utiles
+
+Ne jamais supposer qu’une donnée reçue est correcte.
+
+## Secrets
+
+- Les secrets doivent être stockés en variables d’environnement.
+- Les fichiers `.env` doivent être ignorés par Git.
+- Aucun secret ne doit être hardcodé dans le code.
+
+## Tokens sensibles
+
+Les tokens OAuth doivent être :
+
+- stockés chiffrés en base ;
+- récupérés de manière sécurisée ;
+- jamais exposés inutilement aux logs ou au frontend.
+
+## Logging
+
+Il est interdit de logger :
+
+- mots de passe
+- access tokens
+- refresh tokens
+- secrets applicatifs
+- clés API complètes
+- payloads sensibles non filtrés
+
+Si un identifiant technique doit être tracé, préférer une version partiellement masquée.
+
+## Surface d’attaque
+
+- Limiter les permissions accordées aux clés et tokens.
+- Vérifier les accès aux ressources par utilisateur, tenant ou contexte.
+- Refuser par défaut ce qui n’est pas explicitement autorisé.
+
+---
+
+# 6. Intégration LLM
+
+## Principe de séparation
+
+Dans `llmRouter`, distinguer clairement :
+
+- **provider** : fournisseur (ex. Anthropic, OpenAI/Codex, autre)
+- **model** : modèle cible
+- **transport** : mode d’appel ou de streaming
+
+Ces notions ne doivent pas être mélangées dans une seule abstraction floue.
+
+## Convention provider Codex
+
+Pour le provider Codex :
+
+- utiliser le champ `instructions` plutôt que `messages` lorsque requis ;
+- forcer `store: false` ;
+- utiliser `stream: true` lorsque le flux est prévu.
+
+## Streaming
+
+Le streaming de réponse pour Codex doit être géré en **SSE** lorsque ce mode est utilisé.
+
+## Fallback
+
+Le `taskExecutor` doit prévoir un **fallback automatique vers Anthropic** lorsque le provider principal échoue ou n’est pas disponible, selon les règles métier définies.
+
+## OAuth et résolution de tokens
+
+La résolution des tokens OAuth nécessaires aux providers ou intégrations doit passer par le **pool DB partagé**.
+
+Aucune logique parallèle de récupération de secrets ne doit contourner les conventions de sécurité et d’accès aux données.
+
+## Règles de robustesse
+
+- Toujours gérer les timeouts, erreurs réseau et réponses incomplètes.
+- Ne pas supposer qu’un provider répond de façon homogène avec un autre.
+- Journaliser le contexte utile sans exposer les secrets ni le contenu sensible.
+
+---
+
+# 7. Gestion des erreurs
+
+## Standardisation
+
+Les erreurs doivent être structurées et prévisibles.
+
+## Classes d’erreurs métier
+
+Créer et utiliser des classes dédiées quand cela a du sens, par exemple :
+
+- `ValidationError`
+- `NotFoundError`
+- `UnauthorizedError`
+- `ForbiddenError`
+- `ConflictError`
+
+## Handler centralisé
+
+Le backend doit utiliser un **handler d’erreur centralisé**.
+
+Objectifs :
+
+- éviter la duplication ;
+- garantir une réponse homogène ;
+- contrôler précisément les statuts HTTP ;
+- centraliser les logs serveur.
+
+## Distinction 4xx / 5xx
+
+- Les erreurs **4xx** représentent une erreur côté client, appelant ou données fournies.
+- Les erreurs **5xx** représentent une erreur côté serveur, infrastructure ou dépendance.
+
+Il ne faut pas transformer arbitrairement une erreur serveur en erreur client, ni l’inverse.
+
+## Logging des erreurs
+
+Les erreurs 5xx doivent être loggées avec suffisamment de contexte pour être investiguées :
+
+- route concernée ;
+- identifiant de requête si disponible ;
+- utilisateur ou tenant si pertinent ;
+- provider externe si concerné ;
+- stack trace côté serveur.
+
+Mais sans exposer de secrets ni de données sensibles.
+
+## Messages d’erreur
+
+- Les messages retournés au client doivent être utiles mais sûrs.
+- Ne pas exposer les détails internes SQL, stack traces ou secrets dans les réponses HTTP.
+
+---
+
+# 8. TypeScript
+
+## Frontend
+
+Le frontend doit être en **TypeScript strict**.
+
+Règles :
+
+- `strict` activé ;
+- types explicites pour les entités métier ;
+- éviter les types implicites fragiles ;
+- ne pas utiliser `any` sauf exception rare, documentée et temporaire.
+
+## Entités métier
+
+Les types des objets métier doivent être nommés, centralisés et réutilisables :
+
+- utilisateurs
+- tâches
+- intégrations
+- providers
+- configurations
+- réponses API
+
+## Backend JavaScript
+
+Le backend restant en JavaScript CommonJS, les fichiers JS existants doivent utiliser au minimum :
+
+- `@ts-check`
+- JSDoc utiles sur les fonctions publiques ou sensibles
+
+## Exemple
+
+```js
+// @ts-check
+
+/**
+ * @param {string} userId
+ * @returns {Promise<{ id: string, email: string | null } | null>}
+ */
+async function findUserById(userId) {
   // ...
 }
-
-// Export unique en bas
-module.exports = MyService;
-// ou
-module.exports = { function1, function2 };
 ```
 
-### Express Router Pattern
-```javascript
-// api/agents.js
-const express = require('express');
-const router = express.Router();
-const { authenticateAgent } = require('../lib/auth');
+## Règle
 
-// Middleware d'auth sur toutes les routes
-router.use(authenticateAgent);
-
-// Routes
-router.get('/', async (req, res) => {
-  try {
-    const agents = await getAgents(req.workspaceId);
-    res.json({ success: true, data: agents });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-module.exports = router;
-```
-
-### Response Format Standard
-```javascript
-// Success
-res.json({
-  success: true,
-  data: { /* payload */ },
-  meta: { total: 100, page: 1 }  // optionnel
-});
-
-// Error
-res.status(400).json({
-  success: false,
-  error: 'Validation failed',
-  details: { field: 'email', message: 'Invalid format' }  // optionnel
-});
-```
-
-### Async/Await Pattern
-```javascript
-// Toujours utiliser try/catch avec async
-async function processMessage(messageId) {
-  try {
-    const message = await db.query('SELECT * FROM messages WHERE id = $1', [messageId]);
-    if (!message) {
-      throw new Error('Message not found');
-    }
-    return message;
-  } catch (err) {
-    console.error('[processMessage] Error:', err.message);
-    throw err;  // Re-throw pour le handler parent
-  }
-}
-```
-
-### Logging Pattern
-```javascript
-// Préfixe avec le contexte [Module/Function]
-console.log('[Runtime] Starting agent runtime…');
-console.warn('[Runtime] Agent bus init skipped:', err.message);
-console.error('[AgentRuntime._connect] WebSocket error:', err);
-
-// Pour production: utiliser le logger structuré
-const { logger } = require('./lib/logger');
-logger.info({ agentId, action: 'start' }, 'Agent started');
-logger.error({ err, agentId }, 'Agent failed to start');
-```
+Même en JavaScript, le code doit tendre vers une lisibilité de type suffisante pour limiter les erreurs.
 
 ---
 
-## PostgreSQL Patterns
+# 9. Async / Await
 
-### Requêtes Paramétrées (anti SQL injection)
-```javascript
-// TOUJOURS utiliser les paramètres $1, $2, etc.
-const result = await pool.query(
-  'SELECT * FROM agents WHERE workspace_id = $1 AND status = $2',
-  [workspaceId, 'active']
-);
+## Standard
 
-// JAMAIS de string interpolation
-// ❌ `SELECT * FROM agents WHERE id = '${id}'`
+Utiliser **async/await partout**.
+
+## Interdit sauf cas particulier justifié
+
+- chaînes `.then().catch()` en logique applicative courante ;
+- promesses imbriquées difficiles à lire ;
+- gestion implicite d’erreurs asynchrones.
+
+## Bonnes pratiques
+
+- Utiliser `Promise.all()` pour les opérations parallèles indépendantes.
+- Utiliser `Promise.allSettled()` si certaines erreurs sont acceptables sans faire échouer l’ensemble.
+- Toujours gérer explicitement les erreurs asynchrones.
+- Ne jamais laisser une promesse rejetée sans traitement.
+
+## Règle forte
+
+Ne jamais ignorer un `.catch()` quand une promesse n’est pas `await`ée.
+
+## Exemple recommandé
+
+```js
+const [user, settings] = await Promise.all([
+  getUser(userId),
+  getUserSettings(userId)
+]);
 ```
 
-### Transactions
-```javascript
-const client = await pool.connect();
-try {
-  await client.query('BEGIN');
-  await client.query('INSERT INTO agents ...', [...]);
-  await client.query('INSERT INTO agent_channels ...', [...]);
-  await client.query('COMMIT');
-} catch (err) {
-  await client.query('ROLLBACK');
-  throw err;
-} finally {
-  client.release();
-}
-```
+## Exemple à éviter
 
----
-
-## Error Handling
-
-### Classes d'Erreur Custom
-```javascript
-class AppError extends Error {
-  constructor(message, statusCode = 500, code = 'INTERNAL_ERROR') {
-    super(message);
-    this.statusCode = statusCode;
-    this.code = code;
-    this.isOperational = true;
-  }
-}
-
-class ValidationError extends AppError {
-  constructor(message, details = {}) {
-    super(message, 400, 'VALIDATION_ERROR');
-    this.details = details;
-  }
-}
-
-class NotFoundError extends AppError {
-  constructor(resource = 'Resource') {
-    super(`${resource} not found`, 404, 'NOT_FOUND');
-  }
-}
-```
-
-### Middleware Error Handler
-```javascript
-// Toujours en dernier dans la chaîne Express
-app.use((err, req, res, next) => {
-  const statusCode = err.statusCode || 500;
-  const response = {
-    success: false,
-    error: err.message,
-    code: err.code || 'INTERNAL_ERROR'
-  };
-
-  if (process.env.NODE_ENV === 'development') {
-    response.stack = err.stack;
-  }
-
-  res.status(statusCode).json(response);
-});
-```
-
----
-
-## Security Best Practices
-
-### Environment Variables
-```javascript
-// Toujours avec fallback pour dev
-const API_KEY = process.env.API_KEY || '';
-const PORT = process.env.PORT || 3001;
-
-// Valider les variables critiques au démarrage
-if (!process.env.DATABASE_URL) {
-  console.error('FATAL: DATABASE_URL not set');
-  process.exit(1);
-}
-```
-
-### Authentication
-```javascript
-// Toujours vérifier l'auth en premier
-router.use(authenticateAgent);
-
-// Headers requis
-const authToken = req.headers['x-auth-token'];
-const userId = req.headers['x-user-id'];
-const workspaceId = req.headers['x-workspace-id'];
-```
-
-### Input Validation
-```javascript
-// Valider avant de traiter
-const { name, email } = req.body;
-if (!name || typeof name !== 'string' || name.length > 100) {
-  return res.status(400).json({ success: false, error: 'Invalid name' });
-}
-```
-
----
-
-## Git Conventions
-
-### Branches
-```
-main              # Production
-develop           # Integration
-feature/S12-xxx   # Features (Sprint-Story)
-fix/S12-xxx       # Bug fixes
-hotfix/xxx        # Production hotfixes
-```
-
-### Commits
-```
-type(scope): description
-
-Types:
-- feat: Nouvelle fonctionnalité
-- fix: Bug fix
-- refactor: Refactoring
-- docs: Documentation
-- test: Tests
-- chore: Maintenance
-
-Exemples:
-feat(agents): add agent memory persistence
-fix(chat): resolve message deduplication issue
-refactor(runtime): extract WebSocket handling to separate class
-docs(api): update Swagger definitions
-```
-
-### Pull Requests
-- Titre: `[S12.3] Feature description`
-- Description: What, Why, How
-- Checklist: Tests, Docs, Security review
-
----
-
-## Tests
-
-### Structure
-```
-tests/
-├── unit/           # Tests unitaires (fast, isolated)
-├── integration/    # Tests d'intégration (DB, APIs)
-└── e2e/            # Tests end-to-end
-```
-
-### Naming
-```javascript
-// test-{feature}.js ou {feature}.test.js
-describe('AgentRuntime', () => {
-  describe('start()', () => {
-    it('should load agents from PostgreSQL', async () => {
-      // ...
-    });
-
-    it('should handle connection errors gracefully', async () => {
-      // ...
-    });
+```js
+getUser(userId).then((user) => {
+  getUserSettings(userId).then((settings) => {
+    // ...
   });
 });
 ```
 
-### Running Tests
-```bash
-npm test              # All tests
-npm run test:unit     # Unit only
-npm run test:e2e      # E2E only
-npm run test:coverage # With coverage
-```
+---
+
+# 10. Organisation du code
+
+## Principes
+
+### Pas de code mort
+
+- Supprimer les fonctions, fichiers, branches conditionnelles et imports inutilisés.
+- Ne pas laisser de vieux patterns “au cas où”.
+- Toute compatibilité legacy doit être explicitement justifiée.
+
+### Un seul format de réponse API
+
+Le projet doit converger vers un format de réponse unifié.  
+Les exceptions doivent être rares, documentées et motivées par une contrainte réelle.
+
+### SRP — Single Responsibility Principle
+
+Chaque fichier, module ou service doit avoir **une seule responsabilité principale**.
+
+Exemples :
+
+- une route expose une ressource ;
+- un service applique une logique métier ;
+- un module SQL gère un accès de données cohérent ;
+- un composant UI affiche une responsabilité visuelle claire.
+
+## Règles de lisibilité
+
+- Préférer du code simple à du code “malin”.
+- Préférer des noms explicites à des abréviations obscures.
+- Limiter la profondeur d’imbrication.
+- Factoriser ce qui est réellement partagé, pas ce qui pourrait l’être un jour.
+
+## Imports et dépendances
+
+- Éviter les dépendances inutiles.
+- Avant d’ajouter une librairie, vérifier si le besoin peut être couvert proprement avec l’existant.
+- Toute nouvelle dépendance structurante doit être cohérente avec cette stack cible.
+
+## Cohérence avant préférence personnelle
+
+Les développeurs peuvent avoir des préférences différentes, mais la cohérence du codebase passe avant les styles individuels.
 
 ---
 
-## Documentation
+# 11. Checklist de revue
 
-### JSDoc pour les fonctions publiques
-```javascript
-/**
- * Creates a new agent in the workspace
- * @param {string} workspaceId - The workspace identifier
- * @param {Object} agentData - Agent configuration
- * @param {string} agentData.name - Display name
- * @param {string} agentData.systemPrompt - System prompt for LLM
- * @returns {Promise<Agent>} The created agent
- * @throws {ValidationError} If agent data is invalid
- */
-async function createAgent(workspaceId, agentData) {
-  // ...
-}
-```
+Avant de valider un changement, vérifier au minimum :
 
-### README par module
-Chaque dossier majeur (`api/`, `services/`) devrait avoir un README.md expliquant:
-- Purpose du module
-- Fichiers principaux
-- Comment étendre
+## Backend
 
----
+- [ ] route placée dans le bon domaine sous `api/`
+- [ ] logique métier extraite dans `services/` si nécessaire
+- [ ] format de réponse API respecté
+- [ ] route versionnée en `/api/v1/...`
+- [ ] auth vérifiée si endpoint non public
+- [ ] entrées validées
+- [ ] requêtes SQL paramétrées
+- [ ] aucune concaténation SQL
+- [ ] pas de secret dans les logs
+- [ ] erreurs correctement classées en 4xx/5xx
 
-## Performance
+## Frontend
 
-### Connection Pooling
-```javascript
-// PostgreSQL pool (déjà configuré dans lib/postgres.js)
-const { Pool } = require('pg');
-const pool = new Pool({
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
-```
+- [ ] types explicites
+- [ ] pas de `any` non justifié
+- [ ] appels API centralisés de façon cohérente
+- [ ] compatibilité avec les formats de réponse backend
+- [ ] composants et logique métier raisonnablement découplés
 
-### Caching Pattern
-```javascript
-// Redis pour cache fréquent
-const cached = await redis.get(`agent:${agentId}`);
-if (cached) return JSON.parse(cached);
+## LLM / intégrations
 
-const agent = await db.query(...);
-await redis.setex(`agent:${agentId}`, 300, JSON.stringify(agent));
-return agent;
-```
+- [ ] séparation claire provider / model / transport
+- [ ] conventions Codex respectées
+- [ ] fallback géré si nécessaire
+- [ ] tokens résolus de manière sécurisée
+- [ ] streaming géré proprement si utilisé
+
+## Global
+
+- [ ] pas de code mort
+- [ ] responsabilité du fichier claire
+- [ ] async/await utilisé proprement
+- [ ] changement cohérent avec la stack actuelle
+- [ ] aucune réintroduction de patterns obsolètes
 
 ---
 
-## Checklist PR
+# 12. Résumé exécutable
 
-- [ ] Code suit les conventions ci-dessus
-- [ ] Pas de `console.log` de debug (utiliser logger)
-- [ ] Variables d'env documentées
-- [ ] Tests ajoutés/mis à jour
-- [ ] Pas de secrets dans le code
-- [ ] SQL utilise des paramètres (`$1`, `$2`)
-- [ ] Errors sont catchés et loggés
-- [ ] API responses suivent le format standard
+En cas de doute, appliquer ces règles simples :
+
+1. Utiliser la stack actuelle, pas l’historique.
+2. Express + services côté backend.
+3. PostgreSQL via Supabase, avec `pool.query()` paramétré uniquement.
+4. Routes sécurisées par défaut.
+5. Réponses API homogènes.
+6. TypeScript strict côté frontend.
+7. `async/await` partout.
+8. Erreurs centralisées et propres.
+9. LLMs intégrés avec séparation provider / model / transport.
+10. Aucun retour aux conventions Mongo / Meteor / DDP / Rocket.Chat.
 
 ---
 
-*Dernière mise à jour: Février 2026*
+# 13. Ce qui n’est plus un standard
+
+Les éléments ci-dessous ne doivent plus être présentés comme conventions Vutler :
+
+- MongoDB comme base principale
+- Mongoose
+- Prisma
+- DDP
+- patterns Meteor
+- conventions Rocket.Chat
+- abstraction temps réel héritée de Meteor
+- logique métier directement couplée au transport
+- formats de réponse API hétérogènes
+- concaténation SQL
+- stockage non chiffré de tokens OAuth
+- usage de `any` sans justification
+- chaînes `.then().catch()` comme style principal
+```
+
+Si tu veux, je peux aussi te faire une **version “prête à commit” plus concise et plus normative**, avec un ton plus sec de documentation interne, ou une **diff structurée section par section** pour faciliter le remplacement de l’ancien fichier.

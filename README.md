@@ -1,258 +1,409 @@
-# Vutler Platform
+# Vutler
 
-> **Two products. One AI platform.** — by [Starbox Group](https://starbox-group.com/)
+Vutler is an agent platform for task execution, business workflows, and connected productivity. It combines a modern web app, tenant-aware backend services, multi-provider LLM orchestration, and operational integrations for teams that want AI agents to do real work.
 
-Vutler is a production-grade platform for deploying AI agents that collaborate with humans across chat, email, drive, and tasks. Built on a monorepo architecture with two distinct products.
+## Overview
 
-**Homepage:** [vutler.ai](https://vutler.ai) · **App:** [app.vutler.ai](https://app.vutler.ai) · **Open Source:** [github.com/Vutler-ai/vutler](https://github.com/Vutler-ai/vutler)
+Vutler is built around one core idea: agents should be able to execute tasks, not just chat.
 
----
+The platform provides:
 
-## Two Products
+- **Agent creation and management**
+- **Task execution workflows**
+- **Connected integrations** for email, drive, social posting, and external tools
+- **Multi-provider LLM routing**
+- **Tenant-aware architecture**
+- **Security controls for production deployments**
+- **MCP connectivity** for external agent environments such as Claude Code
 
-### Vutler Office (Proprietary SaaS)
-AI-powered workspace where humans and agents collaborate.
+Vutler currently operates as two distinct surfaces:
 
-| Feature | Description |
-|---------|-------------|
-| **Chat** | Real-time messaging with AI agents in the conversation |
-| **Email** | Agents send/receive via Postal (custom domains or @slug.vutler.ai) |
-| **Drive** | Shared file storage on Exoscale SOS (Swiss, GDPR/LPD) |
-| **Calendar** | Team scheduling with event management |
-| **Tasks** | Kanban board with subtasks + Snipara sync |
-| **Memory** | Workspace knowledge + agent memories + cross-scope search |
-| **Billing** | Stripe checkout with 8 plan tiers |
+- **`vutler.ai`** — landing site, product presentation, marketing pages
+- **`app.vutler.ai`** — authenticated application used to create, configure, and run agents
 
-### Vutler Agents (Open Source — AGPL-3.0)
-Build, deploy, and orchestrate AI agents anywhere.
-
-| Feature | Description |
-|---------|-------------|
-| **17 Templates** | Pre-built agents for sales, ops, technical, finance |
-| **68 Skills** | Modular capabilities assignable to any agent |
-| **Nexus CLI** | Deploy agents locally or at client sites |
-| **Multi-Agent** | Rule-based task routing across agent teams |
-| **OpenRouter Auto** | Best model per prompt (200+ models) |
-| **Marketplace** | Share and install agent configurations |
-| **Sandbox** | Test agent execution safely |
+This split replaces the previous single-domain approach and reflects the current product architecture.
 
 ---
 
 ## Architecture
 
-```
-vutler-platform/
-├── packages/
-│   ├── core/           # Shared: auth, DB, permissions, feature gate
-│   ├── office/         # SaaS: chat, email, drive, tasks, calendar
-│   ├── agents/         # Open: agent routes, marketplace, swarm, LLM
-│   ├── nexus/          # Open: CLI, multi-agent runtime, providers
-│   └── mcp-server/     # MCP: 13 tools for external AI agents
-├── frontend/           # Next.js 16 + shadcn/ui + Tailwind CSS 4
-├── services/           # LLM router, Snipara client, Stripe, crypto
-├── api/                # Express routes (agents, nexus, billing, etc.)
-├── seeds/              # 17 templates + 68 skills
-└── tests/e2e/          # 9 test suites
-```
+### Product surfaces
+
+#### `vutler.ai`
+Public website for:
+
+- product messaging
+- pricing and offers
+- onboarding entry points
+- documentation and discovery
+
+#### `app.vutler.ai`
+Authenticated product application for:
+
+- workspace and tenant operations
+- agent provisioning
+- task execution
+- integrations management
+- billing-linked add-ons
+- internal chat and agent workflows
+
+### Current tech stack
+
+#### Frontend
+- **Next.js 14** with **App Router**
+- **TypeScript**
+- **Tailwind CSS**
+- **shadcn/ui**
+
+#### Backend
+- **Express.js**
+- **Node.js**
+
+#### Database
+- **Supabase**
+- **PostgreSQL**
+- tenant schema: **`tenant_vutler`**
+
+#### Authentication
+- **Supabase Auth**
+- **X-API-Key** support for MCP and programmatic access
+
+#### LLM providers
+- **Anthropic**
+- **OpenAI Codex via ChatGPT OAuth**
+- **OpenRouter**
+- **Mistral**
+- **Groq**
+- **Google**
+
+#### Storage
+- **Exoscale SOS**
+- Swiss hosting, aligned with **GDPR / LPD** requirements
+
+#### Deployment
+- **Ubuntu VPS**
+- **Docker**
+- **PM2**
+
+### Communication model
+
+Vutler uses a **native WebSocket chat layer** for real-time interactions inside the app.  
+This replaces the previous Rocket.Chat-based approach.
+
+### Data layer
+
+Vutler no longer uses MongoDB. The current persistent layer is centered on **Supabase/PostgreSQL** with tenant-aware organization and application-managed service boundaries.
 
 ---
 
-## Tech Stack
+## LLM Providers
 
-| Layer | Technology |
-|-------|-----------|
-| **Backend** | Node.js + Express.js |
-| **Frontend** | Next.js 16, React 19, TypeScript, shadcn/ui, Tailwind CSS 4 |
-| **Database** | PostgreSQL (Vaultbrix) |
-| **LLM** | OpenRouter Auto, Anthropic, OpenAI, Groq, Mistral, Ollama |
-| **Memory** | Snipara (3-level scoping: instance, template, global) |
-| **Storage** | Exoscale SOS (Swiss, S3-compatible) |
-| **Email** | Postal (self-hosted SMTP) |
-| **Payments** | Stripe (live, 5 products, 10 prices) |
-| **Auth** | JWT + Google OAuth + GitHub OAuth |
-| **Hosting** | Swiss 🇨🇭 (Geneva datacenter, GDPR/LPD) |
+Vutler supports multiple providers so agents can be routed according to task type, latency, capability, or fallback policy.
+
+### Anthropic
+Anthropic is used across the platform and also serves as an important **fallback provider for task execution** when required by orchestration logic or reliability policy.
+
+### Codex via ChatGPT OAuth
+Vutler integrates **Codex** using:
+
+- `chatgpt.com/backend-api/codex/responses`
+- **ChatGPT OAuth**
+- **SSE streaming**
+
+This enables Vutler agents to use Codex-oriented execution paths within the product’s authenticated model pipeline.
+
+### OpenRouter
+Used for model access abstraction and broader provider reach when needed.
+
+### Groq
+Available for latency-sensitive workloads.
+
+### Mistral
+Supported as part of the current provider matrix.
+
+### Google
+Supported for compatible model workflows.
+
+### Model strategy
+Vutler’s current agent platform is aligned with **Codex-oriented models** and current provider capabilities.  
+Legacy references to older model sets such as `gpt-4o` or `claude-3.5-sonnet` have been removed from product documentation.
 
 ---
 
-## Quick Start
+## Agent Platform
+
+### Agent-first workflow
+Vutler lets users create specialized agents that can be configured for distinct business or operational roles.
+
+### Agent type wizard
+The platform includes an **agent type wizard** to guide creation and configuration. This helps standardize setup, reduce friction, and align capabilities with the intended use case.
+
+### Skills system
+Agents are configured with a bounded skill model:
+
+- agents can have **up to 8 skills maximum**
+- skill limits help control scope, behavior, and execution surface
+- this structure supports clearer provisioning and more predictable operations
+
+### Auto-provisioning
+Agents can be provisioned with preconfigured defaults based on type, selected skills, and connected services. This allows faster deployment while preserving tenant-level configuration boundaries.
+
+### Task execution
+Vutler agents are built to:
+
+- receive tasks
+- use connected context
+- call tools or integrations
+- stream progress
+- complete execution-oriented workflows
+
+### Context and memory
+Vutler integrates **Snipara** for context and memory-related capabilities. This supports better retrieval and continuity during execution workflows.
+
+---
+
+## Integrations
+
+## MCP Nexus Bridge
+
+Vutler provides **MCP Nexus Bridge** through **`@vutler/mcp-nexus`**.
+
+This bridge allows external environments, including **Claude Code**, to delegate tasks into Vutler and access the platform through an MCP-compatible layer.
+
+Key points:
+
+- MCP bridge package: **`@vutler/mcp-nexus`**
+- supports delegation of tasks from **Claude Code**
+- supports **X-API-Key** authentication
+- enables secure machine-to-platform connectivity
+
+This is a core integration point for developer workflows and external agent orchestration.
+
+---
+
+## Post for Me
+
+**Post for Me** is Vutler’s social media integration layer.
+
+It allows agents or configured workflows to prepare and publish content through supported social channels, with monetization handled through **Stripe add-on packs**.
+
+Highlights:
+
+- social media posting workflow
+- packaged as paid add-ons
+- Stripe-linked commercial model
+- built for operational delegation rather than standalone social scheduling only
+
+---
+
+## Email
+
+Vutler supports email-connected workflows for agents and task automation, enabling use cases such as:
+
+- drafting
+- task-triggered communication
+- inbox-connected execution
+- operational follow-up actions
+
+---
+
+## Drive
+
+Vutler supports drive/document workflows for agents, including retrieval and task context enrichment where configured.
+
+---
+
+## Security Highlights
+
+Security has been treated as a first-class concern in the current product iteration.
+
+### Pre-production audit
+A **pre-production audit** was conducted before release hardening.
+
+### Remediation program
+Issues were tracked and remediated using severity tiers:
+
+- **P0**
+- **P1**
+- **P2**
+
+### Sandbox auth guard
+A **sandbox auth guard** has been added to protect isolated execution or development paths from unauthorized access patterns.
+
+### Authentication
+Current auth stack includes:
+
+- **Supabase Auth** for application users
+- **X-API-Key** support for MCP and programmatic clients
+
+### Storage and compliance posture
+File/object storage uses **Exoscale SOS** in Switzerland, with alignment goals around:
+
+- **GDPR**
+- **LPD**
+
+---
+
+## Development
+
+### Stack summary
+- Next.js 14 App Router frontend
+- Express.js backend
+- Supabase/PostgreSQL data layer
+- Dockerized deployment targets
+- PM2 process supervision on Ubuntu VPS
+
+### Repository structure
+The exact structure may evolve, but the platform is organized around:
+
+- frontend application code
+- backend/API services
+- integration modules
+- agent orchestration logic
+- deployment and infra configuration
+
+A typical high-level structure looks like:
 
 ```bash
-# Clone
-git clone https://github.com/alopez3006/vutler-platform.git
-cd vutler-platform
+.
+├── app/                # Next.js application surface
+├── server/             # Express backend and APIs
+├── components/         # UI components
+├── lib/                # shared services, utils, provider clients
+├── integrations/       # external connectors and platform integrations
+├── scripts/            # automation and maintenance scripts
+├── docker/             # container-related assets
+└── docs/               # internal or product documentation
+```
 
-# Install
+### Local development
+Install dependencies:
+
+```bash
 npm install
-cd frontend && npm install && cd ..
-
-# Configure
-cp .env.example .env  # Add your keys
-
-# Run API
-PORT=3001 node index.js
-
-# Run Frontend (separate terminal)
-cd frontend && npm run dev
 ```
 
-**Health:** `curl http://localhost:3001/api/v1/health`
-
----
-
-## API Endpoints
-
-### Workspace (Office)
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET/POST | `/api/v1/chat/channels` | Chat channels + messages |
-| GET/POST | `/api/v1/email` | Email inbox + send + drafts + approval |
-| GET/POST | `/api/v1/drive/files` | File browser + upload + download |
-| GET/POST | `/api/v1/tasks-v2` | Tasks + subtasks + Snipara sync |
-| GET/POST | `/api/v1/calendar/events` | Calendar events CRUD |
-| GET | `/api/v1/memory/*` | Memory: workspace, agents, search |
-
-### Agents
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET/POST | `/api/v1/agents` | Agent CRUD + execute |
-| GET/POST | `/api/v1/nexus/*` | Nexus node management + multi-agent |
-| GET | `/api/v1/marketplace/templates` | 17 agent templates |
-| GET | `/api/v1/marketplace/skills` | 68 skills by category |
-| GET/POST | `/api/v1/llm/*` | LLM provider management |
-
-### Billing
-| Method | Route | Description |
-|--------|-------|-------------|
-| GET | `/api/v1/billing/plans` | 8 plan tiers |
-| GET | `/api/v1/billing/subscription` | Current subscription + usage |
-| POST | `/api/v1/billing/checkout` | Stripe checkout session |
-| POST | `/api/v1/billing/portal` | Stripe customer portal |
-| POST | `/api/v1/billing/webhooks/stripe` | Stripe webhook handler |
-
-### Auth
-| Method | Route | Description |
-|--------|-------|-------------|
-| POST | `/api/v1/auth/login` | Email/password login |
-| POST | `/api/v1/auth/register` | New account |
-| GET | `/api/v1/auth/google` | Google OAuth |
-| GET | `/api/v1/auth/github` | GitHub OAuth |
-
----
-
-## MCP Server
-
-Expose your Vutler workspace to any AI agent (Claude Code, Cursor, etc.):
-
-```json
-{
-  "mcpServers": {
-    "vutler": {
-      "command": "npx",
-      "args": ["@vutler/mcp-office"],
-      "env": {
-        "VUTLER_API_KEY": "your-api-key",
-        "VUTLER_API_URL": "https://app.vutler.ai"
-      }
-    }
-  }
-}
-```
-
-**13 tools:** send_email, read_emails, send_chat, create_task, list_tasks, upload_file, list_files, list_events, search, and more.
-
----
-
-## Nexus CLI
-
-Deploy agents locally or at client sites:
+Run frontend dev server:
 
 ```bash
-# Local mode (clone cloud agents to your machine)
-vutler-nexus start --key YOUR_KEY --name "My Workstation"
-
-# Multi-agent (3 agents with routing rules)
-vutler-nexus agents          # List running agents
-vutler-nexus spawn mike      # Spawn an agent from pool
-
-# Enterprise (deploy at client site)
-vutler-nexus create-agent    # Create new agent for client
+npm run dev
 ```
 
----
-
-## Plans & Pricing
-
-| Plan | Price | Category |
-|------|-------|----------|
-| Free | $0/mo | Office |
-| Office Starter | $29/mo | Office |
-| Office Team | $79/mo | Office |
-| Agents Starter | $29/mo | Agents |
-| Agents Pro | $79/mo | Agents |
-| Full Platform | $129/mo | Full |
-| Enterprise | Custom | Full |
-
----
-
-## Deployment
-
-### Docker (Production)
-```bash
-# API
-docker build -t vutler-api:latest .
-docker run -d --name vutler-api --network host --env-file .env vutler-api:latest
-
-# Frontend
-cd frontend && bash ../scripts/deploy-frontend.sh
-```
-
-### VPS
-```bash
-ssh ubuntu@83.228.222.180
-cd /home/ubuntu/vutler
-git pull origin main
-docker build --no-cache -t vutler-api:latest .
-bash scripts/deploy-frontend.sh
-```
-
----
-
-## Testing
+Run backend dev server:
 
 ```bash
-# E2E tests (9 suites)
-npm run test:e2e
+npm run server:dev
+```
 
-# Suites: health, agents, tasks, chat, drive, billing, nexus, marketplace
+Build production assets:
+
+```bash
+npm run build
+```
+
+Start production mode:
+
+```bash
+npm run start
+```
+
+### Environment configuration
+Typical environment variables include:
+
+```bash
+# App
+NEXT_PUBLIC_APP_URL=
+NEXT_PUBLIC_MARKETING_URL=
+
+# Supabase
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Database / tenant config
+DATABASE_URL=
+
+# Auth / API
+X_API_KEY=
+
+# LLM providers
+ANTHROPIC_API_KEY=
+OPENROUTER_API_KEY=
+MISTRAL_API_KEY=
+GROQ_API_KEY=
+GOOGLE_API_KEY=
+
+# ChatGPT / Codex
+CHATGPT_OAUTH_CLIENT_ID=
+CHATGPT_OAUTH_CLIENT_SECRET=
+CHATGPT_OAUTH_REDIRECT_URI=
+
+# Storage
+EXOSCALE_SOS_ENDPOINT=
+EXOSCALE_SOS_BUCKET=
+EXOSCALE_SOS_ACCESS_KEY=
+EXOSCALE_SOS_SECRET_KEY=
+
+# Billing / add-ons
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+```
+
+> Adjust variable names to match the actual implementation in this repository.
+
+### Deployment
+Production deployment currently targets:
+
+- **Ubuntu VPS**
+- **Docker**
+- **PM2**
+
+Typical flow:
+
+```bash
+docker compose up -d --build
+pm2 start ecosystem.config.js
 ```
 
 ---
 
-## Security
+## What changed from previous documentation
 
-- JWT + OAuth (Google, GitHub)
-- Rate limiting (express-rate-limit)
-- Helmet security headers
-- Stripe webhook signature verification
-- CORS + CSRF protection
-- Swiss hosting (GDPR/LPD compliant)
+The current README reflects the actual product state and intentionally removes outdated references.
 
----
+### Removed
+- Rocket.Chat
+- MongoDB
+- MiniMax
+- legacy model references such as `gpt-4o` and `claude-3.5-sonnet`
+- previous mono-domain architecture description
 
-## License
-
-- **Vutler Agents** (packages/agents, packages/nexus, packages/core): **AGPL-3.0**
-- **Vutler Office** (packages/office, frontend, billing): **Proprietary**
+### Added / clarified
+- separation between **`vutler.ai`** and **`app.vutler.ai`**
+- **Codex** integration via `chatgpt.com/backend-api/codex/responses`
+- **ChatGPT OAuth**
+- **SSE streaming**
+- **Anthropic fallback** for task execution
+- **MCP Nexus Bridge** via `@vutler/mcp-nexus`
+- **Post for Me** and Stripe add-on packs
+- **agent type wizard**
+- **skill cap of 8**
+- **Snipara** integration for context/memory
+- security audit and remediation highlights
+- **X-API-Key** support for MCP auth
 
 ---
 
 ## Links
 
-- 🌐 [vutler.ai](https://vutler.ai)
-- 📱 [app.vutler.ai](https://app.vutler.ai)
-- 🐙 [github.com/Vutler-ai/vutler](https://github.com/Vutler-ai/vutler) (Open Source)
-- 💼 [starbox-group.com](https://starbox-group.com/)
+- **Marketing / landing:** `https://vutler.ai`
+- **Application:** `https://app.vutler.ai`
 
----
+If this repository includes additional internal docs, deployment playbooks, or provider setup guides, they should be linked here as they are finalized.
+```
 
-**Built with ❤️ in Geneva, Switzerland 🇨🇭** · **Last updated:** March 2026
+Si tu veux, je peux aussi te fournir une **version encore plus “finale repo-ready”**, avec :
+1. badges,
+2. section installation plus précise,
+3. arborescence adaptée au repo réel si tu me donnes la structure,
+4. et un **diff éditorial** expliquant chaque changement par rapport à l’ancien README.

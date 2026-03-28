@@ -1,587 +1,339 @@
-# AGENTS.md - Vutler Project Guide
-
-> Guide for AI coding agents working on the Vutler platform.  
-> This project uses **English** for code/comments and **French** for documentation/business docs.
-
----
+# AGENTS.md
 
 ## Project Overview
 
-**Vutler** is an AI agent management platform developed by **Starbox Group** (Geneva, Switzerland). It enables businesses to create, deploy, and orchestrate AI agents that interact through chat (Rocket.Chat integration), email, and webhooks.
+Vutler is an AI agent management platform built by **Starbox Group**, based in Geneva.
 
-### Core Features
-- **AI Agent Runtime**: Multi-agent orchestration with LLM routing (OpenAI, Anthropic, MiniMax)
-- **Chat Integration**: Deep Rocket.Chat integration for agent-human collaboration
-- **Email Support**: Inbound/outbound email processing for agents
-- **Tool Framework**: Extensible tool system (web search, file operations, shell execution)
-- **Memory System**: Snipara integration for persistent agent memory
-- **Multi-tenant**: Workspace-based data isolation
-- **VDrive**: Encrypted file storage with chat integration
+### Product surfaces
+- **vutler.ai** → public landing site
+- **app.vutler.ai** → authenticated application
 
-### Product Ecosystem
-- **vutler.ai** — Main platform (this repo)
-- **Snipara** — AI context optimization & agent memory (snipara.com)
-- **Vaultbrix** — Swiss-hosted database platform (vaultbrix.com)
+### What the platform does
+Vutler allows organizations to create, configure, and operate AI agents that can collaborate across multiple channels and tools.
+
+Agents can work through:
+- **native WebSocket chat**
+- **email**
+- **tasks**
+- **shared drive access**
+
+The platform is multi-tenant and designed for workspace-based agent operations, with configuration, memory, task execution, and communication handled at the application level.
 
 ---
 
 ## Technology Stack
 
-| Component | Technology |
-|-----------|------------|
-| **Runtime** | Node.js 20+ |
-| **Language** | JavaScript (CommonJS) / TypeScript (select files) |
-| **API Framework** | Express.js 4.x |
-| **Databases** | PostgreSQL 15+ (primary), MongoDB (Rocket.Chat), Redis (cache/pub-sub) |
-| **Real-time** | WebSocket (DDP protocol for Rocket.Chat), Socket.io |
-| **Container** | Docker + Docker Compose |
-| **Reverse Proxy** | nginx |
-| **Process Management** | PM2 (production) |
+### Frontend
+- **Next.js 14**
+- **TypeScript**
+- **Tailwind CSS**
+- **shadcn/ui**
 
-### Key Dependencies
-```javascript
-// Core
-express, cors, helmet, rate-limit
-ws (WebSocket), mongodb, pg (PostgreSQL), redis
+### Backend
+- **Express.js**
+- **Node.js**
+- Module system: **CommonJS**
 
-// Security
-crypto, bcrypt, jsonwebtoken
+### Database
+- **Supabase PostgreSQL**
+- Primary schema: **`tenant_vutler`**
+- **No MongoDB**
+- **No Meteor**
 
-// HTTP/API
-axios, node-fetch
+### Authentication
+- **Supabase Auth**
+- **X-API-Key** for API-based integrations and external clients
 
-// Utilities
-uuid, dotenv, winston (logging)
+### Real-time communication
+- **Native WebSocket**
+- **No Rocket.Chat**
+- **No DDP**
 
-// File handling
-multer, mime-types
-```
+### LLM providers
+Supported providers include:
+- **Anthropic**
+- **Codex** via ChatGPT OAuth
+- **OpenRouter**
+- **Mistral**
+- **Groq**
+- **Google**
 
----
-
-## Project Structure
-
-```
-vutler/
-├── api/                      # Express route handlers (1 file = 1 domain)
-│   ├── agents.js             # Agent CRUD operations
-│   ├── chat.js               # Rocket.Chat integration
-│   ├── email.js              # Email send/receive
-│   ├── drive-chat.js         # VDrive file sharing
-│   ├── github.js             # GitHub connector API
-│   ├── llm.js                # LLM provider management
-│   ├── memory.js             # Agent memory (Snipara)
-│   ├── onboarding.js         # User onboarding wizard
-│   ├── runtime.js            # Agent runtime control
-│   ├── tools.js              # Agent tools framework
-│   ├── webhook.js            # Webhook integrations
-│   └── workspace.js          # Multi-tenant workspace API
-│
-├── services/                 # Business logic & core services
-│   ├── agentRuntime.js       # Main agent runtime (DDP WebSocket)
-│   ├── agentManager.js       # Runtime v3: Agent Process Manager (APM)
-│   ├── agentBus.js           # Redis pub/sub for inter-agent comms
-│   ├── toolRegistry.js       # Tool registration & execution
-│   ├── skillSystem.js        # Agent skills framework
-│   ├── localAgent.js         # Local WebSocket agent connections
-│   ├── llmRouter.js          # LLM provider routing
-│   ├── crypto.js             # Encryption/decryption service
-│   ├── provisioning.js       # Workspace & agent provisioning
-│   └── swagger.js            # API documentation (Swagger)
-│
-├── lib/                      # Shared utilities & middleware
-│   ├── auth.js               # Authentication middleware
-│   ├── postgres.js           # PostgreSQL pool & helpers
-│   ├── logger.js             # Winston logger configuration
-│   └── validators.js         # Input validation helpers
-│
-├── scripts/                  # Utility scripts
-│   ├── email-poll.py         # IMAP email polling
-│   └── jarvis-sync.sh        # Deployment sync script
-│
-├── skills/                   # Agent skill definitions
-│   ├── agile-story-master/
-│   ├── dev-story-executor/
-│   ├── product-vision-builder/
-│   └── system-architect/
-│
-├── memory/                   # Daily memory logs & reports
-│   ├── YYYY-MM-DD.md         # Daily context files
-│   ├── rex-health-report.md  # Monitoring reports
-│   └── vchat-inbox.jsonl     # Pending chat messages
-│
-├── social-media/             # Social media content & scheduling
-├── prompts/                  # LLM prompt templates
-├── projects/                 # Project-specific documentation
-├── reports/                  # Generated reports
-│
-├── *.sql                     # Database migrations
-├── *.js                      # Standalone service files
-├── *.md                      # Sprint docs & specifications
-│
-└── docker-compose.yml        # (in production VPS, not in repo)
-```
+### Deployment
+- **Docker**
+- **Ubuntu VPS**
 
 ---
 
-## Code Organization
+## Agent Lifecycle
 
-### Module Pattern (CommonJS)
-All JavaScript files follow this structure:
+### Agent creation
+Agents are created through an **agent type wizard**.
 
-```javascript
-'use strict';
+This replaces any older direct/manual agent creation flow. The wizard is the expected entry point for provisioning a new agent.
 
-const dependency = require('./dependency');
+### Provisioning model
+Agents are **auto-provisioned by role**.  
+The selected role determines the initial setup, including default behavior and compatible capabilities.
 
-// Constants first
-const DEFAULT_TIMEOUT = 5000;
-const MAX_RETRY_COUNT = 5;
+### Skills
+- Each agent can have a maximum of **8 skills**
+- Skills are selected and constrained according to the agent’s intended role and runtime configuration
 
-// Main class or functions
-class MyService {
-  constructor(db) {
-    this.db = db;
-  }
-  
-  async doSomething() {
-    // Implementation
-  }
-}
+### Core agent configuration
+Each agent can be configured with:
+- `model`
+- `provider`
+- `system_prompt`
+- `temperature`
+- `max_tokens`
 
-// Private helper (underscore prefix)
-function _privateHelper() {}
+### Supported model families
+Supported models include current providers and naming conventions such as:
+- `codex/*`
+  - examples: `gpt-5.4`, `gpt-5.3-codex-spark`
+- `claude-sonnet-4`
+- other currently supported models exposed through configured providers
 
-// Export at bottom
-module.exports = MyService;
-// OR
-module.exports = { function1, function2 };
-```
-
-### Express Router Pattern
-```javascript
-// api/agents.js
-const express = require('express');
-const router = express.Router();
-const { authenticateAgent } = require('../lib/auth');
-
-// Apply auth middleware to all routes
-router.use(authenticateAgent);
-
-// RESTful routes
-router.get('/', async (req, res) => {
-  try {
-    const agents = await getAgents(req.workspaceId);
-    res.json({ success: true, data: agents });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-module.exports = router;
-```
-
-### Response Format Standard
-```javascript
-// Success response
-res.json({
-  success: true,
-  data: { /* payload */ },
-  meta: { total: 100, page: 1 }  // optional
-});
-
-// Error response
-res.status(400).json({
-  success: false,
-  error: 'Validation failed',
-  details: { field: 'email', message: 'Invalid format' }  // optional
-});
-```
+Do not document or rely on deprecated model references such as:
+- `gpt-4o`
+- `claude-3.5-sonnet`
 
 ---
 
-## Naming Conventions
+## Agent Communication
 
-### Files
-- **kebab-case** for new files: `agent-runtime.js`, `llm-router.js`
-- **camelCase** accepted for legacy: `agentRuntime.js`
-- Suffixes: `*.test.js`, `*.spec.js`, `*.config.js`
+### Native chat
+Agents collaborate through a **native WebSocket chat system**.
 
-### Variables & Functions
-```javascript
-// camelCase for variables
-const agentConfig = {};
-const isActive = true;
+This is the current real-time communication layer and fully replaces any previous Rocket.Chat-based assumptions.
 
-// SCREAMING_SNAKE_CASE for constants
-const RC_WS_URL = process.env.RC_WS_URL || 'ws://localhost:3000';
-const MAX_RETRY_COUNT = 5;
+### Email
+Agents can send and receive email via **Postal**.
 
-// camelCase, verb-first for functions
-function getAgentById(id) {}
-function createWorkspace(data) {}
-async function fetchMessages() {}
+Supported email identities include:
+- custom domains configured by the workspace
+- platform-managed addresses under **`@slug.vutler.ai`**
 
-// underscore prefix for "private" functions
-async function _loadFromPG() {}
-function _handleError(err) {}
-```
+### Tasks
+Agents can collaborate asynchronously through the **Tasks API**.
 
-### Classes
-```javascript
-// PascalCase for classes
-class AgentRuntime {
-  constructor(db, app) {
-    this.db = db;
-    this.app = app;
-  }
-}
+Tasks are assigned using:
+- `assigned_agent`
 
-class LLMRouter {}
-class AgentProcessManager {}
-```
-
-### API Routes
-```javascript
-// RESTful naming, plural for collections
-router.get('/agents', listAgents);
-router.get('/agents/:id', getAgent);
-router.post('/agents', createAgent);
-router.put('/agents/:id', updateAgent);
-router.delete('/agents/:id', deleteAgent);
-
-// Special actions: verb after ID
-router.post('/agents/:id/start', startAgent);
-router.post('/agents/:id/stop', stopAgent);
-```
+### Shared drive
+Agents can access shared files through a common drive layer backed by:
+- **Exoscale SOS**
 
 ---
 
-## Database Patterns
+## LLM Integration
 
-### PostgreSQL Queries (Always Parameterized)
-```javascript
-// ALWAYS use parameterized queries (anti-SQL injection)
-const result = await pool.query(
-  'SELECT * FROM agents WHERE workspace_id = $1 AND status = $2',
-  [workspaceId, 'active']
-);
+### Router architecture
+LLM calls are routed through a central service layer, typically represented by `llmRouter`.
 
-// NEVER use string interpolation
-// ❌ `SELECT * FROM agents WHERE id = '${id}'`
-```
+This router is responsible for:
+- selecting the correct provider
+- resolving credentials
+- formatting requests
+- applying fallbacks
+- handling streaming behavior
 
-### Transactions
-```javascript
-const client = await pool.connect();
-try {
-  await client.query('BEGIN');
-  await client.query('INSERT INTO agents ...', [...]);
-  await client.query('INSERT INTO agent_channels ...', [...]);
-  await client.query('COMMIT');
-} catch (err) {
-  await client.query('ROLLBACK');
-  throw err;
-} finally {
-  client.release();
-}
-```
+### Codex provider
+Vutler supports **Codex** through the ChatGPT backend endpoint:
 
-### Multi-tenant Isolation
-All tables have `workspace_id` with Row Level Security (RLS) policies:
-```sql
-CREATE POLICY ws_isolation_agents ON agents
-  USING (workspace_id = current_setting('app.workspace_id', true));
-```
+- `chatgpt.com/backend-api/codex/responses`
+
+### Codex authentication
+Authentication uses **ChatGPT OAuth**.
+
+Implementation requirements:
+- OAuth token is stored in the database
+- token refresh must happen automatically when needed
+
+### Request format
+Codex integration uses a **Responses API-style payload**.
+
+Use:
+- `instructions`
+- `input`
+
+Do **not** rely on old `messages`-based formatting for this provider.
+
+### Transport requirements
+Streaming is required for Codex requests.
+
+Mandatory parameters:
+- `stream: true`
+- `store: false`
+
+Transport mode:
+- **SSE streaming**
+
+### Fallback behavior
+If the primary provider fails, the default fallback is:
+- **Anthropic**
+
+This fallback behavior should be built into the routing and execution path, not implemented ad hoc in feature code.
+
+### Token resolution requirement
+Provider token resolution requires a database pool to be passed into `llmRouter`.
+
+If `llmRouter` is used without access to the DB pool, provider auth resolution may fail, especially for OAuth-backed providers like Codex.
 
 ---
 
-## Environment Variables
+## Task Execution
 
-Critical env vars used across the codebase:
+### Task creation
+Tasks are created through the API and assigned via:
+- `assigned_agent`
+
+### Execution flow
+Task execution is handled by `TaskExecutor`.
+
+Expected flow:
+1. A task is created with an assigned agent
+2. `TaskExecutor` loads the task and agent context
+3. `TaskExecutor` calls `llmRouter.chat()` with the agent
+4. The provider executes using the agent configuration
+5. If the primary provider fails, execution falls back automatically to **Anthropic**
+6. The output is persisted in task metadata
+
+### Persistence
+Task execution results are stored in:
+- task `metadata`
+
+This metadata should include enough structured context to support later inspection, retries, or downstream processing.
+
+---
+
+## MCP Nexus Bridge
+
+Vutler exposes an MCP bridge through:
+
+- **`@vutler/mcp-nexus`**
+
+### Purpose
+This package allows external MCP-compatible clients to delegate work to Vutler agents.
+
+Typical clients include:
+- Claude Code
+- any MCP-compatible tool or runtime
+
+### Authentication
+Authentication is handled with:
+- **X-API-Key**
+
+This bridge should be treated as the standard external delegation layer for agent task execution from MCP ecosystems.
+
+---
+
+## Memory & Context
+
+Vutler integrates with **Snipara** for persistent agent memory.
+
+### Runtime primitives
+Agents can use:
+- `remember()`
+- `recall()`
+
+These functions are available in the agent runtime to persist and retrieve contextual memory over time.
+
+### Configuration
+Snipara is configured at the workspace level through:
+- workspace settings
+
+Memory behavior should be understood as persistent contextual support for agents, not as a replacement for immediate runtime state.
+
+---
+
+## Key Directories
+
+### Frontend
+- `frontend/src/app/(app)/` → application pages
+- `frontend/src/lib/api/` → API client and shared types
+
+### Backend
+- `api/` → Express route handlers
+- `services/` → business logic such as `llmRouter`, `taskExecutor`, and related services
+- `seeds/` → agent templates and skills
+
+When documenting architecture or navigating the codebase, use these directories as the primary reference points.
+
+---
+
+## Development
+
+### Frontend
 ```bash
-# Database
-DATABASE_URL=postgresql://user:pass@localhost:5432/vutler
-MONGODB_URI=mongodb://localhost:27017/rocketchat
-REDIS_URL=redis://localhost:6379
-
-# Rocket.Chat
-RC_WS_URL=ws://localhost:3000/websocket
-RC_API_URL=http://localhost:3000
-RC_ADMIN_TOKEN=xxx
-RC_ADMIN_USER_ID=xxx
-
-# LLM Providers
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-MINIMAX_API_KEY=...
-
-# External Services
-SNIPARA_API_URL=https://api.snipara.com/mcp/vutler
-SNIPARA_API_KEY=rlm_...
-
-# Security
-JWT_SECRET=...
-ENCRYPTION_KEY=...
-
-# Server
-PORT=3001
-NODE_ENV=production
+cd frontend && pnpm dev
 ```
 
----
+Default port:
+- `3000`
 
-## Testing
-
-### Test Files
-```javascript
-// test-{feature}.js OR {feature}.test.js
-describe('AgentRuntime', () => {
-  describe('start()', () => {
-    it('should load agents from PostgreSQL', async () => {
-      // Test implementation
-    });
-
-    it('should handle connection errors gracefully', async () => {
-      // Test implementation
-    });
-  });
-});
-```
-
-### Running Tests
+### API
 ```bash
-npm test              # All tests
-npm run test:unit     # Unit tests only
-npm run test:e2e      # End-to-end tests
-npm run test:coverage # With coverage report
+cd api && pnpm dev
 ```
 
-### E2E Test Coverage
-Key E2E flows (from `e2e-test-s8.5.js`):
-- User signup → onboarding → LLM setup → agent creation → channel assignment
-- Agent receives message → processes via LLM → posts response
-- Multi-tenant isolation verification
+### Tests
+```bash
+pnpm test
+```
 
 ---
 
-## Security Guidelines
+## Conventions
 
-### Authentication Headers
-```javascript
-// Required headers for authenticated requests
-const authToken = req.headers['x-auth-token'];
-const userId = req.headers['x-user-id'];
-const workspaceId = req.headers['x-workspace-id'];
-```
+### Language conventions
+- Application code is written in **English**
+- Business-facing documentation can be written in **French**
 
-### Input Validation
-```javascript
-// Always validate before processing
-const { name, email } = req.body;
-if (!name || typeof name !== 'string' || name.length > 100) {
-  return res.status(400).json({ success: false, error: 'Invalid name' });
+### Type safety
+- Frontend uses **TypeScript strict mode**
+
+### API response format
+Standard API responses should follow:
+
+```ts
+{
+  success: boolean,
+  data?: T,
+  error?: string
 }
 ```
 
-### Secret Management
-- NEVER commit secrets to git
-- Use environment variables
-- Encrypt sensitive data at rest (CryptoService)
-- Validate all external inputs
+### Database access
+- Database queries use **raw SQL via Supabase**
+- **No ORM**
+
+### Architectural rules
+- Do not introduce or document deprecated Meteor/DDP concepts
+- Do not reference Rocket.Chat as the chat layer
+- Do not reference MiniMax as a supported provider
+- Do not assume legacy model names are current
+- Do not assume agent creation happens outside the wizard flow
 
 ---
 
-## Deployment
+## Important Current-State Notes
 
-### VPS Context (Production)
-- **IP**: 83.228.222.180
-- **SSH Key**: `.secrets/vps-ssh-key.pem`
-- **Source**: `/home/ubuntu/vutler/app/custom/`
-- **Rebuild**: `cd /home/ubuntu/vutler && docker compose up -d --build vutler-api`
+The following are explicitly obsolete and should not appear in future documentation unless discussing legacy history:
 
-### Docker Services
-```yaml
-# docker-compose.yml structure
-services:
-  vutler-api:       # Main API server (port 3001)
-  vutler-rocketchat:# Rocket.Chat (port 3000)
-  vutler-postgres:  # PostgreSQL
-  vutler-mongo:     # MongoDB
-  vutler-redis:     # Redis cache
-  vutler-nginx:     # Reverse proxy
+- **Rocket.Chat**
+- **Meteor / DDP**
+- **MiniMax**
+- legacy models such as:
+  - `gpt-4o`
+  - `claude-3.5-sonnet`
+- manual agent creation flow without the wizard
+
+Any implementation, documentation, or onboarding material should reflect the current platform architecture described in this file.
 ```
 
-### Git Conventions
-```
-main              # Production
-develop           # Integration
-feature/S12-xxx   # Features (Sprint-Story format)
-fix/S12-xxx       # Bug fixes
-hotfix/xxx        # Production hotfixes
-```
-
-### Commit Format
-```
-type(scope): description
-
-Types:
-- feat: New feature
-- fix: Bug fix
-- refactor: Code refactoring
-- docs: Documentation
-- test: Tests
-- chore: Maintenance
-
-Examples:
-feat(agents): add agent memory persistence
-fix(chat): resolve message deduplication issue
-```
-
----
-
-## Development Workflow
-
-### Before Coding
-1. Read `SOUL.md` — understand the agent persona
-2. Read `USER.md` — understand Alex's preferences
-3. Read `MEMORY.md` — check recent context
-4. Check `TODO.md` for active tasks
-5. Read relevant sprint file (e.g., `sprint-11.md`)
-
-### Logging Pattern
-```javascript
-// Prefix with [Module/Function]
-console.log('[Runtime] Starting agent runtime…');
-console.warn('[Runtime] Agent bus init skipped:', err.message);
-console.error('[AgentRuntime._connect] WebSocket error:', err);
-
-// For production: use structured logger
-const { logger } = require('./lib/logger');
-logger.info({ agentId, action: 'start' }, 'Agent started');
-logger.error({ err, agentId }, 'Agent failed to start');
-```
-
-### Error Handling
-```javascript
-// Custom error classes
-class AppError extends Error {
-  constructor(message, statusCode = 500, code = 'INTERNAL_ERROR') {
-    super(message);
-    this.statusCode = statusCode;
-    this.code = code;
-    this.isOperational = true;
-  }
-}
-
-// Always use try/catch with async
-async function processMessage(messageId) {
-  try {
-    const message = await db.query('SELECT * FROM messages WHERE id = $1', [messageId]);
-    if (!message) {
-      throw new Error('Message not found');
-    }
-    return message;
-  } catch (err) {
-    console.error('[processMessage] Error:', err.message);
-    throw err;  // Re-throw for parent handler
-  }
-}
-```
-
----
-
-## Key Architecture Components
-
-### Agent Runtime (v2)
-Located in `services/agentRuntime.js`:
-- DDP WebSocket connection to Rocket.Chat
-- Message subscription per channel
-- Round-robin routing for unmentioned messages
-- @mention routing to specific agents
-- Each agent posts with own credentials (PAT)
-
-### Agent Process Manager (v3 - Runtime v3)
-Located in `services/agentManager.js`:
-- Worker thread management for agents
-- Health monitoring & auto-restart
-- Scalable agent orchestration
-- Tool execution isolation
-
-### LLM Router
-Located in `services/llmRouter.js`:
-- Multi-provider support (OpenAI, Anthropic, MiniMax)
-- Model selection per agent/task
-- Token usage tracking
-- Rate limiting integration
-
-### Tool Registry
-Located in `services/toolRegistry.js`:
-- 7 built-in tools: knowledge, memory, email, shell, drive, webhook, web_search
-- Dynamic tool loading
-- Per-agent tool assignment
-- Security sandboxing
-
----
-
-## Sprint Documentation
-
-Active sprint files track development progress:
-- `sprint-7.md` — Launch prep, E2E testing
-- `sprint-8.md` — Multi-tenant, Snipara integration
-- `sprint-9.md` — Onboarding wizard, auto-provisioning
-- `sprint-10.md` — Chat polish, branding
-- `sprint-11.md` — Agent autonomy: email, tools, multi-agent
-- `SPRINT-11.5-FINAL-REPORT.md` — Runtime v3 activation status
-
----
-
-## Files to Know
-
-### Critical Service Files
-| File | Purpose |
-|------|---------|
-| `agentRuntime.js` | Main agent runtime service (DDP WebSocket) |
-| `index-s11.5-integrated.js` | Express server with all routes (main entry) |
-| `pg-updated.js` | PostgreSQL connection & helpers |
-| `provisioning.js` | Workspace & agent provisioning logic |
-| `crypto-service.js` | Encryption/decryption utilities |
-| `quotaMiddleware.js` | Rate limiting & quota enforcement |
-
-### Configuration Files
-| File | Purpose |
-|------|---------|
-| `.eslintrc.json` | ESLint rules (semicolons required, single quotes) |
-| `.mcp.json` | MCP server configurations (Snipara) |
-| `.prettierrc` | Code formatting rules |
-| `.editorconfig` | Editor consistency settings |
-
-### Documentation Files
-| File | Purpose |
-|------|---------|
-| `CODING_STANDARDS.md` | Detailed coding conventions (French) |
-| `SECURITY.md` | Trust model & security rules |
-| `TODO.md` | Active task board |
-| `HEARTBEAT.md` | Automated check procedures |
-| `TOOLS.md` | MCP tools & integrations reference |
-
----
-
-## PR Checklist
-
-Before submitting changes:
-- [ ] Code follows conventions above
-- [ ] No debug `console.log` (use logger)
-- [ ] Environment variables documented
-- [ ] Tests added/updated
-- [ ] No secrets in code
-- [ ] SQL uses parameters (`$1`, `$2`)
-- [ ] Errors are caught and logged
-- [ ] API responses follow standard format
-- [ ] RLS policies updated if new tables
-
----
-
-*Last updated: 2026-03-02*  
-*Project: Vutler by Starbox Group*  
-*Primary Language: English (code), French (docs)*
+Si tu veux, je peux aussi te livrer une **version encore plus “repo-ready”**, avec :
+- un ton plus interne/dev
+- une section “Architecture at a glance”
+- une section “Do / Don’t”
+- une mise en forme plus compacte pour un vrai `AGENTS.md` de projet.
