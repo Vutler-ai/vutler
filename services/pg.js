@@ -86,36 +86,47 @@ async function checkWorkspaceLimits(workspaceId, plan) {
       [workspaceId]
     ).catch(() => ({ rows: [{ cnt: 0 }] }));
 
-    const agentCount   = parseInt(agentsRes.rows[0].cnt, 10);
-    const tokenCount   = parseInt(tokensRes.rows[0].cnt, 10);
-    const storageBytes = parseInt(storageRes.rows[0].cnt, 10);
+    // Social posts usage for current month
+    const socialPostsRes = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM social_posts_usage
+       WHERE workspace_id = $1 AND created_at >= date_trunc('month', NOW())`,
+      [workspaceId]
+    ).catch(() => ({ rows: [{ cnt: 0 }] }));
+
+    const agentCount     = parseInt(agentsRes.rows[0].cnt, 10);
+    const tokenCount     = parseInt(tokensRes.rows[0].cnt, 10);
+    const storageBytes   = parseInt(storageRes.rows[0].cnt, 10);
+    const socialPosts    = parseInt(socialPostsRes.rows[0].cnt, 10);
 
     // Plan limits — these mirror the values in featureGate.js
     const LIMITS = {
-      free:       { agents: 3,   tokens_month: 50000,    storage_gb: 1 },
-      starter:    { agents: 10,  tokens_month: 500000,   storage_gb: 10 },
-      pro:        { agents: 50,  tokens_month: 5000000,  storage_gb: 100 },
-      enterprise: { agents: 500, tokens_month: 50000000, storage_gb: 1000 },
+      free:       { agents: 3,   tokens_month: 50000,    storage_gb: 1,    social_posts_month: 0 },
+      starter:    { agents: 10,  tokens_month: 500000,   storage_gb: 10,   social_posts_month: 10 },
+      pro:        { agents: 50,  tokens_month: 5000000,  storage_gb: 100,  social_posts_month: 50 },
+      enterprise: { agents: 500, tokens_month: 50000000, storage_gb: 1000, social_posts_month: 500 },
     };
     const limits = LIMITS[plan] || LIMITS.free;
     const storageGb = storageBytes / (1024 ** 3);
 
     const usage = {
-      agents:  agentCount,
-      tokens:  tokenCount,
-      storage: storageGb,
+      agents:       agentCount,
+      tokens:       tokenCount,
+      storage:      storageGb,
+      social_posts: socialPosts,
     };
 
     const percentages = {
-      agents:  limits.agents       ? Math.round((agentCount / limits.agents) * 100) : 0,
-      tokens:  limits.tokens_month ? Math.round((tokenCount / limits.tokens_month) * 100) : 0,
-      storage: limits.storage_gb   ? Math.round((storageGb  / limits.storage_gb)   * 100) : 0,
+      agents:       limits.agents            ? Math.round((agentCount  / limits.agents) * 100) : 0,
+      tokens:       limits.tokens_month      ? Math.round((tokenCount  / limits.tokens_month) * 100) : 0,
+      storage:      limits.storage_gb        ? Math.round((storageGb   / limits.storage_gb)   * 100) : 0,
+      social_posts: limits.social_posts_month ? Math.round((socialPosts / limits.social_posts_month) * 100) : 0,
     };
 
     const allowed = {
-      agents:  agentCount  < limits.agents,
-      tokens:  tokenCount  < limits.tokens_month,
-      storage: storageGb   < limits.storage_gb,
+      agents:       agentCount   < limits.agents,
+      tokens:       tokenCount   < limits.tokens_month,
+      storage:      storageGb    < limits.storage_gb,
+      social_posts: limits.social_posts_month <= 0 ? false : socialPosts < limits.social_posts_month,
     };
 
     return { allowed, usage, percentages };

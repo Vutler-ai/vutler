@@ -30,6 +30,13 @@ function checkStorageQuota(req, res, next) {
 }
 
 /**
+ * Middleware to check social posts quota
+ */
+function checkSocialPostsQuota(req, res, next) {
+  return checkQuota('social_posts')(req, res, next);
+}
+
+/**
  * Generic quota checker middleware
  * @param {string} resource - Resource type to check (agents, tokens, storage)
  */
@@ -55,6 +62,7 @@ function checkQuota(resource) {
         agents: planLimits.agents,
         tokens: planLimits.tokens_month,
         storage: planLimits.storage_gb,
+        social_posts: planLimits.social_posts_month,
       };
       const resourceLimit = resourceLimitMap[resource];
       
@@ -149,13 +157,22 @@ function checkStorageQuotaWithPlan(req, res, next) {
   });
 }
 
+function checkSocialPostsQuotaWithPlan(req, res, next) {
+  addWorkspacePlan(req, res, (err) => {
+    if (err) return next(err);
+    checkSocialPostsQuota(req, res, next);
+  });
+}
+
 module.exports = {
   checkAgentQuota,
-  checkTokenQuota, 
+  checkTokenQuota,
   checkStorageQuota,
+  checkSocialPostsQuota,
   checkQuota,
   addWorkspacePlan,
   checkAgentQuotaWithPlan,
   checkTokenQuotaWithPlan,
   checkStorageQuotaWithPlan,
+  checkSocialPostsQuotaWithPlan,
 };

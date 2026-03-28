@@ -23,6 +23,7 @@ const INTEGRATIONS_META: Record<string, { icon: string; name: string; descriptio
   n8n: { icon: "⚡", name: "n8n", description: "Workflow automation and custom integrations" },
   microsoft365: { icon: "🟦", name: "Microsoft 365", description: "Outlook, Teams, OneDrive, and SharePoint" },
   chatgpt: { icon: "🤖", name: "ChatGPT", description: "Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex" },
+  social_media: { icon: "📱", name: "Social Media", description: "Post to LinkedIn, X, Instagram, TikTok, and 5+ more platforms" },
 };
 
 const COMING_SOON = ["microsoft365"];
@@ -157,7 +158,7 @@ export default function IntegrationsPage() {
                 {integration.status === "connected" && (
                   <>
                     <Link
-                      href={`/settings/integrations/${integration.provider}`}
+                      href={integration.provider === "social_media" ? "/settings/integrations/social-media" : `/settings/integrations/${integration.provider}`}
                       className="px-3 py-1.5 text-sm rounded-lg bg-[#3b82f6]/10 text-[#3b82f6] hover:bg-[#3b82f6]/20 transition-colors"
                     >
                       Settings
@@ -170,7 +171,15 @@ export default function IntegrationsPage() {
                     </button>
                   </>
                 )}
-                {integration.status === "disconnected" && (
+                {integration.status === "disconnected" && integration.provider === "social_media" && (
+                  <Link
+                    href="/settings/integrations/social-media"
+                    className="px-4 py-1.5 text-sm rounded-lg bg-[#3b82f6] text-white hover:bg-[#2563eb] transition-colors"
+                  >
+                    Configure
+                  </Link>
+                )}
+                {integration.status === "disconnected" && integration.provider !== "social_media" && (
                   <button
                     onClick={() => handleConnect(integration.provider)}
                     className="px-4 py-1.5 text-sm rounded-lg bg-[#3b82f6] text-white hover:bg-[#2563eb] transition-colors cursor-pointer"

@@ -165,6 +165,40 @@ async function main() {
     }
   }
 
+  // ── Social Media Addon Packs ────────────────────────────────────────────────
+  const ADDON_PACKS = [
+    { id: 'social_posts_100',  label: '100 Social Posts/month',  monthly: 500 },
+    { id: 'social_posts_500',  label: '500 Social Posts/month',  monthly: 1900 },
+    { id: 'social_posts_2000', label: '2000 Social Posts/month', monthly: 4900 },
+  ];
+
+  console.log('\n\n--- Processing Social Media Addon Packs ---');
+  for (const addon of ADDON_PACKS) {
+    console.log(`\nProcessing addon: ${addon.id} (${addon.label})`);
+    try {
+      const existing = await findProductByPlanId(addon.id);
+      let product;
+      if (existing) {
+        console.log(`  [product] Found existing product for ${addon.id}: ${existing.id}`);
+        product = existing;
+      } else {
+        product = await stripe.products.create(
+          { name: `Vutler — ${addon.label}`, metadata: { plan_id: addon.id, type: 'addon' } },
+          ACCOUNT_OPTS
+        );
+        console.log(`  [product] Created product for ${addon.id}: ${product.id}`);
+      }
+
+      const monthlyPrice = await getOrCreatePrice(product.id, addon.id, addon.monthly, 'month');
+      const addonVar = `STRIPE_PRICE_ADDON_${addon.id.toUpperCase()}`;
+      envLines.push(`${addonVar}=${monthlyPrice.id}`);
+
+      results.push({ planId: addon.id, monthlyVar: addonVar, monthlyPriceId: monthlyPrice.id, yearlyPriceId: 'N/A' });
+    } catch (err) {
+      console.error(`  ERROR processing addon ${addon.id}:`, err.message);
+    }
+  }
+
   // ── Print env vars ──────────────────────────────────────────────────────────
   console.log('\n\n=== Add these to your .env / environment ===\n');
   for (const line of envLines) {
