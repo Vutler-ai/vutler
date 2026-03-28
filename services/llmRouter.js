@@ -78,10 +78,10 @@ const PROVIDERS = {
     defaultHeaders: {},
   },
   codex: {
-    baseURL: 'https://api.openai.com/v1',
-    path: '/chat/completions',
-    format: 'openai',
-    defaultModel: 'gpt-5.4',
+    baseURL: 'https://chatgpt.com/backend-api',
+    path: '/codex/responses',
+    format: 'responses',
+    defaultModel: 'gpt-5.3-codex',
     defaultHeaders: {},
   },
 };
@@ -198,6 +198,33 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
     };
   }
 
+  // Responses API format (used by Codex via chatgpt.com/backend-api)
+  if (cfg.format === 'responses') {
+    const input = [];
+    if (systemPrompt) {
+      input.push({ role: 'developer', content: systemPrompt });
+    }
+    for (const m of messages.filter(m => m.role !== 'system')) {
+      input.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
+    }
+
+    const body = {
+      model: model || cfg.defaultModel,
+      input,
+    };
+
+    return {
+      hostname,
+      path,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        ...cfg.defaultHeaders,
+      },
+      body,
+    };
+  }
+
   const allMsgs = systemPrompt
     ? [{ role: 'system', content: systemPrompt }, ...messages.filter(m => m.role !== 'system')]
     : messages;
@@ -262,6 +289,28 @@ function normalizeResponse(provider, model, result, latency_ms) {
       content: textContent,
       tool_calls: toolCalls.length > 0 ? toolCalls : null,
       stop_reason: result.stop_reason || null,
+      provider,
+      model: result.model || model,
+      usage: {
+        input_tokens: result.usage?.input_tokens || 0,
+        output_tokens: result.usage?.output_tokens || 0,
+      },
+      cost: 0,
+      latency_ms,
+    };
+  }
+
+  // Responses API format (Codex): output is an array of items
+  if (result.output && !result.choices) {
+    const outputItems = Array.isArray(result.output) ? result.output : [];
+    const textContent = outputItems
+      .filter(o => o.type === 'message')
+      .flatMap(o => (o.content || []).filter(c => c.type === 'output_text').map(c => c.text))
+      .join('');
+    return {
+      content: textContent || result.output_text || '',
+      tool_calls: null,
+      stop_reason: result.status || 'completed',
       provider,
       model: result.model || model,
       usage: {
