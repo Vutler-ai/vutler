@@ -280,6 +280,8 @@ function WorkspaceTab({
   const [wsDesc, setWsDesc] = useState(getStr(settings?.workspace_description));
   const [timezone, setTimezone] = useState(getStr(settings?.timezone) || "UTC");
   const [defaultProvider, setDefaultProvider] = useState(getStr(settings?.default_provider));
+  const [sniparaKey, setSniparaKey] = useState(getStr((settings as Record<string, unknown>)?.snipara_api_key));
+  const [sniparaProjectId, setSniparaProjectId] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_id));
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -288,20 +290,30 @@ function WorkspaceTab({
       setWsDesc(getStr(settings.workspace_description));
       setTimezone(getStr(settings.timezone) || "UTC");
       setDefaultProvider(getStr(settings.default_provider));
+      setSniparaKey(getStr((settings as Record<string, unknown>)?.snipara_api_key));
+      setSniparaProjectId(getStr((settings as Record<string, unknown>)?.snipara_project_id));
     }
   }, [settings]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateSettings({
+      const payload: Record<string, unknown> = {
         settings: {
           workspace_name: { value: wsName, type: "text" },
           workspace_description: { value: wsDesc, type: "text" },
           timezone: { value: timezone, type: "text" },
           default_provider: { value: defaultProvider, type: "text" },
         },
-      });
+      };
+      // Only send Snipara fields if they contain real values (not masked)
+      if (sniparaKey && !sniparaKey.includes("••")) {
+        (payload as Record<string, unknown>).snipara_api_key = sniparaKey;
+      }
+      if (sniparaProjectId) {
+        (payload as Record<string, unknown>).snipara_project_id = sniparaProjectId;
+      }
+      await updateSettings(payload);
       onToast("Workspace settings saved", "success");
     } catch (err) {
       onToast(err instanceof Error ? err.message : "Failed to save", "error");
@@ -376,6 +388,36 @@ function WorkspaceTab({
             )}
           </div>
         </div>
+
+        {/* Snipara Integration */}
+        <div className="border-t border-[rgba(255,255,255,0.07)] pt-5 mt-2">
+          <h3 className="text-white text-sm font-medium mb-1">Snipara Integration</h3>
+          <p className="text-[#6b7280] text-xs mb-3">
+            Connect Snipara to enable swarm task execution and agent memory sync.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label className={cx.label}>API Key</Label>
+              <Input
+                type="password"
+                value={sniparaKey}
+                onChange={(e) => setSniparaKey(e.target.value)}
+                placeholder="rlm_..."
+                className={cx.input}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className={cx.label}>Project ID</Label>
+              <Input
+                value={sniparaProjectId}
+                onChange={(e) => setSniparaProjectId(e.target.value)}
+                placeholder="cmmf..."
+                className={cx.input}
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="flex justify-end pt-2">
           <Button
             onClick={handleSave}

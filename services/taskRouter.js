@@ -2,6 +2,7 @@
 
 const { pool } = require('../lib/postgres');
 const sniparaService = require('./sniparaService');
+const { executeTaskViaLLM } = require('./taskExecutor');
 
 const ROUTING_RULES = [
   { patterns: ['bug', 'fix', 'error', 'crash', 'broken', '500', 'fail'], agent: 'bug-hunter', priority: 'P1' },
@@ -41,6 +42,19 @@ function classifyAndAssign(task) {
  */
 async function getWorkspaceSniparaKey(workspaceId) {
   try {
+    // Try workspace_settings KV table first
+    const kvResult = await pool.query(
+      `SELECT value FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'snipara_api_key'`,
+      [workspaceId]
+    );
+    if (kvResult.rows.length > 0) {
+      const v = kvResult.rows[0].value;
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object' && v !== null && 'value' in v) return v.value;
+      if (typeof v === 'object' && v !== null) return JSON.stringify(v).replace(/"/g, '');
+      return v || null;
+    }
+    // Fallback: workspaces table (legacy)
     const result = await pool.query(
       `SELECT snipara_api_key FROM ${SCHEMA}.workspaces WHERE id = $1`,
       [workspaceId]
@@ -102,6 +116,15 @@ async function createTask({ title, description, source, source_ref, priority, du
           console.log('[TaskRouter] Synced to Snipara swarm:', swarmTaskId);
         }
       }
+    }
+
+    // 🟡 FALLBACK: Execute via LLM if Snipara sync didn't happen
+    if (!task.swarm_task_id && assigned_agent) {
+      console.log(`[TaskRouter] No Snipara sync, falling back to LLM execution for ${assigned_agent}`);
+      // Fire-and-forget — don't block the API response
+      executeTaskViaLLM(task, assigned_agent, workspace_id).catch(err => {
+        console.error('[TaskRouter] LLM fallback error:', err.message);
+      });
     }
 
     return task;
