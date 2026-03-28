@@ -23,13 +23,15 @@ import {
 const FALLBACK_MODELS = [
   { provider: 'anthropic', model_name: 'claude-sonnet-4-20250514' },
   { provider: 'anthropic', model_name: 'claude-haiku-4-5' },
-  { provider: 'openai', model_name: 'gpt-4o' },
-  { provider: 'openai', model_name: 'gpt-4o-mini' },
-  { provider: 'codex', model_name: 'codex/gpt-4o' },
+  { provider: 'openai', model_name: 'gpt-5.4' },
+  { provider: 'openai', model_name: 'gpt-5.4-mini' },
+  { provider: 'openai', model_name: 'gpt-5.3-codex' },
+  { provider: 'openai', model_name: 'gpt-5.3-codex-spark' },
+  { provider: 'codex', model_name: 'codex/gpt-5.4' },
+  { provider: 'codex', model_name: 'codex/gpt-5.4-mini' },
+  { provider: 'codex', model_name: 'codex/gpt-5.3-codex' },
+  { provider: 'codex', model_name: 'codex/gpt-5.3-codex-spark' },
   { provider: 'codex', model_name: 'codex/o3' },
-  { provider: 'codex', model_name: 'codex/gpt-4o-mini' },
-  { provider: 'codex', model_name: 'codex/gpt-4.1' },
-  { provider: 'codex', model_name: 'codex/gpt-4.1-mini' },
 ];
 
 const TOOLS = [

@@ -137,7 +137,7 @@ function postalRequest(path, body) {
 async function generateLLMDraft(agent, email) {
   try {
     const agentObj = {
-      model: 'gpt-4o',
+      model: 'gpt-5.4',
       provider: 'openai',
       system_prompt: `You are ${agent.name}, a professional AI assistant at Vutler. Draft a helpful email response. Be concise and professional. Always sign with your name.`,
       temperature: 0.7,

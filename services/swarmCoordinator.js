@@ -175,7 +175,7 @@ class SwarmCoordinator {
     const available = channelAgents.map((a) => (a.username || a.name || "").toLowerCase()).filter(Boolean);
     const prompt = `Décompose la demande en 1-5 sous-tâches JSON strict uniquement: {"tasks":[{"title":"...","description":"...","priority":"high|medium|low","agent":"username"}]}. Agents disponibles: ${available.join(", ")}. Demande: ${messageText}`;
     try {
-      const r = await llmChat({ model: process.env.OPENAI_MODEL || "gpt-4o-mini", provider: "openai", temperature: 0.2, max_tokens: 900 }, [{ role: "user", content: prompt }]);
+      const r = await llmChat({ model: process.env.OPENAI_MODEL || "gpt-5.4-mini", provider: "openai", temperature: 0.2, max_tokens: 900 }, [{ role: "user", content: prompt }]);
       const raw = String(r?.content || "{}");
       const json = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
       if (Array.isArray(json.tasks) && json.tasks.length) return json.tasks;

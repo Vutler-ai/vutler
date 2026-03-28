@@ -17,7 +17,7 @@ async function main() {
       const payload = {
         name: `E2E Test Agent ${Date.now()}`,
         username: `e2e_agent_${Date.now()}`,
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.4-mini',
         provider: 'openai',
         system_prompt: 'You are a test agent created by e2e tests.',
       };

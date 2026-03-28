@@ -61,7 +61,7 @@ function normalizeTemplate(tpl) {
     avg_rating: tpl.avg_rating || 0,
     review_count: tpl.review_count || 0,
     config: {
-      model: tpl.model || 'gpt-4o',
+      model: tpl.model || 'gpt-5.4',
       temperature: (tpl.config && tpl.config.temperature) != null ? tpl.config.temperature : 0.7,
       max_tokens: (tpl.config && tpl.config.max_tokens) || 2000,
       system_prompt: tpl.system_prompt || '',

@@ -14,7 +14,7 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [companyName, setCompanyName] = useState('');
   const [agentName, setAgentName] = useState('');
-  const [agentModel, setAgentModel] = useState('gpt-4o');
+  const [agentModel, setAgentModel] = useState('gpt-5.4');
   const [systemPrompt, setSystemPrompt] = useState('You are a helpful AI assistant.');
   const [selectedPlan, setSelectedPlan] = useState('Free');
   const [saving, setSaving] = useState(false);
@@ -106,10 +106,10 @@ export default function OnboardingPage() {
                 <label className="block text-sm font-medium text-[#94a3b8] mb-1.5">Model</label>
                 <select value={agentModel} onChange={(e) => setAgentModel(e.target.value)}
                   className="w-full px-4 py-2.5 bg-[#1e293b] border border-[rgba(255,255,255,0.1)] rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-[#3b82f6]">
-                  <option value="gpt-4o">GPT-4o</option>
-                  <option value="gpt-4o-mini">GPT-4o Mini</option>
-                  <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-                  <option value="claude-3-opus">Claude 3 Opus</option>
+                  <option value="gpt-5.4">GPT-5.4</option>
+                  <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                  <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                  <option value="claude-opus-4-20250514">Claude Opus 4</option>
                 </select>
               </div>
               <div>

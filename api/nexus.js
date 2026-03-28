@@ -1037,7 +1037,7 @@ router.post('/:nodeId/agents/create', async (req, res) => {
     }
 
     const {
-      name, username, role = 'general', system_prompt, model = 'gpt-4o',
+      name, username, role = 'general', system_prompt, model = 'gpt-5.4',
       temperature = 0.7, max_tokens = 4096, skills = [], avatar = null,
     } = req.body || {};
 

@@ -121,7 +121,7 @@ const PROVIDERS: Provider[] = [
   {
     provider: "chatgpt",
     name: "ChatGPT",
-    description: "Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex models — no API key needed.",
+    description: "Use your ChatGPT subscription to power agents with GPT-5.4, o3, and Codex models — no API key needed.",
     category: "ai",
     oauthReady: true,
     icon: <ChatGPTIcon />,
@@ -543,8 +543,8 @@ export default function IntegrationsPage() {
             <div className="bg-[#1f2028] border border-[rgba(255,255,255,0.06)] rounded-lg p-3 text-xs text-[#9ca3af]">
               <strong className="text-white">Model selection by role:</strong>{" "}
               Reasoning roles (code, analytics, legal) → <span className="text-amber-400">codex/o3</span> ·{" "}
-              Creative/strategic roles → <span className="text-blue-400">codex/gpt-4o</span> ·{" "}
-              Support/routine roles → <span className="text-green-400">codex/gpt-4o-mini</span>
+              Creative/strategic roles → <span className="text-blue-400">codex/gpt-5.4</span> ·{" "}
+              Support/routine roles → <span className="text-green-400">codex/gpt-5.4-mini</span>
             </div>
 
             <div className="flex gap-3">

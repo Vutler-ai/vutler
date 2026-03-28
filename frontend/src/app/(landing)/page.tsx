@@ -367,11 +367,12 @@ function FeaturesSection() {
 
 const MCP_CONFIG = `{
   "mcpServers": {
-    "vutler": {
+    "vutler-nexus": {
       "command": "npx",
-      "args": ["-y", "@vutler/mcp"],
+      "args": ["-y", "@vutler/mcp-nexus"],
       "env": {
-        "VUTLER_TOKEN": "your_api_token"
+        "VUTLER_API_URL": "https://app.vutler.ai",
+        "VUTLER_API_KEY": "vt_your_key_here"
       }
     }
   }
@@ -379,12 +380,12 @@ const MCP_CONFIG = `{
 
 const NEXUS_BRIDGE_CONFIG = `{
   "mcpServers": {
-    "nexus-bridge": {
-      "command": "node",
-      "args": ["packages/mcp-nexus/index.js"],
+    "vutler-nexus": {
+      "command": "npx",
+      "args": ["-y", "@vutler/mcp-nexus"],
       "env": {
-        "VUTLER_API_URL": "http://localhost:3001",
-        "VUTLER_API_KEY": "your_api_key"
+        "VUTLER_API_URL": "https://app.vutler.ai",
+        "VUTLER_API_KEY": "vt_your_key_here"
       }
     }
   }

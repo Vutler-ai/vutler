@@ -259,7 +259,7 @@ function SpawnAgentDropdown({
 
 const AVAILABLE_SKILLS = ['email', 'calendar', 'tasks', 'drive', 'chat', 'web-search', 'code-exec'];
 const AVAILABLE_TOOLS  = ['send-email', 'read-email', 'create-event', 'create-task', 'read-file', 'write-file', 'web-search', 'execute-code'];
-const MODEL_OPTIONS    = ['gpt-4o', 'gpt-4o-mini', 'claude-3-5-sonnet', 'claude-3-haiku', 'llama-3.1-70b'];
+const MODEL_OPTIONS    = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'claude-sonnet-4-20250514', 'claude-haiku-4-5', 'llama-3.3-70b-versatile'];
 
 function CreateAgentDialog({
   nodeId,
@@ -275,7 +275,7 @@ function CreateAgentDialog({
     role: '',
     description: '',
     system_prompt: '',
-    model: 'gpt-4o-mini',
+    model: 'gpt-5.4-mini',
     skills: [],
     tools: [],
   });
