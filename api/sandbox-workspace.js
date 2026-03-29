@@ -27,10 +27,10 @@ const VALID_STATUSES = ['active', 'validated', 'dispatched', 'closed'];
 // ── POST / — Create workspace ─────────────────────────────────────────────────
 
 router.post('/', async (req, res) => {
-  const workspace_id = req.headers['x-workspace-id'] || req.workspaceId;
+  const workspace_id = req.workspaceId;
 
   if (!workspace_id) {
-    return res.status(400).json({ success: false, error: 'workspace_id is required (x-workspace-id header)' });
+    return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
   const { repo_url, branch, base_branch, agent_id, task_title, dispatch_target, dispatch_target_id } = req.body || {};
@@ -60,10 +60,10 @@ router.post('/', async (req, res) => {
 // ── GET / — List workspaces ───────────────────────────────────────────────────
 
 router.get('/', async (req, res) => {
-  const workspace_id = req.headers['x-workspace-id'] || req.workspaceId;
+  const workspace_id = req.workspaceId;
 
   if (!workspace_id) {
-    return res.status(400).json({ success: false, error: 'workspace_id is required (x-workspace-id header)' });
+    return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
   const { status, limit = '20', offset = '0' } = req.query;

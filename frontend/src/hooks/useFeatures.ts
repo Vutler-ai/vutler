@@ -24,13 +24,13 @@ interface FeaturesContextType {
 // ========== Defaults ==========
 
 const DEFAULT_FEATURES: FeaturesContextType = {
-  plan: 'full',
+  plan: 'office',
   features: [],
   snipara: [],
   loading: true,
-  hasFeature: () => true,
+  hasFeature: () => false,
   hasOffice: true,
-  hasAgents: true,
+  hasAgents: false,
 };
 
 // ========== Context ==========
@@ -72,7 +72,7 @@ async function fetchWorkspaceFeatures(): Promise<FeaturesResponse> {
 // ========== Provider state hook ==========
 
 export function useFeaturesState(): FeaturesContextType {
-  const [plan, setPlan] = useState<'office' | 'agents' | 'full'>('full');
+  const [plan, setPlan] = useState<'office' | 'agents' | 'full'>('office');
   const [features, setFeatures] = useState<string[]>([]);
   const [snipara, setSnipara] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,8 +89,8 @@ export function useFeaturesState(): FeaturesContextType {
       })
       .catch(() => {
         if (cancelled) return;
-        // Graceful degradation: default to full plan on API failure
-        setPlan('full');
+        // SECURITY: default to most restrictive plan on API failure (audit 2026-03-29)
+        setPlan('office');
         setFeatures([]);
         setSnipara([]);
       })

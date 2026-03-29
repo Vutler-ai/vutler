@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
   try {
     const pool = getPool();
     if (!pool) return res.json({ success: true, data: {} });
-    const wsId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const wsId = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
 
     const [agents, executions, tasks, notifications] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM ${SCHEMA}.agents WHERE workspace_id = $1`, [wsId]),

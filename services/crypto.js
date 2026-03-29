@@ -59,9 +59,7 @@ class CryptoService {
     const packed = Buffer.from(data, ENCODING);
 
     if (packed.length < IV_LENGTH + TAG_LENGTH + 1) {
-      // Likely legacy base64-encoded data — return as-is for migration
-      console.warn('[CryptoService] Data too short for AES-GCM, returning base64-decoded (legacy migration)');
-      return Buffer.from(data, 'base64').toString('utf8');
+      throw new Error('Invalid encrypted data: too short for AES-GCM. Data may need migration from legacy format.');
     }
 
     const iv = packed.subarray(0, IV_LENGTH);
@@ -78,9 +76,7 @@ class CryptoService {
       ]);
       return decrypted.toString('utf8');
     } catch (err) {
-      // Auth tag mismatch or wrong key — try legacy base64 decode
-      console.warn('[CryptoService] GCM decryption failed, trying legacy base64:', err.message);
-      return Buffer.from(data, 'base64').toString('utf8');
+      throw new Error('Decryption failed: authentication tag mismatch or wrong key.');
     }
   }
 }

@@ -36,8 +36,14 @@ async function withTable(pool) {
   return pool;
 }
 
+// SECURITY: workspace from JWT only (audit 2026-03-29)
+router.use((req, res, next) => {
+  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  next();
+});
+
 function wsId(req) {
-  return req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
+  return req.workspaceId;
 }
 
 // GET /api/v1/automations

@@ -83,7 +83,7 @@ router.get("/", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE workspace_id = $1 ORDER BY name`,
-      [req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+      [req.workspaceId] // SECURITY: workspace from JWT only (audit 2026-03-29)
     );
     const agents = result.rows.map(a => ({
       id: a.id,
@@ -121,7 +121,7 @@ router.get("/:id", async (req, res) => {
     const { id } = req.params;
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) AND workspace_id = $2 LIMIT 1`,
-      [id, req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+      [id, req.workspaceId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Agent not found", id });
@@ -155,7 +155,7 @@ router.post("/", async (req, res) => {
     const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, template_id } = req.body;
     if (!name || !username) return res.status(400).json({ success: false, error: "name and username required" });
 
-    const ws = req.workspaceId||"00000000-0000-0000-0000-000000000001";
+    const ws = req.workspaceId;
 
     const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
     const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();

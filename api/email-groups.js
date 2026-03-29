@@ -84,7 +84,7 @@ router.get('/', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.json({ success: true, groups: [] });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
     const result = await pg.query(
       `SELECT g.*,
               COUNT(m.id) AS member_count
@@ -125,7 +125,7 @@ router.post('/', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
     const resolvedDomain = domain || await getWorkspaceDomain(pg, ws);
     const emailAddress = `${cleanPrefix}@${resolvedDomain}`;
 
@@ -156,7 +156,7 @@ router.get('/:id', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
 
     const groupResult = await pg.query(
       `SELECT * FROM ${SCHEMA}.email_groups WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
@@ -195,7 +195,7 @@ router.put('/:id', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
 
     const result = await pg.query(
       `UPDATE ${SCHEMA}.email_groups
@@ -227,7 +227,7 @@ router.delete('/:id', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
     const result = await pg.query(
       `DELETE FROM ${SCHEMA}.email_groups WHERE id = $1 AND workspace_id = $2 RETURNING id, name, email_address`,
       [req.params.id, ws]
@@ -257,7 +257,7 @@ router.post('/:id/members', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
 
     // Verify group belongs to workspace
     const groupCheck = await pg.query(

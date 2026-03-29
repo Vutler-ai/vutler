@@ -25,7 +25,7 @@ router.post('/', async (req, res) => {
       title, description, priority: priority || 'medium',
       due_date, created_by: assignee || 'user',
       assigned_agent: assigned_agent || assignee || undefined,
-      workspace_id: workspace_id || '00000000-0000-0000-0000-000000000001'
+      workspace_id: req.workspaceId // SECURITY: workspace from JWT only (audit 2026-03-29)
     });
     res.status(201).json({ success: true, data: task });
   } catch (err) {

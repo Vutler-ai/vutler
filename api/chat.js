@@ -10,7 +10,12 @@ const pool = require('../lib/vaultbrix');
 const llmRouter = require('../services/llmRouter');
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+// SECURITY: workspace from JWT only (audit 2026-03-29)
+router.use((req, res, next) => {
+  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  next();
+});
 
 // ── Agent response helper (runs async, does not block user) ──
 async function _triggerAgentResponse(req, channelId, wsId) {
@@ -87,7 +92,7 @@ let llmResult;
 // GET /channels — list all channels
 router.get('/channels', async (req, res) => {
   try {
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = req.workspaceId;
     const result = await pool.query(
       `SELECT c.*, 
         (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) as message_count,
@@ -148,7 +153,7 @@ router.post('/send', async (req, res) => {
 
     const sId = sender_id || req.headers['x-user-id'] || 'user';
     const sName = sender_name || req.headers['x-user-name'] || 'User';
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = req.workspaceId;
 
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, parent_id, workspace_id)
@@ -184,7 +189,7 @@ router.post('/channels', async (req, res) => {
       return res.status(400).json({ success: false, error: 'name is required' });
     }
 
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = req.workspaceId;
     const createdBy = req.headers['x-user-id'] || 'system';
 
     // For DM channels, return existing if found
@@ -228,7 +233,7 @@ router.post('/channels', async (req, res) => {
 // GET /agents — list available agents
 router.get('/agents', async (req, res) => {
   try {
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = req.workspaceId;
     const result = await pool.query(
       `SELECT id, name, username, status, avatar, role, description, model, provider
        FROM ${SCHEMA}.agents

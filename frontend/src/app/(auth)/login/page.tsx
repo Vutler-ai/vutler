@@ -59,12 +59,11 @@ export default function LoginPage() {
         return;
       }
 
-      // Strip any other query params (e.g. pre-filled email/password from old flow)
+      // Strip any other query params (e.g. pre-filled email from old flow)
       if (Array.from(params.keys()).length > 0) {
         const qpEmail = params.get('email');
-        const qpPassword = params.get('password');
         if (qpEmail) setEmail(qpEmail);
-        if (qpPassword) setPassword(qpPassword);
+        // SECURITY: never pre-fill password from URL (audit 2026-03-29)
         window.history.replaceState({}, '', '/login');
       }
     } catch {

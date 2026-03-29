@@ -40,7 +40,12 @@ function buildCommand(language, code) {
     case 'python':
       return { cmd: 'python3', args: ['-c', code] };
     case 'shell':
-      // `sh -c` runs arbitrary shell; code passed as arg, not interpolated
+      // SECURITY: shell execution disabled in production (audit 2026-03-29)
+      // Shell allows arbitrary file access, network calls, and privilege escalation.
+      // Re-enable only when Docker container isolation is implemented.
+      if (process.env.NODE_ENV === 'production' || process.env.SANDBOX_DISABLE_SHELL !== 'false') {
+        throw new Error('Shell execution is disabled for security. Use JavaScript or Python.');
+      }
       return { cmd: 'sh', args: ['-c', code] };
     default:
       throw new Error(`Unsupported language: ${language}`);
@@ -152,9 +157,12 @@ function runProcess(cmd, args, timeoutMs) {
       // Limit environment variables passed to child for basic hygiene
       env: {
         PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-        HOME: process.env.HOME || '/tmp',
+        HOME: '/tmp',
         LANG: 'en_US.UTF-8',
+        // SECURITY: strip all secrets — child gets only minimal env (audit 2026-03-29)
       },
+      // Isolate child process — no parent stdio inheritance
+      cwd: '/tmp',
     });
 
     const timer = setTimeout(() => {

@@ -80,7 +80,7 @@ function setupChatWebSocket(server, app) {
       req.wsUser = {
         userId: decoded.userId,
         userName: decoded.name || decoded.email || 'User',
-        workspaceId: decoded.workspaceId || '00000000-0000-0000-0000-000000000001'
+        workspaceId: decoded.workspaceId // SECURITY: workspace from JWT only (audit 2026-03-29)
       };
 
       wss.handleUpgrade(req, socket, head, (ws) => {

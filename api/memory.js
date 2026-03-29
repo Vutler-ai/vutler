@@ -20,7 +20,7 @@ async function resolveAgentScope(req, agentId) {
   const pg = req.app?.locals?.pg;
   if (pg) {
     try {
-      const wsId = req.workspaceId || "00000000-0000-0000-0000-000000000001";
+      const wsId = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
       const result = await pg.query(
         `SELECT username, name FROM tenant_vutler.agents
          WHERE (id::text = $1 OR username = $1) AND workspace_id = $2 LIMIT 1`,
@@ -444,7 +444,7 @@ router.get("/templates", async (req, res) => {
       try {
         const result = await pg.query(
           "SELECT DISTINCT role FROM tenant_vutler.agents WHERE role IS NOT NULL AND workspace_id = $1",
-          [req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+          [req.workspaceId]
         );
         roles = result.rows.map(r => r.role).filter(Boolean);
         if (!roles.length) roles = ["general"];
