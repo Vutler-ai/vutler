@@ -595,7 +595,7 @@ router.get('/email/pending', async (req, res) => {
     const r = await pg.query(
       `SELECT e.*, a.name AS agent_name, a.avatar AS agent_avatar, a.username AS agent_username
        FROM ${SCHEMA}.emails e
-       LEFT JOIN ${SCHEMA}.agents a ON a.id = e.agent_id
+       LEFT JOIN ${SCHEMA}.agents a ON a.id::text = e.agent_id
        WHERE e.folder = 'drafts' AND e.agent_id IS NOT NULL
        ORDER BY e.created_at DESC LIMIT 100`
     );
