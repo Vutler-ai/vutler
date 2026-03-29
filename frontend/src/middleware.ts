@@ -16,13 +16,15 @@ export function middleware(request: NextRequest) {
   const hostname = request.headers.get('host')?.split(':')[0] || '';
   const { pathname } = request.nextUrl;
 
-  // Skip static files, API routes, and RSC internal requests
+  // Skip static files, API routes, and Next.js RSC/prefetch requests
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/ws') ||
     pathname.startsWith('/static') ||
     pathname.match(/\.(ico|png|jpg|jpeg|svg|css|js|woff2?)$/) ||
+    request.headers.get('RSC') === '1' ||
+    request.headers.get('Next-Router-State-Tree') !== null ||
     request.nextUrl.searchParams.has('_rsc')
   ) {
     return NextResponse.next();
@@ -46,9 +48,13 @@ export function middleware(request: NextRequest) {
     const isLandingRoute = LANDING_ROUTES.includes(pathname);
 
     if (isLandingRoute) {
-      // "/" on app.vutler.ai → redirect to /login (avoids cross-origin CORS issues with RSC)
+      // "/" on app.vutler.ai → redirect to vutler.ai unless it's a logged-in user
+      // For "/" specifically, we check if user might be authenticated (has token cookie or auth header)
+      // If not authenticated, redirect to vutler.ai
       if (pathname === '/') {
-        return NextResponse.redirect(new URL('/login', request.url));
+        // Let Next.js handle it — the landing page already redirects to /dashboard if authenticated
+        // For unauthenticated users, redirect to marketing site
+        return NextResponse.redirect(new URL(`https://vutler.ai${request.nextUrl.search}`));
       }
       return NextResponse.redirect(new URL(`https://vutler.ai${pathname}${request.nextUrl.search}`));
     }

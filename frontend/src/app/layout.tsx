@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
@@ -42,6 +43,13 @@ export default function RootLayout({
       <body className={`${inter.variable} antialiased`}>
         {children}
         <ServiceWorkerRegister />
+        {/* Umami Analytics - Privacy-focused, no cookies */}
+        <Script
+          defer
+          src="https://cloud.umami.is/script.js"
+          data-website-id="223241c1-605f-4afe-8dc7-3a8a59c06d68"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );

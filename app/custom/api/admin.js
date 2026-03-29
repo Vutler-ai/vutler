@@ -7,6 +7,9 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const os = require('os');
+const { execSync } = require('child_process');
+const fs = require('fs');
 const { pool } = require('../lib/postgres');
 const router = express.Router();
 
@@ -66,9 +69,15 @@ router.post('/login', async (req, res) => {
       const hash = hashPassword(password, user.salt);
       passwordValid = (hash === user.password_hash);
     } else if (user.password_hash && user.password_hash.startsWith('$2b$')) {
-      // bcrypt — can't verify without bcrypt lib, skip
-      console.log('[Admin] bcrypt password format not supported for admin login');
-      return res.status(401).json({ success: false, error: 'Invalid credentials (password format not supported)' });
+      // bcrypt format — use bcryptjs
+      let bcrypt;
+      try { bcrypt = require('bcryptjs'); } catch { try { bcrypt = require('bcrypt'); } catch { /* none */ } }
+      if (bcrypt) {
+        passwordValid = await bcrypt.compare(password, user.password_hash);
+      } else {
+        console.log('[Admin] No bcrypt library available');
+        return res.status(401).json({ success: false, error: 'Invalid credentials (bcrypt not available)' });
+      }
     }
 
     if (!passwordValid) {
@@ -373,6 +382,194 @@ router.delete('/users/:id', async (req, res) => {
     res.json({ success: true, data: result.rows[0] });
   } catch (err) {
     console.error('[Admin] Delete user error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── VPS Health Helpers ──────────────────────────────────────────────────────
+
+const THRESHOLDS = {
+  cpu: { warning: 80, critical: 95 },
+  memory: { warning: 80, critical: 95 },
+  disk: { warning: 80, critical: 90 },
+  load: { warning: 0.8, critical: 1.5 },
+};
+
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  return parts.length ? parts.join(' ') : `${Math.floor(seconds)}s`;
+}
+
+function readProcFile(path) {
+  try { return fs.readFileSync(path, 'utf8'); } catch { return ''; }
+}
+
+function getCpuInfo() {
+  const cores = os.cpus().length || 1;
+  const model = os.cpus()[0]?.model || 'Unknown';
+  const [one_minute, five_minutes, fifteen_minutes] = os.loadavg();
+
+  // CPU usage from /proc/stat (Linux) or fallback to load-based estimate
+  let usage_percent = 0;
+  try {
+    const stat1 = readProcFile('/proc/stat');
+    const parseLine = (line) => {
+      const p = line.split(/\s+/).slice(1).map(Number);
+      return { idle: p[3] + (p[4] || 0), total: p.reduce((a, b) => a + b, 0) };
+    };
+    // Synchronous second sample
+    const { execSync: exec } = require('child_process');
+    exec('sleep 0.1', { stdio: 'ignore' });
+    const stat2 = readProcFile('/proc/stat');
+    if (stat1 && stat2) {
+      const c1 = parseLine(stat1.split('\n')[0]);
+      const c2 = parseLine(stat2.split('\n')[0]);
+      const totalDiff = c2.total - c1.total;
+      if (totalDiff > 0) usage_percent = Math.round((1 - (c2.idle - c1.idle) / totalDiff) * 1000) / 10;
+    }
+  } catch {
+    usage_percent = Math.min(100, Math.round((one_minute / cores) * 100));
+  }
+
+  return { cores, model, usage_percent, load_average: { one_minute, five_minutes, fifteen_minutes } };
+}
+
+function getMemoryInfo() {
+  const meminfo = readProcFile('/proc/meminfo');
+  if (!meminfo) {
+    const total = os.totalmem();
+    const free = os.freemem();
+    const used = total - free;
+    return {
+      total_bytes: total, used_bytes: used, free_bytes: free, available_bytes: free,
+      usage_percent: Math.round((used / total) * 1000) / 10,
+      swap_total_bytes: 0, swap_used_bytes: 0, swap_usage_percent: 0,
+    };
+  }
+  const val = (key) => { const m = meminfo.match(new RegExp(`${key}:\\s+(\\d+)`)); return m ? parseInt(m[1]) * 1024 : 0; };
+  const total = val('MemTotal'), free = val('MemFree'), available = val('MemAvailable') || free;
+  const used = total - available;
+  const swapTotal = val('SwapTotal'), swapFree = val('SwapFree'), swapUsed = swapTotal - swapFree;
+  return {
+    total_bytes: total, used_bytes: used, free_bytes: free, available_bytes: available,
+    usage_percent: total > 0 ? Math.round((used / total) * 1000) / 10 : 0,
+    swap_total_bytes: swapTotal, swap_used_bytes: swapUsed,
+    swap_usage_percent: swapTotal > 0 ? Math.round((swapUsed / swapTotal) * 1000) / 10 : 0,
+  };
+}
+
+function getDiskInfo() {
+  try {
+    const dfOutput = execSync('df -B1 -T 2>/dev/null || df -k 2>/dev/null', { encoding: 'utf8' });
+    const lines = dfOutput.split('\n').slice(1);
+    const disks = [];
+    const seen = new Set();
+    for (const line of lines) {
+      const p = line.split(/\s+/);
+      if (p.length < 6) continue;
+      const dev = p[0];
+      if (/^(tmpfs|devtmpfs|overlay|none|shm)/.test(dev) || dev.startsWith('/dev/loop')) continue;
+      const isReal = /^\/dev\/(sd|nvme|vd|xvd)/.test(dev);
+      let mp, fsType, total, used, avail;
+      if (p.length >= 7) { fsType = p[1]; total = +p[2]; used = +p[3]; avail = +p[4]; mp = p[6]; }
+      else { fsType = 'unknown'; total = +p[1]*1024; used = +p[2]*1024; avail = +p[3]*1024; mp = p[5]; }
+      const relevant = mp === '/' || mp.startsWith('/home') || mp.startsWith('/var') || mp.startsWith('/data');
+      if ((isReal || relevant) && !seen.has(dev)) {
+        seen.add(dev);
+        disks.push({ mount_point: mp, filesystem: fsType, total_bytes: total, used_bytes: used, available_bytes: avail, usage_percent: total > 0 ? Math.round((used / total) * 1000) / 10 : 0 });
+      }
+    }
+    return disks;
+  } catch { return []; }
+}
+
+function getNetworkInfo() {
+  const netDev = readProcFile('/proc/net/dev');
+  if (!netDev) return [];
+  const ifaces = [];
+  for (const line of netDev.split('\n').slice(2)) {
+    const m = line.match(/^\s*(\w+):\s*(\d+)\s+(\d+)\s+(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+(\d+)\s+(\d+)/);
+    if (m && m[1] !== 'lo' && !m[1].startsWith('veth') && !m[1].startsWith('br-') && !m[1].startsWith('docker')) {
+      ifaces.push({ name: m[1], rx_bytes: +m[2], rx_packets: +m[3], rx_errors: +m[4], tx_bytes: +m[5], tx_packets: +m[6], tx_errors: +m[7] });
+    }
+  }
+  return ifaces;
+}
+
+function getVpsHealthMetrics() {
+  const alerts = [];
+  const cpu = getCpuInfo();
+  const memory = getMemoryInfo();
+  const disks = getDiskInfo();
+  const network = getNetworkInfo();
+  const uptimeSec = os.uptime();
+  const uptime = { uptime_seconds: Math.floor(uptimeSec), uptime_formatted: formatUptime(uptimeSec), boot_time: new Date(Date.now() - uptimeSec * 1000).toISOString() };
+  const hostname = os.hostname();
+
+  if (cpu.usage_percent >= THRESHOLDS.cpu.critical) alerts.push(`Critical: CPU at ${cpu.usage_percent}%`);
+  else if (cpu.usage_percent >= THRESHOLDS.cpu.warning) alerts.push(`Warning: CPU at ${cpu.usage_percent}%`);
+  if (memory.usage_percent >= THRESHOLDS.memory.critical) alerts.push(`Critical: Memory at ${memory.usage_percent}%`);
+  else if (memory.usage_percent >= THRESHOLDS.memory.warning) alerts.push(`Warning: Memory at ${memory.usage_percent}%`);
+  for (const d of disks) {
+    if (d.usage_percent >= THRESHOLDS.disk.critical) alerts.push(`Critical: Disk ${d.mount_point} at ${d.usage_percent}%`);
+    else if (d.usage_percent >= THRESHOLDS.disk.warning) alerts.push(`Warning: Disk ${d.mount_point} at ${d.usage_percent}%`);
+  }
+
+  let status = 'healthy';
+  if (alerts.some(a => a.startsWith('Critical'))) status = 'critical';
+  else if (alerts.some(a => a.startsWith('Warning'))) status = 'warning';
+
+  return { timestamp: new Date().toISOString(), hostname, cpu, memory, disks, network, uptime, status, alerts };
+}
+
+async function getServicesHealth() {
+  const services = [];
+  // Check Express API
+  services.push({ name: 'Express API', key: 'api', status: 'healthy', latency_ms: 0, last_checked: new Date().toISOString(), required: true, description: 'Main backend API' });
+  // Check PostgreSQL
+  try {
+    const start = Date.now();
+    await pool.query('SELECT 1');
+    services.push({ name: 'PostgreSQL', key: 'postgres', status: 'healthy', latency_ms: Date.now() - start, last_checked: new Date().toISOString(), required: true, description: 'Primary database' });
+  } catch (err) {
+    services.push({ name: 'PostgreSQL', key: 'postgres', status: 'unhealthy', latency_ms: null, last_checked: new Date().toISOString(), error: err.message, required: true, description: 'Primary database' });
+  }
+  // Check Frontend (port 3000)
+  try {
+    const start = Date.now();
+    const resp = await fetch('http://localhost:3000/api/health', { signal: AbortSignal.timeout(3000) });
+    services.push({ name: 'Next.js Frontend', key: 'frontend', status: resp.ok ? 'healthy' : 'degraded', latency_ms: Date.now() - start, last_checked: new Date().toISOString(), required: true, description: 'Frontend application' });
+  } catch {
+    services.push({ name: 'Next.js Frontend', key: 'frontend', status: 'unhealthy', latency_ms: null, last_checked: new Date().toISOString(), error: 'Connection refused', required: true, description: 'Frontend application' });
+  }
+  return services;
+}
+
+/**
+ * GET /api/v1/admin/health/vps
+ * VPS system health + service status
+ */
+router.get('/health/vps', async (req, res) => {
+  try {
+    const [services, vps] = await Promise.all([
+      getServicesHealth(),
+      Promise.resolve(getVpsHealthMetrics()),
+    ]);
+    const summary = {
+      total: services.length,
+      healthy: services.filter(s => s.status === 'healthy').length,
+      unhealthy: services.filter(s => s.status === 'unhealthy').length,
+      degraded: services.filter(s => s.status === 'degraded' || s.status === 'unknown').length,
+    };
+    res.json({ success: true, services, summary, vps, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Admin] VPS health error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
