@@ -29,7 +29,7 @@ async function loadAgents() {
   const now = Date.now();
   if (agentCache && (now - agentCacheTime) < CACHE_TTL) return agentCache;
   const res = await pool.query(
-    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role
+    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role, workspace_id
      FROM ${SCHEMA}.agents WHERE workspace_id = $1`,
     [DEFAULT_WORKSPACE]
   );
@@ -75,8 +75,10 @@ async function executeTask(task) {
         system_prompt: systemPrompt,
         temperature: parseFloat(agent.temperature) || 0.7,
         max_tokens: agent.max_tokens || 4096,
+        workspace_id: agent.workspace_id || DEFAULT_WORKSPACE,
       },
-      [{ role: 'user', content: userMessage }]
+      [{ role: 'user', content: userMessage }],
+      pool // pass db for OAuth token resolution (codex/chatgpt)
     );
 
     const latencyMs = Date.now() - start;
