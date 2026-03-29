@@ -33,7 +33,7 @@ export interface Agent {
   id: string;
   name: string;
   platform?: string;
-  status: 'active' | 'online' | 'deployed' | 'inactive' | 'error' | string;
+  status: 'active' | 'inactive' | 'error';
   lastActive?: string;
   model?: string;
   provider?: string;
@@ -160,7 +160,7 @@ export interface SendMessagePayload {
 
 // ─── Email ────────────────────────────────────────────────────────────────────
 
-export type EmailFolder = 'inbox' | 'sent';
+export type EmailFolder = 'inbox' | 'sent' | 'archive' | 'drafts' | 'trash';
 
 export interface Email {
   uid: string;
