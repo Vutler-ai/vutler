@@ -160,7 +160,6 @@ export async function adminFetch<T>(
 
   if (response.status === 401) {
     clearAdminToken();
-    if (typeof window !== 'undefined') window.location.href = '/admin';
     throw new Error('Admin authentication required');
   }
 
