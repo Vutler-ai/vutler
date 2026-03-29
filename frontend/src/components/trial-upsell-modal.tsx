@@ -54,7 +54,7 @@ export function TrialUpsellModal({
 
   const title = expired
     ? 'Votre essai a expiré'
-    : 'Vos crédits d'essai sont épuisés'
+    : "Vos crédits d'essai sont épuisés"
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
