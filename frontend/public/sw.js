@@ -1,5 +1,5 @@
 const CACHE_NAME = 'vutler-v1';
-const STATIC_ASSETS = ['/', '/dashboard', '/favicon.svg'];
+const STATIC_ASSETS = ['/dashboard', '/favicon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -19,6 +19,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
+  // Skip cross-origin requests entirely
+  if (url.origin !== self.location.origin) return;
   // Network-first for API calls
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(
