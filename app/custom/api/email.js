@@ -135,8 +135,11 @@ router.get('/email/sent', async (req, res) => {
       [req.workspaceId]
     );
     const emails = r.rows.map(e => ({
-      id: e.id, from: e.from_addr, to: e.to_addr,
-      subject: e.subject, body: e.body, date: e.created_at,
+      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
+      subject: e.subject, body: e.body, htmlBody: e.html_body,
+      isRead: e.is_read ?? true, flagged: e.flagged || false,
+      folder: e.folder || 'sent', agentId: e.agent_id,
+      date: e.created_at,
     }));
 
     res.json({ success: true, emails, count: emails.length });
@@ -159,9 +162,10 @@ router.get('/email/drafts', async (req, res) => {
       [req.workspaceId]
     );
     const emails = r.rows.map(e => ({
-      id: e.id, from: e.from_addr, to: e.to_addr,
+      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
       subject: e.subject, body: e.body, htmlBody: e.html_body,
-      status: 'pending_approval',
+      isRead: e.is_read || false, flagged: e.flagged || false,
+      folder: e.folder || 'drafts', status: 'pending_approval',
       agentId: e.agent_id, date: e.created_at,
     }));
 

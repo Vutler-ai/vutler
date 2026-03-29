@@ -1056,9 +1056,9 @@ export default function EmailPage() {
   };
 
   const handleSelectEmail = async (email: AugmentedEmail) => {
-    setSelectedEmail(email);
+    setSelectedEmail({ ...email, unread: false });
     setMobileView("viewer");
-    if (email.unread && folder === "inbox") {
+    if (email.unread) {
       setEmails((prev) =>
         prev.map((e) => (e.uid === email.uid ? { ...e, unread: false } : e))
       );
