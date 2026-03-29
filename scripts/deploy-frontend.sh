@@ -14,6 +14,8 @@ docker run -d --name vutler-frontend --restart unless-stopped \
   --network host \
   -e API_URL=http://localhost:3001 \
   -e WS_URL=http://localhost:3001 \
+  -e PORT=3002 \
+  -e HOSTNAME=0.0.0.0 \
   vutler-frontend:latest
 
-echo "[Deploy] Frontend running on :3000"
+echo "[Deploy] Frontend running on :3002"
