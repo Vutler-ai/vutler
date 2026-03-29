@@ -106,20 +106,18 @@ async function executeTask(task) {
 }
 
 async function updateTask(taskId, status, output, metadata) {
-  const sets = ['status = $2', 'updated_at = NOW()'];
-  const vals = [taskId, status];
-  let idx = 3;
-
+  // No 'output' column in tasks table — store everything in metadata jsonb
+  const mergedMeta = { ...(metadata || {}) };
   if (output !== undefined && output !== null) {
-    sets.push(`output = $${idx}`);
-    vals.push(typeof output === 'string' ? output : JSON.stringify(output));
-    idx++;
+    mergedMeta.result = typeof output === 'string' ? output : JSON.stringify(output);
   }
 
-  if (metadata) {
-    sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${idx}::jsonb`);
-    vals.push(JSON.stringify(metadata));
-    idx++;
+  const sets = ['status = $2', 'updated_at = NOW()'];
+  const vals = [taskId, status];
+
+  if (Object.keys(mergedMeta).length > 0) {
+    sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb`);
+    vals.push(JSON.stringify(mergedMeta));
   }
 
   if (status === 'completed' || status === 'failed') {
@@ -159,8 +157,8 @@ async function pollOnce() {
     consecutiveErrors = 0;
   } catch (err) {
     consecutiveErrors++;
-    if (consecutiveErrors <= 3) {
-      console.error('[TaskExecutor] Poll error:', err.message);
+    if (consecutiveErrors <= 10) {
+      console.error('[TaskExecutor] Poll error:', err.message, err.stack?.split('\n')[1]?.trim());
     }
   }
 }
