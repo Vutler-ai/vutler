@@ -318,8 +318,8 @@ export default function PricingPage() {
           <h2 className="text-2xl font-bold mb-8 text-center">Full feature comparison</h2>
 
           {/* Horizontal scroll wrapper for mobile */}
-          <div className="overflow-x-auto rounded-2xl border border-white/5">
-            <table className="w-full min-w-[900px] text-sm">
+          <div className="overflow-x-auto rounded-2xl border border-white/5 scrollbar-hide">
+            <table className="w-full min-w-[640px] lg:min-w-0 text-sm">
               <thead>
                 <tr className="bg-[#0e0f1a]">
                   <th className="text-left px-6 py-4 text-white/40 font-medium w-48">Feature</th>

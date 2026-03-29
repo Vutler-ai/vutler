@@ -131,5 +131,54 @@
   }
   body {
     @apply bg-background text-foreground;
+    -webkit-tap-highlight-color: transparent;
   }
+}
+
+/* ─── Safe area utilities for PWA / notch devices ───────────────────────────── */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* ─── Mobile touch optimizations ────────────────────────────────────────────── */
+@media (max-width: 1023px) {
+  /* Prevent pull-to-refresh interference in PWA */
+  body {
+    overscroll-behavior-y: contain;
+  }
+
+  /* Larger touch targets on mobile */
+  button, a, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Prevent text selection on interactive elements */
+  nav, [role="navigation"] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* ─── Smooth scrolling for all scroll containers ────────────────────────────── */
+.scroll-smooth-touch {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* ─── Hide scrollbar but keep scrollable ────────────────────────────────────── */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }

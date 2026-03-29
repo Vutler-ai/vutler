@@ -27,6 +27,20 @@ router.post('/', async (req, res) => {
       assigned_agent: assigned_agent || assignee || undefined,
       workspace_id: req.workspaceId // SECURITY: workspace from JWT only (audit 2026-03-29)
     });
+
+    // Push notification for task creation (best-effort)
+    if (req.user?.id) {
+      try {
+        const { sendPushToUser } = require('../services/pushService');
+        sendPushToUser(req.user.id, {
+          title: 'New task created',
+          body: title,
+          url: '/tasks',
+          tag: 'task-created',
+        }).catch(() => {});
+      } catch { /* push unavailable */ }
+    }
+
     res.status(201).json({ success: true, data: task });
   } catch (err) {
     console.error('[TASKS] Create error:', err.message);

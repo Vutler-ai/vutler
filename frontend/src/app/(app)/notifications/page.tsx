@@ -39,15 +39,15 @@ export default function NotificationsPage() {
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-white p-6 md:p-10">
+    <div className="min-h-screen bg-[#0f172a] text-white p-4 sm:p-6 md:p-10">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-start justify-between gap-3 mb-8">
           <div>
-            <h1 className="text-3xl font-bold">Notifications</h1>
-            <p className="text-[#94a3b8] mt-1">{unreadCount} unread notification{unreadCount !== 1 ? 's' : ''}</p>
+            <h1 className="text-2xl sm:text-3xl font-bold">Notifications</h1>
+            <p className="text-[#94a3b8] mt-1 text-sm sm:text-base">{unreadCount} unread notification{unreadCount !== 1 ? 's' : ''}</p>
           </div>
           {unreadCount > 0 && (
-            <button onClick={markAllRead} className="px-4 py-2 text-sm bg-[#1e293b] hover:bg-[#334155] border border-[rgba(255,255,255,0.1)] rounded-lg transition-colors cursor-pointer">
+            <button onClick={markAllRead} className="shrink-0 px-3 sm:px-4 py-2 text-sm bg-[#1e293b] hover:bg-[#334155] border border-[rgba(255,255,255,0.1)] rounded-lg transition-colors cursor-pointer">
               Mark all as read
             </button>
           )}
@@ -64,18 +64,18 @@ export default function NotificationsPage() {
         ) : (
           <div className="space-y-3">
             {notifications.map(n => (
-              <div key={n.id} className={`p-4 rounded-xl border-l-4 ${typeColors[n.type] || typeColors.info} ${n.read ? 'bg-[#0f172a] opacity-60' : 'bg-[#1e293b]'} transition-all`}>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3">
-                    <span className="text-xl mt-0.5">{typeIcons[n.type] || '📌'}</span>
-                    <div>
-                      <h3 className="font-semibold">{n.title}</h3>
+              <div key={n.id} className={`p-3 sm:p-4 rounded-xl border-l-4 ${typeColors[n.type] || typeColors.info} ${n.read ? 'bg-[#0f172a] opacity-60' : 'bg-[#1e293b]'} transition-all`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <span className="text-xl mt-0.5 shrink-0">{typeIcons[n.type] || '📌'}</span>
+                    <div className="min-w-0">
+                      <h3 className="font-semibold text-sm sm:text-base">{n.title}</h3>
                       <p className="text-sm text-[#94a3b8] mt-0.5">{n.message}</p>
                       <p className="text-xs text-[#64748b] mt-2">{new Date(n.createdAt).toLocaleString()}</p>
                     </div>
                   </div>
                   {!n.read && (
-                    <button onClick={() => markRead(n.id)} className="text-xs text-[#3b82f6] hover:text-[#60a5fa] whitespace-nowrap cursor-pointer">
+                    <button onClick={() => markRead(n.id)} className="text-xs text-[#3b82f6] hover:text-[#60a5fa] whitespace-nowrap shrink-0 cursor-pointer">
                       Mark read
                     </button>
                   )}

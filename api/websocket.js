@@ -362,6 +362,19 @@ async function handleChatMessage(connection, data, app) {
       summary   : `Chat via WebSocket (${(reply || '').slice(0, 60)}…)`
     });
 
+    // Send push notification (best-effort, for background/closed app)
+    if (connection.userId) {
+      try {
+        const { sendPushToUser } = require('../services/pushService');
+        sendPushToUser(connection.userId, {
+          title: connection.agentName || 'Vutler Agent',
+          body: (reply || '').slice(0, 120),
+          url: '/chat',
+          tag: `chat-${connection.agentId}`,
+        }).catch(() => {});
+      } catch { /* push unavailable */ }
+    }
+
   } catch (err) {
     console.error(`[WS] LLM error for agent ${connection.agentId}:`, err.message);
     send(connection.ws, 'error', {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
@@ -173,6 +173,9 @@ export default function AppSidebar({
   const [collapsed, setCollapsed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const touchStartX = useRef(0);
+  const touchCurrentX = useRef(0);
   const pathname = usePathname();
   const router = useRouter();
   const { hasFeature, loading } = useFeatures();
@@ -209,6 +212,53 @@ export default function AppSidebar({
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
 
+  // Close sidebar on navigation (mobile)
+  useEffect(() => {
+    if (mobileOpen && onMobileClose) {
+      onMobileClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  // ─── Swipe gesture to close sidebar on mobile ───
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchCurrentX.current = e.touches[0].clientX;
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    touchCurrentX.current = e.touches[0].clientX;
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    const diff = touchStartX.current - touchCurrentX.current;
+    // Swipe left to close (>80px threshold)
+    if (diff > 80 && mobileOpen && onMobileClose) {
+      onMobileClose();
+    }
+  }, [mobileOpen, onMobileClose]);
+
+  // ─── Swipe from left edge to open sidebar ───
+  useEffect(() => {
+    let startX = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      startX = e.touches[0].clientX;
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (startX < 20 && e.changedTouches[0].clientX > 80 && !mobileOpen) {
+        // Swiped from left edge to right → open sidebar
+        // Dispatch a custom event that AppShell listens to
+        window.dispatchEvent(new CustomEvent('mobile-sidebar-open'));
+      }
+    };
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [mobileOpen]);
+
   const handleLogout = async () => {
     setMenuOpen(false);
     await logout();
@@ -225,12 +275,16 @@ export default function AppSidebar({
 
   const sidebarWidth = collapsed ? 'w-16' : 'w-64';
 
-  // Filter items based on feature flags. During loading, show all items.
+  // Filter items based on feature flags
   const getVisibleItems = (items: NavItem[]) =>
     items.filter((item) => loading || !item.feature || hasFeature(item.feature));
 
   const sidebarContent = (
     <aside
+      ref={sidebarRef}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       className={`
         fixed top-0 left-0 h-screen ${sidebarWidth} bg-[#0e0f1a] border-r border-[rgba(255,255,255,0.07)]
         flex flex-col z-40 transition-all duration-300 ease-in-out
@@ -291,7 +345,7 @@ export default function AppSidebar({
                     (item.href !== '/' && pathname?.startsWith(item.href));
 
                   const linkClasses = `
-                    flex items-center ${collapsed ? 'justify-center' : 'space-x-3'} px-3 py-2 rounded-lg transition-colors duration-200 cursor-pointer
+                    flex items-center ${collapsed ? 'justify-center' : 'space-x-3'} px-3 py-2.5 rounded-lg transition-colors duration-200 cursor-pointer
                     focus:outline-none focus:ring-2 focus:ring-[#3b82f6]
                     ${
                       isActive

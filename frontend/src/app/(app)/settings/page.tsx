@@ -1237,7 +1237,7 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
 
   if (loading) return <div className="space-y-4">{[1,2,3].map(i => <Skeleton key={i} className="h-24 rounded-xl bg-[#14151f]" />)}</div>;
 
-  const sectionCx = "bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6";
+  const sectionCx = "bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 sm:p-6";
   const inputCx = "px-3 py-2.5 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]";
   const btnPrimary = "px-4 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors";
   const btnDanger = "px-3 py-1.5 text-xs bg-red-900/30 hover:bg-red-800/50 text-red-400 rounded-lg transition-colors";
@@ -1252,9 +1252,9 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
           <CardDescription>Use your own domain for agent emails (e.g. <span className="font-mono text-white">jarvis@yourcompany.com</span>)</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <Input value={newDomain} onChange={e => setNewDomain(e.target.value)} onKeyDown={e => e.key === 'Enter' && addDomain()} placeholder="yourcompany.com" className={cx.input} />
-            <Button onClick={addDomain} disabled={addingDomain || !newDomain.trim()} className="bg-[#3b82f6] hover:bg-[#2563eb]">{addingDomain ? 'Adding…' : 'Add Domain'}</Button>
+            <Button onClick={addDomain} disabled={addingDomain || !newDomain.trim()} className="bg-[#3b82f6] hover:bg-[#2563eb] sm:shrink-0">{addingDomain ? 'Adding…' : 'Add Domain'}</Button>
           </div>
           {domains.length === 0 ? (
             <p className="text-sm text-[#6b7280]">No custom domains. Agents use <span className="font-mono">workspace.vutler.ai</span>.</p>
@@ -1407,7 +1407,7 @@ export default function SettingsPage() {
       )}
 
       <div>
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-white">Settings</h1>
         <p className="text-sm text-[#9ca3af] mt-1">
           Manage your profile, security, workspace, and API keys.
         </p>

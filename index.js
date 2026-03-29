@@ -612,6 +612,7 @@ mount('/api/v1/admin', require('./api/admin'));
 mount('/api/v1/audit-logs', require('./api/audit-logs'));
 mount('/api/v1/clients', require('./api/clients'));
 mount('/api/v1/notifications', require('./api/notifications'));
+mount('/api/v1/push', require('./api/push'));
 mount('/api/v1/webhooks', require('./api/webhook-routes'));
 mount('/api/v1/workspace', require('./api/workspace'));
 

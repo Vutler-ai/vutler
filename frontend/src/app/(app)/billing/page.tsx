@@ -306,7 +306,7 @@ function PlanCard({
 
   return (
     <div
-      className={`flex flex-col bg-[#14151f] border rounded-2xl p-6 transition-all duration-200 ${
+      className={`flex flex-col bg-[#14151f] border rounded-2xl p-4 sm:p-6 transition-all duration-200 ${
         isCurrent
           ? "border-[#3b82f6] shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
           : isEnterprise
@@ -581,10 +581,10 @@ export default function BillingPage() {
   }, []);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
+    <div className="max-w-5xl mx-auto space-y-8 px-0">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white">Plans & Billing</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-white">Plans & Billing</h1>
         <p className="text-sm text-[#9ca3af] mt-1">
           Manage your subscription, view usage, and upgrade your plan.
         </p>
@@ -646,7 +646,7 @@ export default function BillingPage() {
       {/* Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         {/* Category tabs */}
-        <div className="flex bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-1 gap-1 w-fit">
+        <div className="flex bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-1 gap-1 w-full sm:w-fit">
           {TABS.map((tab) => (
             <button
               key={tab.key}

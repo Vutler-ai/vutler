@@ -125,7 +125,7 @@ function HeaderNotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-80 max-h-[420px] bg-[#0d0e1a] border border-[rgba(255,255,255,0.1)] rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="absolute right-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-h-[420px] bg-[#0d0e1a] border border-[rgba(255,255,255,0.1)] rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.07)]">
             <h3 className="text-sm font-semibold text-white">Notifications</h3>
             {unreadCount > 0 && (
@@ -236,7 +236,7 @@ function TrialBadge() {
         href="/billing"
         className="rounded-full px-3 py-1 text-xs font-medium text-red-400 bg-red-900/20 border border-red-600/30 hover:bg-red-900/30 transition-colors"
       >
-        Trial expiré — Upgrade
+        <span className="hidden sm:inline">Trial expiré — </span>Upgrade
       </Link>
     );
   }
@@ -245,13 +245,14 @@ function TrialBadge() {
 
   return (
     <span
-      className={`rounded-full px-3 py-1 text-xs font-medium ${
+      className={`rounded-full px-2 sm:px-3 py-1 text-xs font-medium ${
         isWarning
           ? 'text-amber-400 bg-amber-900/20 border border-amber-600/30'
           : 'text-[#94a3b8] bg-[#1e293b] border border-[rgba(255,255,255,0.1)]'
       }`}
     >
-      Trial: {formatTokens(trial.tokens_remaining)} tokens
+      <span className="hidden sm:inline">Trial: </span>{formatTokens(trial.tokens_remaining)}
+      <span className="hidden sm:inline"> tokens</span>
     </span>
   );
 }
@@ -274,8 +275,8 @@ export default function AppHeader({
     : 'U';
 
   return (
-    <div className="sticky top-0 z-30 flex items-center justify-between gap-3 px-6 py-3 bg-[#08090f]/80 backdrop-blur-xl border-b border-[rgba(255,255,255,0.07)]">
-      {/* Mobile hamburger */}
+    <div className="sticky top-0 z-30 flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2 sm:py-3 bg-[#08090f]/80 backdrop-blur-xl border-b border-[rgba(255,255,255,0.07)]">
+      {/* Mobile hamburger — hidden when bottom nav is active (lg:hidden stays) */}
       <button
         onClick={onMenuClick}
         className="lg:hidden p-2 rounded-lg bg-[#14151f] border border-[rgba(255,255,255,0.07)] text-white hover:bg-[#1a1b2e] transition-colors duration-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
@@ -288,7 +289,7 @@ export default function AppHeader({
       <div className="flex-1" />
 
       {/* Right controls */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         <TrialBadge />
         <HeaderNotificationBell />
 
@@ -303,14 +304,14 @@ export default function AppHeader({
           </div>
         )}
 
-        {/* Logout */}
+        {/* Logout — text hidden on mobile */}
         <button
           onClick={onLogout}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[#1f2028] border border-[rgba(255,255,255,0.1)] rounded-lg text-white hover:bg-[#2a2c36] transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+          className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 text-sm bg-[#1f2028] border border-[rgba(255,255,255,0.1)] rounded-lg text-white hover:bg-[#2a2c36] transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
           aria-label="Logout"
         >
           <LogOut className="w-4 h-4" aria-hidden="true" />
-          <span>Logout</span>
+          <span className="hidden sm:inline">Logout</span>
         </button>
       </div>
     </div>
