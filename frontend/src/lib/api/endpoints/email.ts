@@ -70,6 +70,32 @@ export async function regenerateEmail(id: string): Promise<SuccessResponse> {
   });
 }
 
+export async function markUnread(uid: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/${uid}/unread`, {
+    method: 'PUT',
+  });
+}
+
+export async function toggleFlag(uid: string): Promise<{ flagged: boolean }> {
+  return apiFetch<{ flagged: boolean }>(`/api/v1/email/${uid}/flag`, {
+    method: 'PATCH',
+  });
+}
+
+export async function moveEmail(uid: string, folder: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/${uid}/move`, {
+    method: 'PATCH',
+    body: JSON.stringify({ folder }),
+  });
+}
+
+export async function approveEmailWithBody(id: string, body?: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/email/approve/${id}`, {
+    method: 'POST',
+    body: JSON.stringify(body ? { body } : {}),
+  });
+}
+
 export async function assignEmailToAgent(emailId: string, agentId: string): Promise<SuccessResponse> {
   return apiFetch<SuccessResponse>(`/api/v1/email/${emailId}/assign`, {
     method: 'POST',

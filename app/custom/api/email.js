@@ -303,6 +303,17 @@ router.post('/email/approve/:id', async (req, res) => {
 
     const email = emailRow.rows[0];
 
+    // If edited body was provided, update the draft first
+    const editedBody = req.body?.body;
+    if (editedBody && typeof editedBody === 'string') {
+      await pg.query(
+        `UPDATE ${SCHEMA}.emails SET body = $1, html_body = $2 WHERE id = $3`,
+        [editedBody, editedBody, req.params.id]
+      );
+      email.body = editedBody;
+      email.html_body = editedBody;
+    }
+
     // Send via Postal
     let postalResult;
     try {
@@ -410,6 +421,67 @@ router.put('/email/:uid/read', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/**
+ * PUT /api/v1/email/:uid/unread — mark as unread
+ */
+router.put('/email/:uid/unread', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+
+    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = false WHERE id = $1`, [req.params.uid]);
+    res.json({ success: true, uid: req.params.uid, read: false });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/v1/email/:uid/flag — toggle flagged
+ */
+router.patch('/email/:uid/flag', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+
+    const r = await pg.query(
+      `UPDATE ${SCHEMA}.emails SET flagged = NOT COALESCE(flagged, false) WHERE id = $1 RETURNING flagged`,
+      [req.params.uid]
+    );
+    const flagged = r.rows[0]?.flagged ?? false;
+    res.json({ success: true, uid: req.params.uid, flagged });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/v1/email/:uid/move — move to folder (archive, inbox, trash)
+ */
+router.patch('/email/:uid/move', async (req, res) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+
+    const { folder } = req.body || {};
+    const allowed = ['inbox', 'archive', 'trash', 'sent', 'drafts'];
+    if (!folder || !allowed.includes(folder)) {
+      return res.status(400).json({ success: false, error: `folder must be one of: ${allowed.join(', ')}` });
+    }
+
+    await pg.query(`UPDATE ${SCHEMA}.emails SET folder = $1 WHERE id = $2`, [folder, req.params.uid]);
+    res.json({ success: true, uid: req.params.uid, folder });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/v1/email/approve/:id — approve a draft (supports optional edited body)
+ * Body: { body?: string } — if provided, updates the draft body before sending
+ */
+// (existing approve endpoint is above, we add body-update logic via a separate route)
 
 /**
  * POST /api/v1/email/incoming — Postal webhook for inbound emails

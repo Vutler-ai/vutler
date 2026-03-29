@@ -13,6 +13,10 @@ import {
   assignEmailToAgent,
   getEmailStats,
   getEmailGroups,
+  markUnread,
+  toggleFlag,
+  moveEmail,
+  approveEmailWithBody,
 } from "@/lib/api/endpoints/email";
 import type { Email, EmailFolder } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
@@ -63,6 +67,8 @@ import {
   X,
   ArrowLeft,
   Loader2,
+  MailOpen,
+  ArchiveIcon,
 } from "lucide-react";
 
 // ─── Extended Email type (agent fields from pending approvals) ─────────────
@@ -514,6 +520,8 @@ interface EmailViewerProps {
   onForward: (email: AugmentedEmail) => void;
   onDelete: (email: AugmentedEmail) => void;
   onFlag: (email: AugmentedEmail) => void;
+  onMarkUnread: (email: AugmentedEmail) => void;
+  onArchive: (email: AugmentedEmail) => void;
   onApprove: (email: AugmentedEmail) => void;
   onReject: (email: AugmentedEmail) => void;
   onRegenerate: (email: AugmentedEmail) => void;
@@ -529,6 +537,8 @@ function EmailViewer({
   onForward,
   onDelete,
   onFlag,
+  onMarkUnread,
+  onArchive,
   onApprove,
   onReject,
   onRegenerate,
@@ -616,6 +626,24 @@ function EmailViewer({
             }`}
           >
             <Flag className="w-3.5 h-3.5" />
+          </Button>
+          {!email.unread && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onMarkUnread(email)}
+              className="text-zinc-400 hover:text-white hover:bg-zinc-800 h-8 gap-1.5"
+            >
+              <MailOpen className="w-3.5 h-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onArchive(email)}
+            className="text-zinc-400 hover:text-white hover:bg-zinc-800 h-8 gap-1.5"
+          >
+            <ArchiveIcon className="w-3.5 h-3.5" />
           </Button>
         </div>
 
@@ -722,9 +750,13 @@ function EmailViewer({
           <EditDraftInline
             initial={(email.draftReply as string) || ""}
             onSend={async (body) => {
-              /* For now, treat as approve with edited body */
               setEditingDraft(false);
-              await onApprove(email);
+              try {
+                await approveEmailWithBody(email.uid, body);
+                setEmails((prev) => prev.filter((e) => e.uid !== email.uid));
+                setSelectedEmail(null);
+                loadPendingApprovals();
+              } catch { /* silent */ }
             }}
             onCancel={() => setEditingDraft(false)}
           />
@@ -948,8 +980,10 @@ export default function EmailPage() {
       } else if (folder === "inbox" || folder === "sent") {
         const data = await getEmails(folder);
         setEmails(data as AugmentedEmail[]);
+      } else if (folder === "archive" || folder === "drafts") {
+        const data = await getEmails(folder);
+        setEmails(data as AugmentedEmail[]);
       } else {
-        // archive / drafts — not implemented yet, show empty
         setEmails([]);
       }
     } catch {
@@ -1054,13 +1088,40 @@ export default function EmailPage() {
     setShowCompose(true);
   };
 
-  const handleFlag = (email: AugmentedEmail) => {
+  const handleFlag = async (email: AugmentedEmail) => {
+    const newFlagged = !email.flagged;
     setEmails((prev) =>
-      prev.map((e) => (e.uid === email.uid ? { ...e, flagged: !e.flagged } : e))
+      prev.map((e) => (e.uid === email.uid ? { ...e, flagged: newFlagged } : e))
     );
     if (selectedEmail?.uid === email.uid) {
-      setSelectedEmail((prev) => prev ? { ...prev, flagged: !prev.flagged } : null);
+      setSelectedEmail((prev) => prev ? { ...prev, flagged: newFlagged } : null);
     }
+    try {
+      await toggleFlag(email.uid);
+    } catch { /* revert on error would be nice but non-critical */ }
+  };
+
+  const handleMarkUnread = async (email: AugmentedEmail) => {
+    setEmails((prev) =>
+      prev.map((e) => (e.uid === email.uid ? { ...e, unread: true } : e))
+    );
+    if (selectedEmail?.uid === email.uid) {
+      setSelectedEmail((prev) => prev ? { ...prev, unread: true } : null);
+    }
+    try {
+      await markUnread(email.uid);
+    } catch { /* silent */ }
+  };
+
+  const handleArchive = async (email: AugmentedEmail) => {
+    try {
+      await moveEmail(email.uid, "archive");
+      setEmails((prev) => prev.filter((e) => e.uid !== email.uid));
+      if (selectedEmail?.uid === email.uid) {
+        setSelectedEmail(null);
+        setMobileView("list");
+      }
+    } catch { /* silent */ }
   };
 
   const handleApprove = async (email: AugmentedEmail) => {
@@ -1098,6 +1159,13 @@ export default function EmailPage() {
   const handleAssign = async (emailId: string, agentId: string) => {
     try {
       await assignEmailToAgent(emailId, agentId);
+      const agent = agents.find((a) => a.id === agentId);
+      setEmails((prev) =>
+        prev.map((e) => (e.uid === emailId ? { ...e, agentId, agentName: agent?.name } : e))
+      );
+      if (selectedEmail?.uid === emailId) {
+        setSelectedEmail((prev) => prev ? { ...prev, agentId, agentName: agent?.name } : null);
+      }
     } catch {
       /* silent */
     }
@@ -1301,6 +1369,8 @@ export default function EmailPage() {
           onForward={handleForward}
           onDelete={(email) => setDeleteTarget(email)}
           onFlag={handleFlag}
+          onMarkUnread={handleMarkUnread}
+          onArchive={handleArchive}
           onApprove={handleApprove}
           onReject={handleReject}
           onRegenerate={handleRegenerate}
