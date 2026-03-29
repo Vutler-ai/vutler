@@ -16,13 +16,16 @@ export function middleware(request: NextRequest) {
   const hostname = request.headers.get('host')?.split(':')[0] || '';
   const { pathname } = request.nextUrl;
 
-  // Skip static files and API routes
+  // Skip static files, API routes, and Next.js RSC/prefetch requests
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
     pathname.startsWith('/ws') ||
     pathname.startsWith('/static') ||
-    pathname.match(/\.(ico|png|jpg|jpeg|svg|css|js|woff2?)$/)
+    pathname.match(/\.(ico|png|jpg|jpeg|svg|css|js|woff2?)$/) ||
+    request.headers.get('RSC') === '1' ||
+    request.headers.get('Next-Router-State-Tree') !== null ||
+    request.nextUrl.searchParams.has('_rsc')
   ) {
     return NextResponse.next();
   }
