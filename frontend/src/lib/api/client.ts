@@ -123,9 +123,13 @@ export function clearAdminToken(): void {
 /**
  * Typed JSON fetch for admin endpoints (uses X-Admin-Token header).
  */
+interface AdminFetchOptions extends Omit<RequestInit, 'body'> {
+  body?: Record<string, unknown> | string | null;
+}
+
 export async function adminFetch<T>(
   endpoint: string,
-  options?: RequestInit & { body?: unknown }
+  options?: AdminFetchOptions
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
   const token = getAdminToken();
