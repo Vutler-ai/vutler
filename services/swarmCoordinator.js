@@ -326,24 +326,28 @@ class SwarmCoordinator {
       }).catch((e) => ({ error: e.message }));
     }
     const taskId = created?.id || created?.task_id || created?.task?.id || created?.data?.taskId || created?.data?.id;
-    if (taskId) {
-      await this.syncPgTask({
-        sniparaTaskId: taskId,
-        title: payload.title,
-        description: payload.description,
-        priority: payload.priority,
-        status: "pending",
-        assignedTo: assigned,
-        source: "vutler-api"
-      });
+    // Always persist to PG — Snipara is optional. sniparaTaskId is null when all attempts failed.
+    const pgTaskId = await this.syncPgTask({
+      sniparaTaskId: taskId || null,
+      title: payload.title,
+      description: payload.description,
+      priority: payload.priority,
+      status: "pending",
+      assignedTo: assigned,
+      source: "vutler-api"
+    });
+    // Normalise created: if Snipara failed, return the PG task object so callers always get an id
+    if (!taskId || (created && created.error)) {
+      created = { id: pgTaskId, source: "pg-local" };
     }
 
-    await this.sniparaCall("rlm_broadcast", {
+    // Broadcast is non-blocking
+    this.sniparaCall("rlm_broadcast", {
       swarm_id: this.swarmId,
       type: "task_assigned",
       message: `Task assigned to ${assigned}: ${payload.title}`,
       payload
-    });
+    }).catch((e) => console.warn('[SwarmCoordinator] broadcast failed (non-blocking):', e.message));
 
     await this.postTeam("Mike", `@${assigned} nouveau projet: ${payload.title}, priorité ${payload.priority}`);
     await this.postTeam(cap(assigned), "Reçu je prends.");
