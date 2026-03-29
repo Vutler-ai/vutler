@@ -277,12 +277,12 @@ export default function CalendarPage() {
   return (
     <div className="h-full flex flex-col gap-6 min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between flex-shrink-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-white">Calendar</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Calendar</h1>
           <p className="text-sm text-[#9ca3af] mt-0.5">Manage your schedule</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="outline"
             size="sm"
@@ -299,7 +299,7 @@ export default function CalendarPage() {
           >
             <ChevronLeft className="size-4" />
           </Button>
-          <span className="text-white font-semibold min-w-[160px] text-center text-sm">
+          <span className="text-white font-semibold min-w-[120px] sm:min-w-[160px] text-center text-sm">
             {currentDate.toLocaleString("default", {
               month: "long",
               year: "numeric",
@@ -322,7 +322,7 @@ export default function CalendarPage() {
         </div>
       )}
 
-      <div className="flex-1 flex gap-4 min-h-0 overflow-hidden">
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 overflow-hidden">
         {/* Calendar grid */}
         <div className="flex-1 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col min-h-0 overflow-auto">
           {/* Day headers */}
@@ -395,7 +395,7 @@ export default function CalendarPage() {
         </div>
 
         {/* Upcoming sidebar */}
-        <div className="w-72 flex-shrink-0 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col min-h-0 overflow-hidden">
+        <div className="w-full lg:w-72 flex-shrink-0 bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col min-h-0 overflow-hidden">
           <div className="flex items-center justify-between mb-4 flex-shrink-0">
             <h2 className="text-sm font-semibold text-white">Upcoming</h2>
             <Button

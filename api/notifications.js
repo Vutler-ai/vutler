@@ -160,6 +160,21 @@ router.post("/", async (req, res) => {
       [userId, workspaceId, type, title || null, message || null]
     );
 
+    // Send push notification (fire-and-forget)
+    if (userId && title) {
+      try {
+        const { sendPushToUser } = require('../services/pushService');
+        sendPushToUser(userId, {
+          title: title,
+          body: message || '',
+          url: '/notifications',
+          tag: `notification-${type}`,
+        }).catch(() => {}); // silent — push is best-effort
+      } catch {
+        // pushService not available (missing web-push dep or VAPID keys)
+      }
+    }
+
     res.json({ success: true, notification: result.rows[0] });
   } catch (err) {
     console.error("[NOTIFICATIONS] Create error:", err.message);

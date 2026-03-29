@@ -3,6 +3,10 @@
 import React, { useState, useEffect } from 'react';
 import AppSidebar from './app-sidebar';
 import AppHeader from './app-header';
+import BottomNav from './bottom-nav';
+import OfflineBanner from '../offline-banner';
+import PWAInstallPrompt from '../pwa-install-prompt';
+import PushPermission from '../push-permission';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
 
@@ -67,6 +71,9 @@ export default function AppShell({
 
   return (
     <div className="min-h-screen bg-[#08090f]">
+      {/* Offline indicator */}
+      <OfflineBanner />
+
       <AppSidebar
         user={user}
         mobileOpen={mobileOpen}
@@ -80,12 +87,14 @@ export default function AppShell({
           onLogout={handleLogout}
         />
 
-        <main className="p-6">{children}</main>
+        {/* Main content — add bottom padding on mobile for BottomNav */}
+        <main className="p-4 sm:p-6 pb-20 lg:pb-6">{children}</main>
 
-        <footer className="px-6 py-4 border-t border-[rgba(255,255,255,0.07)] mt-12">
+        {/* Footer — hidden on mobile (BottomNav takes its place) */}
+        <footer className="hidden lg:block px-6 py-4 border-t border-[rgba(255,255,255,0.07)] mt-12">
           <div className="flex flex-col sm:flex-row items-center justify-between space-y-2 sm:space-y-0">
             <p className="text-sm text-[#6b7280]">
-              © {new Date().getFullYear()} Vutler. All rights reserved.
+              &copy; {new Date().getFullYear()} Vutler. All rights reserved.
             </p>
             <nav
               className="flex items-center space-x-6"
@@ -114,6 +123,13 @@ export default function AppShell({
           </div>
         </footer>
       </div>
+
+      {/* Mobile bottom navigation */}
+      <BottomNav onMoreClick={() => setMobileOpen(true)} />
+
+      {/* PWA prompts */}
+      <PWAInstallPrompt />
+      <PushPermission />
     </div>
   );
 }

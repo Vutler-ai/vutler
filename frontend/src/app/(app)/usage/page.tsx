@@ -159,7 +159,7 @@ export default function UsagePage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-white">Usage Analytics</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Usage Analytics</h1>
           <p className="text-sm text-[#9ca3af] mt-1">
             Monitor token consumption and API calls across your agents. LLM is BYOK — no token limits apply.
           </p>

@@ -704,13 +704,13 @@ interface KanbanBoardProps {
 
 function KanbanBoard({ tasks, onOpenDetail, onDelete, onStatusChange }: KanbanBoardProps) {
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 min-h-[400px]">
+    <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4 min-h-[400px] snap-x snap-mandatory lg:snap-none scrollbar-hide">
       {KANBAN_COLUMNS.map((col) => {
         const colTasks = tasks.filter((t) => normalizeStatus(t.status) === col.status);
         return (
           <div
             key={col.status}
-            className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex flex-col min-w-[280px] w-[280px] shrink-0"
+            className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-3 sm:p-4 flex flex-col min-w-[85vw] sm:min-w-[280px] w-[85vw] sm:w-[280px] shrink-0 snap-center"
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-white">{col.label}</h2>
@@ -1237,7 +1237,7 @@ export default function TasksPage() {
 
       {/* Views */}
       {!error && (
-        <Tabs defaultValue="kanban" className="flex-1 flex flex-col gap-4">
+        <Tabs defaultValue={typeof window !== 'undefined' && window.innerWidth < 1024 ? 'list' : 'kanban'} className="flex-1 flex flex-col gap-4">
           <TabsList className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] w-fit p-1">
             <TabsTrigger
               value="kanban"

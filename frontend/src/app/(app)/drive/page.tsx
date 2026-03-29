@@ -391,23 +391,23 @@ export default function DrivePage() {
   const error = fetchError?.message ?? actionError ?? uploadError;
 
   return (
-    <div className="min-h-full flex flex-col gap-5 p-6">
+    <div className="min-h-full flex flex-col gap-5 p-4 sm:p-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Drive</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Drive</h1>
           <p className="text-sm text-slate-400 mt-0.5">Manage your files and folders</p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           {/* search */}
-          <div className="relative">
+          <div className="relative flex-1 sm:flex-none">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <Input
               placeholder="Search files…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 w-48 bg-[#14151f] border-white/10 text-white placeholder:text-slate-500 focus-visible:ring-blue-500/50 h-9"
+              className="pl-8 w-full sm:w-48 bg-[#14151f] border-white/10 text-white placeholder:text-slate-500 focus-visible:ring-blue-500/50 h-9"
             />
           </div>
 

@@ -201,21 +201,21 @@ interface StatCardItemProps {
 
 function StatCardItem({ label, value, subtitle, icon, iconBg }: StatCardItemProps) {
   return (
-    <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-colors gap-3">
-      <CardHeader className="pb-0">
+    <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)] transition-colors gap-2 sm:gap-3">
+      <CardHeader className="pb-0 px-3 sm:px-6 pt-3 sm:pt-6">
         <div className="flex items-start justify-between">
-          <CardTitle className="text-sm font-medium text-[#9ca3af]">{label}</CardTitle>
+          <CardTitle className="text-xs sm:text-sm font-medium text-[#9ca3af]">{label}</CardTitle>
           <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center text-white flex-shrink-0 ${iconBg}`}
+            className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center text-white flex-shrink-0 ${iconBg}`}
             aria-hidden="true"
           >
             {icon}
           </div>
         </div>
       </CardHeader>
-      <CardContent>
-        <p className="text-3xl font-bold text-white mb-1">{value}</p>
-        <p className="text-xs text-[#6b7280]">{subtitle}</p>
+      <CardContent className="px-3 sm:px-6 pb-3 sm:pb-6">
+        <p className="text-xl sm:text-3xl font-bold text-white mb-1">{value}</p>
+        <p className="text-[10px] sm:text-xs text-[#6b7280]">{subtitle}</p>
       </CardContent>
     </Card>
   );
@@ -572,26 +572,26 @@ export default function DashboardPage() {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-sm text-[#9ca3af]">
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Dashboard</h1>
+          <p className="text-xs sm:text-sm text-[#9ca3af]">
             Monitor your agents and system performance
           </p>
         </div>
         <button
           onClick={() => router.push('/builder')}
-          className="flex items-center space-x-2 px-4 py-2 rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] text-white text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#08090f]"
+          className="flex items-center space-x-2 px-3 sm:px-4 py-2 rounded-lg bg-[#3b82f6] hover:bg-[#2563eb] text-white text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:ring-offset-2 focus:ring-offset-[#08090f]"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          <span>New Agent</span>
+          <span className="hidden sm:inline">New Agent</span>
         </button>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
         {statsLoading ? (
           <StatsSkeleton />
         ) : statsError ? (

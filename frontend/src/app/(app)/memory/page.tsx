@@ -104,7 +104,7 @@ function WorkspaceKnowledgeSection() {
   }
 
   return (
-    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-6">
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
       <SectionHeader
         icon={<BookOpen className="w-4 h-4" />}
         title="Workspace Knowledge"
@@ -243,7 +243,7 @@ function AgentMemoriesSection() {
   const agentList = agents ?? [];
 
   return (
-    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-6">
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
       <div className="flex items-start justify-between mb-4">
         <SectionHeader
           icon={<Users className="w-4 h-4" />}
@@ -302,7 +302,7 @@ function SharedKnowledgeSection() {
   const templateList = templates ?? [];
 
   return (
-    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-6">
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
       <SectionHeader
         icon={<Layers className="w-4 h-4" />}
         title="Shared Knowledge"
@@ -451,7 +451,7 @@ function SearchAllMemorySection() {
   }
 
   return (
-    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-6">
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
       <SectionHeader
         icon={<Search className="w-4 h-4" />}
         title="Search All Memory"
@@ -519,14 +519,14 @@ function SearchAllMemorySection() {
 
 export default function MemoryPage() {
   return (
-    <div className="px-6 py-6 max-w-5xl mx-auto">
+    <div className="px-4 sm:px-6 py-4 sm:py-6 max-w-5xl mx-auto">
       {/* Page header */}
       <div className="flex items-center gap-3 mb-8">
-        <div className="w-10 h-10 rounded-xl bg-[rgba(59,130,246,0.12)] flex items-center justify-center text-blue-400">
+        <div className="w-10 h-10 rounded-xl bg-[rgba(59,130,246,0.12)] flex items-center justify-center text-blue-400 shrink-0">
           <Brain className="w-5 h-5" />
         </div>
         <div>
-          <h1 className="text-2xl font-semibold text-white">Memory & Context</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold text-white">Memory & Context</h1>
           <p className="text-sm text-[#6b7280] mt-0.5">
             Workspace memory powered by Snipara — three-level hierarchy
           </p>
