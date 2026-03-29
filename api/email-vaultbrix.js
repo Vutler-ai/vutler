@@ -13,6 +13,12 @@ const POSTAL_API_URL = process.env.POSTAL_API_URL || 'http://localhost:8082';
 const POSTAL_API_KEY = process.env.POSTAL_API_KEY;
 const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.vutler.ai';
 
+// SECURITY: workspace scoped (audit 2026-03-29)
+router.use((req, res, next) => {
+  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  next();
+});
+
 /**
  * Send email via Postal HTTP API
  */
@@ -45,9 +51,9 @@ router.get("/", async (req, res) => {
     const folder = req.query.folder || "inbox";
     const limit = Number(req.query.limit) || 50;
     const r = await pool.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = $1 OR ($1 = 'inbox' AND folder IS NULL)
+      `SELECT * FROM ${SCHEMA}.emails WHERE (folder = $1 OR ($1 = 'inbox' AND folder IS NULL)) AND workspace_id = $3
        ORDER BY created_at DESC LIMIT $2`,
-      [folder, limit]
+      [folder, limit, req.workspaceId]
     );
     const emails = r.rows.map(e => ({
       id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
@@ -67,9 +73,9 @@ router.get('/inbox', async (req, res) => {
   try {
     const limit = Number(req.query.limit) || 50;
     const r = await pool.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'inbox' OR folder IS NULL
+      `SELECT * FROM ${SCHEMA}.emails WHERE (folder = 'inbox' OR folder IS NULL) AND workspace_id = $2
        ORDER BY created_at DESC LIMIT $1`,
-      [limit]
+      [limit, req.workspaceId]
     );
     const emails = r.rows.map(e => ({
       id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
@@ -88,7 +94,8 @@ router.get('/inbox', async (req, res) => {
 router.get('/sent', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' ORDER BY created_at DESC LIMIT 50`
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' AND workspace_id = $1 ORDER BY created_at DESC LIMIT 50`,
+      [req.workspaceId]
     );
     const emails = r.rows.map(e => ({
       id: e.id, from: e.from_addr, to: e.to_addr,
@@ -125,9 +132,9 @@ router.post('/send', async (req, res) => {
 
     // 2. Store in DB as sent
     const r = await pool.query(
-      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'sent', true, NOW()) RETURNING id`,
-      [sender, to, subject, body || '', htmlBody || null]
+      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, created_at, workspace_id)
+       VALUES ($1, $2, $3, $4, $5, 'sent', true, NOW(), $6) RETURNING id`,
+      [sender, to, subject, body || '', htmlBody || null, req.workspaceId]
     );
 
     res.json({
@@ -147,7 +154,7 @@ router.post('/send', async (req, res) => {
 // PATCH /api/v1/email/inbox/:id/read
 router.patch('/inbox/:id/read', async (req, res) => {
   try {
-    await pool.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1`, [req.params.id]);
+    await pool.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1 AND workspace_id = $2`, [req.params.id, req.workspaceId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -157,7 +164,7 @@ router.patch('/inbox/:id/read', async (req, res) => {
 // PUT /api/v1/email/:uid/read (legacy route)
 router.put('/:uid/read', async (req, res) => {
   try {
-    await pool.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1`, [req.params.uid]);
+    await pool.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1 AND workspace_id = $2`, [req.params.uid, req.workspaceId]);
     res.json({ success: true, uid: req.params.uid, read: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

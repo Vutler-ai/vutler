@@ -261,6 +261,29 @@ async function checkReminders() {
   }
 }
 
+/**
+ * Delete a task by ID, scoped to workspace.
+ */
+async function deleteTask(taskId, workspaceId) {
+  try {
+    const conditions = ['id = $1'];
+    const params = [taskId];
+    if (workspaceId) {
+      params.push(workspaceId);
+      conditions.push(`workspace_id = $${params.length}`);
+    }
+    const result = await pool.query(
+      `DELETE FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} RETURNING id`,
+      params
+    );
+    if (!result.rows.length) throw new Error('Task not found');
+    return result.rows[0];
+  } catch (err) {
+    console.error('[TaskRouter] deleteTask error:', err.message);
+    throw err;
+  }
+}
+
 module.exports = {
   ROUTING_RULES,
   classifyAndAssign,
@@ -268,6 +291,7 @@ module.exports = {
   getTask,
   listTasks,
   updateTask,
+  deleteTask,
   getDueTasks,
   getOverdueTasks,
   checkReminders,

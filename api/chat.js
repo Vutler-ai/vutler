@@ -8,6 +8,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const llmRouter = require('../services/llmRouter');
+const { publishMessage } = require('./ws-chat');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -76,14 +77,32 @@ let llmResult;
 
     console.log(`[Chat] Agent response from ${agent.name}: ${llmResult.content.substring(0, 100)}... (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
 
-    // Save agent response
-    await pool.query(
+    // Save agent response and publish via WebSocket
+    const insertResult = await pool.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id)
-       VALUES ($1, $2, $3, $4, 'text', $5)`,
+       VALUES ($1, $2, $3, $4, 'text', $5)
+       RETURNING id, created_at`,
       [channelId, agent.id.toString(), agent.name, llmResult.content, wsId]
     );
 
+    const saved = insertResult.rows[0];
     console.log(`[Chat] Agent message saved for ${agent.name}`);
+
+    // Push to all connected WebSocket clients in the channel
+    try {
+      publishMessage({
+        id: saved.id,
+        channel_id: channelId,
+        sender_id: agent.id.toString(),
+        sender_name: agent.name,
+        content: llmResult.content,
+        message_type: 'text',
+        workspace_id: wsId,
+        created_at: saved.created_at,
+      });
+    } catch (wsErr) {
+      console.warn('[Chat] WebSocket publish failed (non-fatal):', wsErr.message);
+    }
   } catch (err) {
     console.error('[Chat] Agent response error:', err.message);
   }
