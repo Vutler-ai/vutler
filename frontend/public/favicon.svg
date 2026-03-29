@@ -1,9 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <rect width="32" height="32" rx="6" fill="#0e0f1a"/>
-  <path d="M16 4L6 10v12l10 6 10-6V10L16 4z" stroke="#3b82f6" stroke-width="1.5" fill="none"/>
-  <path d="M16 4L6 10l10 6 10-6L16 4z" fill="#3b82f6" fill-opacity="0.2"/>
-  <path d="M16 16l-10 6 10 6 10-6-10-6z" fill="#3b82f6" fill-opacity="0.1"/>
-  <path d="M6 10v12l10 6V16L6 10z" fill="#3b82f6" fill-opacity="0.15"/>
-  <path d="M26 10v12l-10 6V16l10-6z" fill="#3b82f6" fill-opacity="0.05"/>
-  <text x="16" y="20" text-anchor="middle" font-family="Inter,sans-serif" font-weight="700" font-size="12" fill="white">V</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="96" fill="#0e0f1a"/>
+  <g transform="translate(256,260)">
+    <!-- Icosahedron 3D projection -->
+    <!-- Back faces -->
+    <polygon points="0,-160 140,-60 86,130" fill="#3b82f6" fill-opacity="0.06"/>
+    <polygon points="0,-160 -140,-60 -86,130" fill="#3b82f6" fill-opacity="0.04"/>
+    <polygon points="86,130 -86,130 0,175" fill="#3b82f6" fill-opacity="0.10"/>
+
+    <!-- Front face fills -->
+    <polygon points="0,-160 140,-60 0,20" fill="#3b82f6" fill-opacity="0.18"/>
+    <polygon points="0,-160 -140,-60 0,20" fill="#3b82f6" fill-opacity="0.10"/>
+    <polygon points="140,-60 86,130 0,20" fill="#3b82f6" fill-opacity="0.14"/>
+    <polygon points="-140,-60 -86,130 0,20" fill="#3b82f6" fill-opacity="0.07"/>
+    <polygon points="86,130 -86,130 0,20" fill="#3b82f6" fill-opacity="0.12"/>
+
+    <!-- Outer edges -->
+    <line x1="0" y1="-160" x2="140" y2="-60" stroke="#60a5fa" stroke-width="4" stroke-linecap="round"/>
+    <line x1="0" y1="-160" x2="-140" y2="-60" stroke="#3b82f6" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="140" y1="-60" x2="86" y2="130" stroke="#60a5fa" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="-140" y1="-60" x2="-86" y2="130" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/>
+    <line x1="86" y1="130" x2="0" y2="175" stroke="#3b82f6" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="-86" y1="130" x2="0" y2="175" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/>
+    <line x1="86" y1="130" x2="-86" y2="130" stroke="#3b82f6" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- Inner edges (3D depth) -->
+    <line x1="0" y1="-160" x2="0" y2="20" stroke="#60a5fa" stroke-width="2.5" stroke-opacity="0.5" stroke-linecap="round"/>
+    <line x1="140" y1="-60" x2="0" y2="20" stroke="#60a5fa" stroke-width="2.5" stroke-opacity="0.45" stroke-linecap="round"/>
+    <line x1="-140" y1="-60" x2="0" y2="20" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.35" stroke-linecap="round"/>
+    <line x1="86" y1="130" x2="0" y2="20" stroke="#60a5fa" stroke-width="2" stroke-opacity="0.4" stroke-linecap="round"/>
+    <line x1="-86" y1="130" x2="0" y2="20" stroke="#3b82f6" stroke-width="2" stroke-opacity="0.3" stroke-linecap="round"/>
+
+    <!-- Cross edges for 3D effect -->
+    <line x1="140" y1="-60" x2="-86" y2="130" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.2" stroke-linecap="round"/>
+    <line x1="-140" y1="-60" x2="86" y2="130" stroke="#3b82f6" stroke-width="1.5" stroke-opacity="0.15" stroke-linecap="round"/>
+
+    <!-- Vertex highlights -->
+    <circle cx="0" cy="-160" r="5.5" fill="#93c5fd"/>
+    <circle cx="140" cy="-60" r="5" fill="#60a5fa"/>
+    <circle cx="-140" cy="-60" r="4" fill="#3b82f6"/>
+    <circle cx="86" cy="130" r="4.5" fill="#60a5fa"/>
+    <circle cx="-86" cy="130" r="4" fill="#3b82f6"/>
+    <circle cx="0" cy="175" r="4" fill="#3b82f6"/>
+    <circle cx="0" cy="20" r="4" fill="#60a5fa" fill-opacity="0.7"/>
+  </g>
 </svg>
