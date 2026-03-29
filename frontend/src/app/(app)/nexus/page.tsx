@@ -199,6 +199,9 @@ function DeployModal({
 
   const cliInstructions = `npm install -g @vutler/nexus\nvutler-nexus init ${token || '<token>'}\nvutler-nexus start`;
 
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const installerBaseUrl = 'https://github.com/alopez3006/vutler-platform/releases/latest/download';
+
   const isTokenStep = step === 'local-token' || step === 'ent-token';
 
   const stepLabel: Record<DeployStep, string> = {
@@ -592,10 +595,38 @@ function DeployModal({
         {/* ── Token step (shared) ── */}
         {isTokenStep && (
           <div className="space-y-4">
+            {/* ── Step 1: Download installer ── */}
+            <div className="space-y-2">
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">1. Download & Install</label>
+              <div className="grid grid-cols-2 gap-2">
+                <a
+                  href={`${installerBaseUrl}/vutler-nexus-macos.dmg`}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                    isMac
+                      ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                      : 'bg-[#1e293b] hover:bg-[#334155] text-[#d1d5db]'
+                  }`}
+                >
+                  <span className="text-lg">🍎</span> macOS (.dmg)
+                </a>
+                <a
+                  href={`${installerBaseUrl}/vutler-nexus-windows.exe`}
+                  className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${
+                    !isMac
+                      ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                      : 'bg-[#1e293b] hover:bg-[#334155] text-[#d1d5db]'
+                  }`}
+                >
+                  <span className="text-lg">🪟</span> Windows (.exe)
+                </a>
+              </div>
+            </div>
+
+            {/* ── Step 2: Token ── */}
             <div className="space-y-1.5">
-              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Token</label>
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">2. Your Deploy Token</label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-emerald-400 text-xs font-mono truncate">
+                <code className="flex-1 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-emerald-400 text-xs font-mono break-all max-h-20 overflow-y-auto select-all">
                   {token}
                 </code>
                 <button
@@ -606,20 +637,38 @@ function DeployModal({
                 </button>
               </div>
             </div>
+
+            {/* ── Step 3: Setup via QR or CLI ── */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-[#9ca3af] uppercase tracking-wide">CLI Instructions</label>
-                <button
-                  onClick={() => copyText(cliInstructions)}
-                  className="text-xs text-[#6b7280] hover:text-white transition-colors"
-                >
-                  Copy all
-                </button>
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">3. Setup</label>
+              <div className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg p-3 space-y-3">
+                <div className="flex items-start gap-3">
+                  <span className="text-lg shrink-0">📱</span>
+                  <div>
+                    <p className="text-white text-sm font-medium">QR Onboarding (recommended)</p>
+                    <p className="text-[#6b7280] text-xs mt-0.5">Open the app after install — it will guide you through pairing, folder permissions, and health check.</p>
+                  </div>
+                </div>
+                <div className="border-t border-[rgba(255,255,255,0.05)] pt-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg shrink-0">⌨️</span>
+                      <p className="text-[#9ca3af] text-xs font-medium">Or use CLI</p>
+                    </div>
+                    <button
+                      onClick={() => copyText(cliInstructions)}
+                      className="text-xs text-[#6b7280] hover:text-white transition-colors"
+                    >
+                      Copy all
+                    </button>
+                  </div>
+                  <pre className="text-[#6b7280] text-xs font-mono whitespace-pre-wrap leading-relaxed pl-7">
+                    {cliInstructions}
+                  </pre>
+                </div>
               </div>
-              <pre className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-3 text-[#9ca3af] text-xs font-mono whitespace-pre-wrap leading-relaxed">
-                {cliInstructions}
-              </pre>
             </div>
+
             <p className="text-xs text-amber-400">⚠ Token expires in 7 days. Store it securely.</p>
             <button
               onClick={onClose}
