@@ -9,6 +9,13 @@ function getPool() {
 }
 
 const SCHEMA = 'tenant_vutler';
+
+// SECURITY: workspace from JWT only (audit 2026-03-29)
+router.use((req, res, next) => {
+  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  next();
+});
+
 let tableReady = false;
 async function ensureTable(pool) {
   if (tableReady) return;
@@ -35,7 +42,7 @@ router.get('/', async (req, res) => {
     await ensureTable(pool);
     const r = await pool.query(
       "SELECT id, workspace_id, name, logo_url, contact_email, notes, created_at FROM tenant_vutler.client_companies WHERE workspace_id = \$1 ORDER BY created_at DESC",
-      [req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001']
+      [req.workspaceId]
     );
     res.json({ success: true, data: r.rows });
   } catch (err) {
@@ -52,7 +59,7 @@ router.get('/:id', async (req, res) => {
     await ensureTable(pool);
     const r = await pool.query(
       "SELECT * FROM tenant_vutler.client_companies WHERE id = \$1 AND workspace_id = \$2",
-      [req.params.id, req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001']
+      [req.params.id, req.workspaceId]
     );
     if (!r.rows.length) return res.status(404).json({ success: false, error: 'Client not found' });
     res.json({ success: true, data: r.rows[0] });
@@ -70,7 +77,7 @@ router.post('/', async (req, res) => {
     await ensureTable(pool);
     const { name, contact_email, notes, logo_url } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'name required' });
-    const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
+    const wsId = req.workspaceId;
     const r = await pool.query(
       "INSERT INTO tenant_vutler.client_companies (id, workspace_id, name, contact_email, notes, logo_url, created_at) VALUES (gen_random_uuid(), \$1, \$2, \$3, \$4, \$5, NOW()) RETURNING *",
       [wsId, name, contact_email || null, notes || null, logo_url || null]
@@ -89,7 +96,7 @@ router.put('/:id', async (req, res) => {
     if (!pool) return res.status(500).json({ success: false, error: 'DB not available' });
     await ensureTable(pool);
     const { name, contact_email, notes, logo_url } = req.body;
-    const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
+    const wsId = req.workspaceId;
     const r = await pool.query(
       "UPDATE tenant_vutler.client_companies SET name=COALESCE(\$1,name), contact_email=COALESCE(\$2,contact_email), notes=COALESCE(\$3,notes), logo_url=COALESCE(\$4,logo_url) WHERE id=\$5 AND workspace_id=\$6 RETURNING *",
       [name, contact_email, notes, logo_url, req.params.id, wsId]
@@ -108,7 +115,7 @@ router.delete('/:id', async (req, res) => {
     const pool = req.app.locals.pg || getPool()?.pool || getPool();
     if (!pool) return res.status(500).json({ success: false, error: 'DB not available' });
     await ensureTable(pool);
-    const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
+    const wsId = req.workspaceId;
     const r = await pool.query(
       "DELETE FROM tenant_vutler.client_companies WHERE id=\$1 AND workspace_id=\$2 RETURNING id",
       [req.params.id, wsId]

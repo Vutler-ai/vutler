@@ -55,7 +55,11 @@ const DEFAULT_BASE_URLS = {
   codex: "https://api.openai.com/v1"
 };
 
-const getWorkspaceId = (req) => req.workspaceId || req.headers["x-workspace-id"] || req.query.workspace_id || DEFAULT_WORKSPACE;
+// SECURITY: workspace ID must come from JWT only — never from user-controlled sources (audit 2026-03-29)
+const getWorkspaceId = (req) => {
+  if (!req.workspaceId) throw new Error('Authentication required');
+  return req.workspaceId;
+};
 
 const maskApiKey = (apiKey) => {
   if (!apiKey) return null;

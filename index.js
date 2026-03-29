@@ -29,6 +29,8 @@ const helmet = require('helmet');
 const path = require('path');
 const fs = require('fs');
 
+const cookieParser = require('cookie-parser');
+
 const app = express();
 const server = http.createServer(app);
 const port = process.env.PORT || 3001;
@@ -73,6 +75,9 @@ app.use(cors({
 // ---------------------------------------------------------------------------
 // 2. BODY PARSING
 // ---------------------------------------------------------------------------
+
+// Cookie parser — needed for OAuth CSRF state (audit 2026-03-29)
+app.use(cookieParser());
 
 // Skip JSON parsing for Stripe webhook (needs raw body)
 app.use((req, res, next) => {
@@ -572,6 +577,7 @@ app.get('/api/v1/nexus/:nodeId/agent-config', requireNexusAuth, async (req, res)
 // Auth (with brute-force protection — P1 audit 2026-03-28)
 app.use('/api/v1/auth/login', authLimiter);
 app.use('/api/v1/auth/register', authLimiter);
+app.use('/api/v1/auth/signup', authLimiter);
 app.use('/api/v1/auth/forgot-password', authLimiter);
 app.use('/api/v1/auth/reset-password', authLimiter);
 app.use('/api/v1/admin/login', authLimiter);

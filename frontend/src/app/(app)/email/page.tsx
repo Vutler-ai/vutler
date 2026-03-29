@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { apiFetch } from "@/lib/api/client";
 import {
   getEmails,
@@ -697,7 +698,7 @@ function EmailViewer({
         {email.html ? (
           <div
             className="text-zinc-200 prose prose-invert prose-sm max-w-none"
-            dangerouslySetInnerHTML={{ __html: email.html }}
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(email.html, { FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form'], FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'] }) }}
           />
         ) : (
           <pre className="text-zinc-300 whitespace-pre-wrap font-sans text-sm leading-relaxed">

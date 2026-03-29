@@ -12,6 +12,8 @@ const bcrypt = require('bcryptjs');
 const https = require('https');
 const router = express.Router();
 const coordinatorPrompt = require('../services/coordinatorPrompt');
+const { CryptoService } = require('../services/crypto');
+const cryptoSvc = new CryptoService();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
@@ -189,24 +191,39 @@ router.get('/github', (req, res) => {
   }
 
   const state = crypto.randomBytes(32).toString('hex');
-  const authUrl = `https://github.com/login/oauth/authorize?` + 
+  const authUrl = `https://github.com/login/oauth/authorize?` +
     `client_id=${GITHUB_CLIENT_ID}` +
     `&redirect_uri=${encodeURIComponent('https://app.vutler.ai/api/v1/auth/github/callback')}` +
     `&scope=${encodeURIComponent('user:email')}` +
     `&state=${state}`;
 
-  // Store state in session or similar for security (simplified for now)
+  // SECURITY: store state in HttpOnly cookie for CSRF validation (audit 2026-03-29)
+  res.cookie('oauth_state', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000, // 10 minutes
+    path: '/api/v1/auth',
+  });
   res.redirect(authUrl);
 });
 
 // GET /api/v1/auth/github/callback
 router.get('/github/callback', async (req, res) => {
   try {
-    const { code, error, error_description } = req.query;
-    
+    const { code, state, error, error_description } = req.query;
+
     if (error) {
       console.error('[AUTH] GitHub OAuth error:', error, error_description);
       return res.redirect('https://app.vutler.ai/login?error=oauth_cancelled');
+    }
+
+    // SECURITY: verify OAuth state to prevent CSRF (audit 2026-03-29)
+    const storedState = req.cookies?.oauth_state;
+    res.clearCookie('oauth_state', { path: '/api/v1/auth' });
+    if (!state || !storedState || state !== storedState) {
+      console.error('[AUTH] GitHub OAuth state mismatch — possible CSRF');
+      return res.redirect('https://app.vutler.ai/login?error=oauth_invalid');
     }
 
     if (!code) {
@@ -214,9 +231,9 @@ router.get('/github/callback', async (req, res) => {
     }
 
     if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'GitHub OAuth not configured' 
+      return res.status(500).json({
+        success: false,
+        error: 'GitHub OAuth not configured'
       });
     }
 
@@ -312,17 +329,33 @@ router.get('/google', (req, res) => {
     prompt: 'consent'
   });
 
+  // SECURITY: store state in HttpOnly cookie for CSRF validation (audit 2026-03-29)
+  res.cookie('oauth_state', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
+    path: '/api/v1/auth',
+  });
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
 // GET /api/v1/auth/google/callback
 router.get('/google/callback', async (req, res) => {
   try {
-    const { code, error } = req.query;
-    
+    const { code, state, error } = req.query;
+
     if (error) {
       console.error('[AUTH] Google OAuth error:', error);
       return res.redirect('https://app.vutler.ai/login?error=oauth_cancelled');
+    }
+
+    // SECURITY: verify OAuth state to prevent CSRF (audit 2026-03-29)
+    const storedState = req.cookies?.oauth_state;
+    res.clearCookie('oauth_state', { path: '/api/v1/auth' });
+    if (!state || !storedState || state !== storedState) {
+      console.error('[AUTH] Google OAuth state mismatch — possible CSRF');
+      return res.redirect('https://app.vutler.ai/login?error=oauth_invalid');
     }
 
     if (!code) {
@@ -330,9 +363,9 @@ router.get('/google/callback', async (req, res) => {
     }
 
     if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-      return res.status(500).json({ 
-        success: false, 
-        error: 'Google OAuth not configured' 
+      return res.status(500).json({
+        success: false,
+        error: 'Google OAuth not configured'
       });
     }
 
@@ -573,11 +606,13 @@ async function registerHandler(req, res) {
         const trialDays = parseInt(process.env.VUTLER_TRIAL_EXPIRY_DAYS, 10) || 7;
         const expiresAt = new Date(Date.now() + trialDays * 86400000).toISOString();
 
+        // SECURITY: encrypt trial key before storing (audit 2026-03-29)
+        const encryptedTrialKey = cryptoSvc.encrypt(trialKey);
         await client.query(
           `INSERT INTO ${SCHEMA}.workspace_llm_providers (id, workspace_id, name, provider, api_key_encrypted, is_active, created_at)
            VALUES (gen_random_uuid(), $1, 'Vutler Trial', 'vutler-trial', $2, true, NOW())
            ON CONFLICT DO NOTHING`,
-          [workspaceId, trialKey]
+          [workspaceId, encryptedTrialKey]
         );
 
         const trialSettings = [

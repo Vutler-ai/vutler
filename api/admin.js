@@ -7,6 +7,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const pool = require('../lib/vaultbrix');
 const router = express.Router();
 
@@ -59,15 +60,19 @@ router.post('/login', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Admin access required' });
     }
 
-    // Check password — support both pbkdf2 (with salt) and bcrypt formats
+    // Check password — support both bcrypt and legacy pbkdf2 formats
     let passwordValid = false;
-    if (user.salt) {
+    if (user.password_hash && user.password_hash.startsWith('$2')) {
+      // bcrypt format
+      passwordValid = await bcrypt.compare(password, user.password_hash);
+    } else if (user.salt) {
+      // Legacy pbkdf2 format — use timing-safe comparison
       const hash = hashPassword(password, user.salt);
-      passwordValid = (hash === user.password_hash);
-    } else if (user.password_hash && user.password_hash.startsWith('$2b$')) {
-      // bcrypt — can't verify without bcrypt lib, skip
-      console.log('[Admin] bcrypt password format not supported for admin login');
-      return res.status(401).json({ success: false, error: 'Invalid credentials (password format not supported)' });
+      try {
+        passwordValid = crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(user.password_hash, 'hex'));
+      } catch (_) {
+        passwordValid = false;
+      }
     }
 
     if (!passwordValid) {
@@ -76,7 +81,11 @@ router.post('/login', async (req, res) => {
 
     // Create session token
     const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'REDACTED_JWT_FALLBACK';
+    if (!process.env.JWT_SECRET) {
+      console.error('[Admin] JWT_SECRET env var is not set');
+      return res.status(500).json({ success: false, error: 'Server configuration error' });
+    }
+    const JWT_SECRET = process.env.JWT_SECRET;
     const token = jwt.sign(
       { id: user.id, email: user.email, workspace_id: user.workspace_id, role: user.role },
       JWT_SECRET,

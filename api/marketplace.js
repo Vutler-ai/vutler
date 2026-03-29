@@ -392,7 +392,8 @@ router.get("/templates/:id/reviews", async (req, res) => {
 // GET /api/v1/marketplace
 router.get("/", async (req, res) => {
   try {
-    const ws = Number(req.headers['x-workspace-id']) || 1;
+    // SECURITY: workspace from JWT only (audit 2026-03-29)
+    const ws = req.workspaceId;
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.marketplace_templates WHERE published = true AND (workspace_id = $1 OR workspace_id = 1) ORDER BY install_count DESC, avg_rating DESC, created_at DESC LIMIT 50`,
       [ws]

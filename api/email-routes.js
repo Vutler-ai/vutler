@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.json({ success: true, routes: [] });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
     const result = await pg.query(
       `SELECT er.*, a.name AS agent_name, a.username AS agent_username, a.avatar AS agent_avatar
        FROM ${SCHEMA}.email_routes er
@@ -102,7 +102,7 @@ router.post('/', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
 
     // Verify the agent belongs to this workspace
     const agentCheck = await pg.query(
@@ -168,7 +168,7 @@ router.delete('/:id', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
     const result = await pg.query(
       `DELETE FROM ${SCHEMA}.email_routes WHERE id = $1 AND workspace_id = $2 RETURNING id, email_address, agent_id`,
       [req.params.id, ws]

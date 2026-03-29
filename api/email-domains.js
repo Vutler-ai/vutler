@@ -118,7 +118,7 @@ router.get('/', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.json({ success: true, domains: [] });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
     const result = await pg.query(
       `SELECT * FROM ${SCHEMA}.workspace_domains WHERE workspace_id = $1 ORDER BY created_at DESC`,
       [ws]
@@ -165,7 +165,7 @@ router.post('/', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
     const dnsRecords = buildDnsRecords(cleanDomain);
 
     const result = await pg.query(
@@ -206,7 +206,7 @@ router.post('/:id/verify', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
     const domainRow = await pg.query(
       `SELECT * FROM ${SCHEMA}.workspace_domains WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
       [req.params.id, ws]
@@ -259,7 +259,7 @@ router.delete('/:id', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const ws = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const ws = req.workspaceId;
     const result = await pg.query(
       `DELETE FROM ${SCHEMA}.workspace_domains WHERE id = $1 AND workspace_id = $2 RETURNING id, domain`,
       [req.params.id, ws]

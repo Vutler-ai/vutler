@@ -8,6 +8,12 @@ function getPool() {
   return null;
 }
 
+// SECURITY: workspace from JWT only (audit 2026-03-29)
+router.use((req, res, next) => {
+  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  next();
+});
+
 // GET /api/v1/audit-logs
 router.get('/', async (req, res) => {
   try {
@@ -15,7 +21,7 @@ router.get('/', async (req, res) => {
     if (!pool) return res.json({ success: true, data: [] });
     const limit = Math.min(parseInt(req.query.limit) || 50, 500);
     const offset = parseInt(req.query.offset) || 0;
-    const wsId = req.workspaceId || req.headers['x-workspace-id'] || '00000000-0000-0000-0000-000000000001';
+    const wsId = req.workspaceId;
     const r = await pool.query(
       "SELECT id, action, actor, target, details, created_at, workspace_id FROM tenant_vutler.audit_logs WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
       [wsId, limit, offset]

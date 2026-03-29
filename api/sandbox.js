@@ -108,6 +108,12 @@ router.get('/executions', async (req, res) => {
   const conditions = ['batch_id IS NULL']; // top-level only (not batch sub-items)
   const params = [];
 
+  // SECURITY: scope to workspace (audit 2026-03-29)
+  if (req.workspaceId) {
+    params.push(req.workspaceId);
+    conditions.push(`workspace_id = $${params.length}`);
+  }
+
   if (agent_id) {
     params.push(agent_id);
     conditions.push(`agent_id = $${params.length}`);
@@ -156,8 +162,8 @@ router.get('/executions/:id', async (req, res) => {
     const result = await pool.query(
       `SELECT id, agent_id, language, code, stdout, stderr, exit_code, status, duration_ms, batch_id, batch_index, created_at
        FROM ${SCHEMA}.sandbox_executions
-       WHERE id = $1`,
-      [id]
+       WHERE id = $1 AND (workspace_id = $2 OR workspace_id IS NULL)`,
+      [id, req.workspaceId]
     );
 
     if (result.rows.length === 0) {

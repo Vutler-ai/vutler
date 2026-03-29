@@ -116,7 +116,7 @@ function maskKey(key) {
 // GET /api/v1/settings
 router.get('/', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
     const layout = await detectSettingsLayout();
     let row = {};
 
@@ -177,7 +177,7 @@ router.get('/', async (req, res) => {
 // PUT /api/v1/settings
 router.put('/', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId;
     // Support both flat { name, timezone } and nested { settings: { workspace_name: { value } } }
     const body = req.body || {};
     const s = body.settings || {};
@@ -230,7 +230,7 @@ router.put('/', async (req, res) => {
 // GET /api/v1/settings/llm-providers
 router.get('/llm-providers', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId;
     const r = await pool.query(`SELECT llm_providers FROM ${SCHEMA}.workspace_settings WHERE workspace_id=$1 LIMIT 1`, [wsId]);
     const providers = r.rows[0]?.llm_providers || {};
     const masked = {};
@@ -247,7 +247,7 @@ router.get('/llm-providers', async (req, res) => {
 // PUT /api/v1/settings/llm-providers
 router.put('/llm-providers', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId;
     const { providers } = req.body; // { openai: { api_key: '...', enabled: true }, anthropic: { ... } }
     // Merge: if a key looks masked, keep existing
     const r = await pool.query(`SELECT llm_providers FROM ${SCHEMA}.workspace_settings WHERE workspace_id=$1 LIMIT 1`, [wsId]);
@@ -271,7 +271,7 @@ router.put('/llm-providers', async (req, res) => {
 // GET /api/v1/settings/api-keys
 router.get('/api-keys', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId;
     // Try with last_used_at and role columns (may not exist on older schemas)
     let r;
     try {
@@ -301,7 +301,7 @@ router.get('/api-keys', async (req, res) => {
 // POST /api/v1/settings/api-keys
 router.post('/api-keys', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId;
     const { name, role } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'Name required' });
     const validRoles = ['admin', 'developer', 'viewer'];
@@ -341,7 +341,7 @@ router.post('/api-keys', async (req, res) => {
 // DELETE /api/v1/settings/api-keys/:id
 router.delete('/api-keys/:id', async (req, res) => {
   try {
-    const wsId = req.workspaceId || WS_ID;
+    const wsId = req.workspaceId;
     await pool.query(`UPDATE ${SCHEMA}.workspace_api_keys SET revoked_at=NOW() WHERE id=$1 AND workspace_id=$2`, [req.params.id, wsId]);
     res.json({ success: true, message: 'Key revoked' });
   } catch (err) {

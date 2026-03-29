@@ -31,7 +31,7 @@ function estimateCost(tokens, provider) {
 router.get('/usage', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
-    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
     const period = req.query.period || 'month'; // day | week | month | all
 
     const intervalSql = {
@@ -158,7 +158,7 @@ router.get('/usage', async (req, res) => {
 router.get('/usage/summary', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
-    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = req.workspaceId;
 
     let totalTokens = 0;
     if (pg) {
