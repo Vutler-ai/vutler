@@ -14,7 +14,7 @@ const { chat: llmChat } = require('../../../services/llmRouter');
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const POLL_INTERVAL = 10_000;  // 10s between polls
-const STALE_THRESHOLD_MIN = 60; // skip tasks older than 60min
+const STALE_THRESHOLD_MIN = 1440; // skip tasks older than 24h
 const BATCH_SIZE = 5;
 
 let running = false;
