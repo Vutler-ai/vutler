@@ -58,7 +58,7 @@ router.put('/:id', async (req, res) => {
 // DELETE /:id
 router.delete('/:id', async (req, res) => {
   try {
-    await taskRouter.deleteTask(req.params.id);
+    await taskRouter.deleteTask(req.params.id, req.workspaceId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

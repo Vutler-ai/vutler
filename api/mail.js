@@ -478,7 +478,8 @@ router.post('/inbound-webhook', async (req, res) => {
 router.get('/inbound', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM tenant_vutler.email_messages ORDER BY created_at DESC LIMIT 100'
+      'SELECT * FROM tenant_vutler.email_messages WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 100',
+      [req.workspaceId]
     );
     res.json({ success: true, data: result.rows });
   } catch (err) {
@@ -541,7 +542,7 @@ router.get('/auto-approval', async (req, res) => {
 // GET /api/v1/mail
 router.get('/', async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM tenant_vutler.email_messages ORDER BY created_at DESC LIMIT 50');
+    const result = await pool.query('SELECT * FROM tenant_vutler.email_messages WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 50', [req.workspaceId]);
     res.json({ success: true, data: result.rows });
   } catch (err) {
     console.error('[Mail] root list error:', err.message);

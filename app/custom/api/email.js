@@ -16,6 +16,12 @@ const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.starbox-group.com';
 const EMAIL_DOMAIN = process.env.EMAIL_DOMAIN || 'starbox-group.com';
 const SCHEMA = 'tenant_vutler';
 
+// SECURITY: workspace scoped (audit 2026-03-29)
+router.use((req, res, next) => {
+  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
+  next();
+});
+
 /**
  * Send email via Postal HTTP API
  */
@@ -59,11 +65,11 @@ router.get('/email', async (req, res) => {
 
     let query, params;
     if (agentId) {
-      query = `SELECT * FROM ${SCHEMA}.emails WHERE (folder = $1 OR ($1 = 'inbox' AND folder IS NULL)) AND agent_id = $2 ORDER BY created_at DESC LIMIT $3`;
-      params = [folder, agentId, limit];
+      query = `SELECT * FROM ${SCHEMA}.emails WHERE (folder = $1 OR ($1 = 'inbox' AND folder IS NULL)) AND agent_id = $2 AND workspace_id = $3 ORDER BY created_at DESC LIMIT $4`;
+      params = [folder, agentId, req.workspaceId, limit];
     } else {
-      query = `SELECT * FROM ${SCHEMA}.emails WHERE folder = $1 OR ($1 = 'inbox' AND folder IS NULL) ORDER BY created_at DESC LIMIT $2`;
-      params = [folder, limit];
+      query = `SELECT * FROM ${SCHEMA}.emails WHERE (folder = $1 OR ($1 = 'inbox' AND folder IS NULL)) AND workspace_id = $2 ORDER BY created_at DESC LIMIT $3`;
+      params = [folder, req.workspaceId, limit];
     }
 
     const r = await pg.query(query, params);
@@ -99,8 +105,8 @@ router.get('/email/inbox', async (req, res) => {
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
     const r = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'inbox' OR folder IS NULL ORDER BY created_at DESC LIMIT $1`,
-      [limit]
+      `SELECT * FROM ${SCHEMA}.emails WHERE (folder = 'inbox' OR folder IS NULL) AND workspace_id = $2 ORDER BY created_at DESC LIMIT $1`,
+      [limit, req.workspaceId]
     );
     const emails = r.rows.map(e => ({
       id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
@@ -125,7 +131,8 @@ router.get('/email/sent', async (req, res) => {
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
     const r = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' ORDER BY created_at DESC LIMIT 50`
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' AND workspace_id = $1 ORDER BY created_at DESC LIMIT 50`,
+      [req.workspaceId]
     );
     const emails = r.rows.map(e => ({
       id: e.id, from: e.from_addr, to: e.to_addr,
@@ -148,7 +155,8 @@ router.get('/email/drafts', async (req, res) => {
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
     const r = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' ORDER BY created_at DESC LIMIT 100`
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' AND workspace_id = $1 ORDER BY created_at DESC LIMIT 100`,
+      [req.workspaceId]
     );
     const emails = r.rows.map(e => ({
       id: e.id, from: e.from_addr, to: e.to_addr,
@@ -211,9 +219,9 @@ router.post('/email/send', async (req, res) => {
     if (pg) {
       try {
         const r = await pg.query(
-          `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, 'sent', true, $6, NOW()) RETURNING id`,
-          [sender, to, subject, body || '', htmlBody || null, agentId || null]
+          `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, 'sent', true, $6, $7, NOW()) RETURNING id`,
+          [sender, to, subject, body || '', htmlBody || null, agentId || null, req.workspaceId]
         );
         emailId = r.rows[0]?.id;
       } catch (dbErr) {
@@ -265,9 +273,9 @@ router.post('/email/draft', async (req, res) => {
     sender = sender || `noreply@${EMAIL_DOMAIN}`;
 
     const r = await pg.query(
-      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'drafts', false, $6, NOW()) RETURNING id`,
-      [sender, to, subject, body || '', htmlBody || null, agentId || null]
+      `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'drafts', false, $6, $7, NOW()) RETURNING id`,
+      [sender, to, subject, body || '', htmlBody || null, agentId || null, req.workspaceId]
     );
 
     res.status(201).json({
@@ -293,8 +301,8 @@ router.post('/email/approve/:id', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     const emailRow = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND folder = 'drafts' LIMIT 1`,
-      [req.params.id]
+      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND folder = 'drafts' AND workspace_id = $2 LIMIT 1`,
+      [req.params.id, req.workspaceId]
     );
 
     if (!emailRow.rows[0]) {
@@ -334,8 +342,8 @@ router.post('/email/approve/:id', async (req, res) => {
 
     // Update folder to sent
     await pg.query(
-      `UPDATE ${SCHEMA}.emails SET folder = 'sent', is_read = true WHERE id = $1`,
-      [req.params.id]
+      `UPDATE ${SCHEMA}.emails SET folder = 'sent', is_read = true WHERE id = $1 AND workspace_id = $2`,
+      [req.params.id, req.workspaceId]
     );
 
     res.json({
@@ -357,8 +365,8 @@ router.delete('/email/draft/:id', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     await pg.query(
-      `UPDATE ${SCHEMA}.emails SET folder = 'trash' WHERE id = $1`,
-      [req.params.id]
+      `UPDATE ${SCHEMA}.emails SET folder = 'trash' WHERE id = $1 AND workspace_id = $2`,
+      [req.params.id, req.workspaceId]
     );
 
     res.json({ success: true });
@@ -377,8 +385,8 @@ router.delete('/email/:uid', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     const result = await pg.query(
-      `DELETE FROM ${SCHEMA}.emails WHERE id = $1 RETURNING id`,
-      [req.params.uid]
+      `DELETE FROM ${SCHEMA}.emails WHERE id = $1 AND workspace_id = $2 RETURNING id`,
+      [req.params.uid, req.workspaceId]
     );
 
     if (!result.rows[0]) {
@@ -400,7 +408,7 @@ router.patch('/email/inbox/:id/read', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1`, [req.params.id]);
+    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1 AND workspace_id = $2`, [req.params.id, req.workspaceId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -415,7 +423,7 @@ router.put('/email/:uid/read', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1`, [req.params.uid]);
+    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1 AND workspace_id = $2`, [req.params.uid, req.workspaceId]);
     res.json({ success: true, uid: req.params.uid, read: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -531,11 +539,13 @@ router.post('/email/incoming', async (req, res) => {
     let autoReply = false;
     let approvalRequired = true;
     let isGroupEmail = false;
+    let incomingWorkspaceId = null;
 
     try {
       const routeRow = await pg.query(
-        `SELECT er.agent_id, er.auto_reply, er.approval_required
+        `SELECT er.agent_id, er.auto_reply, er.approval_required, a.workspace_id
          FROM tenant_vutler.email_routes er
+         LEFT JOIN tenant_vutler.agents a ON a.id = er.agent_id
          WHERE LOWER(er.email_address) = $1 LIMIT 1`,
         [recipient]
       );
@@ -543,6 +553,7 @@ router.post('/email/incoming', async (req, res) => {
         agentId = routeRow.rows[0].agent_id;
         autoReply = routeRow.rows[0].auto_reply;
         approvalRequired = routeRow.rows[0].approval_required;
+        incomingWorkspaceId = routeRow.rows[0].workspace_id;
       }
     } catch (routeErr) {
       console.warn('[EMAIL/INCOMING] Route lookup failed:', routeErr.message);
@@ -578,9 +589,9 @@ router.post('/email/incoming', async (req, res) => {
             if (member.member_type === 'agent' && member.agent_id) {
               await pg.query(
                 `INSERT INTO ${SCHEMA}.emails
-                   (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
-                 VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, NOW())`,
-                [sender, recipient, subject, body, htmlBody, member.agent_id]
+                   (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
+                 VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, $7, NOW())`,
+                [sender, recipient, subject, body, htmlBody, member.agent_id, group.workspace_id]
               );
               console.log(`[EMAIL/INCOMING] Group delivery → agent ${member.agent_name || member.agent_id}`);
             }
@@ -613,10 +624,10 @@ router.post('/email/incoming', async (req, res) => {
     if (!isGroupEmail) {
       const insertResult = await pg.query(
         `INSERT INTO ${SCHEMA}.emails
-           (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, NOW())
+           (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, $7, NOW())
          RETURNING id`,
-        [sender, recipient, subject, body, htmlBody, agentId || null]
+        [sender, recipient, subject, body, htmlBody, agentId || null, incomingWorkspaceId || null]
       );
       const emailId = insertResult.rows[0]?.id;
       console.log(`[EMAIL/INCOMING] Stored email ${emailId} → agent ${agentId || 'unrouted'}`);
@@ -637,8 +648,8 @@ router.post('/email/incoming', async (req, res) => {
 
       await pg.query(
         `INSERT INTO ${SCHEMA}.emails
-           (from_addr, to_addr, subject, body, folder, is_read, agent_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, false, $6, NOW())`,
+           (from_addr, to_addr, subject, body, folder, is_read, agent_id, workspace_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, false, $6, $7, NOW())`,
         [
           agentEmail,
           sender,
@@ -646,6 +657,7 @@ router.post('/email/incoming', async (req, res) => {
           `Thank you for your email. ${approvalRequired ? 'Your reply is pending approval.' : 'We will be in touch shortly.'}`,
           replyFolder,
           agentId,
+          incomingWorkspaceId || null,
         ]
       );
 
@@ -668,8 +680,9 @@ router.get('/email/pending', async (req, res) => {
       `SELECT e.*, a.name AS agent_name, a.avatar AS agent_avatar, a.username AS agent_username
        FROM ${SCHEMA}.emails e
        LEFT JOIN ${SCHEMA}.agents a ON a.id::text = e.agent_id
-       WHERE e.folder = 'drafts' AND e.agent_id IS NOT NULL
-       ORDER BY e.created_at DESC LIMIT 100`
+       WHERE e.folder = 'drafts' AND e.agent_id IS NOT NULL AND e.workspace_id = $1
+       ORDER BY e.created_at DESC LIMIT 100`,
+      [req.workspaceId]
     );
 
     const emails = r.rows.map(e => ({
@@ -709,7 +722,8 @@ router.get('/email/stats', async (req, res) => {
         COUNT(*) FILTER (WHERE agent_id IS NOT NULL AND folder = 'sent') AS agent_handled,
         COUNT(*) AS total
       FROM ${SCHEMA}.emails
-    `);
+      WHERE workspace_id = $1
+    `, [req.workspaceId]);
 
     const row = r.rows[0];
     res.json({
@@ -749,8 +763,8 @@ router.post('/email/:id/assign', async (req, res) => {
     }
 
     const result = await pg.query(
-      `UPDATE ${SCHEMA}.emails SET agent_id = $1 WHERE id = $2 RETURNING id, agent_id`,
-      [agent_id, req.params.id]
+      `UPDATE ${SCHEMA}.emails SET agent_id = $1 WHERE id = $2 AND workspace_id = $3 RETURNING id, agent_id`,
+      [agent_id, req.params.id, req.workspaceId]
     );
 
     if (!result.rows[0]) {
@@ -781,8 +795,8 @@ router.post('/email/draft/:id/regenerate', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     const emailRow = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND folder = 'drafts' LIMIT 1`,
-      [req.params.id]
+      `SELECT * FROM ${SCHEMA}.emails WHERE id = $1 AND folder = 'drafts' AND workspace_id = $2 LIMIT 1`,
+      [req.params.id, req.workspaceId]
     );
 
     if (!emailRow.rows[0]) {
@@ -793,15 +807,15 @@ router.post('/email/draft/:id/regenerate', async (req, res) => {
 
     // Mark old draft as rejected
     await pg.query(
-      `UPDATE ${SCHEMA}.emails SET folder = 'trash' WHERE id = $1`,
-      [req.params.id]
+      `UPDATE ${SCHEMA}.emails SET folder = 'trash' WHERE id = $1 AND workspace_id = $2`,
+      [req.params.id, req.workspaceId]
     );
 
     // Create a placeholder for the new draft (agent will fill it in)
     const newDraft = await pg.query(
       `INSERT INTO ${SCHEMA}.emails
-         (from_addr, to_addr, subject, body, folder, is_read, agent_id, created_at)
-       VALUES ($1, $2, $3, $4, 'drafts', false, $5, NOW())
+         (from_addr, to_addr, subject, body, folder, is_read, agent_id, workspace_id, created_at)
+       VALUES ($1, $2, $3, $4, 'drafts', false, $5, $6, NOW())
        RETURNING id`,
       [
         email.from_addr,
@@ -809,6 +823,7 @@ router.post('/email/draft/:id/regenerate', async (req, res) => {
         email.subject,
         '[Regenerating draft... The agent is composing a new response.]',
         email.agent_id,
+        req.workspaceId,
       ]
     );
 
