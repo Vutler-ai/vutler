@@ -4,6 +4,7 @@ const { createDashboardServer } = require('./dashboard/server');
 const AgentManager = require('./lib/agent-manager');
 const { WSClient } = require('./lib/ws-client');
 const { TaskOrchestrator } = require('./lib/task-orchestrator');
+const { OfflineQueue } = require('./lib/offline-queue');
 const logger = require('./lib/logger');
 const { UnknownError } = require('./lib/errors');
 
@@ -58,6 +59,8 @@ class NexusNode {
     this.logBuffer = [];
     this.wsClient = null;
     this.orchestrator = null; // initialised after connect() so wsClient is ready
+    this.offlineQueue = null;
+    this.connectionStatus = 'disconnected';
 
     // Offline monitor (enterprise only)
     this.offlineConfig = opts.offline_config || {};
@@ -138,6 +141,7 @@ class NexusNode {
     if (this.wsClient)    this.wsClient.close();
     if (this.healthServer) this.healthServer.close();
     if (this.offlineMonitor) this.offlineMonitor.stop();
+    this.offlineQueue?.close();
     // Legacy timers (kept for safety — no-ops if WS path is used)
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pollTimer)      clearInterval(this.pollTimer);
@@ -161,7 +165,12 @@ class NexusNode {
       nodeId: this.nodeId,
     });
 
+    // Initialise the offline queue as soon as we have a wsClient
+    this.offlineQueue = new OfflineQueue();
+
     this.wsClient.on('connected', () => {
+      this.connectionStatus = 'online';
+
       // Announce presence and push current status
       this.wsClient.send('nexus.register', {
         node_id: this.nodeId,
@@ -181,6 +190,27 @@ class NexusNode {
         this.heartbeatTimer = null;
       }
       if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
+
+      // Drain any items that were queued while offline and resend them
+      if (this.offlineQueue) {
+        try {
+          const queued = this.offlineQueue.drain();
+          for (const item of queued) {
+            this.wsClient.send(item.type, JSON.parse(item.payload));
+          }
+          if (queued.length > 0) {
+            console.log(`[Nexus] Drained ${queued.length} queued item(s) after reconnect`);
+          }
+          // Clean up stale entries opportunistically
+          this.offlineQueue.purge();
+        } catch (e) {
+          console.warn('[Nexus] Failed to drain offline queue:', e.message);
+        }
+      }
+    });
+
+    this.wsClient.on('disconnected', () => {
+      this.connectionStatus = 'reconnecting';
     });
 
     this.wsClient.on('message', async (msg) => {
@@ -190,7 +220,11 @@ class NexusNode {
         case 'nexus.task': {
           if (!msg.payload) break;
           const result = await this.orchestrator.execute(msg.payload);
-          this.wsClient.send('task.result', result);
+          const sent = this.wsClient.send('task.result', result);
+          if (!sent && this.offlineQueue) {
+            // WS dropped between task receipt and result send — queue for resend
+            this.offlineQueue.enqueue(result.taskId || null, 'task.result', result);
+          }
           // Mirror to legacy HTTP status endpoint for backwards compat
           if (result.taskId) {
             const status = result.status === 'completed' ? 'completed' : 'failed';

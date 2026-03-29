@@ -44,7 +44,7 @@ class AgentWorker {
         const command = task.metadata?.command || (task.description || '').replace(/^shell:\s*/, '');
         result = await this.providers.shell.exec(command);
       } else if (provider === 'filesystem') {
-        result = await this.providers.fs.read(task.metadata?.path);
+        result = await this.providers.fs.readFile(task.metadata?.path);
       } else if (this.providers.llm) {
         // LLM-based execution with agent personality
         const prompt = [

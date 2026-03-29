@@ -7,7 +7,9 @@
     "vutler-nexus": "./bin/cli.js"
   },
   "dependencies": {
+    "better-sqlite3": "^9.4.3",
     "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
     "ws": "^8.16.0"
   }
 }

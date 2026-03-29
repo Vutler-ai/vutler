@@ -2,6 +2,7 @@
 
 const logger = require('./logger');
 const { UnknownError } = require('./errors');
+const { getPermissionEngine } = require('./permission-engine');
 
 const MAX_RESULT_BYTES    = 1 * 1024 * 1024; // 1 MB
 const PROGRESS_INTERVAL_MS = 2_000;
@@ -56,6 +57,11 @@ class TaskOrchestrator {
     }
 
     try {
+      // Permission check — validate path before any provider call
+      const targetPath = params.path || params.command || null;
+      if (targetPath) {
+        getPermissionEngine().validate(targetPath, action);
+      }
       const data = await this._route(action, params, taskId);
       const durationMs = Date.now() - start;
       return this._successResult(taskId, data, durationMs, action);

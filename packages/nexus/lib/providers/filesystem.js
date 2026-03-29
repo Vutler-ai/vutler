@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const fg = require('fast-glob');
 
 class FilesystemProvider {
   constructor(config = {}) {
@@ -22,6 +23,56 @@ class FilesystemProvider {
   stat(p) { return fs.statSync(this._resolve(p)); }
   deleteFile(p) { fs.unlinkSync(this._resolve(p)); }
   mkdir(p) { fs.mkdirSync(this._resolve(p), { recursive: true }); }
+
+  /**
+   * Glob for files matching a pattern within rootDir.
+   * Uses fast-glob (sync) and applies the same path-escape security as _resolve().
+   * @param {string} pattern  - Glob pattern (e.g. "**\/*.js")
+   * @param {string} rootDir  - Directory to search in (defaults to this.root)
+   * @returns {string[]}        Matching absolute paths
+   */
+  glob(pattern, rootDir = this.root) {
+    const resolvedRoot = this._resolve(path.relative(this.root, rootDir) || '.');
+    return fg.sync(pattern, { cwd: resolvedRoot, absolute: true });
+  }
+
+  /**
+   * Recursively search dir for entries whose name contains query (case-insensitive).
+   * @param {string} dir    - Directory to walk (relative or absolute within root)
+   * @param {string} query  - Substring to match against entry names
+   * @returns {{ name: string, path: string, size: number, isDir: boolean }[]}
+   *          Up to 200 results.
+   */
+  searchRecursive(dir, query) {
+    const resolvedDir = this._resolve(path.relative(this.root, dir) || '.');
+    const lowerQuery = query.toLowerCase();
+    const results = [];
+
+    const walk = (current) => {
+      if (results.length >= 200) return;
+      let entries;
+      try {
+        entries = fs.readdirSync(current, { withFileTypes: true });
+      } catch (_) {
+        return; // skip unreadable directories
+      }
+      for (const entry of entries) {
+        if (results.length >= 200) break;
+        const entryPath = path.join(current, entry.name);
+        if (entry.name.toLowerCase().includes(lowerQuery)) {
+          let size = 0;
+          try { size = entry.isDirectory() ? 0 : fs.statSync(entryPath).size; } catch (_) { /* ignore */ }
+          results.push({ name: entry.name, path: entryPath, size, isDir: entry.isDirectory() });
+        }
+        if (entry.isDirectory()) {
+          walk(entryPath);
+        }
+      }
+    };
+
+    walk(resolvedDir);
+    return results;
+  }
 }
 
 module.exports = { FilesystemProvider };
