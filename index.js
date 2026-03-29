@@ -678,6 +678,11 @@ async function start() {
     if (chatRuntime?.start) chatRuntime.start();
     app.locals.chatRuntime = chatRuntime;
 
+    // Task executor — picks up pending tasks and executes them via agent LLM
+    const taskExecutor = require('./app/custom/services/taskExecutor');
+    taskExecutor.start();
+    app.locals.taskExecutor = taskExecutor;
+
     // Swarm coordinator
     try {
       const { getSwarmCoordinator } = require('./services/swarmCoordinator');
