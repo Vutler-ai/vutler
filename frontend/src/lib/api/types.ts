@@ -347,6 +347,66 @@ export interface NexusTokenResponse {
   token: string;
 }
 
+// ── Nexus Dispatch Types ─────────────────────────────────────────────────────
+
+export type NexusAction =
+  | 'search' | 'read_document' | 'list_dir' | 'open_file' | 'write_file'
+  | 'shell_exec' | 'read_clipboard' | 'list_emails' | 'search_emails'
+  | 'read_calendar' | 'read_contacts' | 'search_contacts';
+
+export interface NexusDispatchResult<T = unknown> {
+  taskId: string;
+  status: 'completed' | 'error';
+  data?: T;
+  error?: string;
+  metadata?: { durationMs: number; action: string; truncated?: boolean };
+}
+
+export interface NexusSearchResult {
+  path: string;
+  name: string;
+  size?: number;
+  modified?: string;
+}
+
+export interface NexusDocumentResult {
+  content: string;
+  format: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface NexusEmailResult {
+  sender: string;
+  subject: string;
+  date: string;
+  preview: string;
+}
+
+export interface NexusCalendarEvent {
+  title: string;
+  start: string;
+  end: string;
+  location?: string;
+}
+
+export interface NexusContact {
+  name: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+}
+
+export interface NexusShellResult {
+  output: string;
+  exitCode?: number;
+}
+
+export interface NexusCapabilities {
+  platform: string;
+  providers: string[];
+  permissions?: { allowedFolders: string[] };
+}
+
 // ─── Marketplace ──────────────────────────────────────────────────────────────
 
 export interface MarketplaceTemplateConfig {

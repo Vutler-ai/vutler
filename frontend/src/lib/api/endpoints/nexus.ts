@@ -7,6 +7,14 @@ import type {
   DeployEnterprisePayload,
   NexusTokenResponse,
   SuccessResponse,
+  NexusDispatchResult,
+  NexusSearchResult,
+  NexusDocumentResult,
+  NexusEmailResult,
+  NexusCalendarEvent,
+  NexusContact,
+  NexusShellResult,
+  NexusCapabilities,
 } from '../types';
 
 export async function getNodes(): Promise<NexusStatusResponse> {
@@ -91,4 +99,92 @@ export async function stopNodeAgent(
     `/api/v1/nexus/nodes/${nodeId}/agents/${agentId}/stop`,
     { method: 'POST' }
   );
+}
+
+// ── Typed dispatch helpers ────────────────────────────────────────────────────
+
+export async function dispatchAction(
+  nodeId: string,
+  action: string,
+  args?: Record<string, unknown>
+): Promise<NexusDispatchResult> {
+  return apiFetch<NexusDispatchResult>(`/api/v1/nexus/nodes/${nodeId}/dispatch`, {
+    method: 'POST',
+    body: JSON.stringify({ command: action, args }),
+  });
+}
+
+export async function dispatchSearch(
+  nodeId: string,
+  query: string,
+  scope?: string
+): Promise<NexusDispatchResult<{ results: NexusSearchResult[] }>> {
+  return dispatchAction(nodeId, 'search', { query, scope }) as Promise<NexusDispatchResult<{ results: NexusSearchResult[] }>>;
+}
+
+export async function dispatchReadDocument(
+  nodeId: string,
+  path: string
+): Promise<NexusDispatchResult<NexusDocumentResult>> {
+  return dispatchAction(nodeId, 'read_document', { path }) as Promise<NexusDispatchResult<NexusDocumentResult>>;
+}
+
+export async function dispatchListDir(
+  nodeId: string,
+  path: string,
+  recursive?: boolean,
+  pattern?: string
+): Promise<NexusDispatchResult<{ entries: Array<{ name: string; type: string; size?: number }> }>> {
+  return dispatchAction(nodeId, 'list_dir', { path, recursive, pattern }) as Promise<NexusDispatchResult<{ entries: Array<{ name: string; type: string; size?: number }> }>>;
+}
+
+export async function dispatchListEmails(
+  nodeId: string,
+  limit?: number,
+  folder?: string
+): Promise<NexusDispatchResult<{ emails: NexusEmailResult[] }>> {
+  return dispatchAction(nodeId, 'list_emails', { limit, folder }) as Promise<NexusDispatchResult<{ emails: NexusEmailResult[] }>>;
+}
+
+export async function dispatchSearchEmails(
+  nodeId: string,
+  query: string,
+  limit?: number
+): Promise<NexusDispatchResult<{ emails: NexusEmailResult[] }>> {
+  return dispatchAction(nodeId, 'search_emails', { query, limit }) as Promise<NexusDispatchResult<{ emails: NexusEmailResult[] }>>;
+}
+
+export async function dispatchReadCalendar(
+  nodeId: string,
+  days?: number
+): Promise<NexusDispatchResult<{ events: NexusCalendarEvent[] }>> {
+  return dispatchAction(nodeId, 'read_calendar', { days: days ?? 7 }) as Promise<NexusDispatchResult<{ events: NexusCalendarEvent[] }>>;
+}
+
+export async function dispatchReadContacts(
+  nodeId: string,
+  query?: string,
+  limit?: number
+): Promise<NexusDispatchResult<{ contacts: NexusContact[] }>> {
+  const action = query ? 'search_contacts' : 'read_contacts';
+  return dispatchAction(nodeId, action, { query, limit }) as Promise<NexusDispatchResult<{ contacts: NexusContact[] }>>;
+}
+
+export async function dispatchShellExec(
+  nodeId: string,
+  command: string
+): Promise<NexusDispatchResult<NexusShellResult>> {
+  return dispatchAction(nodeId, 'shell_exec', { command }) as Promise<NexusDispatchResult<NexusShellResult>>;
+}
+
+export async function dispatchReadClipboard(
+  nodeId: string
+): Promise<NexusDispatchResult<{ content: string }>> {
+  return dispatchAction(nodeId, 'read_clipboard', {}) as Promise<NexusDispatchResult<{ content: string }>>;
+}
+
+export async function getNodeCapabilities(
+  nodeId: string
+): Promise<NexusCapabilities> {
+  return apiFetch<NexusCapabilities>(`/api/v1/nexus/nodes/${nodeId}/capabilities`);
 }

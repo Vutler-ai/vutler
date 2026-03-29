@@ -231,33 +231,38 @@ app.post('/api/v1/nexus/tokens/local', async (req, res) => {
   if (!req.user || req.authType !== 'jwt') {
     return res.status(401).json({ success: false, error: 'Authentication required to generate deploy tokens' });
   }
-  const { agentId, permissions, llmConfig } = req.body;
-  if (!agentId) return res.status(400).json({ success: false, error: 'agentId required' });
+  const { agentId, agentIds, permissions, llmConfig, routingRules } = req.body;
+  // Support both singular agentId and plural agentIds (frontend sends agentIds array)
+  const primaryAgentId = agentId || (Array.isArray(agentIds) ? agentIds[0] : null);
+  const allAgentIds = Array.isArray(agentIds) ? agentIds : (agentId ? [agentId] : []);
+  if (!primaryAgentId) return res.status(400).json({ success: false, error: 'agentId or agentIds required' });
 
   const pg = app.locals.pg;
   const workspaceId = req.workspaceId;
 
-  // Look up agent to get name and snipara instance ID
+  // Look up primary agent to get name and snipara instance ID
   let agentName = 'Unknown Agent';
-  let sniparaInstanceId = agentId;
+  let sniparaInstanceId = primaryAgentId;
   if (pg) {
     try {
-      const agent = await pg.query('SELECT name, id FROM tenant_vutler.agents WHERE id = $1', [agentId]);
+      const agent = await pg.query('SELECT name, id FROM tenant_vutler.agents WHERE id = $1', [primaryAgentId]);
       if (agent.rows[0]) agentName = agent.rows[0].name;
     } catch (_) {}
   }
 
   const { generateLocalToken } = require('./services/tokenService');
-  const result = generateLocalToken({ agentId, agentName, workspaceId, sniparaInstanceId, permissions, llmConfig });
+  const result = generateLocalToken({ agentId: primaryAgentId, agentName, workspaceId, sniparaInstanceId, permissions, llmConfig });
 
   // Pre-create node in DB
   if (pg) {
     try {
+      const metadata = { agentIds: allAgentIds, routingRules: routingRules || [] };
       await pg.query(
-        `INSERT INTO tenant_vutler.nexus_nodes (id, workspace_id, name, mode, clone_source_agent_id, snipara_instance_id, status, deploy_token_hash)
-         VALUES ($1, $2, $3, 'local', $4, $5, 'pending_activation', $6)`,
-        [result.nodeId, workspaceId, agentName + ' (Local)', agentId, sniparaInstanceId,
-         require('crypto').createHash('sha256').update(result.token).digest('hex')]
+        `INSERT INTO tenant_vutler.nexus_nodes (id, workspace_id, name, mode, clone_source_agent_id, snipara_instance_id, status, deploy_token_hash, metadata)
+         VALUES ($1, $2, $3, 'local', $4, $5, 'pending_activation', $6, $7::jsonb)`,
+        [result.nodeId, workspaceId, agentName + ' (Local)', primaryAgentId, sniparaInstanceId,
+         require('crypto').createHash('sha256').update(result.token).digest('hex'),
+         JSON.stringify(metadata)]
       );
     } catch (_) {}
   }
