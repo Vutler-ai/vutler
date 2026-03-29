@@ -523,6 +523,7 @@ interface EmailViewerProps {
   onMarkUnread: (email: AugmentedEmail) => void;
   onArchive: (email: AugmentedEmail) => void;
   onApprove: (email: AugmentedEmail) => void;
+  onApproveWithBody: (email: AugmentedEmail, body: string) => void;
   onReject: (email: AugmentedEmail) => void;
   onRegenerate: (email: AugmentedEmail) => void;
   onAssign: (emailId: string, agentId: string) => void;
@@ -540,6 +541,7 @@ function EmailViewer({
   onMarkUnread,
   onArchive,
   onApprove,
+  onApproveWithBody,
   onReject,
   onRegenerate,
   onAssign,
@@ -751,12 +753,7 @@ function EmailViewer({
             initial={(email.draftReply as string) || ""}
             onSend={async (body) => {
               setEditingDraft(false);
-              try {
-                await approveEmailWithBody(email.uid, body);
-                setEmails((prev) => prev.filter((e) => e.uid !== email.uid));
-                setSelectedEmail(null);
-                loadPendingApprovals();
-              } catch { /* silent */ }
+              await onApproveWithBody(email, body);
             }}
             onCancel={() => setEditingDraft(false)}
           />
@@ -1135,6 +1132,17 @@ export default function EmailPage() {
     }
   };
 
+  const handleApproveWithBody = async (email: AugmentedEmail, body: string) => {
+    try {
+      await approveEmailWithBody(email.uid, body);
+      setEmails((prev) => prev.filter((e) => e.uid !== email.uid));
+      setSelectedEmail(null);
+      loadPendingApprovals();
+    } catch {
+      /* silent */
+    }
+  };
+
   const handleReject = async (email: AugmentedEmail) => {
     try {
       await rejectEmail(email.uid);
@@ -1372,6 +1380,7 @@ export default function EmailPage() {
           onMarkUnread={handleMarkUnread}
           onArchive={handleArchive}
           onApprove={handleApprove}
+          onApproveWithBody={handleApproveWithBody}
           onReject={handleReject}
           onRegenerate={handleRegenerate}
           onAssign={handleAssign}
