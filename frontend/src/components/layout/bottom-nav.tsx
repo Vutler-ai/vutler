@@ -35,7 +35,7 @@ export default function BottomNav({ onMoreClick }: BottomNavProps) {
       <div className="flex items-center justify-around h-14">
         {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
           const isActive =
-            pathname === href || (href !== '/' && pathname?.startsWith(href));
+            pathname === href || pathname?.startsWith(href);
           return (
             <Link
               key={href}
