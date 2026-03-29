@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#3b82f6">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Vutler Nexus — Setup</title>
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .container { max-width: 480px; padding: 2rem; text-align: center; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; }
+    .subtitle { color: #888; margin-bottom: 2rem; font-size: 0.9rem; }
+    .step { display: none; }
+    .step.active { display: block; }
+    .qr-box { background: #fff; padding: 1.5rem; border-radius: 12px; display: inline-block; margin: 1.5rem 0; }
+    .qr-box canvas { display: block; }
+    .code { font-family: monospace; font-size: 1.8rem; letter-spacing: 4px; color: #60a5fa; margin: 1rem 0; }
+    .timer { color: #888; font-size: 0.85rem; }
+    .btn { display: inline-block; padding: 0.75rem 2rem; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; margin: 0.5rem; transition: all 0.2s; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-secondary { background: #333; color: #e5e5e5; }
+    .folder-list { text-align: left; margin: 1.5rem 0; }
+    .folder-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: #1a1a1a; border-radius: 8px; margin: 0.5rem 0; }
+    .folder-item label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .check { color: #22c55e; font-size: 1.5rem; }
+    .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #333; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status { padding: 1rem; border-radius: 8px; margin: 1rem 0; }
+    .status.success { background: #052e16; border: 1px solid #22c55e; color: #22c55e; }
+    .status.error { background: #2a0a0a; border: 1px solid #ef4444; color: #ef4444; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Step 1: QR Code Pairing -->
+    <div class="step active" id="step-qr">
+      <h1>Welcome to Vutler Nexus</h1>
+      <p class="subtitle">Scan this QR code from your Vutler dashboard to connect</p>
+      <div class="qr-box" id="qr-canvas"></div>
+      <div class="code" id="pairing-code">------</div>
+      <div class="timer" id="timer">Expires in 5:00</div>
+      <p style="margin-top: 1.5rem; color: #666; font-size: 0.85rem;">
+        Or enter this code manually in Settings &gt; Nexus &gt; Pair Device
+      </p>
+    </div>
+
+    <!-- Step 2: Folder Permissions -->
+    <div class="step" id="step-permissions">
+      <h1>Choose folders to share</h1>
+      <p class="subtitle">Nexus can only access folders you explicitly allow</p>
+      <div class="folder-list" id="folder-list"></div>
+      <button class="btn btn-secondary" onclick="addCustomFolder()">+ Add custom folder</button>
+      <br>
+      <button class="btn btn-primary" onclick="goToStep('step-verify')" style="margin-top: 1.5rem;">Continue</button>
+    </div>
+
+    <!-- Step 3: Health Check -->
+    <div class="step" id="step-verify">
+      <h1>Verifying connection</h1>
+      <p class="subtitle">Running a quick health check...</p>
+      <div style="margin: 2rem 0;"><span class="spinner" id="verify-spinner"></span></div>
+      <div id="verify-result"></div>
+    </div>
+
+    <!-- Step 4: Done -->
+    <div class="step" id="step-done">
+      <div style="font-size: 4rem; margin-bottom: 1rem;">&#10003;</div>
+      <h1>You're all set!</h1>
+      <p class="subtitle">Nexus is connected and running. You can close this tab.</p>
+      <button class="btn btn-primary" onclick="window.location='/'">Go to Dashboard</button>
+    </div>
+  </div>
+
+  <script>
+    // ── Config ───────────────────────────────────────────────────────────────
+    const API = '';
+    let pairingCode = null;
+    let pairingExpiry = null;
+
+    // ── Step 1: Generate pairing code ────────────────────────────────────────
+    async function initPairing() {
+      try {
+        const res = await fetch(API + '/api/pairing/generate', { method: 'POST' });
+        const data = await res.json();
+        pairingCode = data.code;
+        pairingExpiry = Date.now() + (data.ttl_seconds || 300) * 1000;
+        document.getElementById('pairing-code').textContent = pairingCode;
+        // Simple QR: use an inline SVG placeholder (real QR via qrcode lib in production)
+        document.getElementById('qr-canvas').innerHTML =
+          `<div style="width:200px;height:200px;display:flex;align-items:center;justify-content:center;font-size:3rem;color:#000;">${pairingCode}</div>`;
+        startTimer();
+        pollPairingStatus();
+      } catch (e) {
+        document.getElementById('pairing-code').textContent = 'ERROR';
+        document.getElementById('timer').textContent = 'Could not generate pairing code';
+      }
+    }
+
+    function startTimer() {
+      const el = document.getElementById('timer');
+      const iv = setInterval(() => {
+        const remaining = Math.max(0, Math.floor((pairingExpiry - Date.now()) / 1000));
+        const min = Math.floor(remaining / 60);
+        const sec = String(remaining % 60).padStart(2, '0');
+        el.textContent = `Expires in ${min}:${sec}`;
+        if (remaining <= 0) { clearInterval(iv); el.textContent = 'Expired — refresh to retry'; }
+      }, 1000);
+    }
+
+    async function pollPairingStatus() {
+      while (Date.now() < pairingExpiry) {
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const res = await fetch(API + `/api/pairing/status?code=${pairingCode}`);
+          const data = await res.json();
+          if (data.paired) { goToStep('step-permissions'); loadFolders(); return; }
+        } catch (_) {}
+      }
+    }
+
+    // ── Step 2: Folder permissions ───────────────────────────────────────────
+    const defaultFolders = [
+      { path: '~/Documents', label: 'Documents' },
+      { path: '~/Desktop', label: 'Desktop' },
+      { path: '~/Downloads', label: 'Downloads' },
+    ];
+
+    async function loadFolders() {
+      const list = document.getElementById('folder-list');
+      try {
+        const res = await fetch(API + '/api/permissions');
+        const perms = await res.json();
+        const allowed = new Set(perms.allowedFolders || []);
+        const folders = [...defaultFolders];
+        for (const f of allowed) {
+          if (!folders.find(df => df.path === f)) folders.push({ path: f, label: f });
+        }
+        list.innerHTML = folders.map(f => `
+          <div class="folder-item">
+            <label><input type="checkbox" data-path="${f.path}" ${allowed.has(f.path) ? 'checked' : ''} onchange="toggleFolder(this)"> ${f.label}</label>
+          </div>
+        `).join('');
+      } catch (_) {
+        list.innerHTML = defaultFolders.map(f => `
+          <div class="folder-item">
+            <label><input type="checkbox" data-path="${f.path}" onchange="toggleFolder(this)"> ${f.label}</label>
+          </div>
+        `).join('');
+      }
+    }
+
+    async function toggleFolder(el) {
+      const folder = el.dataset.path;
+      const action = el.checked ? 'grant' : 'revoke';
+      await fetch(API + `/api/permissions/${action}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+    }
+
+    function addCustomFolder() {
+      const folder = prompt('Enter full folder path:');
+      if (!folder) return;
+      const list = document.getElementById('folder-list');
+      list.innerHTML += `
+        <div class="folder-item">
+          <label><input type="checkbox" data-path="${folder}" checked onchange="toggleFolder(this)"> ${folder}</label>
+        </div>`;
+      fetch(API + '/api/permissions/grant', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+    }
+
+    // ── Step 3: Health check ─────────────────────────────────────────────────
+    async function runHealthCheck() {
+      const result = document.getElementById('verify-result');
+      try {
+        const res = await fetch(API + '/api/status');
+        const status = await res.json();
+        if (status.status === 'connected' || status.node_id) {
+          result.innerHTML = '<div class="status success">Connected to Vutler Cloud</div>';
+          setTimeout(() => goToStep('step-done'), 1500);
+        } else {
+          result.innerHTML = '<div class="status error">Not connected — check your internet</div>';
+        }
+      } catch (_) {
+        result.innerHTML = '<div class="status error">Health check failed</div>';
+      }
+      document.getElementById('verify-spinner').style.display = 'none';
+    }
+
+    // ── Navigation ───────────────────────────────────────────────────────────
+    function goToStep(id) {
+      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      document.getElementById(id).classList.add('active');
+      if (id === 'step-verify') runHealthCheck();
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────────
+    initPairing();
+  </script>
+</body>
+</html>
