@@ -33,7 +33,7 @@ export interface Agent {
   id: string;
   name: string;
   platform?: string;
-  status: 'active' | 'inactive' | 'error';
+  status: 'active' | 'online' | 'deployed' | 'inactive' | 'error' | string;
   lastActive?: string;
   model?: string;
   provider?: string;

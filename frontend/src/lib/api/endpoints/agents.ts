@@ -12,7 +12,8 @@ export async function getAgents(): Promise<Agent[]> {
 }
 
 export async function getAgent(id: string): Promise<Agent> {
-  return apiFetch<Agent>(`/api/v1/agents/${id}`);
+  const data = await apiFetch<{ agent?: Agent } & Agent>(`/api/v1/agents/${id}`);
+  return data.agent ?? data;
 }
 
 export async function createAgent(payload: CreateAgentPayload): Promise<Agent> {
