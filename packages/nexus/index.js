@@ -1,8 +1,11 @@
-const WebSocket = require('ws');
 const https = require('https');
 const http = require('http');
 const { createDashboardServer } = require('./dashboard/server');
 const AgentManager = require('./lib/agent-manager');
+const { WSClient } = require('./lib/ws-client');
+const { TaskOrchestrator } = require('./lib/task-orchestrator');
+const logger = require('./lib/logger');
+const { UnknownError } = require('./lib/errors');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -53,6 +56,8 @@ class NexusNode {
     this.reconnectInterval = 5000;
     this.recentTasks = [];
     this.logBuffer = [];
+    this.wsClient = null;
+    this.orchestrator = null; // initialised after connect() so wsClient is ready
 
     // Offline monitor (enterprise only)
     this.offlineConfig = opts.offline_config || {};
@@ -103,48 +108,151 @@ class NexusNode {
 
     if (this.offlineMonitor) this.offlineMonitor.start();
 
-    // 2. Start heartbeat
-    this._startHeartbeat();
-    
-    // 3. Start polling for tasks
-    this._startTaskPoll();
-    
-    // 4. Start local dashboard server
+    // 2. Initialise task orchestrator (needs wsClient for progress updates)
+    //    wsClient is set during _startWSClient() below, so we pass `this` and
+    //    TaskOrchestrator reads this.wsClient lazily via the send calls.
+    this.orchestrator = new TaskOrchestrator(this.providers, null);
+
+    // 3. Start WebSocket connection (replaces heartbeat + task poll).
+    //    Falls back to HTTP polling if the server does not yet support /ws/nexus.
+    this._startWSClient();
+    // Wire the orchestrator's wsClient once the WSClient instance is created
+    this.orchestrator.wsClient = this.wsClient;
+
+    // 3. Start local dashboard server
     this._startDashboardServer();
-    
+
+    // Graceful shutdown
+    const shutdown = () => {
+      console.log('[Nexus] Shutting down…');
+      this.disconnect().finally(() => process.exit(0));
+    };
+    process.once('SIGINT',  shutdown);
+    process.once('SIGTERM', shutdown);
+
     console.log(`[Nexus] Node "${this.name}" online. Listening on port ${this.port}`);
     return this;
   }
 
   async disconnect() {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.wsClient)    this.wsClient.close();
     if (this.healthServer) this.healthServer.close();
     if (this.offlineMonitor) this.offlineMonitor.stop();
+    // Legacy timers (kept for safety — no-ops if WS path is used)
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.pollTimer)      clearInterval(this.pollTimer);
     if (this.nodeId) {
       await this._apiCall('DELETE', `/api/v1/nexus/${this.nodeId}`);
     }
     console.log('[Nexus] Disconnected.');
   }
 
-  _startHeartbeat() {
+  /**
+   * Start the WSClient and wire incoming messages to the task executor.
+   * Falls back to HTTP polling when the WS endpoint is not yet available
+   * (HTTP 404 / 101 upgrade failure), so existing deployments keep working.
+   */
+  _startWSClient() {
+    const wsUrl = this.server.replace(/^http/, 'ws') + '/ws/nexus';
+
+    this.wsClient = new WSClient({
+      url:    wsUrl,
+      apiKey: this.key,
+      nodeId: this.nodeId,
+    });
+
+    this.wsClient.on('connected', () => {
+      // Announce presence and push current status
+      this.wsClient.send('nexus.register', {
+        node_id: this.nodeId,
+        name:    this.name,
+        type:    this.type,
+        mode:    this.mode,
+        agents:  this.agentManager.getStatus(),
+        seats:   this.agentManager.seatsInfo,
+      });
+      // Stop fallback polling if it was running
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+      }
+      if (this.heartbeatTimer) {
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+      }
+      if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
+    });
+
+    this.wsClient.on('message', async (msg) => {
+      if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
+
+      switch (msg.type) {
+        case 'nexus.task': {
+          if (!msg.payload) break;
+          const result = await this.orchestrator.execute(msg.payload);
+          this.wsClient.send('task.result', result);
+          // Mirror to legacy HTTP status endpoint for backwards compat
+          if (result.taskId) {
+            const status = result.status === 'completed' ? 'completed' : 'failed';
+            const data   = result.status === 'completed'
+              ? { output: JSON.stringify(result.data) }
+              : { error: result.error };
+            await this._updateTaskStatus(result.taskId, status, data);
+          }
+          break;
+        }
+
+        case 'nexus.ping':
+          this.wsClient.send('nexus.pong', {
+            status: 'online',
+            agents: this.agentManager.getStatus(),
+            memory: process.memoryUsage(),
+            uptime: process.uptime(),
+          });
+          break;
+
+        default:
+          this.log(`[Nexus] Unknown WS message type: ${msg.type}`);
+      }
+    });
+
+    this.wsClient.on('error', (err) => {
+      // If the server doesn't support /ws/nexus yet, fall back silently to polling
+      const isUpgradeFailure = err.message?.includes('Unexpected server response') ||
+                               err.message?.includes('404') ||
+                               err.message?.includes('ECONNREFUSED');
+      if (isUpgradeFailure && !this.pollTimer) {
+        console.warn('[Nexus] WS endpoint unavailable — falling back to HTTP polling');
+        this._startHeartbeatHTTP();
+        this._startTaskPollHTTP();
+      }
+    });
+
+    this.wsClient.connect();
+  }
+
+  /** Legacy HTTP heartbeat — used only when /ws/nexus is not available. */
+  _startHeartbeatHTTP() {
+    if (this.heartbeatTimer) return;
     this.heartbeatTimer = setInterval(async () => {
       try {
         await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/connect`, {
           status: 'online',
           agents: this.agentManager.getStatus(),
-          seats: this.agentManager.seatsInfo,
+          seats:  this.agentManager.seatsInfo,
           memory: process.memoryUsage(),
-          uptime: process.uptime()
+          uptime: process.uptime(),
         });
         if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
       } catch (e) {
-        console.warn('[Nexus] Heartbeat failed:', e.message);
+        console.warn('[Nexus] HTTP heartbeat failed:', e.message);
       }
-    }, 30000); // every 30s
+    }, 30000);
   }
 
-  _startTaskPoll() {
+  /** Legacy HTTP task poll — used only when /ws/nexus is not available. */
+  _startTaskPollHTTP() {
+    if (this.pollTimer) return;
     this.pollTimer = setInterval(async () => {
       try {
         const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/tasks`);
@@ -211,17 +319,21 @@ class NexusNode {
         this.log(`[NEXUS] Task failed: ${task.title} - ${result.error}`);
         await this._updateTaskStatus(task.id, 'failed', { error: result.error });
       }
-    } catch (error) {
+    } catch (rawError) {
+      // Wrap unexpected errors so the stack is always in the log
+      const err = rawError.isNexus ? rawError : new UnknownError(rawError);
+      const structured = logger.logError(err, { taskId: task.id, taskTitle: task.title });
+
       tracked.status = 'failed';
       tracked.completedAt = new Date().toISOString();
-      await this._updateTaskStatus(task.id, 'failed', { error: error.message });
-      this.log(`[NEXUS] Task failed: ${task.title} — ${error.message}`);
+      // Nexus never crashes — failed task gets a structured error back to cloud
+      await this._updateTaskStatus(task.id, 'failed', { error: structured });
     }
   }
 
   log(message) {
     const line = `[${new Date().toISOString()}] ${message}`;
-    console.log(line);
+    logger.info(message);
     this.logBuffer.push(line);
     if (this.logBuffer.length > 100) this.logBuffer.shift();
   }

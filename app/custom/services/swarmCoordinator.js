@@ -201,24 +201,24 @@ class SwarmCoordinator {
       metadata: { workflow_mode: workflow.mode, workflow_score: workflow.score, workflow_reasons: workflow.reasons },
     };
 
-    // Snipara sync is non-blocking: if it fails (bad swarm ID, network, etc.), task still gets created in PG
+    // Snipara is non-blocking — if it fails (bad swarm ID, network, etc.), task still gets created in PG
     let created = null;
     let swarmTaskId = null;
     if (this.swarmId && this.apiUrl && this.apiKey) {
       try {
         created = await this.sniparaCall("rlm_task_create", payload);
-        // Guard against Snipara returning an error object instead of a task
-        if (created && created.error) {
-          console.warn('[SwarmCoordinator] Snipara rlm_task_create returned error:', created.error);
+        // Guard against Snipara returning an error object instead of a valid task
+        if (created && typeof created === 'object' && created.error) {
+          console.warn('[SwarmCoordinator] rlm_task_create returned error:', created.error);
           created = null;
         } else {
           swarmTaskId = created?.id || created?.task_id || created?.task?.id || created?.taskId;
         }
       } catch (err) {
-        console.warn('[SwarmCoordinator] Snipara task create failed (non-blocking):', err.message);
+        console.warn('[SwarmCoordinator] rlm_task_create failed (non-blocking):', err.message);
       }
     } else {
-      console.warn('[SwarmCoordinator] Snipara not configured, creating task locally only');
+      console.warn('[SwarmCoordinator] Snipara not configured — creating task locally only');
     }
 
     // Always persist to PG regardless of Snipara result
@@ -243,7 +243,7 @@ class SwarmCoordinator {
         });
       }
     } catch (err) {
-      console.warn('[SwarmCoordinator] Snipara broadcast failed (non-blocking):', err.message);
+      console.warn('[SwarmCoordinator] rlm_broadcast failed (non-blocking):', err.message);
     }
 
     await this.postTaskMessageToAgentChannel(agentId, payload.title, payload.priority);
