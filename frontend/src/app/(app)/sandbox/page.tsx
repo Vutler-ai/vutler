@@ -134,7 +134,7 @@ function HistoryItem({
         <span className="text-[10px] text-[#4b5563] shrink-0">{timeAgo(exec.created_at)}</span>
       </div>
       <p className="text-xs text-[#6b7280] font-mono truncate leading-relaxed">
-        {exec.code.split('\n')[0].slice(0, 60) || '—'}
+        {(exec.code || '').split('\n')[0].slice(0, 60) || '—'}
       </p>
       {exec.duration_ms != null && (
         <p className="text-[10px] text-[#374151] mt-0.5">{exec.duration_ms}ms</p>
