@@ -143,9 +143,12 @@ export async function adminFetch<T>(
     headers['X-Admin-Token'] = token;
   }
 
-  const fetchOptions: RequestInit = { ...options, headers };
-  if (options?.body && typeof options.body !== 'string') {
-    fetchOptions.body = JSON.stringify(options.body);
+  const { body: rawBody, ...restOptions } = options || {};
+  const fetchOptions: RequestInit = { ...restOptions, headers };
+  if (rawBody && typeof rawBody !== 'string') {
+    fetchOptions.body = JSON.stringify(rawBody);
+  } else if (rawBody) {
+    fetchOptions.body = rawBody;
   }
 
   let response: Response;
