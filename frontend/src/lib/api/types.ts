@@ -645,3 +645,118 @@ export interface MemorySearchResult {
   type: string;
   createdAt: string;
 }
+
+// ─── Admin ───────────────────────────────────────────────────────────────────
+
+export interface AdminStats {
+  total: string;
+  admins: string;
+  users: string;
+  banned: string;
+  plan_free: string;
+  plan_starter: string;
+  plan_team: string;
+  plan_enterprise: string;
+  plan_beta: string;
+  signups_7d: string;
+  signups_30d: string;
+}
+
+export interface AdminUser {
+  id: string;
+  workspace_id: string | null;
+  email: string;
+  name: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  role: string;
+  plan: string | null;
+  plan_expires_at: string | null;
+  beta_code: string | null;
+  stripe_customer_id: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+  last_login_at: string | null;
+}
+
+export interface AdminUsersMeta {
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface ServiceHealth {
+  name: string;
+  key: string;
+  status: 'healthy' | 'unhealthy' | 'degraded' | 'unknown';
+  latency_ms: number | null;
+  last_checked: string;
+  url?: string;
+  error?: string;
+  required: boolean;
+  description: string;
+}
+
+export interface VpsHealth {
+  timestamp: string;
+  hostname: string;
+  cpu: {
+    cores: number;
+    model: string;
+    usage_percent: number;
+    load_average: {
+      one_minute: number;
+      five_minutes: number;
+      fifteen_minutes: number;
+    };
+  };
+  memory: {
+    total_bytes: number;
+    used_bytes: number;
+    free_bytes: number;
+    available_bytes: number;
+    usage_percent: number;
+    swap_total_bytes: number;
+    swap_used_bytes: number;
+    swap_usage_percent: number;
+  };
+  disks: {
+    mount_point: string;
+    filesystem: string;
+    total_bytes: number;
+    used_bytes: number;
+    available_bytes: number;
+    usage_percent: number;
+  }[];
+  network: {
+    name: string;
+    rx_bytes: number;
+    tx_bytes: number;
+    rx_packets: number;
+    tx_packets: number;
+    rx_errors: number;
+    tx_errors: number;
+  }[];
+  uptime: {
+    uptime_seconds: number;
+    uptime_formatted: string;
+    boot_time: string;
+  };
+  status: 'healthy' | 'warning' | 'critical';
+  alerts: string[];
+}
+
+export interface VpsHealthResponse {
+  success: boolean;
+  services: ServiceHealth[];
+  summary: {
+    total: number;
+    healthy: number;
+    unhealthy: number;
+    degraded: number;
+  };
+  vps: VpsHealth | null;
+  timestamp: string;
+}

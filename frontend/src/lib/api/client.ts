@@ -101,6 +101,73 @@ export async function apiFetch<T>(
  * Raw fetch with Bearer auth — returns the Response object (useful for blobs,
  * streams, and cases where the caller needs status codes).
  */
+// ─── Admin API helpers ───────────────────────────────────────────────────────
+
+export const ADMIN_TOKEN_KEY = 'vutler_admin_token';
+
+export function getAdminToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(ADMIN_TOKEN_KEY);
+}
+
+export function setAdminToken(token: string): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(ADMIN_TOKEN_KEY, token);
+}
+
+export function clearAdminToken(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+/**
+ * Typed JSON fetch for admin endpoints (uses X-Admin-Token header).
+ */
+export async function adminFetch<T>(
+  endpoint: string,
+  options?: RequestInit & { body?: unknown }
+): Promise<T> {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const token = getAdminToken();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options?.headers as Record<string, string>) || {}),
+  };
+
+  if (token) {
+    headers['X-Admin-Token'] = token;
+  }
+
+  const fetchOptions: RequestInit = { ...options, headers };
+  if (options?.body && typeof options.body !== 'string') {
+    fetchOptions.body = JSON.stringify(options.body);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, fetchOptions);
+  } catch (err) {
+    throw new Error(err instanceof Error ? err.message : 'Network error');
+  }
+
+  if (response.status === 401) {
+    clearAdminToken();
+    if (typeof window !== 'undefined') window.location.href = '/admin';
+    throw new Error('Admin authentication required');
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    throw new Error(errorBody.error || `HTTP ${response.status}`);
+  }
+
+  if (response.status === 204) return undefined as unknown as T;
+  return response.json() as Promise<T>;
+}
+
+// ─── Raw fetch ───────────────────────────────────────────────────────────────
+
 export async function authFetch(
   url: string,
   options?: RequestInit
