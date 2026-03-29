@@ -303,7 +303,34 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
       const s = event.data.object;
       const { planId, interval, workspaceId, addonId, type } = s.metadata || {};
 
-      if (type === 'addon' && pool && workspaceId && addonId) {
+      if (type === 'credits' && pool && workspaceId) {
+        // Handle LLM credit purchase — add tokens to workspace
+        const purchasedTokens = parseInt(s.metadata?.tokens, 10) || 0;
+        if (purchasedTokens > 0) {
+          await pool.query(
+            `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, 'trial_tokens_total', to_jsonb($2), NOW(), NOW())
+             ON CONFLICT (workspace_id, key) DO UPDATE
+               SET value = to_jsonb((workspace_settings.value::text::int + $2)), updated_at = NOW()`,
+            [workspaceId, purchasedTokens]
+          );
+          const trialKey = process.env.VUTLER_TRIAL_OPENAI_KEY;
+          if (trialKey) {
+            await pool.query(
+              `INSERT INTO ${SCHEMA}.workspace_llm_providers (id, workspace_id, name, provider, api_key_encrypted, is_active, created_at)
+               VALUES (gen_random_uuid(), $1, 'Vutler Credits', 'vutler-trial', $2, true, NOW())
+               ON CONFLICT DO NOTHING`,
+              [workspaceId, trialKey]
+            );
+          }
+          // Purchased credits don't expire — remove trial expiry
+          await pool.query(
+            `DELETE FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'trial_expires_at'`,
+            [workspaceId]
+          );
+          console.log(`[Billing] Credits: +${purchasedTokens} tokens for workspace ${workspaceId}`);
+        }
+      } else if (type === 'addon' && pool && workspaceId && addonId) {
         // Handle addon purchase (social posts packs, etc.)
         const addon = ADDONS.find(a => a.id === addonId);
         if (addon && addon.posts) {
@@ -536,6 +563,81 @@ router.post('/billing/change-plan', async (req, res) => {
     res.json({ success: true, data: { planId, label: PLANS[planId].label } });
   } catch (err) {
     console.error('[Billing] change-plan error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── LLM Credit Packs ──────────────────────────────────────────────────────────
+const CREDIT_PACKS = [
+  { id: 'credits_50k',  label: '50K tokens',  tokens: 50000,   price: 500,  currency: 'usd' },
+  { id: 'credits_200k', label: '200K tokens', tokens: 200000,  price: 1500, currency: 'usd' },
+  { id: 'credits_1m',   label: '1M tokens',   tokens: 1000000, price: 5000, currency: 'usd' },
+];
+
+router.get('/billing/credits', (req, res) => {
+  res.json({
+    success: true,
+    data: CREDIT_PACKS.map(p => ({
+      id: p.id,
+      label: p.label,
+      tokens: p.tokens,
+      price_display: `$${(p.price / 100).toFixed(0)}`,
+      price_cents: p.price,
+    })),
+  });
+});
+
+router.post('/billing/credits', async (req, res) => {
+  try {
+    const workspaceId = req.workspaceId || req.user?.workspaceId;
+    if (!workspaceId) return res.status(401).json({ success: false, error: 'Not authenticated' });
+
+    const { pack_id } = req.body || {};
+    const pack = CREDIT_PACKS.find(p => p.id === pack_id);
+    if (!pack) return res.status(400).json({ success: false, error: 'Invalid pack_id' });
+
+    const stripe = getStripe();
+
+    // Ensure Stripe customer exists
+    let customerId;
+    if (pool) {
+      const sub = await pool.query(
+        `SELECT stripe_customer_id FROM ${SCHEMA}.workspace_subscriptions WHERE workspace_id = $1 LIMIT 1`,
+        [workspaceId]
+      );
+      customerId = sub.rows[0]?.stripe_customer_id;
+    }
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        metadata: { workspaceId },
+      });
+      customerId = customer.id;
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      customer: customerId,
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: pack.currency,
+          unit_amount: pack.price,
+          product_data: { name: `Vutler LLM Credits — ${pack.label}` },
+        },
+        quantity: 1,
+      }],
+      metadata: {
+        type: 'credits',
+        pack_id: pack.id,
+        tokens: String(pack.tokens),
+        workspaceId,
+      },
+      success_url: `${process.env.APP_URL || 'https://app.vutler.ai'}/billing?credits=success`,
+      cancel_url: `${process.env.APP_URL || 'https://app.vutler.ai'}/billing`,
+    });
+
+    res.json({ success: true, data: { checkout_url: session.url } });
+  } catch (err) {
+    console.error('[Billing] credits checkout error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

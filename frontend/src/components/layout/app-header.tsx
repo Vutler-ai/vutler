@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { Menu, LogOut } from 'lucide-react';
 import { authFetch } from '@/lib/authFetch';
 
@@ -192,6 +193,69 @@ function HeaderNotificationBell() {
   );
 }
 
+// ─── TrialBadge ───────────────────────────────────────────────────────────────
+
+interface TrialStatus {
+  is_trial_active: boolean;
+  tokens_total: number;
+  tokens_used: number;
+  tokens_remaining: number;
+  expires_at: string | null;
+  expired: boolean;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${Math.floor(n / 1000)}K`;
+  return String(n);
+}
+
+function TrialBadge() {
+  const [trial, setTrial] = useState<TrialStatus | null>(null);
+
+  const fetchTrial = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/onboarding/trial-status');
+      const data = await res.json();
+      if (data.success && data.data) setTrial(data.data);
+    } catch {
+      // silent
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTrial();
+    const interval = setInterval(fetchTrial, 60000);
+    return () => clearInterval(interval);
+  }, [fetchTrial]);
+
+  if (!trial || !trial.is_trial_active) return null;
+
+  if (trial.expired || trial.tokens_remaining === 0) {
+    return (
+      <Link
+        href="/billing"
+        className="rounded-full px-3 py-1 text-xs font-medium text-red-400 bg-red-900/20 border border-red-600/30 hover:bg-red-900/30 transition-colors"
+      >
+        Trial expiré — Upgrade
+      </Link>
+    );
+  }
+
+  const isWarning = trial.tokens_remaining < 10000;
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-xs font-medium ${
+        isWarning
+          ? 'text-amber-400 bg-amber-900/20 border border-amber-600/30'
+          : 'text-[#94a3b8] bg-[#1e293b] border border-[rgba(255,255,255,0.1)]'
+      }`}
+    >
+      Trial: {formatTokens(trial.tokens_remaining)} tokens
+    </span>
+  );
+}
+
 // ─── AppHeader ────────────────────────────────────────────────────────────────
 
 export default function AppHeader({
@@ -225,6 +289,7 @@ export default function AppHeader({
 
       {/* Right controls */}
       <div className="flex items-center gap-3">
+        <TrialBadge />
         <HeaderNotificationBell />
 
         {/* User avatar */}

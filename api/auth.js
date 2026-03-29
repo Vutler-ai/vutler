@@ -566,6 +566,35 @@ async function registerHandler(req, res) {
         [workspaceId]
       );
 
+      // ── Trial token provisioning (silent — user never sees this) ──────────
+      const trialKey = process.env.VUTLER_TRIAL_OPENAI_KEY;
+      if (trialKey) {
+        const trialTotal = parseInt(process.env.VUTLER_TRIAL_TOKENS_TOTAL, 10) || 50000;
+        const trialDays = parseInt(process.env.VUTLER_TRIAL_EXPIRY_DAYS, 10) || 7;
+        const expiresAt = new Date(Date.now() + trialDays * 86400000).toISOString();
+
+        await client.query(
+          `INSERT INTO ${SCHEMA}.workspace_llm_providers (id, workspace_id, name, provider, api_key_encrypted, is_active, created_at)
+           VALUES (gen_random_uuid(), $1, 'Vutler Trial', 'vutler-trial', $2, true, NOW())
+           ON CONFLICT DO NOTHING`,
+          [workspaceId, trialKey]
+        );
+
+        const trialSettings = [
+          ['trial_tokens_total', JSON.stringify(trialTotal)],
+          ['trial_tokens_used', JSON.stringify(0)],
+          ['trial_expires_at', JSON.stringify(expiresAt)],
+        ];
+        for (const [key, value] of trialSettings) {
+          await client.query(
+            `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3::jsonb, NOW(), NOW())
+             ON CONFLICT (workspace_id, key) DO NOTHING`,
+            [workspaceId, key, value]
+          );
+        }
+      }
+
       await client.query('COMMIT');
     } catch (e) {
       await client.query('ROLLBACK');

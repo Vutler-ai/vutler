@@ -107,6 +107,13 @@ const PROVIDERS = {
     defaultModel: 'gpt-5.3-codex',
     defaultHeaders: {},
   },
+  'vutler-trial': {
+    baseURL: 'https://api.openai.com/v1',
+    path: '/chat/completions',
+    format: 'openai',
+    defaultModel: 'gpt-4o-mini',
+    defaultHeaders: {},
+  },
 };
 
 function detectProvider(model) {
@@ -124,6 +131,69 @@ function detectProvider(model) {
 // Strip codex/ prefix to get the real OpenAI model ID
 function resolveCodexModel(model) {
   return String(model).replace(/^codex\//, '');
+}
+
+// ── Trial token helpers ──────────────────────────────────────────────────────
+const _trialRateWindows = new Map(); // workspaceId → timestamp[]
+const TRIAL_RATE_LIMIT = 5;
+const TRIAL_RATE_WINDOW_MS = 60000;
+
+// Cleanup stale rate-limit entries every 5 minutes
+setInterval(() => {
+  const cutoff = Date.now() - TRIAL_RATE_WINDOW_MS * 2;
+  for (const [wsId, timestamps] of _trialRateWindows) {
+    const fresh = timestamps.filter(t => t > cutoff);
+    if (fresh.length === 0) _trialRateWindows.delete(wsId);
+    else _trialRateWindows.set(wsId, fresh);
+  }
+}, 300000);
+
+async function checkTrialQuota(db, workspaceId) {
+  const rows = await db.query(
+    `SELECT key, value FROM tenant_vutler.workspace_settings
+     WHERE workspace_id = $1 AND key IN ('trial_tokens_total', 'trial_tokens_used', 'trial_expires_at')`,
+    [workspaceId]
+  );
+  const s = {};
+  for (const r of rows.rows) s[r.key] = r.value;
+
+  const total = parseInt(s.trial_tokens_total, 10) || 0;
+  const used = parseInt(s.trial_tokens_used, 10) || 0;
+  const expiresAt = s.trial_expires_at ? new Date(s.trial_expires_at) : null;
+
+  if (expiresAt && expiresAt < new Date()) {
+    return { allowed: false, remaining: 0, reason: 'Trial expired' };
+  }
+  const remaining = total - used;
+  if (remaining <= 0) {
+    return { allowed: false, remaining: 0, reason: 'Trial tokens exhausted' };
+  }
+  return { allowed: true, remaining };
+}
+
+function checkTrialRateLimit(workspaceId) {
+  const now = Date.now();
+  const timestamps = _trialRateWindows.get(workspaceId) || [];
+  const recent = timestamps.filter(t => t > now - TRIAL_RATE_WINDOW_MS);
+  if (recent.length >= TRIAL_RATE_LIMIT) {
+    return { allowed: false, reason: 'Trial rate limit exceeded (5 req/min)' };
+  }
+  recent.push(now);
+  _trialRateWindows.set(workspaceId, recent);
+  return { allowed: true };
+}
+
+async function debitTrialTokens(db, workspaceId, tokensUsed) {
+  try {
+    await db.query(
+      `UPDATE tenant_vutler.workspace_settings
+       SET value = to_jsonb((value::text::int + $1)), updated_at = NOW()
+       WHERE workspace_id = $2 AND key = 'trial_tokens_used'`,
+      [tokensUsed, workspaceId]
+    );
+  } catch (err) {
+    console.warn('[LLM Router] debitTrialTokens error:', err.message);
+  }
 }
 
 function parseUrl(baseURL) {
@@ -545,7 +615,27 @@ async function chat(agent, messages, db) {
     }
 
     let api_key, base_url;
-    if (a.provider === 'codex') {
+    if (a.provider === 'vutler-trial') {
+      // Trial tokens: enforce quota, rate limit, and gpt-4o-mini only
+      const quota = await checkTrialQuota(db, workspaceId);
+      if (!quota.allowed) {
+        lastErr = new Error(quota.reason);
+        continue;
+      }
+      const rateCheck = checkTrialRateLimit(workspaceId);
+      if (!rateCheck.allowed) {
+        lastErr = new Error(rateCheck.reason);
+        continue;
+      }
+      const row = await resolveWorkspaceProvider(db, workspaceId, 'vutler-trial');
+      api_key = row?.api_key || process.env.VUTLER_TRIAL_OPENAI_KEY;
+      base_url = providerCfg.baseURL;
+      a.model = 'gpt-4o-mini'; // force trial model
+      if (!api_key) {
+        lastErr = new Error('Trial not provisioned. No shared key available.');
+        continue;
+      }
+    } else if (a.provider === 'codex') {
       // Codex uses OAuth token from workspace_integrations (ChatGPT OAuth)
       api_key = await resolveCodexOAuthToken(db, workspaceId);
       base_url = providerCfg.baseURL;
@@ -678,6 +768,13 @@ async function chat(agent, messages, db) {
       }
 
       await logUsage(db, workspaceId, agent, llmResult);
+
+      // Debit trial tokens if using the shared trial provider
+      if (a.provider === 'vutler-trial' && llmResult.usage) {
+        const totalTokens = (llmResult.usage.input_tokens || 0) + (llmResult.usage.output_tokens || 0);
+        if (totalTokens > 0) await debitTrialTokens(db, workspaceId, totalTokens);
+      }
+
       return llmResult;
     } catch (err) {
       lastErr = err;

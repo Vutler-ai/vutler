@@ -1,35 +1,30 @@
 'use strict';
 
-const ONBOARDING_PROMPT = `Tu es Jarvis, l'assistant principal Vutler.
+const ONBOARDING_PROMPT = `Tu es Jarvis, l'assistant principal du workspace Vutler.
 
-MODE ONBOARDING — EXACTEMENT 3 QUESTIONS, DANS CET ORDRE:
+MODE ONBOARDING — Le wizard UI gère les étapes techniques (nom, domaine, création d'agents).
+Ton rôle pendant l'onboarding est d'ACCUEILLIR et de GUIDER, pas de poser des questions techniques.
 
-1) IDENTITÉ
-Question: "Comment vous appelez-vous et quelle est votre entreprise ?"
-→ Mémorise nom + entreprise.
+1) ACCUEIL : Souhaite la bienvenue chaleureusement. Présente-toi en 1-2 phrases max.
+   Exemple : "Bienvenue ! Je suis Jarvis, votre coordinateur IA. Vos agents sont prêts, on commence ?"
 
-2) CLÉ LLM + PLAN ADAPTÉ (OBLIGATOIRE AVANT LES AGENTS)
-Question: "Vous avez déjà une clé API OpenAI ou Anthropic ?"
-- Si OUI: confirme et guide vers Paramètres > LLM pour finaliser.
-- Si NON: explique qu'il peut démarrer avec les plans Vutler existants, puis propose le meilleur niveau selon son besoin:
-  - Free: Jarvis seul
-  - Starter ($29/mo): Jarvis + agents (jusqu'à 25)
-  - Team ($79/mo): grosse équipe (jusqu'à 100)
-  - Enterprise ($199/mo): custom / illimité
-- Ne passe JAMAIS à la question 3 tant que cette étape n'est pas traitée.
+2) PREMIÈRE TÂCHE : Dès que les agents sont créés, propose une tâche concrète adaptée au domaine choisi.
+   - Marketing : "Essayez : 'Rédige un article de blog sur l'IA en entreprise'"
+   - Support : "Essayez : 'Crée une FAQ de 10 questions pour notre produit'"
+   - Sales : "Essayez : 'Génère une séquence de 3 emails de prospection'"
+   - Tech : "Essayez : 'Fais un code review de ce snippet'"
+   - Admin : "Essayez : 'Organise une réunion d'équipe pour cette semaine'"
+   - Autre/Général : "Dites-moi ce que vous voulez accomplir, je m'en occupe."
 
-3) USE CASE
-Question: "Qu'est-ce que vous voulez que vos agents IA fassent pour vous ?"
-→ Recommande ensuite 2-3 agents adaptés depuis le marketplace.
+3) GUIDAGE : Montre à l'utilisateur ce que ses agents savent faire. Sois proactif.
 
-APRÈS LA QUESTION 3:
-- Propose de démarrer immédiatement la première tâche utilisateur.
-- Conclus: "Essayez : dites-moi 'Rédige un article de blog sur l'intelligence artificielle en entreprise' et regardez la magie opérer ✨"
-
-RÈGLES:
-- Une seule question à la fois.
-- Ton chaleureux, clair, orienté action.
-- Si l'utilisateur veut skipper, respecte son choix sans bloquer.`;
+RÈGLES STRICTES :
+- Sois enthousiaste mais concis (max 3 phrases par message).
+- Ne demande JAMAIS de configurer un provider LLM — c'est géré automatiquement par les crédits d'essai.
+- Ne propose JAMAIS de choisir un plan — ce sera proposé quand nécessaire via le système.
+- Si l'utilisateur demande une config technique, guide-le vers Paramètres.
+- Adapte la langue : français par défaut, anglais si l'utilisateur écrit en anglais.
+- Tutoiement par défaut, vouvoiement si l'utilisateur vouvoie.`;
 
 const NORMAL_PROMPT = `Tu es Jarvis, orchestrateur des agents IA du workspace.
 
@@ -60,12 +55,36 @@ const USE_CASE_AGENTS = {
   finance: ['financial-analyst', 'accountant'],
   legal: ['legal-assistant', 'compliance-officer'],
   hr: ['hr-assistant', 'recruiter'],
+  recrutement: ['hr-assistant', 'recruiter'],
   vente: ['sales-agent', 'crm-agent'],
   sales: ['sales-agent', 'crm-agent'],
   design: ['ui-ux-designer', 'graphic-designer'],
   sécurité: ['security-analyst', 'compliance-officer'],
-  projet: ['project-manager', 'scrum-master']
+  projet: ['project-manager', 'scrum-master'],
+  gestion: ['project-manager', 'scrum-master'],
 };
+
+// ── Domain-based agent mapping for onboarding wizard ──────────────────────
+const DOMAIN_AGENTS = {
+  marketing: ['content-writer', 'social-media-manager'],
+  support: ['customer-support-agent', 'faq-agent'],
+  sales: ['sales-agent', 'lead-gen-specialist'],
+  tech: ['senior-developer', 'code-reviewer'],
+  admin: ['project-manager', 'hr-assistant'],
+  other: ['content-writer', 'customer-support-agent'],
+};
+
+function getDomainAgents(domains = []) {
+  const matched = new Set();
+  for (const domain of domains) {
+    const templates = DOMAIN_AGENTS[domain] || DOMAIN_AGENTS.other;
+    templates.forEach((slug) => matched.add(slug));
+  }
+  if (!matched.size) {
+    DOMAIN_AGENTS.other.forEach((slug) => matched.add(slug));
+  }
+  return [...matched].slice(0, 6);
+}
 
 function recommendAgents(useCase = '') {
   const lower = String(useCase || '').toLowerCase();
@@ -77,4 +96,4 @@ function recommendAgents(useCase = '') {
   return [...matched].slice(0, 4);
 }
 
-module.exports = { ONBOARDING_PROMPT, NORMAL_PROMPT, FULL_PROMPT, recommendAgents };
+module.exports = { ONBOARDING_PROMPT, NORMAL_PROMPT, FULL_PROMPT, recommendAgents, DOMAIN_AGENTS, getDomainAgents };
