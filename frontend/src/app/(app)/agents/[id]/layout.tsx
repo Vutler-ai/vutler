@@ -20,7 +20,7 @@ const TABS = [
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
-function StatusBadge({ status, model }: { status: Agent['status']; model?: string }) {
+function StatusBadge({ status, model }: { status: string; model?: string }) {
   if (status === 'active' || status === 'online' || status === 'deployed') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-green-400 bg-green-500/15 border border-green-500/20 px-2 py-0.5 rounded-full">
