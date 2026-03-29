@@ -175,7 +175,6 @@ class SwarmCoordinator {
   }
 
   async createTask(task = {}) {
-    if (!this.swarmId) throw new Error("SNIPARA_SWARM_ID missing");
     let agentId = task.for_agent_id;
     if (!agentId) {
       try {
@@ -202,32 +201,55 @@ class SwarmCoordinator {
       metadata: { workflow_mode: workflow.mode, workflow_score: workflow.score, workflow_reasons: workflow.reasons },
     };
 
-    const created = await this.sniparaCall("rlm_task_create", payload);
-    const swarmTaskId = created?.id || created?.task_id || created?.task?.id || created?.taskId;
-
-    if (swarmTaskId) {
-      await this.upsertPgTaskFromSwarm({
-        swarmTaskId,
-        title: payload.title,
-        description: payload.description,
-        priority: payload.priority,
-        status: "pending",
-        assignedTo: agentId,
-        source: "vutler-api"
-      });
+    // Snipara sync is non-blocking: if it fails (bad swarm ID, network, etc.), task still gets created in PG
+    let created = null;
+    let swarmTaskId = null;
+    if (this.swarmId && this.apiUrl && this.apiKey) {
+      try {
+        created = await this.sniparaCall("rlm_task_create", payload);
+        // Guard against Snipara returning an error object instead of a task
+        if (created && created.error) {
+          console.warn('[SwarmCoordinator] Snipara rlm_task_create returned error:', created.error);
+          created = null;
+        } else {
+          swarmTaskId = created?.id || created?.task_id || created?.task?.id || created?.taskId;
+        }
+      } catch (err) {
+        console.warn('[SwarmCoordinator] Snipara task create failed (non-blocking):', err.message);
+      }
+    } else {
+      console.warn('[SwarmCoordinator] Snipara not configured, creating task locally only');
     }
 
-    await this.sniparaCall("rlm_broadcast", {
-      swarm_id: this.swarmId,
-      type: "task_assigned",
-      message: `📋 Nouvelle tâche assignée à ${agentId}: ${payload.title} — Priority: ${payload.priority}`,
-      payload: { ...payload, task: created }
+    // Always persist to PG regardless of Snipara result
+    const pgTaskId = await this.upsertPgTaskFromSwarm({
+      swarmTaskId: swarmTaskId || null,
+      title: payload.title,
+      description: payload.description,
+      priority: payload.priority,
+      status: "pending",
+      assignedTo: agentId,
+      source: "vutler-api"
     });
+
+    // Broadcast is also non-blocking
+    try {
+      if (this.swarmId && this.apiUrl && this.apiKey) {
+        await this.sniparaCall("rlm_broadcast", {
+          swarm_id: this.swarmId,
+          type: "task_assigned",
+          message: `📋 Nouvelle tâche assignée à ${agentId}: ${payload.title} — Priority: ${payload.priority}`,
+          payload: { ...payload, task: created }
+        });
+      }
+    } catch (err) {
+      console.warn('[SwarmCoordinator] Snipara broadcast failed (non-blocking):', err.message);
+    }
 
     await this.postTaskMessageToAgentChannel(agentId, payload.title, payload.priority);
     await this.postTeamCoordinationCreate(agentId, payload.title, payload.priority);
 
-    return { assigned_agent_id: agentId, priority: payload.priority, task: created };
+    return { assigned_agent_id: agentId, priority: payload.priority, task: created || { id: pgTaskId } };
   }
 
   async listTasks() {
