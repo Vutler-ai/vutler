@@ -23,7 +23,7 @@ async function _triggerAgentResponse(req, channelId, wsId) {
   try {
     // Find agents in this channel
     const agentResult = await pool.query(
-      `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens
+      `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens, a.workspace_id
        FROM ${SCHEMA}.chat_channel_members cm
        JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id
        WHERE cm.channel_id = $1
@@ -70,8 +70,10 @@ let llmResult;
         system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
         temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
         max_tokens: agent.max_tokens || 4096,
+        workspace_id: agent.workspace_id || req.workspaceId || req.user?.workspace_id,
       },
-      messages
+      messages,
+      pool // pass db for OAuth token resolution (codex/chatgpt)
     );
 }
 

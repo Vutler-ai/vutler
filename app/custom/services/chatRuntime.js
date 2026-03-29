@@ -208,7 +208,7 @@ async function loadAgents() {
   if (agentCache && (now - agentCacheTime) < CACHE_TTL) return agentCache;
 
   const result = await pool.query(
-    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, status
+    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, status, workspace_id
      FROM ${SCHEMA}.agents WHERE workspace_id = $1 AND status = 'online'`,
     [DEFAULT_WORKSPACE]
   );
@@ -334,8 +334,10 @@ async function processMessage(msg) {
         system_prompt: soul,
         temperature: parseFloat(targetAgent.temperature) || 0.7,
         max_tokens: targetAgent.max_tokens || 4096,
+        workspace_id: targetAgent.workspace_id || DEFAULT_WORKSPACE,
       },
-      history
+      history,
+      pool // pass db for OAuth token resolution (codex/chatgpt)
     );
 
     // Insert agent response
