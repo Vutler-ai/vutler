@@ -87,9 +87,19 @@ class TaskOrchestrator {
         return { results: await sp.search(params.query, { scope: params.scope, limit: params.limit }) };
       }
 
-      case 'read_document':
+      case 'read_document': {
         this._require(params.path, 'params.path');
-        return { content: fs.readFile(params.path) };
+        const docs = require('./providers/documents');
+        // Batch mode: process all supported docs in a folder
+        if (params.batch && require('fs').statSync(params.path).isDirectory()) {
+          return docs.batchRead(params.path, (p) => {
+            if (this.wsClient?.isConnected) {
+              this.wsClient.send('task.progress', { taskId, message: `Processing ${p.file} (${p.index + 1}/${p.total})` });
+            }
+          });
+        }
+        return docs.readDocument(params.path);
+      }
 
       case 'open_file': {
         this._require(params.path, 'params.path');
@@ -111,6 +121,38 @@ class TaskOrchestrator {
       case 'shell_exec':
         this._require(params.command, 'params.command');
         return { output: shell.exec(params.command) };
+
+      case 'read_clipboard': {
+        const { ClipboardProvider } = require('./providers/clipboard');
+        return { content: new ClipboardProvider().read() };
+      }
+
+      case 'list_emails':
+      case 'search_emails': {
+        const { getMailProvider } = require('./providers/mail');
+        const mail = getMailProvider();
+        if (action === 'search_emails') {
+          this._require(params.query, 'params.query');
+          return { emails: await mail.searchEmails(params.query, params) };
+        }
+        return { emails: await mail.listEmails(params) };
+      }
+
+      case 'read_calendar': {
+        const { CalendarProvider } = require('./providers/calendar');
+        return { events: await new CalendarProvider().readCalendar(params) };
+      }
+
+      case 'read_contacts':
+      case 'search_contacts': {
+        const { ContactsProvider } = require('./providers/contacts');
+        const cp = new ContactsProvider();
+        if (action === 'search_contacts') {
+          this._require(params.query, 'params.query');
+          return { contacts: await cp.searchContacts(params.query, params) };
+        }
+        return { contacts: await cp.readContacts(params) };
+      }
 
       default: {
         const { UnknownError: UE } = require('./errors');
