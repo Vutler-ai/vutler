@@ -69,9 +69,15 @@ router.post('/login', async (req, res) => {
       const hash = hashPassword(password, user.salt);
       passwordValid = (hash === user.password_hash);
     } else if (user.password_hash && user.password_hash.startsWith('$2b$')) {
-      // bcrypt — can't verify without bcrypt lib, skip
-      console.log('[Admin] bcrypt password format not supported for admin login');
-      return res.status(401).json({ success: false, error: 'Invalid credentials (password format not supported)' });
+      // bcrypt format — use bcryptjs
+      let bcrypt;
+      try { bcrypt = require('bcryptjs'); } catch { try { bcrypt = require('bcrypt'); } catch { /* none */ } }
+      if (bcrypt) {
+        passwordValid = await bcrypt.compare(password, user.password_hash);
+      } else {
+        console.log('[Admin] No bcrypt library available');
+        return res.status(401).json({ success: false, error: 'Invalid credentials (bcrypt not available)' });
+      }
     }
 
     if (!passwordValid) {
