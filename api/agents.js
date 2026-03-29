@@ -9,6 +9,24 @@ const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
+const MAX_SKILLS = 8;
+const TOOL_KEYS = new Set(['file_access', 'network_access', 'code_execution', 'web_search', 'tool_use']);
+
+/** Serialize type for DB: array → JSON string, string → as-is */
+function serializeType(type) {
+  if (Array.isArray(type)) return JSON.stringify(type);
+  return type || null;
+}
+
+/** Deserialize type from DB: JSON array string → array, plain string → wrap */
+function deserializeType(type) {
+  if (!type) return [];
+  try {
+    const parsed = JSON.parse(type);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return type === 'bot' ? [] : [type];
+}
 
 /**
  * Resolve the default email domain for a workspace.
@@ -73,7 +91,7 @@ router.get("/", async (req, res) => {
       username: a.username,
       email: a.email,
       status: a.status || "online",
-      type: a.type || "bot",
+      type: deserializeType(a.type),
       avatar: a.avatar || null,
       description: a.description || "",
       role: a.role,
@@ -113,7 +131,7 @@ router.get("/:id", async (req, res) => {
       success: true,
       agent: {
         id: a.id, name: a.name, username: a.username, email: a.email,
-        status: a.status, type: a.type,
+        status: a.status, type: deserializeType(a.type),
         avatar: a.avatar || null,
         description: a.description || "", role: a.role, mbti: a.mbti,
         model: a.model, provider: a.provider, platform: a.platform || a.role || null,
@@ -141,7 +159,8 @@ router.post("/", async (req, res) => {
 
     const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
     const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
-    if (plan === 'free' && String(type || 'bot').toLowerCase() !== 'coordinator') {
+    const typeStr = Array.isArray(type) ? type.join(',') : String(type || 'bot');
+    if (plan === 'free' && typeStr.toLowerCase() !== 'coordinator') {
       return res.status(403).json({ success: false, error: 'Free plan allows only the Coordinator. Upgrade to Pro to add specialized agents.' });
     }
 
@@ -160,6 +179,13 @@ router.post("/", async (req, res) => {
       finalSystemPrompt = MINIMAL_PROMPT(name);
     }
 
+    // Enforce skill limit
+    const capabilities = req.body.capabilities || [];
+    const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+    if (skillCount > MAX_SKILLS) {
+      return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+    }
+
     // Auto-generate email if not provided
     let finalEmail = email || null;
     if (!finalEmail) {
@@ -171,11 +197,11 @@ router.post("/", async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-      [name, username, finalEmail, type||"bot", role||null, mbti||null, finalModel, provider||null,
+      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+      [name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, ws]
+       `/sprites/agent-${username}.png`, ws, capabilities.length > 0 ? capabilities : null]
     );
 
     // Register email route for inbound routing
@@ -251,6 +277,93 @@ router.delete("/:id", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     res.json({ success: true, deleted: result.rows[0] });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools)
+router.get("/:id/config", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT model, provider, temperature, max_tokens, system_prompt, capabilities, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const row = result.rows[0];
+    const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
+    const cfg = {
+      model: row.model,
+      provider: row.provider,
+      temperature: row.temperature,
+      max_tokens: row.max_tokens,
+      system_prompt: isCoordinator ? null : row.system_prompt,
+      skills: row.capabilities || [],
+      tools: row.capabilities || [],
+      type: deserializeType(row.type),
+      locked_prompt: isCoordinator
+    };
+    // Spread cfg at top level so frontend `...data` picks up fields directly
+    res.json({ success: true, ...cfg, config: cfg });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/v1/agents/:id/config — updates agent config
+router.put("/:id/config", async (req, res) => {
+  try {
+    const { model, provider, temperature, max_tokens, system_prompt, skills, tools, type } = req.body;
+    const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const ex = existing.rows[0];
+    const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
+    if (isCoordinator && system_prompt !== undefined) {
+      return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
+    }
+    const capabilities = skills || tools || undefined;
+    // Enforce skill limit
+    if (capabilities) {
+      const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+      if (skillCount > MAX_SKILLS) {
+        return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+      }
+    }
+    const result = await pool.query(
+      `UPDATE ${SCHEMA}.agents SET
+        model=COALESCE($1,model),
+        provider=COALESCE($2,provider),
+        temperature=COALESCE($3,temperature),
+        max_tokens=COALESCE($4,max_tokens),
+        system_prompt=CASE WHEN $5::text IS NULL THEN system_prompt ELSE $5 END,
+        capabilities=COALESCE($6::text[],capabilities),
+        type=COALESCE($8,type),
+        updated_at=NOW()
+       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id, serializeType(type)]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+    const row = result.rows[0];
+    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [], type: deserializeType(row.type) } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/agents/:id/executions
+router.get("/:id/executions", async (req, res) => {
+  try {
+    const agentId = req.params.id;
+    const result = await pool.query(
+      `SELECT id, agent_id, input, output, model, provider, tokens_used, latency_ms, created_at
+       FROM ${SCHEMA}.agent_executions
+       WHERE agent_id::text = $1
+       ORDER BY created_at DESC LIMIT 50`,
+      [agentId]
+    );
+    res.json({ success: true, executions: result.rows });
+  } catch (err) {
+    // Table may not exist yet
+    if (err.code === '42P01') return res.json({ success: true, executions: [] });
     res.status(500).json({ success: false, error: err.message });
   }
 });
