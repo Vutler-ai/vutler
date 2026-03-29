@@ -81,12 +81,11 @@ class TaskOrchestrator {
     const shell = this.providers.shell;
 
     switch (action) {
-      case 'search':
-        // SearchProvider is coming in a future story — stub for now
-        if (fs && typeof fs.search === 'function') {
-          return fs.search(params);
-        }
-        return { results: [], note: 'SearchProvider not yet available — upgrade Nexus' };
+      case 'search': {
+        const { getSearchProvider } = require('./providers/search');
+        const sp = getSearchProvider();
+        return { results: await sp.search(params.query, { scope: params.scope, limit: params.limit }) };
+      }
 
       case 'read_document':
         this._require(params.path, 'params.path');
@@ -94,17 +93,14 @@ class TaskOrchestrator {
 
       case 'open_file': {
         this._require(params.path, 'params.path');
-        const platform = process.platform;
-        const cmd = platform === 'darwin'  ? `open "${params.path}"`
-                  : platform === 'win32'   ? `start "" "${params.path}"`
-                  : `xdg-open "${params.path}"`;
-        shell.exec(cmd);
-        return { opened: true, path: params.path };
+        const { AppLauncher } = require('./providers/app-launcher');
+        return new AppLauncher().open(params.path);
       }
 
       case 'list_dir':
+      case 'list_directory':
         this._require(params.path, 'params.path');
-        return { entries: fs.listDir(params.path) };
+        return { entries: fs.listDir(params.path, { recursive: params.recursive, pattern: params.pattern }) };
 
       case 'write_file':
         this._require(params.path,    'params.path');
