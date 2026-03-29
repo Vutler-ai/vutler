@@ -600,29 +600,46 @@ export default function AgentConfigPage() {
       <div className="space-y-6">
         {/* LLM Routing */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">LLM Routing</h3>
+          <h3 className="text-base font-semibold text-white mb-1">LLM Routing</h3>
+          <p className="text-xs text-[#6b7280] mb-4">
+            Choose how this agent connects to its language model.
+          </p>
           <div className="flex gap-4">
-            {(['cloud', 'local'] as const).map(mode => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setConfig(prev => ({ ...prev, llm_routing: mode }))}
-                className={`flex-1 p-4 rounded-lg border-2 text-left transition-colors ${
-                  config.llm_routing === mode
-                    ? 'border-blue-500 bg-blue-500/10'
-                    : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)]'
-                }`}
-              >
-                <div className="text-white font-medium text-sm">
-                  {mode === 'cloud' ? 'Cloud (via Vutler)' : 'Local (direct from Nexus)'}
-                </div>
-                <div className="text-xs text-[#9ca3af] mt-1">
-                  {mode === 'cloud'
-                    ? 'Route through Vutler cloud for managed inference'
-                    : 'Direct local inference from your Nexus device'}
-                </div>
-              </button>
-            ))}
+            {/* Cloud option */}
+            <button
+              type="button"
+              onClick={() => setConfig(prev => ({ ...prev, llm_routing: 'cloud' }))}
+              className={`flex-1 p-4 rounded-lg border-2 text-left transition-colors ${
+                config.llm_routing === 'cloud'
+                  ? 'border-blue-500 bg-blue-500/10'
+                  : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)]'
+              }`}
+            >
+              <div className="text-white font-medium text-sm">☁️ Cloud (via Vutler)</div>
+              <div className="text-xs text-[#9ca3af] mt-1">
+                Uses Vutler&apos;s managed LLM providers (Anthropic, OpenAI, OpenRouter, etc.). No setup required.
+              </div>
+            </button>
+
+            {/* Local/Nexus option — disabled if no Nexus */}
+            <button
+              type="button"
+              onClick={() => setConfig(prev => ({ ...prev, llm_routing: 'local' }))}
+              disabled
+              className={`flex-1 p-4 rounded-lg border-2 text-left transition-colors relative ${
+                config.llm_routing === 'local'
+                  ? 'border-blue-500 bg-blue-500/10'
+                  : 'border-[rgba(255,255,255,0.07)] opacity-50 cursor-not-allowed'
+              }`}
+            >
+              <div className="text-white font-medium text-sm">🖥️ Local (Nexus)</div>
+              <div className="text-xs text-[#9ca3af] mt-1">
+                Run models locally on your own hardware via a Nexus node. Requires a deployed Nexus device.
+              </div>
+              <span className="absolute top-2 right-2 text-[10px] text-amber-400/80 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                No Nexus
+              </span>
+            </button>
           </div>
         </section>
 
