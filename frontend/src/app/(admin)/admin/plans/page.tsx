@@ -165,7 +165,7 @@ export default function AdminPlansPage() {
       {/* Plan Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {PLANS.map((plan) => {
-          const count = Number((stats as Record<string, string>)[plan.key]) || 0;
+          const count = Number((stats as unknown as Record<string, string>)[plan.key]) || 0;
           const revenue = count * plan.price;
           const PlanIcon = plan.icon;
 
