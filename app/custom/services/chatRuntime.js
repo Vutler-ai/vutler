@@ -629,7 +629,6 @@ module.exports = {
   stop,
   processMessage,
   processMessageById,
-  getMemoryScope,
   loadAgents,
   getChannelAgents,
   getRecentHistory,
