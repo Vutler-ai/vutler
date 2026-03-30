@@ -90,6 +90,7 @@ router.get('/', async (req, res) => {
     const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || (source && source.startsWith('agent'));
     const wantGoals  = !source || source === 'all' || source === 'goal';
     const wantBilling = !source || source === 'all' || source === 'billing';
+    const wantGoogle = !source || source === 'all' || source === 'google';
 
     const promises = [];
 
@@ -130,6 +131,43 @@ router.get('/', async (req, res) => {
 
     // 3. Virtual billing events
     if (wantBilling) promises.push(fetchBillingEvents(start, end));
+
+    // 4. Google Calendar events (if connected)
+    if (wantGoogle) {
+      const googlePromise = (async () => {
+        try {
+          const { isGoogleConnected } = require('../services/google/tokenManager');
+          const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+          const connected = await isGoogleConnected(workspaceId);
+          if (!connected) return [];
+
+          const { listCalendarEvents } = require('../services/google/googleApi');
+          const gEvents = await listCalendarEvents(workspaceId, {
+            timeMin: start || new Date().toISOString(),
+            timeMax: end,
+            maxResults: 100,
+          });
+          return gEvents.map((e) => ({
+            id: `google-${e.id}`,
+            title: e.summary || '(no title)',
+            description: e.description || '',
+            start: e.start?.dateTime || e.start?.date,
+            end: e.end?.dateTime || e.end?.date,
+            allDay: !e.start?.dateTime,
+            location: e.location || '',
+            color: '#4285f4', // Google blue
+            source: 'google',
+            sourceId: e.id,
+            readOnly: true,
+            metadata: { htmlLink: e.htmlLink, attendees: (e.attendees || []).map((a) => a.email) },
+          }));
+        } catch (err) {
+          console.warn('[CALENDAR] Google Calendar fetch failed (non-blocking):', err.message);
+          return [];
+        }
+      })();
+      promises.push(googlePromise);
+    }
 
     const results = await Promise.all(promises);
     const events = results.flat().sort((a, b) => new Date(a.start) - new Date(b.start)).slice(0, 200);

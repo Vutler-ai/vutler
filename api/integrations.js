@@ -44,6 +44,9 @@ const GOOGLE_INTEGRATION_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/gmail.modify',
 ].join(' ');
 
 const GITHUB_INTEGRATION_SCOPES = 'repo read:user';
@@ -97,7 +100,7 @@ const INTERNAL_CATALOG = [
     description: 'Gmail, Calendar, Drive, and Docs integration',
     icon: '🔵',
     category: 'productivity',
-    actions: ['send_email', 'list_files', 'create_event'],
+    actions: ['send_email', 'list_files', 'create_event', 'list_events', 'read_email', 'search_drive'],
     scopes: ['gmail.readonly', 'calendar.readonly', 'drive.readonly'],
   },
   {
@@ -1654,6 +1657,69 @@ router.post('/submissions', async (_req, res) => {
     error: 'Marketplace submissions are disabled (internal-only mode)',
     code: 'INTERNAL_ONLY_MODE',
   });
+});
+
+// ─── Google Data Proxy Endpoints ────────────────────────────────────────────
+
+const googleApi = require('../services/google/googleApi');
+
+// GET /api/v1/integrations/google/calendar/events
+router.get('/google/calendar/events', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { timeMin, timeMax, maxResults } = req.query;
+    const events = await googleApi.listCalendarEvents(workspaceId, {
+      timeMin: timeMin || new Date().toISOString(),
+      timeMax,
+      maxResults: maxResults ? parseInt(maxResults, 10) : 50,
+    });
+    res.json({ success: true, events });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/google/drive/files
+router.get('/google/drive/files', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { q, pageSize, pageToken } = req.query;
+    const result = await googleApi.listDriveFiles(workspaceId, {
+      query: q,
+      pageSize: pageSize ? parseInt(pageSize, 10) : 20,
+      pageToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/google/gmail/messages
+router.get('/google/gmail/messages', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { q, maxResults, pageToken } = req.query;
+    const result = await googleApi.listGmailMessages(workspaceId, {
+      query: q,
+      maxResults: maxResults ? parseInt(maxResults, 10) : 20,
+      pageToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/google/gmail/messages/:id
+router.get('/google/gmail/messages/:messageId', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const msg = await googleApi.getGmailMessage(workspaceId, { messageId: req.params.messageId });
+    res.json({ success: true, message: msg });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
 });
 
 module.exports = router;

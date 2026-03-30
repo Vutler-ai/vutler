@@ -712,5 +712,41 @@
     "description": "Guide patients through intake forms, collect medical history, and prepare clinical notes for provider review",
     "category": "healthcare",
     "icon": "user-plus"
+  },
+  "google_drive_list": {
+    "name": "Google Drive List",
+    "description": "List and browse files in the user's Google Drive",
+    "category": "productivity",
+    "icon": "folder"
+  },
+  "google_drive_search": {
+    "name": "Google Drive Search",
+    "description": "Search for files in Google Drive by name, content, or type",
+    "category": "productivity",
+    "icon": "search"
+  },
+  "google_drive_read": {
+    "name": "Google Drive Read",
+    "description": "Read file metadata or download text content from Google Drive",
+    "category": "productivity",
+    "icon": "file-text"
+  },
+  "gmail_list": {
+    "name": "Gmail List",
+    "description": "List and filter emails from the user's Gmail inbox",
+    "category": "communication",
+    "icon": "mail"
+  },
+  "gmail_read": {
+    "name": "Gmail Read",
+    "description": "Read the full content of a specific Gmail message",
+    "category": "communication",
+    "icon": "mail-open"
+  },
+  "gmail_send": {
+    "name": "Gmail Send",
+    "description": "Draft an email via Gmail (requires human approval before sending)",
+    "category": "communication",
+    "icon": "send"
   }
 }

@@ -1,6 +1,7 @@
 'use strict';
 
 const { LLMPromptHandler } = require('./LLMPromptHandler');
+const { isGoogleConnected, agentHasGoogleAccess } = require('../../google/tokenManager');
 
 /**
  * @typedef {import('./LLMPromptHandler').SkillContext} SkillContext
@@ -8,15 +9,25 @@ const { LLMPromptHandler } = require('./LLMPromptHandler');
  */
 
 /**
+ * Maps skill-level integration_provider names to the DB provider name.
+ * Skills use semantic names (calendar, email, drive) but tokens are stored
+ * under a single 'google' provider row.
+ */
+const PROVIDER_MAP = {
+  calendar: 'google',
+  email:    'google',
+  drive:    'google',
+};
+
+/**
  * Handler for skills that require a third-party integration (CRM, calendar,
  * helpdesk, accounting, etc.).
  *
  * Execution flow:
  *  1. Check whether the required integration is connected for the workspace.
- *  2. If connected → dispatch to the appropriate adapter.
- *     (Adapters are stubs for now; they return a standard "not yet implemented"
- *      response so the plumbing is in place for future development.)
- *  3. If not connected → fall back to LLMPromptHandler so the agent can still
+ *  2. Verify the agent has been granted access to this integration.
+ *  3. If connected + authorized → dispatch to the appropriate adapter.
+ *  4. If not connected → fall back to LLMPromptHandler so the agent can still
  *     produce a useful advisory/draft response.
  */
 class IntegrationHandler {
@@ -24,12 +35,6 @@ class IntegrationHandler {
     this._llmFallback = new LLMPromptHandler();
   }
 
-  /**
-   * An integration skill can always execute — in the worst case it falls back
-   * to LLM. Return true unconditionally; the fallback logic lives in execute().
-   * @param {SkillContext} _context
-   * @returns {Promise<boolean>}
-   */
   async canExecute(_context) {
     return true;
   }
@@ -52,8 +57,6 @@ class IntegrationHandler {
     const isConnected = await this._isIntegrationConnected(workspaceId, integrationProvider);
 
     if (!isConnected) {
-      // Transparent fallback — enrich the context with a hint so the LLM
-      // knows it is operating in advisory mode (no live data).
       const fallbackContext = {
         ...context,
         params: {
@@ -76,7 +79,24 @@ class IntegrationHandler {
       };
     }
 
-    // Integration is connected — delegate to the adapter.
+    // Check per-agent access
+    const agentId = context.agentId;
+    if (agentId) {
+      const dbProvider = PROVIDER_MAP[integrationProvider] || integrationProvider;
+      const hasAccess = await this._checkAgentAccess(workspaceId, agentId, dbProvider);
+      if (!hasAccess) {
+        return {
+          success: false,
+          error: `Agent does not have access to the "${integrationProvider}" integration. Grant access in Settings > Integrations > Agents.`,
+          meta: {
+            handler: 'integration',
+            integration_provider: integrationProvider,
+            reason: 'agent_access_denied',
+          },
+        };
+      }
+    }
+
     return this._executeAdapter(context, integrationProvider);
   }
 
@@ -84,48 +104,36 @@ class IntegrationHandler {
 
   /**
    * Check whether the workspace has the given integration connected.
-   * Currently queries the in-memory stub; replace with a DB lookup
-   * against tenant_vutler.workspace_integrations when the table exists.
-   *
-   * @param {string} workspaceId
-   * @param {string} integrationProvider
-   * @returns {Promise<boolean>}
    */
   async _isIntegrationConnected(workspaceId, integrationProvider) {
-    // TODO: Replace with DB query:
-    //   SELECT 1 FROM tenant_vutler.workspace_integrations
-    //   WHERE workspace_id = $1 AND provider = $2 AND status = 'connected'
-    //
-    // Returning false for now so all execution routes through the LLM fallback
-    // until adapters are implemented.
+    const dbProvider = PROVIDER_MAP[integrationProvider];
+
+    if (dbProvider === 'google') {
+      return isGoogleConnected(workspaceId);
+    }
+
+    // For unmapped providers, not yet implemented
+    return false;
+  }
+
+  /**
+   * Check per-agent access to a specific integration provider.
+   */
+  async _checkAgentAccess(workspaceId, agentId, dbProvider) {
+    if (dbProvider === 'google') {
+      return agentHasGoogleAccess(workspaceId, agentId);
+    }
     return false;
   }
 
   /**
    * Dispatch the skill to its integration adapter.
-   * Each provider maps to an adapter module that will be implemented separately.
-   *
-   * @param {SkillContext} context
-   * @param {string}       integrationProvider
-   * @returns {Promise<SkillResult>}
    */
   async _executeAdapter(context, integrationProvider) {
-    // Adapter registry — populated as adapters are built.
     const ADAPTERS = {
-      // 'crm':            require('../adapters/CrmAdapter'),
-      // 'email':          require('../adapters/EmailAdapter'),
-      // 'social_media':   require('../adapters/SocialMediaAdapter'),
-      // 'calendar':       require('../adapters/CalendarAdapter'),
-      // 'helpdesk':       require('../adapters/HelpdeskAdapter'),
-      // 'accounting':     require('../adapters/AccountingAdapter'),
-      // 'project_management': require('../adapters/ProjectManagementAdapter'),
-      // 'hris':           require('../adapters/HrisAdapter'),
-      // 'erp':            require('../adapters/ErpAdapter'),
-      // 'monitoring':     require('../adapters/MonitoringAdapter'),
-      // 'event_platform': require('../adapters/EventPlatformAdapter'),
-      // 'healthcare':     require('../adapters/HealthcareAdapter'),
-      // 'consent_platform': require('../adapters/ConsentPlatformAdapter'),
-      // 'workflow':       require('../adapters/WorkflowAdapter'),
+      'calendar': require('../adapters/CalendarAdapter').CalendarAdapter,
+      'email':    require('../adapters/GmailAdapter').GmailAdapter,
+      'drive':    require('../adapters/DriveAdapter').DriveAdapter,
     };
 
     const AdapterClass = ADAPTERS[integrationProvider];
@@ -146,11 +154,11 @@ class IntegrationHandler {
 
     try {
       const adapter = new AdapterClass();
-      const data    = await adapter.execute(context);
+      const result  = await adapter.execute(context);
       return {
-        success: true,
-        data,
+        ...result,
         meta: {
+          ...(result.meta || {}),
           handler:              'integration',
           integration_provider: integrationProvider,
           skillKey:             context.skillKey,
@@ -160,6 +168,11 @@ class IntegrationHandler {
       return {
         success: false,
         error:   `Integration adapter "${integrationProvider}" threw an error: ${err.message}`,
+        meta: {
+          handler:              'integration',
+          integration_provider: integrationProvider,
+          error_type:           err.constructor.name,
+        },
       };
     }
   }
