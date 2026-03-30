@@ -191,7 +191,7 @@ function DeployModal({
   const cliInstructions = `npm install -g @vutler/nexus\nvutler-nexus init ${token || '<token>'}\nvutler-nexus start`;
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent);
-  const installerBaseUrl = 'https://app.vutler.ai/downloads';
+  const installerBaseUrl = 'https://github.com/Vutler-ai/vutler/releases/latest/download';
 
   const isTokenStep = step === 'local-token' || step === 'ent-token';
 
@@ -575,8 +575,8 @@ function DeployModal({
             {/* ── Step 2: Token ── */}
             <div className="space-y-1.5">
               <label className="text-xs text-[#9ca3af] uppercase tracking-wide">2. Your Deploy Token</label>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-emerald-400 text-xs font-mono break-all max-h-20 overflow-y-auto select-all">
+              <div className="flex items-center gap-2 min-w-0">
+                <code className="flex-1 min-w-0 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-emerald-400 text-[10px] font-mono break-all max-h-24 overflow-y-auto overflow-x-hidden select-all leading-relaxed">
                   {token}
                 </code>
                 <button
