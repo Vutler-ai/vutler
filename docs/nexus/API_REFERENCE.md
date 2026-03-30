@@ -717,6 +717,718 @@ All errors include a code for programmatic handling:
 }
 ```
 
+---
+
+## Vault API
+
+All endpoints require workspace authentication (`req.workspaceId`). Secrets are **never** returned in decrypted form except via `/vault/resolve`.
+
+Base path: `/api/v1`
+
+---
+
+### GET `/vault`
+
+List all secrets for the workspace (metadata only, secret masked).
+
+**Auth:** JWT (workspace)
+
+**Query params:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `tags` | string | Comma-separated tags filter (ALL must match) |
+| `type` | string | Filter by type: `ssh`, `api_token`, `smtp`, `database`, `password`, `certificate`, `custom` |
+| `q` | string | Partial match on label or notes |
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "uuid",
+      "workspace_id": "uuid",
+      "label": "Prod DB",
+      "type": "database",
+      "host": "db.example.com",
+      "port": 5432,
+      "username": "admin",
+      "secret_encrypted": "••••••••",
+      "tags": ["production", "postgres"],
+      "notes": null,
+      "last_used_at": "2026-03-30T10:00:00Z",
+      "expires_at": null,
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### POST `/vault`
+
+Store a secret manually.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "label": "AWS Access Key",
+  "type": "api_token",
+  "host": null,
+  "port": null,
+  "username": "AKIAIOSFODNN7EXAMPLE",
+  "secret": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "tags": ["aws", "production"],
+  "notes": "S3 read-only access",
+  "expiresAt": "2027-01-01T00:00:00Z"
+}
+```
+
+Required: `label`, `type`, `secret`.
+
+**Response:** `201` with stored row (secret masked).
+
+---
+
+### GET `/vault/:id`
+
+Get secret metadata by ID (secret masked).
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with the row, or `404`.
+
+---
+
+### DELETE `/vault/:id`
+
+Delete a secret.
+
+**Auth:** JWT (workspace)
+
+**Response:**
+```json
+{ "success": true, "data": { "id": "uuid", "deleted": true } }
+```
+
+---
+
+### PATCH `/vault/:id`
+
+Partial update. Accepted fields: `label`, `type`, `host`, `port`, `username`, `secret` (rotates key), `tags`, `notes`, `expiresAt`.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with updated row (secret masked), or `404`.
+
+---
+
+### POST `/vault/extract`
+
+Use LLM to extract credentials from raw text. Returns a preview — nothing is stored.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "text": "DB_HOST=db.prod.example.com\nDB_PASS=s3cr3t123\nAWS_SECRET_ACCESS_KEY=abc...",
+  "agentId": "agent-uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "credentials": [
+      {
+        "label": "MySQL prod password",
+        "type": "database",
+        "host": "db.prod.example.com",
+        "username": null,
+        "secret": "s3cr3t123",
+        "tags": ["production"],
+        "notes": null
+      }
+    ],
+    "count": 1,
+    "message": "Found 1 credential(s). Review and confirm to store."
+  }
+}
+```
+
+---
+
+### POST `/vault/extract/confirm`
+
+Confirm and store a set of extracted credentials.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "credentials": [ /* same shape as extract response */ ],
+  "sourceFile": "config/.env.prod",
+  "agentId": "agent-uuid"
+}
+```
+
+**Response:** `201` (all stored) or `207` (partial — some failed):
+```json
+{
+  "success": true,
+  "data": {
+    "stored": [ /* masked rows */ ],
+    "errors": [],
+    "summary": "2 stored, 0 failed"
+  }
+}
+```
+
+---
+
+### POST `/vault/resolve`
+
+Decrypt and return a secret. Requires machine API key.
+
+**Auth:** `x-vault-api-key: <VAULT_MACHINE_KEY>` header (compared via `timingSafeEqual`)
+
+**Body (one of):**
+```json
+{ "id": "uuid" }
+{ "label": "Prod DB" }
+{ "tags": ["aws", "production"], "type": "api_token" }
+```
+
+**Response:** `200` with decrypted row:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "label": "Prod DB",
+    "type": "database",
+    "host": "db.prod.example.com",
+    "username": "admin",
+    "secret": "<plaintext password>",
+    "last_used_at": "2026-03-30T10:00:00Z"
+  }
+}
+```
+
+Note: The `secret` value is **never logged** by the server.
+
+---
+
+## Jira API
+
+Base path: `/api/v1/jira`. Requires Jira to be connected for the workspace (`POST /integrations/jira/connect`).
+
+---
+
+### GET `/jira/projects`
+
+List all Jira projects accessible to the configured API token.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with Jira project array.
+
+---
+
+### GET `/jira/issues`
+
+Search issues using JQL.
+
+**Auth:** JWT (workspace)
+
+**Query params:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `jql` | yes | JQL query string |
+| `maxResults` | no | Max results (default 50, max 100) |
+
+**Example:** `GET /jira/issues?jql=project=MYPROJ AND status="In Progress"&maxResults=20`
+
+**Response:** `200` with Jira search result.
+
+---
+
+### POST `/jira/issues`
+
+Create a new Jira issue.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "projectKey": "MYPROJ",
+  "summary": "Fix login timeout",
+  "description": "Users are being logged out after 5 minutes.",
+  "issueType": "Bug",
+  "priority": "High",
+  "assignee": "accountId-string",
+  "labels": ["backend", "auth"]
+}
+```
+
+Required: `projectKey`, `summary`. Description is converted to Atlassian Document Format (ADF).
+
+**Response:** `201` with created issue.
+
+---
+
+### GET `/jira/issues/:key`
+
+Get full issue details.
+
+**Auth:** JWT (workspace)
+
+**Path params:** `key` — e.g. `MYPROJ-123`
+
+**Response:** `200` with Jira issue object.
+
+---
+
+### PATCH `/jira/issues/:key`
+
+Update issue fields.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "fields": {
+    "summary": "Updated title",
+    "priority": { "name": "Medium" }
+  }
+}
+```
+
+Required: `fields` object (Jira fields format).
+
+**Response:** `200` with `{ updated: true, key: "MYPROJ-123" }`.
+
+---
+
+### POST `/jira/issues/:key/comment`
+
+Add a comment to an issue.
+
+**Auth:** JWT (workspace)
+
+**Body:** `{ "body": "Comment text" }`
+
+**Response:** `201` with created comment.
+
+---
+
+### GET `/jira/issues/:key/transitions`
+
+List available status transitions for an issue.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with Jira transitions array (id, name, to.name).
+
+---
+
+### POST `/jira/issues/:key/transition`
+
+Transition an issue to a new status.
+
+**Auth:** JWT (workspace)
+
+**Body:** `{ "transitionId": "31" }` — use IDs from GET transitions.
+
+**Response:** `200` with `{ transitioned: true, key: "MYPROJ-123", transitionId: "31" }`.
+
+---
+
+### POST `/integrations/jira/connect`
+
+Connect Jira to the workspace. Encrypts the API token before storage.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "baseUrl": "https://mycompany.atlassian.net",
+  "email": "user@mycompany.com",
+  "apiToken": "ATATT3xFfGF0..."
+}
+```
+
+**Response:** `200` with integration row (token masked).
+
+---
+
+### DELETE `/integrations/jira/disconnect`
+
+Disconnect Jira integration.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with `{ disconnected: true }`.
+
+---
+
+### POST `/webhooks/jira` (Jira → Vutler)
+
+Receive Jira Cloud webhook events.
+
+**Auth:** `?secret=<JIRA_WEBHOOK_SECRET>` query param or `x-jira-webhook-secret` header (if `JIRA_WEBHOOK_SECRET` env var is set).
+
+**Supported events:** `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`, `comment_created`, `comment_updated`.
+
+**Response:** Always `200` (to prevent Jira retries).
+
+---
+
+## Runbooks API
+
+Base path: `/api/v1`. All routes require agent authentication (`authenticateAgent`).
+
+---
+
+### POST `/runbooks/parse`
+
+Parse free text or structured JSON into a runbook preview. Does not execute.
+
+**Auth:** Agent token
+
+**Body (free text):**
+```json
+{ "text": "1. Deploy app to staging\n2. Run smoke tests\n3. Deploy to prod (requires approval)" }
+```
+
+**Body (structured):**
+```json
+{
+  "json": {
+    "name": "Deploy pipeline",
+    "steps": [
+      { "order": 1, "action": "deploy_app", "params": { "env": "staging" } },
+      { "order": 2, "action": "run_smoke_tests" },
+      { "order": 3, "action": "deploy_app", "params": { "env": "prod" }, "requireApproval": true }
+    ]
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "runbook": { "name": "...", "steps": [ /* ... */ ] },
+    "validation": { "valid": true, "errors": [] }
+  }
+}
+```
+
+---
+
+### POST `/runbooks/execute`
+
+Launch runbook execution (asynchronous). Returns immediately with `runbookId`.
+
+**Auth:** Agent token
+
+**Body:**
+```json
+{
+  "runbook": { /* parsed Runbook object or raw string */ },
+  "agentId": "agent-uuid",
+  "dryRun": false
+}
+```
+
+With `dryRun: true`, returns validation result without executing.
+
+**Response:** `202`:
+```json
+{
+  "success": true,
+  "data": {
+    "runbookId": "uuid",
+    "name": "Deploy pipeline",
+    "totalSteps": 3
+  }
+}
+```
+
+---
+
+### GET `/runbooks`
+
+List runbooks for the workspace.
+
+**Auth:** Agent token
+
+**Query params:** `limit` (default 50), `status` (filter by: `pending`, `running`, `completed`, `failed`, `cancelled`).
+
+**Response:** `200` with array and `meta.total`.
+
+---
+
+### GET `/runbooks/:id`
+
+Get status and step results for a runbook.
+
+**Auth:** Agent token
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "name": "Deploy pipeline",
+    "status": "running",
+    "current_step": 2,
+    "total_steps": 3,
+    "results": [
+      { "order": 1, "action": "deploy_app", "success": true, "duration_ms": 1200 }
+    ]
+  }
+}
+```
+
+---
+
+### POST `/runbooks/:id/cancel`
+
+Cancel a running runbook (sets cancellation flag; checked at next step boundary).
+
+**Auth:** Agent token
+
+**Response:** `200` with `{ cancelled: true }` or `404`.
+
+---
+
+### POST `/runbooks/:id/approve/:stepOrder`
+
+Approve (or reject) a step that is paused waiting for human review.
+
+**Auth:** Agent token
+
+**Path params:** `id` (runbook UUID), `stepOrder` (integer)
+
+**Body:** `{ "approved": true }` (default `true` if omitted)
+
+**Response:** `200` with `{ runbookId, stepOrder, approved }`.
+
+---
+
+## Schedules API
+
+Base path: `/api/v1/schedules`. All routes require JWT authentication (`req.workspaceId`).
+
+---
+
+### POST `/schedules/parse`
+
+Parse natural language into a schedule preview. Does not save.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "text": "Every Monday at 9am, send a summary report",
+  "provider": "openrouter",
+  "model": "openrouter/auto"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "cron": "0 9 * * 1",
+    "description": "Every Monday at 9am",
+    "taskDescription": "send a summary report",
+    "next_run_at": "2026-04-07T09:00:00.000Z",
+    "cron_preview": "0 9 * * 1"
+  }
+}
+```
+
+---
+
+### POST `/schedules`
+
+Create a new schedule.
+
+**Auth:** JWT (workspace)
+
+**Body:**
+```json
+{
+  "cron": "0 9 * * 1",
+  "description": "Weekly report — every Monday at 9am",
+  "task_title": "Send weekly summary",
+  "task_description": "Compile and send the weekly activity summary to the team",
+  "priority": "P2",
+  "agent_id": "agent-uuid"
+}
+```
+
+Or pass `task_template` directly instead of flat fields.
+
+**Response:** `201` with schedule row including `next_run_at`.
+
+---
+
+### GET `/schedules`
+
+List all schedules for the workspace.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with schedule array and `count`.
+
+---
+
+### GET `/schedules/:id`
+
+Get schedule detail including last 20 execution runs and timer status.
+
+**Auth:** JWT (workspace)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "cron_expression": "0 9 * * 1",
+    "description": "Weekly report",
+    "is_active": true,
+    "is_timer_active": true,
+    "last_run_at": "2026-03-24T09:00:00Z",
+    "next_run_at": "2026-03-31T09:00:00Z",
+    "run_count": 12,
+    "recent_runs": [ /* last 20 scheduled_task_runs rows */ ]
+  }
+}
+```
+
+---
+
+### PATCH `/schedules/:id`
+
+Update cron, description, task template, agent, or active state.
+
+**Auth:** JWT (workspace)
+
+**Body (any subset):**
+```json
+{
+  "cron": "0 10 * * 1",
+  "description": "Weekly report — now at 10am",
+  "is_active": true,
+  "task_template": { "title": "...", "description": "...", "priority": "P1" },
+  "agent_id": "agent-uuid"
+}
+```
+
+**Response:** `200` with updated schedule. Timer is re-armed or stopped based on `is_active`.
+
+---
+
+### DELETE `/schedules/:id`
+
+Delete a schedule and stop its timer.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with `{ message: "Schedule deleted" }`.
+
+---
+
+### POST `/schedules/:id/activate`
+
+Set `is_active = true` and arm the cron timer.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with updated schedule row.
+
+---
+
+### POST `/schedules/:id/deactivate`
+
+Set `is_active = false` and stop the cron timer.
+
+**Auth:** JWT (workspace)
+
+**Response:** `200` with `{ message: "Schedule deactivated" }`.
+
+---
+
+### POST `/schedules/:id/run-now`
+
+Manually trigger a schedule execution regardless of cron timing.
+
+**Auth:** JWT (workspace)
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Schedule executed immediately",
+  "data": { "runId": "uuid", "taskId": "uuid", "status": "completed" }
+}
+```
+
+---
+
+### GET `/schedules/:id/history`
+
+Paginated execution history.
+
+**Auth:** JWT (workspace)
+
+**Query params:** `limit` (default 50, max 200), `offset` (default 0)
+
+**Response:**
+```json
+{
+  "success": true,
+  "total": 48,
+  "limit": 50,
+  "offset": 0,
+  "data": [
+    {
+      "id": "uuid",
+      "schedule_id": "uuid",
+      "status": "completed",
+      "task_id": "uuid",
+      "result": { "task_id": "uuid", "created": true },
+      "started_at": "2026-03-24T09:00:00Z",
+      "completed_at": "2026-03-24T09:00:01Z"
+    }
+  ]
+}
+```
+
+---
+
 ## Rate Limiting
 
 WebSocket connections are not rate-limited. REST endpoints have the following limits:

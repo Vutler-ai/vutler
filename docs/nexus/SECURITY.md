@@ -202,6 +202,140 @@ All OfflineMonitor log entries include `ts` (ISO-8601), `level`, `msg`, and rele
 
 ---
 
+---
+
+## Vault Secret Encryption
+
+### Algorithm
+
+Vault secrets are encrypted using AES-256-GCM via the `CryptoService` class. The key is derived from the `VAULT_MACHINE_KEY` (or a fallback app secret) at process startup.
+
+```
+plaintext secret
+  └─ CryptoService.encrypt(plaintext)
+       └─ AES-256-GCM
+            ├─ Random 12-byte IV per encryption
+            ├─ 128-bit authentication tag (GCM)
+            └─ Output: base64(IV + tag + ciphertext) stored in secret_encrypted
+```
+
+### Who Can Decrypt
+
+`CryptoService.decrypt()` is called **only** in `services/vault.js:getSecret()`. This function is the single decryption path. No other code in the stack accesses plaintext secrets.
+
+The `POST /vault/resolve` endpoint (the only HTTP route that returns decrypted secrets) is protected by:
+- `x-vault-api-key` header — compared against `VAULT_MACHINE_KEY` env var using `crypto.timingSafeEqual()`
+- If `VAULT_MACHINE_KEY` is not set, falls back to requiring a valid workspace session
+
+### Masking
+
+All API responses outside of `/vault/resolve` return `secret_encrypted: '••••••••'`. The mask is applied in `maskRow()` before the row reaches the response serializer. Plaintext values are **never logged** — the code explicitly avoids including secrets in `console.log`/`console.error` calls.
+
+### Audit Trail
+
+Every `getSecret()` call updates `last_used_at` and logs a structured entry including `workspace_id`, `id`, `label`, `type`, and `resolved_by` — but **not** the secret value.
+
+### LLM Extraction Security
+
+When `POST /vault/extract` is called, the LLM receives raw text to extract credentials from. The LLM response (proposed credentials) is returned to the caller for human review. **Nothing is stored at this stage.** Storage only occurs after an explicit `POST /vault/extract/confirm` call, giving the user full control over what enters the vault.
+
+---
+
+## Jira Credential Security
+
+### Storage
+
+Jira credentials (`baseUrl`, `email`, `apiToken`) are stored in `workspace_integrations.credentials` as a JSONB column. The `apiToken` is encrypted via `CryptoService.encrypt()` before insert:
+
+```javascript
+const encrypted = crypto.encrypt(apiToken);
+// stored as credentials.apiToken = <ciphertext>
+```
+
+### API Responses
+
+Jira credentials are **never returned** in API responses. Routes return integration metadata (`connected`, `status`, `provider`) only.
+
+### Webhook Security
+
+Jira Cloud webhooks do not support HMAC signing. Vutler uses a shared secret:
+
+- Configure `JIRA_WEBHOOK_SECRET` env var on the server.
+- Register webhook in Jira with `?secret=<value>` appended to the endpoint URL, or send `x-jira-webhook-secret` header.
+- The server compares the provided secret with `JIRA_WEBHOOK_SECRET` via direct string comparison. If no env var is set, the endpoint accepts all requests (acceptable behind an IP allowlist at the reverse proxy).
+- Always returns `200` to prevent Jira retry loops, even on processing errors.
+
+### Credential Rotation
+
+1. Call `DELETE /integrations/jira/disconnect`.
+2. Call `POST /integrations/jira/connect` with the new API token.
+3. The old encrypted token is overwritten; no manual DB cleanup required.
+
+---
+
+## Runbook Approval Gates
+
+### Purpose
+
+Approval gates prevent automated execution of sensitive or destructive actions without human review. Any step with `requireApproval: true` (or the runbook-level `requireApproval` flag) will pause execution and wait for explicit confirmation.
+
+### Mechanism
+
+```
+Executor reaches step with requireApproval=true
+  └─ UPDATE runbooks SET status='running', current_step=N
+  └─ Emit 'approval_needed' event (step metadata, not secrets)
+  └─ Pause: wait on Promise (approvalPromises Map)
+
+External caller: POST /runbooks/:id/approve/:stepOrder { approved: true }
+  └─ approveStep(runbookId, stepOrder, approved)
+  └─ Resolve the Promise → execution resumes
+
+Timeout: 24 hours auto-reject (prevents runbooks hanging forever)
+```
+
+### Security Properties
+
+- Approval signals are delivered via in-process `Map`, not through a shared queue or DB polling. Only the process that is executing the runbook can receive the approval.
+- The `POST /runbooks/:id/approve/:stepOrder` endpoint requires agent authentication (`authenticateAgent`).
+- If the server restarts while a runbook is waiting for approval, the runbook's in-memory state is lost. The DB record will remain `status='running'`; a recovery procedure (cancel + restart) is required.
+- Approval tokens are not issued — any authenticated agent can approve any step. Add role-based checks at the endpoint level if tighter control is needed.
+
+### Sensitive Actions That Should Use Approval Gates
+
+By convention, set `requireApproval: true` on steps that:
+- Deploy to production (`deploy_app` with `env: prod`)
+- Delete or modify production data
+- Send bulk external communications
+- Execute shell commands via `nexus_provider`
+- Modify infrastructure (IaC apply, firewall rules)
+
+---
+
+## Scheduling Security
+
+### Workspace Isolation
+
+All scheduler DB queries include `AND workspace_id = $n`. A schedule from workspace A cannot trigger task creation in workspace B. The workspace ID is sourced from the authenticated JWT (`req.workspaceId`) — not from the request body.
+
+### No Arbitrary Code Execution
+
+The Scheduler creates tasks via `SwarmCoordinator.createTask()` — it does not execute shell commands, run scripts, or eval user-supplied code. The `task_template` JSONB is a data structure passed to the coordinator, not executable code.
+
+### Cron Expression Validation
+
+All cron expressions are validated through `parseCron()` before storage. An invalid expression causes a `400` response and is never persisted. Expressions are re-validated on update via `PATCH /schedules/:id`.
+
+### Manual Trigger Protection
+
+`POST /schedules/:id/run-now` verifies that the schedule belongs to the requesting workspace before executing. This prevents cross-workspace triggering if a schedule UUID leaks.
+
+### Rate Limiting Note
+
+The scheduler does not have built-in rate limiting on how many times a schedule can fire. A cron expression like `* * * * *` (every minute) is technically valid. Operators should audit schedules for unreasonably high frequency and consider adding a minimum interval guard if needed.
+
+---
+
 ## Security Configuration Reference
 
 | Parameter | Location | Recommended value |
