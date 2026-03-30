@@ -26,6 +26,7 @@ describe('taskExecutor Snipara sync', () => {
             system_prompt: 'You are Mike.',
             temperature: 0.2,
             max_tokens: 512,
+            role: 'engineering',
             workspace_id: 'ws-1',
           }],
         };
@@ -62,11 +63,19 @@ describe('taskExecutor Snipara sync', () => {
     });
     const claimTask = jest.fn().mockResolvedValue({ ok: true });
     const completeTask = jest.fn().mockResolvedValue({ ok: true });
+    const buildRuntimeMemoryPrompt = jest.fn().mockResolvedValue('## Agent Memory\n- [fact] User prefers concise answers');
+    const extractTaskMemories = jest.fn().mockResolvedValue([{ type: 'task_episode' }]);
 
     jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
     jest.doMock('../../services/llmRouter', () => ({ chat: llmChat }));
     jest.doMock('../../services/swarmCoordinator', () => ({
       getSwarmCoordinator: () => ({ claimTask, completeTask }),
+    }));
+    jest.doMock('../../services/sniparaMemoryService', () => ({
+      buildRuntimeMemoryPrompt,
+    }));
+    jest.doMock('../../services/memoryExtractionService', () => ({
+      extractTaskMemories,
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
 
@@ -90,7 +99,17 @@ describe('taskExecutor Snipara sync', () => {
 
     expect(claimTask).toHaveBeenCalledWith('snip-1', 'mike', 'ws-1');
     expect(completeTask).toHaveBeenCalledWith('snip-1', 'mike', 'Task completed output.', 'ws-1');
+    expect(buildRuntimeMemoryPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'ws-1',
+      agent: expect.objectContaining({ username: 'mike' }),
+    }));
+    expect(extractTaskMemories).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'ws-1',
+      task: expect.objectContaining({ id: 'task-1' }),
+      response: 'Task completed output.',
+    }));
     expect(llmChat).toHaveBeenCalledTimes(1);
+    expect(llmChat.mock.calls[0][0].system_prompt).toContain('## Agent Memory');
     expect(writes.some((call) => String(call.params[1]) === 'completed')).toBe(true);
     expect(claimTask.mock.invocationCallOrder[0]).toBeLessThan(completeTask.mock.invocationCallOrder[0]);
   });

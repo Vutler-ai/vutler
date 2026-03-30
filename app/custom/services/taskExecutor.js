@@ -8,6 +8,8 @@ const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
+const { buildRuntimeMemoryPrompt } = require('../../../services/sniparaMemoryService');
+const { extractTaskMemories } = require('../../../services/memoryExtractionService');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 10_000;
@@ -158,6 +160,20 @@ async function failTask(task, err, extraMetadata = {}) {
   });
 }
 
+async function buildExecutionPrompt(agent, task, workspaceId) {
+  const baseSystemPrompt = agent.system_prompt || `You are ${agent.name}, a helpful assistant.`;
+  const memoryPrompt = await buildRuntimeMemoryPrompt({
+    db: pool,
+    workspaceId,
+    agent,
+    query: `${task.title} ${task.description || ''}`.trim(),
+  }).catch(() => '');
+
+  return memoryPrompt
+    ? `${baseSystemPrompt}\n\n${memoryPrompt}`
+    : baseSystemPrompt;
+}
+
 async function executeTask(task) {
   const workspaceId = normalizeWorkspaceId(task.workspace_id);
   const agents = await loadAgents(workspaceId);
@@ -177,11 +193,15 @@ async function executeTask(task) {
       await swarmCoordinator.claimTask(task.snipara_task_id, agentRef, workspaceId);
     }
 
+    const effectiveSystemPrompt = await buildExecutionPrompt(agent, task, workspaceId);
     const response = await llmChat(
       {
+        id: agent.id,
+        username: agent.username,
+        role: agent.role,
         model: agent.model,
         provider: agent.provider,
-        system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful assistant.`,
+        system_prompt: effectiveSystemPrompt,
         temperature: parseFloat(agent.temperature) || 0.7,
         max_tokens: agent.max_tokens || 4096,
         workspace_id: workspaceId
@@ -210,6 +230,16 @@ async function executeTask(task) {
         return;
       }
     }
+
+    await extractTaskMemories({
+      db: pool,
+      workspaceId,
+      agent,
+      task,
+      response: response.content,
+    }).catch((err) => {
+      console.warn('[TaskExecutor] memory extraction failed:', err.message);
+    });
 
     await updateTask(task.id, 'completed', response.content, successMeta);
     await postTaskChatResult(task, response.content, String(agent.id), agent.name).catch((chatErr) => {
@@ -281,6 +311,7 @@ module.exports = {
   updateTask,
   _test: {
     buildTaskPrompt,
+    buildExecutionPrompt,
     failTask,
     postTaskChatResult
   }

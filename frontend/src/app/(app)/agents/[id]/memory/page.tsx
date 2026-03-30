@@ -257,11 +257,19 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-[#6b7280]">Personal memories</span>
-            <span className="text-white font-medium">{context.instance_count}</span>
+            <span className="text-white font-medium">{context.instance_count}{context.instance_count_is_estimate ? '+' : ''}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-[#6b7280]">Template memories</span>
-            <span className="text-white font-medium">{context.template_count}</span>
+            <span className="text-white font-medium">{context.template_count}{context.template_count_is_estimate ? '+' : ''}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[#6b7280]">Hidden personal</span>
+            <span className="text-white font-medium">{context.hidden_instance_count ?? 0}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[#6b7280]">Hidden template</span>
+            <span className="text-white font-medium">{context.hidden_template_count ?? 0}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-[#6b7280]">Role</span>
@@ -274,6 +282,7 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
         <div className="bg-[#0e0f1a] rounded-xl p-4">
           <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider mb-2">Context</h3>
           <p className="text-xs text-[#9ca3af] leading-relaxed">{context.context}</p>
+          <p className="text-[11px] text-[#4b5563] mt-2">Internal memories stay available to agents but are hidden from this screen.</p>
         </div>
       )}
 

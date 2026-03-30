@@ -2,6 +2,7 @@
 
 const https = require('https');
 const sniparaClient = require('./sniparaClient');
+const { recordToolObservation } = require('./memoryExtractionService');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 
 function formatToolResultContent(result) {
@@ -48,6 +49,20 @@ async function finishToolActionRun(db, runId, agentId, result, err) {
     output_json: isError ? null : (result?.data ?? result ?? null),
     error_json: isError ? { error: err?.message || result?.error || 'Tool execution failed' } : null,
   }).catch(() => {});
+}
+
+async function storeToolObservation(db, workspaceId, agent, toolName, args, result) {
+  if (!db || !workspaceId || !agent || !toolName || !result || result.success === false) return;
+  await recordToolObservation({
+    db,
+    workspaceId,
+    agent,
+    toolName,
+    args,
+    result,
+  }).catch((err) => {
+    console.warn('[LLM Router] tool memory extraction failed:', err.message);
+  });
 }
 
 // ── Memory tool definitions injected when an agent has a Snipara scope ────────
@@ -838,13 +853,15 @@ async function chat(agent, messages, db, opts = {}) {
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
                 { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
               ];
-              await finishToolActionRun(db, actionRun?.id, agent?.id || null, {
+              const socialResult = {
                 success: true,
                 data: {
                   account_count: accounts.length,
                   post_id: postData.id || null,
                 },
-              }, null);
+              };
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, socialResult, null);
+              await storeToolObservation(db, workspaceId, agent, 'vutler_post_social_media', args, socialResult);
             } catch (socialErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, socialErr);
               currentMessages = [
@@ -872,6 +889,7 @@ async function chat(agent, messages, db, opts = {}) {
               });
 
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, skillResult, null);
+              await storeToolObservation(db, workspaceId, agent, toolCall.name, args, skillResult);
 
               currentMessages = [
                 ...currentMessages,
@@ -901,6 +919,7 @@ async function chat(agent, messages, db, opts = {}) {
                   ? JSON.stringify(toolResult.data)
                   : `Error: ${toolResult.error || 'Tool execution failed'}`;
                 await finishToolActionRun(db, actionRun?.id, agent?.id || null, toolResult, null);
+                await storeToolObservation(db, workspaceId, agent, toolCall.name, args, toolResult);
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },

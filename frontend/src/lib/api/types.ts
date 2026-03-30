@@ -684,12 +684,23 @@ export interface SandboxExecutionsResponse {
 export interface Memory {
   id: string;
   text: string;
-  type: 'fact' | 'learning' | 'decision' | 'preference';
+  type: string;
   importance: number;
-  scope: 'agent' | 'template' | 'global';
+  scope: 'agent' | 'template' | 'global' | string;
   category?: string;
   created_at: string;
   agent_id?: string;
+  visibility?: 'internal' | 'reviewable' | 'user_visible' | string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentMemoryListResponse {
+  memories: Memory[];
+  count: number;
+  total_count?: number;
+  visible_count?: number;
+  has_more?: boolean;
+  count_is_estimate?: boolean;
 }
 
 export interface AgentContext {
@@ -699,6 +710,10 @@ export interface AgentContext {
   template_count: number;
   instance_count: number;
   role: string;
+  hidden_instance_count?: number;
+  hidden_template_count?: number;
+  instance_count_is_estimate?: boolean;
+  template_count_is_estimate?: boolean;
 }
 
 export interface RememberPayload {
@@ -712,6 +727,7 @@ export interface RememberPayload {
 export interface WorkspaceKnowledge {
   content: string;
   updatedAt: string;
+  readOnly?: boolean;
 }
 
 export interface TemplateScope {

@@ -7,6 +7,7 @@ const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
+const { extractConversationMemories } = require('../../../services/memoryExtractionService');
 const { callSniparaTool, resolveSniparaConfig } = require('../../../services/sniparaResolver');
 
 const SCHEMA = 'tenant_vutler';
@@ -253,17 +254,18 @@ async function getAgentSoul(agent) {
   return soul;
 }
 
-function rememberInteraction(agentName, workspaceId, userMessage, agentResponse) {
+function rememberInteraction(agent, workspaceId, userMessage, agentResponse, userName) {
   if (String(userMessage || '').length < 20 && String(agentResponse || '').length < 50) return;
-  const scope = getMemoryScope(agentName, 'instance', agentName, workspaceId);
-  sniparaCall('rlm_remember', {
-    agent_id: agentName,
-    scope: scope.scope,
-    category: scope.category,
-    text: `User asked: "${String(userMessage).slice(0, 200)}" — I responded about ${String(agentResponse).slice(0, 100)}...`,
-    type: 'fact',
-    importance: 0.3
-  }, workspaceId).catch(() => {});
+  extractConversationMemories({
+    db: pool,
+    workspaceId,
+    agent,
+    userMessage,
+    assistantMessage: agentResponse,
+    userName,
+  }).catch((err) => {
+    console.warn('[ChatRuntime] memory extraction failed:', err.message);
+  });
 }
 
 async function claimMessage(messageId, workspaceId = DEFAULT_WORKSPACE) {
@@ -524,8 +526,7 @@ async function handleMessage(message) {
     }
   });
 
-  const agentName = targetAgent.username || String(targetAgent.name || '').toLowerCase();
-  rememberInteraction(agentName, workspaceId, message.content, response.content);
+  rememberInteraction(targetAgent, workspaceId, message.content, response.content, message.sender_name || null);
 }
 
 async function processMessageById(messageId, workspaceId = DEFAULT_WORKSPACE) {

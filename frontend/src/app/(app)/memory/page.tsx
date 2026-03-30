@@ -10,13 +10,14 @@ import {
   updateWorkspaceKnowledge,
   getTemplateScopes,
   searchMemory,
-  recallMemories,
+  getAgentMemorySummary,
 } from '@/lib/api/endpoints/memory';
 import type {
   Agent,
   WorkspaceKnowledge,
   TemplateScope,
   MemorySearchResult,
+  AgentMemoryListResponse,
 } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -144,10 +145,10 @@ function WorkspaceKnowledgeSection() {
           <Button
             size="sm"
             onClick={handleSave}
-            disabled={saving || isLoading || draft === null}
+            disabled={saving || isLoading || draft === null || data?.readOnly}
             className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
           >
-            {saving ? 'Saving...' : 'Save'}
+            {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save'}
           </Button>
         </div>
       </div>
@@ -195,15 +196,13 @@ function AgentAvatarDisplay({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }
 
 function AgentMemoryCard({ agent }: AgentMemoryCardProps) {
   const router = useRouter();
-  const { data: memories, isLoading } = useApi<{ count?: number; memories?: unknown[] }>(
-    `/api/v1/agents/${agent.id}/memories?count=true`,
-    async () => {
-      const mems = await recallMemories(agent.id);
-      return { count: mems.length, memories: mems };
-    }
+  const { data: summary, isLoading } = useApi<AgentMemoryListResponse>(
+    '/api/v1/agents/' + agent.id + '/memories?countOnly=true&limit=200',
+    () => getAgentMemorySummary(agent.id)
   );
 
-  const count = memories?.count ?? memories?.memories?.length ?? 0;
+  const count = summary?.count ?? 0;
+  const countLabel = summary?.has_more || summary?.count_is_estimate ?     `${count}+` : `${count}`;
 
   return (
     <button
@@ -225,7 +224,7 @@ function AgentMemoryCard({ agent }: AgentMemoryCardProps) {
         <Skeleton className="h-3 w-20" />
       ) : (
         <p className="text-xs text-[#6b7280]">
-          <span className="text-white font-medium">{count}</span> {count === 1 ? 'memory' : 'memories'}
+          <span className="text-white font-medium">{countLabel}</span> {count === 1 ? 'memory' : 'memories'}
         </p>
       )}
     </button>
