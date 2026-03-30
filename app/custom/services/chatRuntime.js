@@ -7,6 +7,7 @@
 const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
+const { publishMessage } = require('../../../api/ws-chat');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
@@ -309,12 +310,14 @@ async function processMessage(msg) {
             `Pour lancer l'exécution : \`POST /api/v1/runbooks/execute\` avec ce runbook. ` +
             `Ou confirme ici avec "yes, execute" pour que je le lance directement.`;
 
-          await pool.query(
+          const rbResult = await pool.query(
             `INSERT INTO ${SCHEMA}.chat_messages
                (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
-             VALUES ($1, $2, $3, $4, 'text', $5, NOW())`,
+             VALUES ($1, $2, $3, $4, 'text', $5, NOW())
+             RETURNING *`,
             [msg.channel_id, 'mike', 'Mike', preview, DEFAULT_WORKSPACE]
           );
+          if (rbResult.rows[0]) publishMessage(rbResult.rows[0]);
           return;
         }
       }
@@ -326,9 +329,10 @@ async function processMessage(msg) {
     try {
       const routing = await swarmCoordinator.analyzeAndRoute(msg, channelAgents);
       if (routing?.routed) {
-          await pool.query(
+          const swarmResult = await pool.query(
             `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
-             VALUES ($1, $2, $3, $4, 'text', $5, NOW())`,
+             VALUES ($1, $2, $3, $4, 'text', $5, NOW())
+             RETURNING *`,
             [
               msg.channel_id,
               'mike',
@@ -337,6 +341,7 @@ async function processMessage(msg) {
               DEFAULT_WORKSPACE
             ]
           );
+          if (swarmResult.rows[0]) publishMessage(swarmResult.rows[0]);
           return;
         }
     } catch (swarmErr) {
@@ -374,11 +379,15 @@ async function processMessage(msg) {
     );
 
     // Insert agent response
-    await pool.query(
+    const replyResult = await pool.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
-       VALUES ($1, $2, $3, $4, 'text', $5, NOW())`,
+       VALUES ($1, $2, $3, $4, 'text', $5, NOW())
+       RETURNING *`,
       [msg.channel_id, targetAgent.id, targetAgent.name, response.content, DEFAULT_WORKSPACE]
     );
+
+    // Push reply to connected WebSocket clients
+    if (replyResult.rows[0]) publishMessage(replyResult.rows[0]);
 
     console.log(`[ChatRuntime] ${targetAgent.name} replied (${response.latency_ms}ms, ${response.provider}/${response.model}, soul: ${soul.length} chars)`);
 

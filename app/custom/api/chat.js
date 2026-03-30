@@ -24,6 +24,8 @@
 const express = require('express');
 const router = express.Router();
 
+const { publishMessage } = require('../../../api/ws-chat');
+
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
@@ -143,11 +145,15 @@ async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
       pg  // pass DB so llmRouter can resolve workspace LLM provider config
     );
 
-    await pg.query(
+    const fallbackResult = await pg.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id)
-       VALUES ($1, $2, $3, $4, 'text', $5)`,
+       VALUES ($1, $2, $3, $4, 'text', $5)
+       RETURNING *`,
       [channelId, agent.id.toString(), agent.name, llmResult.content, workspaceId]
     );
+
+    // Push reply to connected WebSocket clients
+    if (fallbackResult.rows[0]) publishMessage(fallbackResult.rows[0]);
 
     console.log(`[Chat] Agent ${agent.name} responded in channel ${channelId} (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
   } catch (err) {
@@ -346,6 +352,9 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
     // Respond immediately, then trigger agent response async
     res.status(201).json({ success: true, ...saved });
 
+    // Broadcast user message to other connected WS clients
+    publishMessage(saved);
+
     // Check sender is not an agent to avoid infinite loops
     const isAgent = await pg.query(
       `SELECT id FROM ${SCHEMA}.agents WHERE id::text = $1 OR username = $2 LIMIT 1`,
@@ -490,6 +499,9 @@ router.post('/chat/send', async (req, res) => {
 
     const saved = normaliseMessage(result.rows[0]);
     res.json({ success: true, data: saved });
+
+    // Broadcast via WebSocket
+    publishMessage(saved);
 
     const isAgent = await pg.query(
       `SELECT id FROM ${SCHEMA}.agents WHERE id::text = $1 OR username = $2 LIMIT 1`,
