@@ -191,7 +191,7 @@ function DeployModal({
   const cliInstructions = `npm install -g @vutler/nexus\nvutler-nexus init ${token || '<token>'}\nvutler-nexus start`;
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent);
-  const installerBaseUrl = 'https://github.com/alopez3006/vutler-platform/releases/latest/download';
+  const installerBaseUrl = 'https://app.vutler.ai/downloads';
 
   const isTokenStep = step === 'local-token' || step === 'ent-token';
 

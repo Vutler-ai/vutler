@@ -621,6 +621,22 @@ mount('/api/v1/push', require('./api/push'));
 mount('/api/v1/webhooks', require('./api/webhook-routes'));
 mount('/api/v1/workspace', require('./api/workspace'));
 
+// ── Nexus installer downloads ─────────────────────────────────────────────────
+const path = require('path');
+const NEXUS_DIST_DIR = process.env.NEXUS_DIST_DIR || path.join(__dirname, 'packages', 'nexus', 'dist');
+app.get('/downloads/nexus-macos.dmg', (req, res) => {
+  const file = path.join(NEXUS_DIST_DIR, 'vutler-nexus-macos.dmg');
+  res.download(file, 'vutler-nexus-macos.dmg', (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'macOS installer not available yet. Coming soon.' });
+  });
+});
+app.get('/downloads/nexus-windows.exe', (req, res) => {
+  const file = path.join(NEXUS_DIST_DIR, 'vutler-nexus-windows.exe');
+  res.download(file, 'vutler-nexus-windows.exe', (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'Windows installer not available yet. Coming soon.' });
+  });
+});
+
 // WebSocket stats
 const { setupWebSocket, getStats: wsGetStats } = require('./api/websocket');
 app.get('/api/v1/ws/stats', (req, res) => res.json({ success: true, ws: wsGetStats() }));
