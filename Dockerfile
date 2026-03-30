@@ -3,8 +3,8 @@
 FROM node:18-alpine
 RUN apk add --no-cache curl
 WORKDIR /app
-COPY package.json ./
-RUN npm install --only=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY . .
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=20s \
