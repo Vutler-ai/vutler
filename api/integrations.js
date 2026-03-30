@@ -1202,6 +1202,123 @@ setInterval(() => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Jira — API Token (Basic Auth) Connect/Disconnect ─────────────────────────
+
+// POST /api/v1/integrations/jira/connect
+// Body: { baseUrl, email, apiToken }
+router.post('/jira/connect', async (req, res) => {
+  try {
+    await ensureReady();
+    const workspaceId = getWorkspaceId(req);
+    const { baseUrl, email, apiToken } = req.body || {};
+
+    if (!baseUrl || !email || !apiToken) {
+      return res.status(400).json({ success: false, error: 'baseUrl, email and apiToken are required' });
+    }
+
+    // Normalise base URL
+    const normalizedUrl = baseUrl.replace(/\/+$/, '');
+
+    // Validate URL shape (must start with https://)
+    if (!/^https:\/\/.+/.test(normalizedUrl)) {
+      return res.status(400).json({ success: false, error: 'baseUrl must start with https://' });
+    }
+
+    // Test the connection by listing projects (cheap + validates both URL and credentials)
+    let projects;
+    try {
+      const { JiraAdapter } = require('../services/integrations/jira');
+      const { CryptoService } = require('../services/crypto');
+      const adapter = new JiraAdapter(normalizedUrl, email, apiToken);
+      projects = await adapter.listProjects();
+    } catch (connErr) {
+      console.error('[INTEGRATIONS] Jira connection test failed:', connErr.message);
+      return res.status(400).json({ success: false, error: `Connection test failed: ${connErr.message}` });
+    }
+
+    // Encrypt the API token before storing
+    const { CryptoService } = require('../services/crypto');
+    const cryptoSvc = new CryptoService();
+    const encryptedToken = cryptoSvc.encrypt(apiToken);
+
+    // Store credentials in the workspace_integrations row
+    const credentials = {
+      baseUrl: normalizedUrl,
+      email,
+      apiToken: encryptedToken,   // encrypted — never return raw token in responses
+    };
+
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, source, connected, status, credentials, scopes,
+         connected_at, disconnected_at, connected_by, updated_at)
+       VALUES ($1, 'jira', 'apitoken', TRUE, 'connected', $2::jsonb,
+         '["read:jira-user","read:jira-work","write:jira-work"]'::jsonb,
+         NOW(), NULL, $3, NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         source = 'apitoken',
+         connected = TRUE,
+         status = 'connected',
+         credentials = EXCLUDED.credentials,
+         scopes = EXCLUDED.scopes,
+         connected_at = NOW(),
+         disconnected_at = NULL,
+         connected_by = EXCLUDED.connected_by,
+         updated_at = NOW()`,
+      [
+        workspaceId,
+        JSON.stringify(credentials),
+        req.user?.email || req.user?.name || req.userId || 'system',
+      ]
+    );
+
+    await addLog({ workspaceId, provider: 'jira', action: 'apitoken_connect' });
+    console.log(`[INTEGRATIONS] Jira connected for workspace ${workspaceId}`);
+
+    res.json({
+      success: true,
+      provider: 'jira',
+      status: 'connected',
+      baseUrl: normalizedUrl,
+      email,
+      // apiToken intentionally omitted
+      projectCount: Array.isArray(projects) ? projects.length : undefined,
+    });
+  } catch (err) {
+    console.error('[INTEGRATIONS] Jira connect error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/v1/integrations/jira/disconnect
+router.delete('/jira/disconnect', async (req, res) => {
+  try {
+    await ensureReady();
+    const workspaceId = getWorkspaceId(req);
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.workspace_integrations
+       SET connected = FALSE,
+           status = 'disconnected',
+           credentials = '{}'::jsonb,
+           disconnected_at = NOW(),
+           updated_at = NOW()
+       WHERE workspace_id = $1 AND provider = 'jira'`,
+      [workspaceId]
+    );
+
+    await addLog({ workspaceId, provider: 'jira', action: 'disconnect' });
+    console.log(`[INTEGRATIONS] Jira disconnected for workspace ${workspaceId}`);
+
+    res.json({ success: true, provider: 'jira', status: 'disconnected' });
+  } catch (err) {
+    console.error('[INTEGRATIONS] Jira disconnect error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // POST /api/v1/integrations/:provider/connect
 router.post('/:provider/connect', async (req, res) => {
   try {

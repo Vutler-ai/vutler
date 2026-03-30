@@ -39,6 +39,18 @@ async function execute({ taskType, title, description, code, errorLog, metadata 
 
   console.log(`[SANDBOX] Starting execution ${executionId} — type=${taskType}, title="${title}"`);
 
+  // Skill-aware execution
+  if (metadata?.skill_key) {
+    const { getSkillRegistry } = require('./skills');
+    const registry = getSkillRegistry();
+    return registry.execute(metadata.skill_key, {
+      skillKey: metadata.skill_key,
+      workspaceId: metadata.workspace_id || DEFAULT_WORKSPACE,
+      agentId: metadata.agent_id || null,
+      params: { title, description, code, errorLog, ...metadata },
+    });
+  }
+
   // 1. Route to agent
   const routing = await routeTask(taskType);
   if (!routing.agent) {

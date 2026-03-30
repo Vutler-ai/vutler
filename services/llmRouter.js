@@ -683,7 +683,15 @@ async function chat(agent, messages, db, opts = {}) {
             }
           } catch (_) { /* nexusTools not available — skip */ }
         }
-        const allTools = [...(memoryTools || []), ...socialMediaTools, ...nexusTools];
+        // Inject skill tools when the agent has skills configured
+        let skillTools = [];
+        if (Array.isArray(agentSkills) && agentSkills.length > 0) {
+          try {
+            const { getSkillRegistry } = require('./skills');
+            skillTools = getSkillRegistry().getSkillTools(agentSkills);
+          } catch (_) { /* skills not available — skip */ }
+        }
+        const allTools = [...(memoryTools || []), ...socialMediaTools, ...nexusTools, ...skillTools];
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
 
         // No tool calls → we have the final answer

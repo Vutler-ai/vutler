@@ -45,6 +45,20 @@ class AgentWorker {
         result = await this.providers.shell.exec(command);
       } else if (provider === 'filesystem') {
         result = await this.providers.fs.readFile(task.metadata?.path);
+      } else if (task.metadata?.skill_key) {
+        const { getLocalSkillExecutor } = require('./skill-executor');
+        const executor = getLocalSkillExecutor(this.providers);
+
+        // Verify the agent has been granted this skill
+        if (this.skills?.length && !this.skills.includes(task.metadata.skill_key)) {
+          result = { success: false, error: `Agent does not have skill: ${task.metadata.skill_key}` };
+        } else {
+          result = await executor.execute(task.metadata.skill_key, {
+            ...task.metadata,
+            description: task.description,
+            skill_key: task.metadata.skill_key,
+          });
+        }
       } else if (this.providers.llm) {
         // LLM-based execution with agent personality
         const prompt = [
