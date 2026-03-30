@@ -47,6 +47,7 @@ const PUBLIC_FULL_PATHS = [
   '/api/v1/billing/webhook',
   '/api/v1/billing/plans',
   '/api/v1/mail',
+  '/downloads', // Nexus installer downloads (public, no auth)
   // SECURITY: sandbox, drive/download, nexus/register removed from public paths (audit 2026-03-28)
   // '/api/v1/sandbox',        — RCE without auth
   // '/api/v1/drive/download', — cross-tenant file access
