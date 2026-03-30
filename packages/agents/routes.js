@@ -80,6 +80,9 @@ mount('/knowledge',       'knowledge',   '../../api/knowledge');
 mount('/',                'agents',      '../../api/memory');
 mount('/memory',          'agents',      '../../app/custom/api/memory');
 
+// ── Runbooks ─────────────────────────────────────────────────────────────────
+mount('/runbooks',        'agents',      '../../app/custom/api/runbooks');
+
 // ── Snipara ─────────────────────────────────────────────────────────────────
 mount('/snipara',         'agents',      '../../api/snipara');
 mount('/snipara/admin',   'agents',      '../../api/sniparaAdmin');
