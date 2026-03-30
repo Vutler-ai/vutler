@@ -1,0 +1,1815 @@
+{
+  "lead_scoring": {
+    "type": "llm_prompt",
+    "prompt_template": "lead_scoring",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "lead_data": { "type": "object", "description": "Lead contact and company data" },
+        "scoring_model": { "type": "string", "enum": ["BANT", "MEDDIC", "custom"], "default": "BANT" },
+        "custom_criteria": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["lead_data"]
+    }
+  },
+  "crm_sync": {
+    "type": "integration",
+    "integration_provider": "crm",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "platform": { "type": "string", "enum": ["salesforce", "hubspot", "pipedrive"] },
+        "entity_type": { "type": "string", "enum": ["contact", "deal", "activity", "note"] },
+        "direction": { "type": "string", "enum": ["push", "pull", "bidirectional"], "default": "bidirectional" },
+        "record_id": { "type": "string" }
+      },
+      "required": ["platform", "entity_type"]
+    }
+  },
+  "email_outreach": {
+    "type": "integration",
+    "integration_provider": "email",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "recipient_email": { "type": "string", "format": "email" },
+        "recipient_name": { "type": "string" },
+        "subject": { "type": "string" },
+        "context": { "type": "string", "description": "Context for personalization" },
+        "tone": { "type": "string", "enum": ["professional", "friendly", "direct"], "default": "professional" },
+        "sequence_step": { "type": "integer", "minimum": 1, "default": 1 }
+      },
+      "required": ["recipient_email"]
+    }
+  },
+  "pipeline_management": {
+    "type": "llm_prompt",
+    "prompt_template": "pipeline_management",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "pipeline_data": { "type": "array", "items": { "type": "object" }, "description": "List of deals with stage and value" },
+        "action": { "type": "string", "enum": ["forecast", "identify_stalled", "stage_update", "summary"] }
+      },
+      "required": ["pipeline_data", "action"]
+    }
+  },
+  "content_scheduling": {
+    "type": "integration",
+    "integration_provider": "social_media",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "platforms": { "type": "array", "items": { "type": "string" } },
+        "scheduled_at": { "type": "string", "format": "date-time" },
+        "timezone": { "type": "string", "default": "UTC" }
+      },
+      "required": ["content", "platforms"]
+    }
+  },
+  "social_analytics": {
+    "type": "integration",
+    "integration_provider": "social_media",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "platforms": { "type": "array", "items": { "type": "string" } },
+        "metrics": { "type": "array", "items": { "type": "string" }, "description": "engagement_rate, followers, reach, impressions" },
+        "date_range": { "type": "object", "properties": { "from": { "type": "string" }, "to": { "type": "string" } } }
+      },
+      "required": ["platforms"]
+    }
+  },
+  "engagement_monitoring": {
+    "type": "integration",
+    "integration_provider": "social_media",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "platforms": { "type": "array", "items": { "type": "string" } },
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "auto_reply": { "type": "boolean", "default": false }
+      },
+      "required": ["platforms"]
+    }
+  },
+  "multi_platform_posting": {
+    "type": "integration",
+    "integration_provider": "social_media",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "platforms": { "type": "array", "items": { "type": "string" } },
+        "media_urls": { "type": "array", "items": { "type": "string" } },
+        "hashtags": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["content", "platforms"]
+    }
+  },
+  "campaign_planning": {
+    "type": "llm_prompt",
+    "prompt_template": "campaign_planning",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "campaign_objective": { "type": "string" },
+        "target_audience": { "type": "string" },
+        "budget": { "type": "number" },
+        "timeline_weeks": { "type": "integer" },
+        "channels": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["campaign_objective", "target_audience"]
+    }
+  },
+  "ab_testing": {
+    "type": "llm_prompt",
+    "prompt_template": "ab_testing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "test_type": { "type": "string", "enum": ["email", "ad", "landing_page", "cta"] },
+        "variant_a": { "type": "string" },
+        "variant_b": { "type": "string" },
+        "results": { "type": "object", "description": "Optional: existing test results to analyze" },
+        "sample_size": { "type": "integer" }
+      },
+      "required": ["test_type", "variant_a", "variant_b"]
+    }
+  },
+  "budget_tracking": {
+    "type": "llm_prompt",
+    "prompt_template": "budget_tracking",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "budget_data": { "type": "object", "description": "Channel budgets and spend to date" },
+        "period": { "type": "string", "enum": ["monthly", "quarterly", "annual"] }
+      },
+      "required": ["budget_data"]
+    }
+  },
+  "roi_analysis": {
+    "type": "llm_prompt",
+    "prompt_template": "roi_analysis",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "campaign_id": { "type": "string" },
+        "spend": { "type": "number" },
+        "revenue_attributed": { "type": "number" },
+        "breakdown": { "type": "object" }
+      },
+      "required": ["spend"]
+    }
+  },
+  "keyword_research": {
+    "type": "llm_prompt",
+    "prompt_template": "keyword_research",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "seed_keywords": { "type": "array", "items": { "type": "string" } },
+        "target_market": { "type": "string" },
+        "intent": { "type": "string", "enum": ["informational", "commercial", "transactional", "navigational"] },
+        "competitor_domains": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["seed_keywords"]
+    }
+  },
+  "content_optimization": {
+    "type": "llm_prompt",
+    "prompt_template": "content_optimization",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "target_keywords": { "type": "array", "items": { "type": "string" } },
+        "page_type": { "type": "string", "enum": ["blog", "landing_page", "product", "category"] }
+      },
+      "required": ["content", "target_keywords"]
+    }
+  },
+  "backlink_analysis": {
+    "type": "llm_prompt",
+    "prompt_template": "backlink_analysis",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "domain": { "type": "string" },
+        "backlink_data": { "type": "array", "items": { "type": "object" }, "description": "List of backlinks with metrics" }
+      },
+      "required": ["domain"]
+    }
+  },
+  "ranking_tracking": {
+    "type": "llm_prompt",
+    "prompt_template": "ranking_tracking",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "ranking_data": { "type": "array", "items": { "type": "object" }, "description": "Historical ranking positions" },
+        "competitor_domains": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["keywords"]
+    }
+  },
+  "task_management": {
+    "type": "integration",
+    "integration_provider": "project_management",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "update", "list", "close"] },
+        "task": { "type": "object", "description": "Task details: title, assignee, due_date, priority" },
+        "filters": { "type": "object" }
+      },
+      "required": ["action"]
+    }
+  },
+  "timeline_tracking": {
+    "type": "llm_prompt",
+    "prompt_template": "timeline_tracking",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "project_data": { "type": "object", "description": "Tasks, milestones, dependencies, and dates" },
+        "action": { "type": "string", "enum": ["check_status", "flag_risks", "update_milestone"] }
+      },
+      "required": ["project_data", "action"]
+    }
+  },
+  "resource_allocation": {
+    "type": "llm_prompt",
+    "prompt_template": "resource_allocation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "team_members": { "type": "array", "items": { "type": "object" }, "description": "List with availability and skills" },
+        "tasks": { "type": "array", "items": { "type": "object" }, "description": "Tasks with requirements and deadlines" }
+      },
+      "required": ["team_members", "tasks"]
+    }
+  },
+  "status_reporting": {
+    "type": "llm_prompt",
+    "prompt_template": "status_reporting",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "project_data": { "type": "object" },
+        "audience": { "type": "string", "enum": ["executive", "stakeholder", "team"], "default": "stakeholder" },
+        "format": { "type": "string", "enum": ["brief", "detailed"], "default": "detailed" }
+      },
+      "required": ["project_data"]
+    }
+  },
+  "recruitment_screening": {
+    "type": "llm_prompt",
+    "prompt_template": "recruitment_screening",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "job_description": { "type": "string" },
+        "candidates": { "type": "array", "items": { "type": "object" }, "description": "CVs or candidate profiles" },
+        "criteria": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["job_description", "candidates"]
+    }
+  },
+  "onboarding": {
+    "type": "llm_prompt",
+    "prompt_template": "onboarding",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "employee_name": { "type": "string" },
+        "role": { "type": "string" },
+        "department": { "type": "string" },
+        "start_date": { "type": "string", "format": "date" }
+      },
+      "required": ["employee_name", "role"]
+    }
+  },
+  "policy_lookup": {
+    "type": "llm_prompt",
+    "prompt_template": "policy_lookup",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string", "description": "Policy question or topic" },
+        "policy_documents": { "type": "array", "items": { "type": "string" }, "description": "Optional document content" }
+      },
+      "required": ["query"]
+    }
+  },
+  "leave_management": {
+    "type": "integration",
+    "integration_provider": "hris",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "employee_id": { "type": "string" },
+        "leave_type": { "type": "string", "enum": ["vacation", "sick", "parental", "unpaid"] },
+        "start_date": { "type": "string", "format": "date" },
+        "end_date": { "type": "string", "format": "date" },
+        "action": { "type": "string", "enum": ["request", "approve", "reject", "check_balance"] }
+      },
+      "required": ["employee_id", "action"]
+    }
+  },
+  "vendor_comparison": {
+    "type": "llm_prompt",
+    "prompt_template": "vendor_comparison",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "vendors": { "type": "array", "items": { "type": "object" }, "description": "Vendor profiles with pricing, specs, terms" },
+        "evaluation_criteria": { "type": "array", "items": { "type": "string" } },
+        "weights": { "type": "object", "description": "Criteria weights (sum to 1)" }
+      },
+      "required": ["vendors"]
+    }
+  },
+  "po_management": {
+    "type": "integration",
+    "integration_provider": "erp",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "approve", "track", "close"] },
+        "po_data": { "type": "object", "description": "PO details: vendor, items, amounts, dates" }
+      },
+      "required": ["action"]
+    }
+  },
+  "inventory_tracking": {
+    "type": "integration",
+    "integration_provider": "erp",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "sku_list": { "type": "array", "items": { "type": "string" } },
+        "location": { "type": "string" },
+        "threshold_alerts": { "type": "boolean", "default": true }
+      }
+    }
+  },
+  "cost_optimization": {
+    "type": "llm_prompt",
+    "prompt_template": "cost_optimization",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "spend_data": { "type": "object", "description": "Spending by category and vendor" },
+        "target_savings_pct": { "type": "number", "description": "Target cost reduction percentage" }
+      },
+      "required": ["spend_data"]
+    }
+  },
+  "invoice_processing": {
+    "type": "composite",
+    "steps": [
+      { "skill": "document_classification", "input_from": "context" },
+      { "skill": "data_extraction", "input_from": "previous" },
+      { "skill": "reconciliation", "input_from": "previous" }
+    ],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "invoice_content": { "type": "string", "description": "Raw invoice text or extracted OCR content" },
+        "po_reference": { "type": "string" }
+      },
+      "required": ["invoice_content"]
+    }
+  },
+  "payment_tracking": {
+    "type": "integration",
+    "integration_provider": "accounting",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "invoice_ids": { "type": "array", "items": { "type": "string" } },
+        "send_reminders": { "type": "boolean", "default": true },
+        "overdue_threshold_days": { "type": "integer", "default": 30 }
+      }
+    }
+  },
+  "reconciliation": {
+    "type": "llm_prompt",
+    "prompt_template": "reconciliation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "ledger_entries": { "type": "array", "items": { "type": "object" } },
+        "bank_statement_entries": { "type": "array", "items": { "type": "object" } },
+        "period": { "type": "string" }
+      },
+      "required": ["ledger_entries", "bank_statement_entries"]
+    }
+  },
+  "approval_workflows": {
+    "type": "integration",
+    "integration_provider": "workflow",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "document_type": { "type": "string" },
+        "amount": { "type": "number" },
+        "department": { "type": "string" },
+        "approver_chain": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["document_type"]
+    }
+  },
+  "equipment_diagnostics": {
+    "type": "nexus_provider",
+    "provider": "system",
+    "methods": ["getSystemInfo", "runDiagnostics"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "equipment_type": { "type": "string", "enum": ["av", "it", "network"] },
+        "symptoms": { "type": "string" },
+        "device_id": { "type": "string" }
+      },
+      "required": ["equipment_type", "symptoms"]
+    }
+  },
+  "network_scanning": {
+    "type": "nexus_provider",
+    "provider": "network",
+    "methods": ["scanNetwork", "getNetworkInfo"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "subnet": { "type": "string", "description": "CIDR notation, e.g. 192.168.1.0/24" },
+        "scan_type": { "type": "string", "enum": ["discovery", "port_scan", "vulnerability"], "default": "discovery" }
+      }
+    }
+  },
+  "snmp_monitoring": {
+    "type": "nexus_provider",
+    "provider": "network",
+    "methods": ["snmpGet", "snmpWalk"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "community": { "type": "string", "default": "public" },
+        "oids": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["host"]
+    }
+  },
+  "av_troubleshooting": {
+    "type": "llm_prompt",
+    "prompt_template": "av_troubleshooting",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "system_type": { "type": "string", "description": "Type of AV system (e.g., Crestron, AMX, Extron)" },
+        "symptoms": { "type": "string" },
+        "signal_flow": { "type": "string" }
+      },
+      "required": ["symptoms"]
+    }
+  },
+  "data_analysis": {
+    "type": "llm_prompt",
+    "prompt_template": "data_analysis",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "dataset": { "type": "string", "description": "CSV, JSON, or structured text data" },
+        "analysis_type": { "type": "string", "enum": ["descriptive", "diagnostic", "predictive", "prescriptive"] },
+        "question": { "type": "string", "description": "Business question to answer" }
+      },
+      "required": ["dataset", "question"]
+    }
+  },
+  "report_generation": {
+    "type": "llm_prompt",
+    "prompt_template": "report_generation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "data": { "type": "object" },
+        "report_type": { "type": "string" },
+        "audience": { "type": "string" },
+        "format": { "type": "string", "enum": ["executive_summary", "detailed", "dashboard"] }
+      },
+      "required": ["data", "report_type"]
+    }
+  },
+  "competitive_intelligence": {
+    "type": "composite",
+    "steps": [
+      { "skill": "trend_spotting", "input_from": "context" },
+      { "skill": "data_analysis", "input_from": "previous" },
+      { "skill": "report_generation", "input_from": "previous" }
+    ],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "competitors": { "type": "array", "items": { "type": "string" } },
+        "dimensions": { "type": "array", "items": { "type": "string" }, "description": "pricing, product, positioning, marketing" },
+        "market": { "type": "string" }
+      },
+      "required": ["competitors"]
+    }
+  },
+  "trend_spotting": {
+    "type": "llm_prompt",
+    "prompt_template": "trend_spotting",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "industry": { "type": "string" },
+        "signals": { "type": "string", "description": "Market data, news, or observations to analyze" },
+        "horizons": { "type": "array", "items": { "type": "string" }, "default": ["3m", "6m", "12m"] }
+      },
+      "required": ["industry"]
+    }
+  },
+  "ocr_processing": {
+    "type": "llm_prompt",
+    "prompt_template": "ocr_processing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "image_content": { "type": "string", "description": "Base64 encoded image or document content" },
+        "output_format": { "type": "string", "enum": ["plain_text", "structured_json", "markdown"], "default": "plain_text" }
+      },
+      "required": ["image_content"]
+    }
+  },
+  "document_classification": {
+    "type": "llm_prompt",
+    "prompt_template": "document_classification",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "document_content": { "type": "string" },
+        "categories": { "type": "array", "items": { "type": "string" }, "description": "Optional override of classification categories" }
+      },
+      "required": ["document_content"]
+    }
+  },
+  "data_extraction": {
+    "type": "llm_prompt",
+    "prompt_template": "data_extraction",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "document_content": { "type": "string" },
+        "fields": { "type": "array", "items": { "type": "string" }, "description": "Fields to extract" },
+        "output_schema": { "type": "object", "description": "Expected JSON schema of extracted data" }
+      },
+      "required": ["document_content", "fields"]
+    }
+  },
+  "summarization": {
+    "type": "llm_prompt",
+    "prompt_template": "summarization",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "max_length": { "type": "integer", "description": "Max words in summary" },
+        "style": { "type": "string", "enum": ["bullet_points", "paragraph", "executive"], "default": "paragraph" }
+      },
+      "required": ["content"]
+    }
+  },
+  "article_creation": {
+    "type": "llm_prompt",
+    "prompt_template": "article_creation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "topic": { "type": "string" },
+        "article_type": { "type": "string", "enum": ["guide", "how-to", "troubleshooting", "policy", "reference"] },
+        "audience": { "type": "string" },
+        "length": { "type": "string", "enum": ["short", "medium", "long"], "default": "medium" }
+      },
+      "required": ["topic", "article_type"]
+    }
+  },
+  "search_optimization": {
+    "type": "llm_prompt",
+    "prompt_template": "search_optimization",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content_title": { "type": "string" },
+        "content_body": { "type": "string" },
+        "target_keywords": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["content_title", "content_body"]
+    }
+  },
+  "faq_management": {
+    "type": "llm_prompt",
+    "prompt_template": "faq_management",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "support_queries": { "type": "array", "items": { "type": "string" } },
+        "existing_faqs": { "type": "array", "items": { "type": "object" } },
+        "action": { "type": "string", "enum": ["generate", "update", "deduplicate"] }
+      },
+      "required": ["action"]
+    }
+  },
+  "content_curation": {
+    "type": "llm_prompt",
+    "prompt_template": "content_curation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content_library": { "type": "array", "items": { "type": "object" } },
+        "action": { "type": "string", "enum": ["deduplicate", "archive", "organize", "gap_analysis"] }
+      },
+      "required": ["content_library", "action"]
+    }
+  },
+  "ticket_triage": {
+    "type": "integration",
+    "integration_provider": "helpdesk",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "ticket": { "type": "object", "description": "Ticket with subject, body, customer info" },
+        "routing_rules": { "type": "object" }
+      },
+      "required": ["ticket"]
+    }
+  },
+  "satisfaction_tracking": {
+    "type": "integration",
+    "integration_provider": "helpdesk",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "metric": { "type": "string", "enum": ["csat", "nps", "ces"] },
+        "period": { "type": "string" },
+        "alert_threshold": { "type": "number" }
+      },
+      "required": ["metric"]
+    }
+  },
+  "churn_prediction": {
+    "type": "composite",
+    "steps": [
+      { "skill": "data_analysis", "input_from": "context" },
+      { "skill": "insight_reporting", "input_from": "previous" }
+    ],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "account_data": { "type": "array", "items": { "type": "object" }, "description": "Usage, payment, support, engagement data per account" },
+        "lookback_days": { "type": "integer", "default": 90 }
+      },
+      "required": ["account_data"]
+    }
+  },
+  "upsell_detection": {
+    "type": "llm_prompt",
+    "prompt_template": "upsell_detection",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "account_data": { "type": "object", "description": "Usage patterns, feature adoption, contract data" },
+        "product_catalog": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["account_data"]
+    }
+  },
+  "calendar_management": {
+    "type": "integration",
+    "integration_provider": "calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "update", "delete", "list", "protect_block"] },
+        "event": { "type": "object" },
+        "rules": { "type": "object", "description": "Focus block rules, meeting hygiene policies" }
+      },
+      "required": ["action"]
+    }
+  },
+  "availability_matching": {
+    "type": "integration",
+    "integration_provider": "calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "attendees": { "type": "array", "items": { "type": "string" }, "description": "Email list of attendees" },
+        "duration_minutes": { "type": "integer" },
+        "preferred_times": { "type": "array", "items": { "type": "string" } },
+        "timezone": { "type": "string", "default": "UTC" }
+      },
+      "required": ["attendees", "duration_minutes"]
+    }
+  },
+  "reminder_sending": {
+    "type": "integration",
+    "integration_provider": "calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "event_id": { "type": "string" },
+        "remind_before_minutes": { "type": "array", "items": { "type": "integer" }, "default": [1440, 60] },
+        "include_agenda": { "type": "boolean", "default": true }
+      },
+      "required": ["event_id"]
+    }
+  },
+  "rescheduling": {
+    "type": "integration",
+    "integration_provider": "calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "event_id": { "type": "string" },
+        "reason": { "type": "string" },
+        "preferred_window": { "type": "object" }
+      },
+      "required": ["event_id"]
+    }
+  },
+  "sentiment_analysis": {
+    "type": "llm_prompt",
+    "prompt_template": "sentiment_analysis",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "texts": { "type": "array", "items": { "type": "string" } },
+        "granularity": { "type": "string", "enum": ["document", "sentence", "aspect"], "default": "document" }
+      },
+      "required": ["texts"]
+    }
+  },
+  "theme_extraction": {
+    "type": "llm_prompt",
+    "prompt_template": "theme_extraction",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "feedback_texts": { "type": "array", "items": { "type": "string" } },
+        "max_themes": { "type": "integer", "default": 10 }
+      },
+      "required": ["feedback_texts"]
+    }
+  },
+  "priority_ranking": {
+    "type": "llm_prompt",
+    "prompt_template": "priority_ranking",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "items": { "type": "array", "items": { "type": "object" }, "description": "Items to rank with their data" },
+        "ranking_criteria": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["items"]
+    }
+  },
+  "insight_reporting": {
+    "type": "llm_prompt",
+    "prompt_template": "insight_reporting",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "data": { "type": "object" },
+        "report_sections": { "type": "array", "items": { "type": "string" }, "description": "themes, quotes, trends, recommendations" }
+      },
+      "required": ["data"]
+    }
+  },
+  "bookkeeping": {
+    "type": "integration",
+    "integration_provider": "accounting",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "transactions": { "type": "array", "items": { "type": "object" } },
+        "chart_of_accounts": { "type": "object" },
+        "standard": { "type": "string", "enum": ["GAAP", "IFRS"], "default": "GAAP" }
+      },
+      "required": ["transactions"]
+    }
+  },
+  "tax_preparation": {
+    "type": "llm_prompt",
+    "prompt_template": "tax_preparation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "financial_data": { "type": "object", "description": "P&L, receipts, expense categories" },
+        "jurisdiction": { "type": "string" },
+        "fiscal_year": { "type": "string" }
+      },
+      "required": ["financial_data", "jurisdiction"]
+    }
+  },
+  "expense_tracking": {
+    "type": "integration",
+    "integration_provider": "accounting",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "expenses": { "type": "array", "items": { "type": "object" } },
+        "policy_rules": { "type": "object" },
+        "employee_id": { "type": "string" }
+      },
+      "required": ["expenses"]
+    }
+  },
+  "financial_reporting": {
+    "type": "composite",
+    "steps": [
+      { "skill": "bookkeeping", "input_from": "context" },
+      { "skill": "reconciliation", "input_from": "previous" },
+      { "skill": "report_generation", "input_from": "previous" }
+    ],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "financial_data": { "type": "object" },
+        "report_types": { "type": "array", "items": { "type": "string" }, "default": ["pl", "balance_sheet", "cash_flow"] },
+        "period": { "type": "string" }
+      },
+      "required": ["financial_data"]
+    }
+  },
+  "competitor_pricing": {
+    "type": "llm_prompt",
+    "prompt_template": "competitor_pricing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "competitors": { "type": "array", "items": { "type": "string" } },
+        "products": { "type": "array", "items": { "type": "string" } },
+        "pricing_data": { "type": "object", "description": "Known pricing information" }
+      },
+      "required": ["competitors"]
+    }
+  },
+  "margin_analysis": {
+    "type": "llm_prompt",
+    "prompt_template": "margin_analysis",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "revenue_data": { "type": "object" },
+        "cost_data": { "type": "object" },
+        "segments": { "type": "array", "items": { "type": "string" }, "description": "product_line, customer_segment, region" }
+      },
+      "required": ["revenue_data", "cost_data"]
+    }
+  },
+  "dynamic_pricing": {
+    "type": "llm_prompt",
+    "prompt_template": "dynamic_pricing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "base_price": { "type": "number" },
+        "pricing_variables": { "type": "object", "description": "Volume, time, geography, demand signals" },
+        "scenario": { "type": "string", "enum": ["volume_discount", "time_based", "geographic", "demand_surge"] }
+      },
+      "required": ["base_price", "scenario"]
+    }
+  },
+  "discount_strategy": {
+    "type": "llm_prompt",
+    "prompt_template": "discount_strategy",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "current_margin": { "type": "number" },
+        "discount_scenarios": { "type": "array", "items": { "type": "object" } },
+        "objectives": { "type": "array", "items": { "type": "string" }, "description": "volume, win_rate, ltv" }
+      },
+      "required": ["current_margin"]
+    }
+  },
+  "ticket_resolution": {
+    "type": "integration",
+    "integration_provider": "helpdesk",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "ticket_id": { "type": "string" },
+        "issue_type": { "type": "string", "enum": ["password_reset", "software_install", "vpn", "peripheral", "other"] },
+        "user_details": { "type": "object" }
+      },
+      "required": ["ticket_id", "issue_type"]
+    }
+  },
+  "vulnerability_scanning": {
+    "type": "nexus_provider",
+    "provider": "system",
+    "methods": ["runSecurityScan", "getSystemInfo"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "target": { "type": "string", "description": "IP, hostname, or CIDR range" },
+        "scan_type": { "type": "string", "enum": ["full", "quick", "network", "web"], "default": "quick" }
+      },
+      "required": ["target"]
+    }
+  },
+  "incident_response": {
+    "type": "composite",
+    "steps": [
+      { "skill": "data_analysis", "input_from": "context" },
+      { "skill": "status_reporting", "input_from": "previous" },
+      { "skill": "report_generation", "input_from": "previous" }
+    ],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "incident_description": { "type": "string" },
+        "affected_systems": { "type": "array", "items": { "type": "string" } },
+        "severity": { "type": "string", "enum": ["p1", "p2", "p3", "p4"] }
+      },
+      "required": ["incident_description", "severity"]
+    }
+  },
+  "security_audit": {
+    "type": "llm_prompt",
+    "prompt_template": "security_audit",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "scope": { "type": "string", "description": "Systems, applications, or processes to audit" },
+        "framework": { "type": "string", "enum": ["SOC2", "ISO27001", "NIST", "HIPAA", "custom"] },
+        "audit_evidence": { "type": "object" }
+      },
+      "required": ["scope", "framework"]
+    }
+  },
+  "cicd_automation": {
+    "type": "llm_prompt",
+    "prompt_template": "cicd_automation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "tech_stack": { "type": "array", "items": { "type": "string" } },
+        "pipeline_stages": { "type": "array", "items": { "type": "string" }, "default": ["build", "test", "deploy"] },
+        "target_platform": { "type": "string", "enum": ["github_actions", "gitlab_ci", "jenkins", "circleci"] }
+      },
+      "required": ["tech_stack"]
+    }
+  },
+  "infrastructure_as_code": {
+    "type": "llm_prompt",
+    "prompt_template": "infrastructure_as_code",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "provider": { "type": "string", "enum": ["aws", "gcp", "azure", "hetzner"] },
+        "iac_tool": { "type": "string", "enum": ["terraform", "pulumi", "cloudformation"] },
+        "infrastructure_spec": { "type": "string" }
+      },
+      "required": ["provider", "iac_tool"]
+    }
+  },
+  "monitoring_alerting": {
+    "type": "integration",
+    "integration_provider": "monitoring",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "tool": { "type": "string", "enum": ["datadog", "prometheus", "grafana", "newrelic", "custom"] },
+        "metrics": { "type": "array", "items": { "type": "string" } },
+        "alert_policies": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["tool"]
+    }
+  },
+  "firewall_management": {
+    "type": "nexus_provider",
+    "provider": "network",
+    "methods": ["getFirewallRules", "listNetworkInterfaces"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["audit", "list_rules", "recommend"] },
+        "network_zone": { "type": "string" }
+      },
+      "required": ["action"]
+    }
+  },
+  "dns_management": {
+    "type": "nexus_provider",
+    "provider": "network",
+    "methods": ["dnsLookup", "getNetworkInfo"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "domain": { "type": "string" },
+        "record_type": { "type": "string", "enum": ["A", "AAAA", "MX", "CNAME", "TXT", "NS"] },
+        "action": { "type": "string", "enum": ["lookup", "troubleshoot", "document"] }
+      },
+      "required": ["domain"]
+    }
+  },
+  "vpn_configuration": {
+    "type": "llm_prompt",
+    "prompt_template": "vpn_configuration",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "vpn_type": { "type": "string", "enum": ["wireguard", "openvpn", "ipsec", "ssl"] },
+        "topology": { "type": "string", "enum": ["site-to-site", "remote-access", "hub-spoke"] },
+        "environment": { "type": "string" }
+      },
+      "required": ["vpn_type", "topology"]
+    }
+  },
+  "device_management": {
+    "type": "nexus_provider",
+    "provider": "system",
+    "methods": ["getSystemInfo", "listRunningProcesses"],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": true,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "device_ids": { "type": "array", "items": { "type": "string" } },
+        "action": { "type": "string", "enum": ["provision", "update", "health_check", "decommission"] }
+      },
+      "required": ["action"]
+    }
+  },
+  "sensor_data_analysis": {
+    "type": "llm_prompt",
+    "prompt_template": "sensor_data_analysis",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "sensor_data": { "type": "array", "items": { "type": "object" }, "description": "Time-series data points" },
+        "sensor_type": { "type": "string" },
+        "anomaly_threshold": { "type": "number" }
+      },
+      "required": ["sensor_data"]
+    }
+  },
+  "edge_computing": {
+    "type": "llm_prompt",
+    "prompt_template": "edge_computing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "use_case": { "type": "string" },
+        "latency_requirement_ms": { "type": "integer" },
+        "device_count": { "type": "integer" },
+        "data_volume_gb_day": { "type": "number" }
+      },
+      "required": ["use_case"]
+    }
+  },
+  "etl_pipelines": {
+    "type": "llm_prompt",
+    "prompt_template": "etl_pipelines",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "source_system": { "type": "string" },
+        "target_system": { "type": "string" },
+        "data_schema": { "type": "object" },
+        "transformation_rules": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["source_system", "target_system"]
+    }
+  },
+  "data_quality": {
+    "type": "llm_prompt",
+    "prompt_template": "data_quality",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "dataset_sample": { "type": "string", "description": "Sample or description of the dataset" },
+        "quality_dimensions": { "type": "array", "items": { "type": "string" }, "default": ["completeness", "accuracy", "consistency", "timeliness"] }
+      },
+      "required": ["dataset_sample"]
+    }
+  },
+  "schema_management": {
+    "type": "llm_prompt",
+    "prompt_template": "schema_management",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "current_schema": { "type": "string", "description": "DDL or schema definition" },
+        "change_request": { "type": "string" },
+        "database_type": { "type": "string", "enum": ["postgresql", "mysql", "mongodb", "bigquery"] }
+      },
+      "required": ["current_schema", "change_request"]
+    }
+  },
+  "test_automation": {
+    "type": "llm_prompt",
+    "prompt_template": "test_automation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "code_or_spec": { "type": "string" },
+        "test_type": { "type": "string", "enum": ["unit", "integration", "e2e", "performance"] },
+        "framework": { "type": "string" }
+      },
+      "required": ["code_or_spec", "test_type"]
+    }
+  },
+  "bug_tracking": {
+    "type": "integration",
+    "integration_provider": "project_management",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["create", "update", "close", "list"] },
+        "bug": { "type": "object", "description": "Title, description, severity, steps_to_reproduce" }
+      },
+      "required": ["action"]
+    }
+  },
+  "regression_testing": {
+    "type": "llm_prompt",
+    "prompt_template": "regression_testing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "change_description": { "type": "string" },
+        "existing_test_suite": { "type": "string" },
+        "risk_areas": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["change_description"]
+    }
+  },
+  "contract_review": {
+    "type": "llm_prompt",
+    "prompt_template": "contract_review",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "contract_text": { "type": "string" },
+        "contract_type": { "type": "string", "enum": ["nda", "msa", "sow", "employment", "saas", "vendor"] },
+        "review_focus": { "type": "array", "items": { "type": "string" }, "default": ["liability", "ip", "termination", "payment"] }
+      },
+      "required": ["contract_text"]
+    }
+  },
+  "compliance_assessment": {
+    "type": "llm_prompt",
+    "prompt_template": "compliance_assessment",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "framework": { "type": "string", "enum": ["GDPR", "SOC2", "ISO27001", "HIPAA", "PCI-DSS"] },
+        "controls_evidence": { "type": "object" },
+        "scope": { "type": "string" }
+      },
+      "required": ["framework", "scope"]
+    }
+  },
+  "policy_drafting": {
+    "type": "llm_prompt",
+    "prompt_template": "policy_drafting",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "policy_type": { "type": "string", "enum": ["privacy", "acceptable_use", "infosec", "hr", "procurement"] },
+        "organization_context": { "type": "string" },
+        "jurisdiction": { "type": "string" }
+      },
+      "required": ["policy_type"]
+    }
+  },
+  "data_mapping": {
+    "type": "llm_prompt",
+    "prompt_template": "data_mapping",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "systems": { "type": "array", "items": { "type": "object" }, "description": "Systems with their data types and flows" },
+        "personal_data_categories": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["systems"]
+    }
+  },
+  "dpia": {
+    "type": "llm_prompt",
+    "prompt_template": "dpia",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "processing_description": { "type": "string" },
+        "data_subjects": { "type": "array", "items": { "type": "string" } },
+        "legal_basis": { "type": "string" },
+        "risks": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["processing_description"]
+    }
+  },
+  "consent_management": {
+    "type": "integration",
+    "integration_provider": "consent_platform",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["record", "withdraw", "check", "export"] },
+        "subject_id": { "type": "string" },
+        "purpose": { "type": "string" }
+      },
+      "required": ["action", "subject_id"]
+    }
+  },
+  "api_documentation": {
+    "type": "llm_prompt",
+    "prompt_template": "api_documentation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "api_spec": { "type": "string", "description": "OpenAPI spec, code, or endpoint description" },
+        "format": { "type": "string", "enum": ["openapi", "markdown", "postman"], "default": "markdown" }
+      },
+      "required": ["api_spec"]
+    }
+  },
+  "release_notes": {
+    "type": "llm_prompt",
+    "prompt_template": "release_notes",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "changes": { "type": "array", "items": { "type": "object" }, "description": "List of changes: type, description, breaking" },
+        "version": { "type": "string" },
+        "audience": { "type": "string", "enum": ["developer", "end_user", "executive"] }
+      },
+      "required": ["changes", "version"]
+    }
+  },
+  "user_research": {
+    "type": "llm_prompt",
+    "prompt_template": "user_research",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "research_type": { "type": "string", "enum": ["interview", "usability_test", "survey", "contextual_inquiry"] },
+        "objectives": { "type": "array", "items": { "type": "string" } },
+        "target_participants": { "type": "string" }
+      },
+      "required": ["research_type", "objectives"]
+    }
+  },
+  "usability_testing": {
+    "type": "llm_prompt",
+    "prompt_template": "usability_testing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "feature_description": { "type": "string" },
+        "tasks": { "type": "array", "items": { "type": "string" } },
+        "findings": { "type": "array", "items": { "type": "object" }, "description": "Optional: session findings to analyze" }
+      },
+      "required": ["feature_description", "tasks"]
+    }
+  },
+  "brand_guidelines": {
+    "type": "llm_prompt",
+    "prompt_template": "brand_guidelines",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content_to_review": { "type": "string" },
+        "brand_guide": { "type": "object", "description": "Tone, visual, messaging rules" },
+        "action": { "type": "string", "enum": ["review", "draft", "update_guide"] }
+      },
+      "required": ["action"]
+    }
+  },
+  "requirements_gathering": {
+    "type": "llm_prompt",
+    "prompt_template": "requirements_gathering",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "project_description": { "type": "string" },
+        "stakeholder_inputs": { "type": "array", "items": { "type": "string" } },
+        "format": { "type": "string", "enum": ["user_stories", "functional_spec", "brd"], "default": "functional_spec" }
+      },
+      "required": ["project_description"]
+    }
+  },
+  "process_mapping": {
+    "type": "llm_prompt",
+    "prompt_template": "process_mapping",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "process_description": { "type": "string" },
+        "stakeholders": { "type": "array", "items": { "type": "string" } },
+        "format": { "type": "string", "enum": ["swimlane", "flowchart", "bpmn"], "default": "flowchart" }
+      },
+      "required": ["process_description"]
+    }
+  },
+  "user_stories": {
+    "type": "llm_prompt",
+    "prompt_template": "user_stories",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "feature_description": { "type": "string" },
+        "persona": { "type": "string" },
+        "include_acceptance_criteria": { "type": "boolean", "default": true }
+      },
+      "required": ["feature_description"]
+    }
+  },
+  "logistics_coordination": {
+    "type": "llm_prompt",
+    "prompt_template": "logistics_coordination",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "shipment_details": { "type": "object" },
+        "carrier_options": { "type": "array", "items": { "type": "object" } },
+        "action": { "type": "string", "enum": ["select_carrier", "track", "customs_docs", "coordinate"] }
+      },
+      "required": ["action"]
+    }
+  },
+  "vendor_management": {
+    "type": "llm_prompt",
+    "prompt_template": "vendor_management",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "vendor_id": { "type": "string" },
+        "action": { "type": "string", "enum": ["performance_review", "sla_check", "escalation", "renewal"] },
+        "vendor_data": { "type": "object" }
+      },
+      "required": ["vendor_id", "action"]
+    }
+  },
+  "event_planning": {
+    "type": "llm_prompt",
+    "prompt_template": "event_planning",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "event_type": { "type": "string" },
+        "attendee_count": { "type": "integer" },
+        "budget": { "type": "number" },
+        "date": { "type": "string", "format": "date" },
+        "location_preference": { "type": "string" }
+      },
+      "required": ["event_type", "attendee_count"]
+    }
+  },
+  "attendee_management": {
+    "type": "integration",
+    "integration_provider": "event_platform",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "event_id": { "type": "string" },
+        "action": { "type": "string", "enum": ["register", "send_invite", "manage_waitlist", "check_in"] }
+      },
+      "required": ["event_id", "action"]
+    }
+  },
+  "social_listening": {
+    "type": "integration",
+    "integration_provider": "social_media",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "keywords": { "type": "array", "items": { "type": "string" } },
+        "platforms": { "type": "array", "items": { "type": "string" } },
+        "sentiment_filter": { "type": "string", "enum": ["all", "negative", "positive"] }
+      },
+      "required": ["keywords"]
+    }
+  },
+  "community_moderation": {
+    "type": "llm_prompt",
+    "prompt_template": "community_moderation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "community_guidelines": { "type": "string" },
+        "action": { "type": "string", "enum": ["review", "auto_moderate", "escalate"] }
+      },
+      "required": ["content", "action"]
+    }
+  },
+  "translation": {
+    "type": "llm_prompt",
+    "prompt_template": "translation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "source_language": { "type": "string" },
+        "target_language": { "type": "string" },
+        "tone": { "type": "string", "enum": ["formal", "informal", "marketing"], "default": "formal" }
+      },
+      "required": ["content", "target_language"]
+    }
+  },
+  "localization": {
+    "type": "llm_prompt",
+    "prompt_template": "localization",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "target_market": { "type": "string" },
+        "adaptations": { "type": "array", "items": { "type": "string" }, "default": ["currency", "dates", "cultural_refs", "regulatory"] }
+      },
+      "required": ["content", "target_market"]
+    }
+  },
+  "training_design": {
+    "type": "llm_prompt",
+    "prompt_template": "training_design",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "topic": { "type": "string" },
+        "audience": { "type": "string" },
+        "duration_hours": { "type": "number" },
+        "delivery_format": { "type": "string", "enum": ["in_person", "virtual", "async", "blended"] }
+      },
+      "required": ["topic", "audience"]
+    }
+  },
+  "assessment_creation": {
+    "type": "llm_prompt",
+    "prompt_template": "assessment_creation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "topic": { "type": "string" },
+        "learning_objectives": { "type": "array", "items": { "type": "string" } },
+        "question_types": { "type": "array", "items": { "type": "string" }, "default": ["mcq", "short_answer"] }
+      },
+      "required": ["topic", "learning_objectives"]
+    }
+  },
+  "financial_modeling": {
+    "type": "llm_prompt",
+    "prompt_template": "financial_modeling",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "model_type": { "type": "string", "enum": ["dcf", "lbo", "budget", "scenario_analysis", "valuation"] },
+        "assumptions": { "type": "object" },
+        "historical_data": { "type": "object" }
+      },
+      "required": ["model_type"]
+    }
+  },
+  "forecasting": {
+    "type": "llm_prompt",
+    "prompt_template": "forecasting",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "historical_data": { "type": "array", "items": { "type": "object" } },
+        "forecast_type": { "type": "string", "enum": ["revenue", "expense", "cash_flow"] },
+        "horizon_months": { "type": "integer", "default": 12 },
+        "method": { "type": "string", "enum": ["driver_based", "trend", "statistical"], "default": "driver_based" }
+      },
+      "required": ["historical_data", "forecast_type"]
+    }
+  },
+  "investor_reporting": {
+    "type": "composite",
+    "steps": [
+      { "skill": "financial_reporting", "input_from": "context" },
+      { "skill": "report_generation", "input_from": "previous" }
+    ],
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "financial_data": { "type": "object" },
+        "kpis": { "type": "object" },
+        "period": { "type": "string" },
+        "investor_type": { "type": "string", "enum": ["vc", "pe", "board", "public"] }
+      },
+      "required": ["financial_data", "period"]
+    }
+  },
+  "property_listing": {
+    "type": "llm_prompt",
+    "prompt_template": "property_listing",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "property_details": { "type": "object", "description": "Size, location, features, condition" },
+        "listing_type": { "type": "string", "enum": ["sale", "rental"] },
+        "target_buyer_profile": { "type": "string" }
+      },
+      "required": ["property_details", "listing_type"]
+    }
+  },
+  "market_valuation": {
+    "type": "llm_prompt",
+    "prompt_template": "market_valuation",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "property_details": { "type": "object" },
+        "comparable_sales": { "type": "array", "items": { "type": "object" } },
+        "market_conditions": { "type": "string" }
+      },
+      "required": ["property_details"]
+    }
+  },
+  "appointment_scheduling": {
+    "type": "integration",
+    "integration_provider": "calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "appointment_type": { "type": "string", "enum": ["viewing", "inspection", "consultation"] },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "property_id": { "type": "string" },
+        "preferred_slots": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["appointment_type", "participants"]
+    }
+  },
+  "insurance_verification": {
+    "type": "integration",
+    "integration_provider": "healthcare",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "patient_id": { "type": "string" },
+        "insurance_id": { "type": "string" },
+        "service_codes": { "type": "array", "items": { "type": "string" } },
+        "appointment_date": { "type": "string", "format": "date" }
+      },
+      "required": ["patient_id", "insurance_id"]
+    }
+  },
+  "patient_intake": {
+    "type": "llm_prompt",
+    "prompt_template": "patient_intake",
+    "fallback_type": null,
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "patient_responses": { "type": "object", "description": "Form responses and medical history" },
+        "appointment_type": { "type": "string" },
+        "clinical_notes_format": { "type": "string", "enum": ["soap", "narrative", "structured"], "default": "soap" }
+      },
+      "required": ["patient_responses"]
+    }
+  }
+}

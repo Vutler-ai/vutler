@@ -3,7 +3,7 @@ class AgentWorker {
     this.id = config.id;
     this.name = config.name || config.username;
     this.systemPrompt = config.system_prompt || '';
-    this.model = config.model || 'gpt-4o';
+    this.model = config.model || 'gpt-5.4';
     this.sniparaScope = config.snipara_instance_id || config.id;
     this.tools = config.tools || ['filesystem', 'shell'];
     this.skills = config.skills || [];
@@ -44,7 +44,21 @@ class AgentWorker {
         const command = task.metadata?.command || (task.description || '').replace(/^shell:\s*/, '');
         result = await this.providers.shell.exec(command);
       } else if (provider === 'filesystem') {
-        result = await this.providers.fs.read(task.metadata?.path);
+        result = await this.providers.fs.readFile(task.metadata?.path);
+      } else if (task.metadata?.skill_key) {
+        const { getLocalSkillExecutor } = require('./skill-executor');
+        const executor = getLocalSkillExecutor(this.providers);
+
+        // Verify the agent has been granted this skill
+        if (this.skills?.length && !this.skills.includes(task.metadata.skill_key)) {
+          result = { success: false, error: `Agent does not have skill: ${task.metadata.skill_key}` };
+        } else {
+          result = await executor.execute(task.metadata.skill_key, {
+            ...task.metadata,
+            description: task.description,
+            skill_key: task.metadata.skill_key,
+          });
+        }
       } else if (this.providers.llm) {
         // LLM-based execution with agent personality
         const prompt = [
