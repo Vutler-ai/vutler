@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import type { ReactElement } from "react";
 import {
   PaperAirplaneIcon,
   PaperClipIcon,
@@ -97,7 +98,7 @@ const PLAIN_URL_REGEX = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/g;
 const MARKDOWN_LINK_REGEX = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 
 function linkifyPlainText(text: string, prefix: string) {
-  const parts: JSX.Element[] = [];
+  const parts: ReactElement[] = [];
   let lastIndex = 0;
   let matchIndex = 0;
 
@@ -141,7 +142,7 @@ function linkifyPlainText(text: string, prefix: string) {
 }
 
 function renderInlineContent(text: string, prefix: string) {
-  const parts: JSX.Element[] = [];
+  const parts: ReactElement[] = [];
   let lastIndex = 0;
   let matchIndex = 0;
 
