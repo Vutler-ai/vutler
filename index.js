@@ -685,9 +685,6 @@ async function start() {
 
     // Task executor — picks up pending tasks and executes them via agent LLM
     const taskExecutor = require('./app/custom/services/taskExecutor');
-    if (app.locals.wsConnections) {
-      taskExecutor.setWsConnections(app.locals.wsConnections);
-    }
     taskExecutor.start();
     app.locals.taskExecutor = taskExecutor;
 
@@ -717,6 +714,11 @@ async function start() {
     // WebSocket
     setupWebSocket(server, app);
     try { const { setupChatWebSocket } = require('./api/ws-chat'); setupChatWebSocket(server, app); } catch (_) {}
+
+    // Link WebSocket connections to TaskExecutor for Nexus tool bridge
+    if (app.locals.wsConnections && app.locals.taskExecutor) {
+      app.locals.taskExecutor.setWsConnections(app.locals.wsConnections);
+    }
 
     // IMAP Poller
     if (process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS) {
