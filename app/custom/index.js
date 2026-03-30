@@ -25,6 +25,7 @@ const nexusAPI = require('./api/nexus');
 const marketplaceAPI = require('./api/marketplace');
 const adminAPI = require("./api/admin");
 const swarmAPI = require('./api/swarm');
+const vaultAPI = require('../../api/vault');
 const { authenticateAgent } = require('./lib/auth');
 const ImapPoller = require('./services/imapPoller');
 const { getSwarmCoordinator } = require('./services/swarmCoordinator');
@@ -260,6 +261,7 @@ async function initializeVutler(app, httpServer) {
     app.use('/api/v1', nexusAPI);
     app.use('/api/v1', marketplaceAPI);
     app.use('/api/v1/swarm', swarmAPI);
+    app.use('/api/v1', vaultAPI);
     // Admin API & page
     app.use("/api/v1/admin", adminAPI);
     const path = require("path");
@@ -297,6 +299,14 @@ async function initializeVutler(app, httpServer) {
     console.log('   - GET    /api/v1/tasks/:id');
     console.log('   - POST   /api/v1/marketplace/templates/:templateId/deploy');
     console.log('   - GET    /api/v1/marketplace/deployments/:id');
+    console.log('   - GET    /api/v1/vault');
+    console.log('   - POST   /api/v1/vault');
+    console.log('   - GET    /api/v1/vault/:id');
+    console.log('   - DELETE /api/v1/vault/:id');
+    console.log('   - PATCH  /api/v1/vault/:id');
+    console.log('   - POST   /api/v1/vault/extract');
+    console.log('   - POST   /api/v1/vault/extract/confirm');
+    console.log('   - POST   /api/v1/vault/resolve  (machine API key)');
     console.log("   - GET    /api/v1/admin/users");
     console.log("   - GET    /admin/users (UI)");
     console.log('   - GET    /api/v1/nexus/status');
