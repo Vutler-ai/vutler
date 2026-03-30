@@ -326,22 +326,46 @@ router.post('/email/approve/:id', async (req, res) => {
       email.html_body = editedBody;
     }
 
-    // Send via Postal
-    let postalResult;
-    try {
-      postalResult = await sendViaPostal({
-        from: email.from_addr,
-        to: email.to_addr,
-        subject: email.subject,
-        body: email.body,
-        htmlBody: email.html_body,
-      });
-    } catch (postalErr) {
-      return res.status(502).json({
-        success: false,
-        error: 'Failed to send via Postal',
-        details: postalErr.response?.data || postalErr.message,
-      });
+    // Route via Gmail API if email was created by GmailAdapter
+    const metadata = typeof email.metadata === 'string' ? JSON.parse(email.metadata || '{}') : (email.metadata || {});
+
+    let sendResult;
+    if (metadata.via === 'gmail') {
+      try {
+        const { sendGmailMessage } = require('../../../services/google/googleApi');
+        const gmailResp = await sendGmailMessage(req.workspaceId, {
+          to: metadata.gmail_to || email.to_addr,
+          subject: metadata.gmail_subject || email.subject,
+          body: email.body,
+          cc: metadata.gmail_cc || undefined,
+          bcc: metadata.gmail_bcc || undefined,
+        });
+        sendResult = { via: 'gmail', messageId: gmailResp.id };
+      } catch (gmailErr) {
+        return res.status(502).json({
+          success: false,
+          error: 'Failed to send via Gmail',
+          details: gmailErr.message,
+        });
+      }
+    } else {
+      // Send via Postal (default)
+      try {
+        const postalResp = await sendViaPostal({
+          from: email.from_addr,
+          to: email.to_addr,
+          subject: email.subject,
+          body: email.body,
+          htmlBody: email.html_body,
+        });
+        sendResult = { via: 'postal', messageId: postalResp.data?.message_id };
+      } catch (postalErr) {
+        return res.status(502).json({
+          success: false,
+          error: 'Failed to send via Postal',
+          details: postalErr.response?.data || postalErr.message,
+        });
+      }
     }
 
     // Update folder to sent
@@ -352,7 +376,7 @@ router.post('/email/approve/:id', async (req, res) => {
 
     res.json({
       success: true,
-      data: { id: req.params.id, status: 'sent', messageId: postalResult.data?.message_id },
+      data: { id: req.params.id, status: 'sent', ...sendResult },
     });
   } catch (err) {
     console.error('[EMAIL] Approve error:', err.message);

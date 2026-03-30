@@ -1811,5 +1811,95 @@
       },
       "required": ["patient_responses"]
     }
+  },
+  "google_drive_list": {
+    "type": "integration",
+    "integration_provider": "drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["list"], "default": "list" },
+        "pageSize": { "type": "integer", "default": 20 },
+        "orderBy": { "type": "string", "default": "modifiedTime desc" }
+      }
+    }
+  },
+  "google_drive_search": {
+    "type": "integration",
+    "integration_provider": "drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["search"], "default": "search" },
+        "searchQuery": { "type": "string", "description": "Text to search for in Google Drive files" },
+        "mimeType": { "type": "string", "description": "Filter by MIME type" }
+      },
+      "required": ["searchQuery"]
+    }
+  },
+  "google_drive_read": {
+    "type": "integration",
+    "integration_provider": "drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["read", "download"], "default": "read" },
+        "fileId": { "type": "string", "description": "Google Drive file ID" }
+      },
+      "required": ["fileId"]
+    }
+  },
+  "gmail_list": {
+    "type": "integration",
+    "integration_provider": "email",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["list_messages"], "default": "list_messages" },
+        "query": { "type": "string", "description": "Gmail search query (e.g. 'from:boss subject:urgent')" },
+        "maxResults": { "type": "integer", "default": 20 },
+        "labelIds": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "gmail_read": {
+    "type": "integration",
+    "integration_provider": "email",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["read_message"], "default": "read_message" },
+        "messageId": { "type": "string", "description": "Gmail message ID" }
+      },
+      "required": ["messageId"]
+    }
+  },
+  "gmail_send": {
+    "type": "integration",
+    "integration_provider": "email",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["send_message"], "default": "send_message" },
+        "to": { "type": "string", "format": "email", "description": "Recipient email" },
+        "subject": { "type": "string" },
+        "body": { "type": "string", "description": "Email body text" },
+        "cc": { "type": "string" },
+        "bcc": { "type": "string" }
+      },
+      "required": ["to", "subject", "body"]
+    }
   }
 }
