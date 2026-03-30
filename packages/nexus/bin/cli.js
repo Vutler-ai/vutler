@@ -609,8 +609,8 @@ program.command('create-agent')
 
     const role = (await ask('Role: ')).trim() || 'general';
     const description = (await ask('Description: ')).trim();
-    const modelInput = (await ask('Model [gpt-5.4]: ')).trim();
-    const model = modelInput || 'gpt-5.4';
+    const modelInput = (await ask('Model [gpt-4o]: ')).trim();
+    const model = modelInput || 'gpt-4o';
     const system_prompt = (await ask('System prompt: ')).trim();
     rl.close();
 

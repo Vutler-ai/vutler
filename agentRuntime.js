@@ -12,8 +12,6 @@
  */
 
 const { LLMRouter } = require('./services/llmRouter');
-const { CryptoService } = require('./services/crypto');
-const _crypto = new CryptoService();
 
 // DB: prefer vaultbrix (tenant_vutler schema), fall back to generic postgres pool
 let pg;
@@ -111,23 +109,6 @@ async function processAgentMessage(message) {
     if (memories?.length) {
       systemPrompt += '\n\nAgent Memories:\n' + memories.map(m => `- ${m.content}`).join('\n');
     }
-
-    // Inject decrypted agent secrets into system prompt
-    try {
-      const cfgRow = await pg.query(
-        `SELECT config FROM tenant_vutler.agent_configs WHERE agent_id = $1 LIMIT 1`, [agentId]
-      );
-      const agentSecrets = cfgRow.rows[0]?.config?.secrets;
-      if (agentSecrets?.length) {
-        const decrypted = agentSecrets.map(s => {
-          try { return `- ${s.key}: ${_crypto.decrypt(s.value)}`; }
-          catch { return null; }
-        }).filter(Boolean);
-        if (decrypted.length) {
-          systemPrompt += '\n\n[Agent Credentials]\nYou have access to the following API credentials. Use them when making external API calls:\n' + decrypted.join('\n') + '\n[/Agent Credentials]';
-        }
-      }
-    } catch (_) { /* secrets unavailable — non-blocking */ }
 
     const messages = [
       { role: 'system', content: systemPrompt },

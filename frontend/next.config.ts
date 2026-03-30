@@ -1,11 +1,20 @@
+import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingRoot: path.resolve(__dirname),
+  turbopack: {
+    root: path.resolve(__dirname),
+  },
   // Enable standalone output for Docker
   output: 'standalone',
 
   // Disable telemetry
   productionBrowserSourceMaps: false,
+
+  experimental: {
+    cpus: 1,
+  },
 
   // Optimize images — allow static avatar proxy
   images: {

@@ -6,34 +6,10 @@
 const express = require("express");
 const router = express.Router();
 
-const SNIPARA_URL = process.env.SNIPARA_MCP_URL || process.env.SNIPARA_API_URL || "https://api.snipara.com/mcp/test-workspace-api-vutler";
-const SNIPARA_KEY = process.env.SNIPARA_API_KEY || process.env.RLM_TOKEN || "REDACTED_SNIPARA_KEY_2";
+const SNIPARA_URL = "https://api.snipara.com/mcp/test-workspace-api-vutler";
+const SNIPARA_KEY = process.env.SNIPARA_API_KEY || "";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * Resolve the Snipara memory scope for an agent.
- * Prefers username, falls back to name-slug, then the raw agentId.
- * This matches how sniparaClient.remember() stores memories (scope = username/slug).
- */
-async function resolveAgentScope(req, agentId) {
-  const pg = req.app?.locals?.pg;
-  if (pg) {
-    try {
-      const wsId = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
-      const result = await pg.query(
-        `SELECT username, name FROM tenant_vutler.agents
-         WHERE (id::text = $1 OR username = $1) AND workspace_id = $2 LIMIT 1`,
-        [agentId, wsId]
-      );
-      if (result.rows[0]) {
-        const { username, name } = result.rows[0];
-        return username || name.toLowerCase().replace(/\s+/g, '-');
-      }
-    } catch (_) { /* table may not exist / agent not found */ }
-  }
-  return agentId; // fallback to whatever was passed (UUID or slug)
-}
 
 function normalizeRole(role) {
   return String(role || "general")
@@ -106,22 +82,13 @@ router.get("/agents/:agentId/memories", async (req, res) => {
       return res.json({ success: true, memories: [], meta: { snipara: false } });
     }
 
-    // Resolve the real Snipara scope (username/slug, not UUID)
-    const agentScope = await resolveAgentScope(req, agentId);
-
-    // Use rlm_memories (listing) when no query, rlm_recall (semantic) when searching
-    const recalled = q
-      ? await sniparaCall("rlm_recall", {
-          query: q,
-          scope: agentScope,
-          agent_id: agentScope,
-          limit: parseInt(limit) || 20,
-        })
-      : await sniparaCall("rlm_memories", {
-          agent: agentScope,
-          agent_id: agentScope,
-          limit: parseInt(limit) || 20,
-        });
+    const recalled = await sniparaCall("rlm_recall", {
+      query: q || `agent ${agentId} memories`,
+      agent_id: agentId,
+      scope: "agent",
+      category: agentId,
+      limit: parseInt(limit) || 20,
+    });
 
     const memories = normalizeMemories(recalled, "agent");
     return res.json({ success: true, memories });
@@ -231,16 +198,14 @@ router.post("/agents/:agentId/memories", async (req, res) => {
       return res.status(503).json({ success: false, error: "Snipara not configured" });
     }
 
-    const agentScope = await resolveAgentScope(req, agentId);
-
     await sniparaCall("rlm_remember", {
       text,
       type,
       importance: Math.min(1, Math.max(0, Number(importance) || 0.5)),
-      scope: agentScope,
-      agent_id: agentScope,
+      scope: "agent",
+      category: agentId,
       metadata: {
-        agent_id: agentScope,
+        agent_id: agentId,
         source: "vutler-dashboard",
         created_at: new Date().toISOString(),
       },
@@ -385,122 +350,6 @@ router.post("/agents/:agentId/memories/:memoryId/promote", async (req, res) => {
   } catch (error) {
     console.error("[Memory API] agent promote failed:", error.message);
     return res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─── GET /api/v1/memory/workspace-knowledge ────────────────────────────────────
-// Returns the SOUL.md / workspace global knowledge from Snipara
-router.get("/workspace-knowledge", async (req, res) => {
-  try {
-    if (!SNIPARA_KEY) {
-      return res.json({ success: true, content: "", updatedAt: null });
-    }
-    const result = await sniparaCall("rlm_recall", {
-      query: "workspace knowledge soul",
-      scope: "project",
-      category: "platform-standards",
-      limit: 1,
-    });
-    const content = typeof result === "string" ? result : JSON.stringify(result || "");
-    res.json({ success: true, content, updatedAt: new Date().toISOString() });
-  } catch (err) {
-    console.error("[Memory] workspace-knowledge error:", err.message);
-    res.json({ success: true, content: "", updatedAt: null });
-  }
-});
-
-// ─── PUT /api/v1/memory/workspace-knowledge ────────────────────────────────────
-router.put("/workspace-knowledge", async (req, res) => {
-  try {
-    const { content } = req.body || {};
-    if (!SNIPARA_KEY) {
-      return res.status(503).json({ success: false, error: "Snipara not configured" });
-    }
-    await sniparaCall("rlm_remember", {
-      content: content || "",
-      scope: "project",
-      category: "platform-standards",
-      type: "soul",
-      importance: 10,
-    });
-    res.json({ success: true });
-  } catch (err) {
-    console.error("[Memory] update workspace-knowledge error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ─── GET /api/v1/memory/templates ──────────────────────────────────────────────
-// Returns template-level memory scopes and their doc counts
-router.get("/templates", async (req, res) => {
-  try {
-    if (!SNIPARA_KEY) {
-      return res.json({ success: true, templates: [] });
-    }
-    // Get list of known roles from agents
-    const pg = req.app?.locals?.pg;
-    let roles = ["general"];
-    if (pg) {
-      try {
-        const result = await pg.query(
-          "SELECT DISTINCT role FROM tenant_vutler.agents WHERE role IS NOT NULL AND workspace_id = $1",
-          [req.workspaceId]
-        );
-        roles = result.rows.map(r => r.role).filter(Boolean);
-        if (!roles.length) roles = ["general"];
-      } catch (_) { /* table may not exist */ }
-    }
-    const templates = [];
-    for (const role of roles) {
-      const normalized = normalizeRole(role);
-      const recalled = await sniparaCall("rlm_recall", {
-        query: "*",
-        scope: "project",
-        category: `template-${normalized}`,
-        limit: 1,
-      });
-      const textBlob = JSON.stringify(recalled || "");
-      const docCount = (textBlob.match(/---/g) || []).length || (textBlob.length > 10 ? 1 : 0);
-      templates.push({
-        scope: `template-${normalized}`,
-        role: normalized,
-        docCount,
-        lastUpdated: new Date().toISOString(),
-      });
-    }
-    res.json({ success: true, templates });
-  } catch (err) {
-    console.error("[Memory] templates error:", err.message);
-    res.json({ success: true, templates: [] });
-  }
-});
-
-// ─── GET /api/v1/memory/search ─────────────────────────────────────────────────
-router.get("/search", async (req, res) => {
-  try {
-    const { q } = req.query;
-    if (!q || !SNIPARA_KEY) {
-      return res.json({ success: true, results: [] });
-    }
-    const result = await sniparaCall("rlm_recall", {
-      query: q,
-      scope: "project",
-      limit: 20,
-    });
-    const text = typeof result === "string" ? result : JSON.stringify(result || "");
-    // Parse into result items (best effort)
-    const results = text.split("---").filter(s => s.trim()).map((chunk, i) => ({
-      id: `search-${i}`,
-      content: chunk.trim().substring(0, 500),
-      scope: "project",
-      importance: 5,
-      type: "memory",
-      createdAt: new Date().toISOString(),
-    }));
-    res.json({ success: true, results });
-  } catch (err) {
-    console.error("[Memory] search error:", err.message);
-    res.json({ success: true, results: [] });
   }
 });
 

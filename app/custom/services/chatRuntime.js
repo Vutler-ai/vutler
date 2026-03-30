@@ -1,41 +1,38 @@
 /**
- * Chat Runtime v2 — Snipara-connected agent message processor
- * Agents load their soul/context from Snipara memory, not static DB prompts
+ * Chat Runtime v3 — Snipara-connected agent message processor
  */
 'use strict';
 
 const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
-const { publishMessage } = require('../../../api/ws-chat');
+const { insertChatMessage } = require('../../../services/chatMessages');
+const { callSniparaTool, resolveSniparaConfig } = require('../../../services/sniparaResolver');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const SNIPARA_TIMEOUT_MS = 15_000;
+const MAX_POLL_INTERVAL = 60_000;
+const MAX_AUTO_RETRIES = 5;
+const RETRY_BACKOFF_MS = [5000, 15_000, 60_000, 300_000];
+const ERROR_LOG_THROTTLE = 30_000;
+const SOUL_CACHE_TTL = 300_000;
+const AGENT_CACHE_TTL = 60_000;
 
-// Snipara config
-const SNIPARA_URL = process.env.SNIPARA_API_URL || 'https://api.snipara.com/mcp/test-workspace-api-vutler';
-const SNIPARA_KEY = process.env.SNIPARA_API_KEY || '';
-
-// In-memory caches
-const processedIds = new Set();
 let running = false;
-let agentCache = null;
-let agentCacheTime = 0;
-const CACHE_TTL = 60000;
-
-// Poll error tracking
 let pollInterval = POLL_INTERVAL;
 let consecutiveErrors = 0;
 let lastErrorMessage = null;
 let lastErrorLogTime = 0;
-const MAX_POLL_INTERVAL = 60000;
-const ERROR_LOG_THROTTLE = 30000;
-const MAX_CONSECUTIVE_ERRORS = 10;
+let processingColumnsAvailable = true;
 
-// Soul cache per agent (TTL 5 min)
 const soulCache = new Map();
-const SOUL_CACHE_TTL = 300000;
+const agentCache = new Map();
+
+function normalizeWorkspaceId(workspaceId) {
+  return workspaceId || DEFAULT_WORKSPACE;
+}
 
 function normalizeRole(role) {
   return String(role || 'general')
@@ -45,387 +42,573 @@ function normalizeRole(role) {
     .replace(/^-|-$/g, '') || 'general';
 }
 
-function getMemoryScope(agentId, level, role) {
+function getMemoryScope(agentId, level, role, workspaceId = DEFAULT_WORKSPACE) {
+  const ws = normalizeWorkspaceId(workspaceId);
   if (level === 'instance') {
-    return { scope: 'agent', category: String(agentId || 'unknown-agent') };
+    return { scope: 'agent', category: `${ws}-agent-${String(agentId || 'unknown-agent')}` };
   }
   if (level === 'template') {
-    return { scope: 'project', category: `template-${normalizeRole(role)}` };
+    return { scope: 'project', category: `${ws}-template-${normalizeRole(role)}` };
   }
-  return { scope: 'project', category: 'platform-standards' };
+  return { scope: 'project', category: `${ws}-platform-standards` };
 }
 
-/**
- * Call Snipara MCP tool via JSON-RPC 2.0
- */
-async function sniparaCall(toolName, args) {
-  if (!SNIPARA_KEY) {
+function getRetryDelayMs(attempts) {
+  if (!attempts || attempts <= 0) return RETRY_BACKOFF_MS[0];
+  return RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)];
+}
+
+function isMissingColumnError(err) {
+  return /processing_state|processing_attempts|processing_started_at|next_retry_at|last_error/i.test(String(err?.message || ''));
+}
+
+function isTimeoutError(err) {
+  return err?.name === 'AbortError' || err?.code === 'ETIMEDOUT' || /timed out/i.test(String(err?.message || ''));
+}
+
+function buildFailureMessage(err) {
+  if (isTimeoutError(err)) return 'Timeout while waiting for external agent services';
+  return String(err?.message || err || 'Unknown error').slice(0, 4000);
+}
+
+async function sniparaCall(toolName, args = {}, workspaceId = DEFAULT_WORKSPACE) {
+  const config = await resolveSniparaConfig(pool, workspaceId);
+  if (!config.configured) {
     console.warn('[ChatRuntime] No SNIPARA_API_KEY — skipping Snipara call');
     return null;
   }
 
   try {
-    const fetch = globalThis.fetch || require('node-fetch');
-    const resp = await fetch(SNIPARA_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SNIPARA_KEY}`
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'tools/call',
-        params: { name: toolName, arguments: args }
-      })
+    return await callSniparaTool({
+      db: pool,
+      workspaceId,
+      toolName,
+      args,
+      timeoutMs: SNIPARA_TIMEOUT_MS,
     });
-
-    if (!resp.ok) {
-      console.error(`[ChatRuntime] Snipara ${toolName} HTTP ${resp.status}`);
-      return null;
-    }
-
-    const data = await resp.json();
-    if (data.error) {
-      console.error(`[ChatRuntime] Snipara ${toolName} error:`, data.error.message || data.error);
-      return null;
-    }
-
-    // Extract text content from MCP response
-    const result = data.result;
-    if (result && result.content && Array.isArray(result.content)) {
-      return result.content.map(c => c.text || '').join('\n');
-    }
-    return typeof result === 'string' ? result : JSON.stringify(result);
   } catch (err) {
     console.error(`[ChatRuntime] Snipara ${toolName} failed:`, err.message);
     return null;
   }
 }
 
-/**
- * Load agent soul from Snipara memory (with cache)
- */
-async function getAgentSoul(agent) {
-  const agentName = agent.username || agent.name.toLowerCase();
-  const cacheKey = agentName;
+async function loadAgents(workspaceId = DEFAULT_WORKSPACE) {
+  const ws = normalizeWorkspaceId(workspaceId);
+  const cached = agentCache.get(ws);
   const now = Date.now();
-
-  // Check cache
-  const cached = soulCache.get(cacheKey);
-  if (cached && (now - cached.time) < SOUL_CACHE_TTL) {
-    return cached.soul;
-  }
-
-  const role = agent.role || agent.username || agent.name;
-  const instanceScope = getMemoryScope(agentName, 'instance', role);
-  const templateScope = getMemoryScope(agentName, 'template', role);
-  const globalScope = getMemoryScope(agentName, 'global', role);
-
-  // 3-level recall at startup: instance + template + global
-  const [instanceMemories, templateMemories, globalMemories] = await Promise.all([
-    sniparaCall('rlm_recall', {
-      query: `${agentName} personality soul role instructions behavior preferences`,
-      agent_id: agentName,
-      scope: instanceScope.scope,
-      category: instanceScope.category,
-      limit: 8
-    }),
-    sniparaCall('rlm_recall', {
-      query: `${role} template best practices role instructions`,
-      scope: templateScope.scope,
-      category: templateScope.category,
-      limit: 6
-    }),
-    sniparaCall('rlm_recall', {
-      query: 'platform standards guardrails policies defaults',
-      scope: globalScope.scope,
-      category: globalScope.category,
-      limit: 6
-    })
-  ]);
-
-  const recalled = [instanceMemories, templateMemories, globalMemories]
-    .filter(Boolean)
-    .join('\n\n');
-
-  // Also get relevant context
-  const context = await sniparaCall('rlm_context_query', {
-    query: `${agentName} agent role responsibilities at Starbox Group`,
-    max_tokens: 1000
-  });
-
-  // Build soul from Snipara data + DB fallback
-  let soul = '';
-
-  if (recalled && recalled.trim()) {
-    soul += `## Your Memories\n${recalled}\n\n`;
-  }
-
-  if (context && context.trim()) {
-    soul += `## Context\n${context}\n\n`;
-  }
-
-  // Always include base identity
-  soul += `## Identity\nYou are ${agent.name}, an AI agent at Starbox Group.\n`;
-  soul += `Your username in the swarm is "${agentName}".\n`;
-  soul += `You work as part of a multi-agent team coordinated by Jarvis.\n`;
-  soul += `Respond in the same language as the user (French or English).\n`;
-  soul += `Be concise, helpful, and stay in character.\n`;
-
-  // Add DB system_prompt as additional context if it exists
-  if (agent.system_prompt) {
-    soul += `\n## Additional Instructions\n${agent.system_prompt}\n`;
-  }
-
-  // Cache it
-  soulCache.set(cacheKey, { soul, time: now });
-  console.log(`[ChatRuntime] Soul loaded for ${agentName} (${soul.length} chars, snipara: ${recalled ? 'yes' : 'no'})`);
-
-  return soul;
-}
-
-/**
- * Remember interaction in Snipara (async, fire-and-forget)
- */
-function rememberInteraction(agentName, userMessage, agentResponse) {
-  // Only remember significant exchanges (not short greetings)
-  if (userMessage.length < 20 && agentResponse.length < 50) return;
-
-  const instanceScope = getMemoryScope(agentName, 'instance');
-
-  sniparaCall('rlm_remember', {
-    agent_id: agentName,
-    scope: instanceScope.scope,
-    category: instanceScope.category,
-    text: `User asked: "${userMessage.substring(0, 200)}" — I responded about ${agentResponse.substring(0, 100)}...`,
-    type: 'fact',
-    importance: 0.3
-  }).catch(() => {}); // fire and forget
-}
-
-async function loadAgents() {
-  const now = Date.now();
-  if (agentCache && (now - agentCacheTime) < CACHE_TTL) return agentCache;
+  if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
 
   const result = await pool.query(
-    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, status, workspace_id
-     FROM ${SCHEMA}.agents WHERE workspace_id = $1 AND status = 'online'`,
-    [DEFAULT_WORKSPACE]
+    `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id
+     FROM ${SCHEMA}.agents
+     WHERE workspace_id = $1 AND COALESCE(status, 'online') IN ('online', 'active')`,
+    [ws]
   );
-  agentCache = result.rows;
-  agentCacheTime = now;
-  return agentCache;
+
+  agentCache.set(ws, { rows: result.rows, time: now });
+  return result.rows;
 }
 
-async function getChannelAgents(channelId) {
+async function getChannelAgents(channelId, workspaceId = DEFAULT_WORKSPACE) {
+  const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
-    `SELECT cm.user_id, a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens
+    `SELECT cm.user_id, cm.role AS channel_role,
+            a.id, a.name, a.username, a.role, a.model, a.provider, a.system_prompt,
+            a.temperature, a.max_tokens, a.workspace_id
      FROM ${SCHEMA}.chat_channel_members cm
      JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id OR a.username = cm.user_id
-     WHERE cm.channel_id = $1`,
-    [channelId]
+     WHERE cm.channel_id = $1 AND a.workspace_id = $2`,
+    [channelId, ws]
   );
   return result.rows;
 }
 
 function findMentionedAgent(content, agents) {
   if (!content) return null;
-  const lower = content.toLowerCase();
-  for (const agent of agents) {
-    if (lower.includes(`@${agent.username?.toLowerCase()}`) || lower.includes(`@${agent.name?.toLowerCase()}`)) {
-      return agent;
+  const lower = String(content).toLowerCase();
+  return agents.find((agent) => {
+    const username = agent.username ? `@${String(agent.username).toLowerCase()}` : null;
+    const name = agent.name ? `@${String(agent.name).toLowerCase()}` : null;
+    return (username && lower.includes(username)) || (name && lower.includes(name));
+  }) || null;
+}
+
+function findJarvisAgent(agents = []) {
+  return agents.find((agent) => {
+    const username = String(agent.username || '').toLowerCase();
+    const name = String(agent.name || '').toLowerCase();
+    return username === 'jarvis' || name === 'jarvis';
+  }) || null;
+}
+
+function sortAgentsDeterministically(agents = []) {
+  return [...agents].sort((left, right) => {
+    const leftKey = `${String(left.name || '').toLowerCase()}|${String(left.username || '').toLowerCase()}|${String(left.id || '')}`;
+    const rightKey = `${String(right.name || '').toLowerCase()}|${String(right.username || '').toLowerCase()}|${String(right.id || '')}`;
+    return leftKey.localeCompare(rightKey);
+  });
+}
+
+function resolveRequestedAgent(message, channelAgents = []) {
+  if (!Array.isArray(channelAgents) || channelAgents.length === 0) return null;
+
+  const explicitRequested = message?.requested_agent_id
+    ? channelAgents.find((agent) => String(agent.id) === String(message.requested_agent_id) || String(agent.username || '') === String(message.requested_agent_id))
+    : null;
+  if (explicitRequested) return { agent: explicitRequested, reason: 'explicit' };
+
+  const mentioned = findMentionedAgent(message?.content, channelAgents);
+  if (mentioned) return { agent: mentioned, reason: 'mention' };
+
+  if (channelAgents.length === 1) {
+    return { agent: channelAgents[0], reason: 'single_channel_agent' };
+  }
+
+  const jarvis = findJarvisAgent(channelAgents);
+  if (jarvis) return { agent: jarvis, reason: 'jarvis_fallback' };
+
+  return { agent: sortAgentsDeterministically(channelAgents)[0], reason: 'deterministic_fallback' };
+}
+
+async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEFAULT_WORKSPACE, limit = 10) {
+  const ws = normalizeWorkspaceId(workspaceId);
+  const result = await pool.query(
+    `SELECT id, sender_id, sender_name, content
+     FROM ${SCHEMA}.chat_messages
+     WHERE channel_id = $1 AND workspace_id = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [channelId, ws, limit]
+  );
+
+  const agentIds = new Set(channelAgents.map((agent) => String(agent.id)));
+  const agentUsernames = new Set(channelAgents.map((agent) => String(agent.username || '').toLowerCase()).filter(Boolean));
+
+  return result.rows.reverse().map((message) => {
+    const senderId = String(message.sender_id || '');
+    const senderIdLower = senderId.toLowerCase();
+    const isAssistant = agentIds.has(senderId) || agentUsernames.has(senderIdLower);
+    return {
+      role: isAssistant ? 'assistant' : 'user',
+      content: isAssistant ? String(message.content || '') : `${message.sender_name || 'User'}: ${message.content || ''}`
+    };
+  });
+}
+
+async function getAgentSoul(agent) {
+  const workspaceId = normalizeWorkspaceId(agent.workspace_id);
+  const agentName = agent.username || String(agent.name || '').toLowerCase();
+  const cacheKey = `${workspaceId}:${agentName}`;
+  const now = Date.now();
+  const cached = soulCache.get(cacheKey);
+
+  if (cached && (now - cached.time) < SOUL_CACHE_TTL) {
+    return cached.soul;
+  }
+
+  const role = agent.role || agent.username || agent.name;
+  const instanceScope = getMemoryScope(agentName, 'instance', role, workspaceId);
+  const templateScope = getMemoryScope(agentName, 'template', role, workspaceId);
+  const globalScope = getMemoryScope(agentName, 'global', role, workspaceId);
+
+  const [instanceMemories, templateMemories, globalMemories, context] = await Promise.all([
+    sniparaCall('rlm_recall', {
+      query: `${agentName} personality soul role instructions behavior preferences`,
+      agent_id: agentName,
+      scope: instanceScope.scope,
+      category: instanceScope.category,
+      limit: 8
+    }, workspaceId),
+    sniparaCall('rlm_recall', {
+      query: `${role} template best practices role instructions`,
+      scope: templateScope.scope,
+      category: templateScope.category,
+      limit: 6
+    }, workspaceId),
+    sniparaCall('rlm_recall', {
+      query: 'platform standards guardrails policies defaults',
+      scope: globalScope.scope,
+      category: globalScope.category,
+      limit: 6
+    }, workspaceId),
+    sniparaCall('rlm_context_query', {
+      query: `${agentName} agent role responsibilities at Starbox Group`,
+      max_tokens: 1000
+    }, workspaceId)
+  ]);
+
+  const recalled = [instanceMemories, templateMemories, globalMemories].filter(Boolean).join('\n\n');
+
+  let soul = '';
+  if (recalled && recalled.trim()) soul += `## Your Memories\n${recalled}\n\n`;
+  if (context && String(context).trim()) soul += `## Context\n${context}\n\n`;
+  soul += `## Identity\nYou are ${agent.name}, an AI agent at Starbox Group.\n`;
+  soul += `Your username in the swarm is "${agentName}".\n`;
+  soul += 'You work as part of a multi-agent team coordinated by Jarvis.\n';
+  soul += 'Respond in the same language as the user (French or English).\n';
+  soul += 'Be concise, helpful, and stay in character.\n';
+  if (agent.system_prompt) soul += `\n## Additional Instructions\n${agent.system_prompt}\n`;
+
+  soulCache.set(cacheKey, { soul, time: now });
+  return soul;
+}
+
+function rememberInteraction(agentName, workspaceId, userMessage, agentResponse) {
+  if (String(userMessage || '').length < 20 && String(agentResponse || '').length < 50) return;
+  const scope = getMemoryScope(agentName, 'instance', agentName, workspaceId);
+  sniparaCall('rlm_remember', {
+    agent_id: agentName,
+    scope: scope.scope,
+    category: scope.category,
+    text: `User asked: "${String(userMessage).slice(0, 200)}" — I responded about ${String(agentResponse).slice(0, 100)}...`,
+    type: 'fact',
+    importance: 0.3
+  }, workspaceId).catch(() => {});
+}
+
+async function claimMessage(messageId, workspaceId = DEFAULT_WORKSPACE) {
+  const ws = normalizeWorkspaceId(workspaceId);
+
+  if (processingColumnsAvailable !== false) {
+    try {
+      const claimed = await pool.query(
+        `UPDATE ${SCHEMA}.chat_messages
+         SET processing_state = 'processing',
+             processing_started_at = NOW(),
+             processing_attempts = COALESCE(processing_attempts, 0) + 1
+         WHERE id = $1
+           AND workspace_id = $2
+           AND processing_state IN ('pending', 'failed')
+           AND COALESCE(next_retry_at, NOW()) <= NOW()
+         RETURNING *`,
+        [messageId, ws]
+      );
+      return claimed.rows[0] || null;
+    } catch (err) {
+      if (!isMissingColumnError(err)) throw err;
+      processingColumnsAvailable = false;
     }
   }
-  return null;
-}
 
-async function getRecentHistory(channelId, limit = 10) {
-  const result = await pool.query(
-    `SELECT sender_id, sender_name, content FROM ${SCHEMA}.chat_messages
-     WHERE channel_id = $1
-     ORDER BY created_at DESC LIMIT $2`,
-    [channelId, limit]
+  const legacy = await pool.query(
+    `UPDATE ${SCHEMA}.chat_messages
+     SET processed_at = NOW()
+     WHERE id = $1 AND workspace_id = $2 AND processed_at IS NULL
+     RETURNING *`,
+    [messageId, ws]
   );
-  // Determine role: rows with sender_id matching any agent are 'assistant', others are 'user'
-  const agentIds = new Set((agentCache || []).map(a => String(a.id)));
-  return result.rows.reverse().map(m => ({
-    role: agentIds.has(String(m.sender_id)) ? 'assistant' : 'user',
-    content: `${m.sender_name}: ${m.content}`
-  }));
+  return legacy.rows[0] || null;
 }
 
-async function processMessage(msg) {
-  // Optimistic lock: mark as processed immediately to prevent duplicate processing
-  // from concurrent poll loop + triggerAgentResponse calls.
-  // Only skip UUID messages (e.g. fake IDs in tests won't have a DB row).
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (msg.id && uuidRegex.test(msg.id)) {
+async function markProcessed(messageId, workspaceId = DEFAULT_WORKSPACE) {
+  const ws = normalizeWorkspaceId(workspaceId);
+  if (processingColumnsAvailable !== false) {
     try {
-      const lockResult = await pool.query(
-        `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW()
-         WHERE id = $1 AND processed_at IS NULL
-         RETURNING id`,
-        [msg.id]
+      await pool.query(
+        `UPDATE ${SCHEMA}.chat_messages
+         SET processing_state = 'processed',
+             processed_at = NOW(),
+             processing_started_at = NULL,
+             last_error = NULL,
+             next_retry_at = NULL
+         WHERE id = $1 AND workspace_id = $2`,
+        [messageId, ws]
       );
-      // If no row was updated, another process already claimed this message — skip.
-      if (lockResult.rowCount === 0) {
-        console.log(`[ChatRuntime] Message ${msg.id} already claimed — skipping`);
-        return;
-      }
-    } catch (lockErr) {
-      // Non-UUID or missing column — proceed anyway (will fail gracefully later)
-      console.warn(`[ChatRuntime] Could not lock message ${msg.id}:`, lockErr.message);
+      return;
+    } catch (err) {
+      if (!isMissingColumnError(err)) throw err;
+      processingColumnsAvailable = false;
     }
+  }
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.chat_messages SET processed_at = NOW() WHERE id = $1 AND workspace_id = $2`,
+    [messageId, ws]
+  );
+}
+
+async function markFailed(message, err) {
+  const ws = normalizeWorkspaceId(message.workspace_id);
+  const attempts = Number(message.processing_attempts || 1);
+  const failure = buildFailureMessage(err);
+  const terminal = attempts >= MAX_AUTO_RETRIES;
+
+  if (processingColumnsAvailable !== false) {
+    try {
+      await pool.query(
+        `UPDATE ${SCHEMA}.chat_messages
+         SET processing_state = 'failed',
+             processing_started_at = NULL,
+             last_error = $3,
+             next_retry_at = $4,
+             processed_at = CASE WHEN $5 THEN processed_at ELSE NULL END
+         WHERE id = $1 AND workspace_id = $2`,
+        [
+          message.id,
+          ws,
+          failure,
+          terminal ? null : new Date(Date.now() + getRetryDelayMs(attempts)),
+          terminal
+        ]
+      );
+      return { terminal, attempts, error: failure };
+    } catch (updateErr) {
+      if (!isMissingColumnError(updateErr)) throw updateErr;
+      processingColumnsAvailable = false;
+    }
+  }
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.chat_messages SET processed_at = NULL WHERE id = $1 AND workspace_id = $2`,
+    [message.id, ws]
+  );
+  return { terminal: false, attempts, error: failure };
+}
+
+async function postTerminalFailure(message, failure) {
+  await insertChatMessage(pool, null, SCHEMA, {
+    channel_id: message.channel_id,
+    sender_id: 'jarvis',
+    sender_name: 'Jarvis',
+    content: `Je n'ai pas pu traiter ce message apres ${failure.attempts} tentative(s). Erreur: ${failure.error}`,
+    message_type: 'text',
+    workspace_id: normalizeWorkspaceId(message.workspace_id),
+    processed_at: new Date(),
+    processing_state: 'processed',
+    reply_to_message_id: message.id,
+    requested_agent_id: message.requested_agent_id || null,
+    display_agent_id: message.display_agent_id || null,
+    orchestrated_by: 'jarvis',
+    executed_by: 'jarvis',
+    metadata: {
+      orchestration_status: 'failed',
+      failure_attempts: failure.attempts,
+      failure_reason: failure.error,
+    }
+  });
+}
+
+async function handleMessage(message) {
+  const workspaceId = normalizeWorkspaceId(message.workspace_id);
+  let channelAgents = await getChannelAgents(message.channel_id, workspaceId);
+  if (channelAgents.length === 0) {
+    channelAgents = await loadAgents(workspaceId);
+  }
+  if (channelAgents.length === 0) {
+    throw new Error('No agents available for this workspace');
   }
 
   try {
-    let channelAgents = await getChannelAgents(msg.channel_id);
-    if (channelAgents.length === 0) {
-      channelAgents = await loadAgents();
-    }
+    const { isRunbookIntent, parseRunbookFromText } = require('../../../services/runbooks');
+    if (isRunbookIntent(message.content)) {
+      const runbook = await parseRunbookFromText(message.content).catch(() => null);
+      if (runbook && Array.isArray(runbook.steps) && runbook.steps.length >= 2) {
+        const stepsPreview = runbook.steps
+          .map((step) => `  ${step.order}. ${step.action}${step.target ? ` [vault: ${step.target}]` : ''}`)
+          .join('\n');
+        const preview =
+          `J'ai detecte un runbook dans ton message.\n\n` +
+          `**${runbook.name}**\n${runbook.description ? `${runbook.description}\n` : ''}` +
+          `\nEtapes (${runbook.steps.length}) :\n${stepsPreview}\n\n` +
+          `Pour lancer l'execution: \`POST /api/v1/runbooks/execute\` avec ce runbook, ou confirme ici avec \"yes, execute\".`;
 
-    if (channelAgents.length === 0) {
-      console.warn('[ChatRuntime] No agents available');
+      await insertChatMessage(pool, null, SCHEMA, {
+          channel_id: message.channel_id,
+          sender_id: 'mike',
+          sender_name: 'Mike',
+          content: preview,
+          message_type: 'text',
+          workspace_id: workspaceId,
+          processed_at: new Date(),
+          processing_state: 'processed',
+          reply_to_message_id: message.id,
+          requested_agent_id: null,
+          display_agent_id: 'mike',
+          orchestrated_by: 'jarvis',
+          executed_by: 'mike',
+          metadata: {
+            orchestration_status: 'runbook_preview',
+          }
+        });
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[ChatRuntime] Runbook detection error (non-blocking):', err.message);
+  }
+
+  const swarmCoordinator = getSwarmCoordinator();
+  try {
+    const routing = await swarmCoordinator.analyzeAndRoute(message, channelAgents, workspaceId);
+    if (routing?.routed) {
+      await insertChatMessage(pool, null, SCHEMA, {
+        channel_id: message.channel_id,
+        sender_id: 'jarvis',
+        sender_name: 'Jarvis',
+        content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
+        message_type: 'text',
+        workspace_id: workspaceId,
+        processed_at: new Date(),
+        processing_state: 'processed',
+        reply_to_message_id: message.id,
+        requested_agent_id: message.requested_agent_id || null,
+        display_agent_id: 'jarvis',
+        orchestrated_by: 'jarvis',
+        executed_by: 'jarvis',
+        metadata: {
+          orchestration_status: 'routed',
+          created_task_count: routing.created_count || 0,
+        }
+      });
       return;
     }
-
-    // ── Runbook detection ────────────────────────────────────────────────────
-    // If the message looks like a runbook (numbered action list, "runbook:",
-    // "execute these steps", etc.) parse it and send a preview for confirmation.
-    // The user confirms via the /runbooks/execute API; the chat just previews.
-    try {
-      const { isRunbookIntent, parseRunbookFromText } = require('../../../services/runbooks');
-      if (isRunbookIntent(msg.content)) {
-        console.log(`[ChatRuntime] Runbook intent detected in message ${msg.id}`);
-        const runbook = await parseRunbookFromText(msg.content).catch(() => null);
-        if (runbook && runbook.steps && runbook.steps.length >= 2) {
-          const stepsPreview = runbook.steps
-            .map((s) => `  ${s.order}. ${s.action}${s.target ? ` [vault: ${s.target}]` : ''}`)
-            .join('\n');
-          const preview =
-            `J'ai détecté un runbook dans ton message.\n\n` +
-            `**${runbook.name}**\n${runbook.description ? runbook.description + '\n' : ''}` +
-            `\nÉtapes (${runbook.steps.length}) :\n${stepsPreview}\n\n` +
-            `Pour lancer l'exécution : \`POST /api/v1/runbooks/execute\` avec ce runbook. ` +
-            `Ou confirme ici avec "yes, execute" pour que je le lance directement.`;
-
-          const rbResult = await pool.query(
-            `INSERT INTO ${SCHEMA}.chat_messages
-               (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
-             VALUES ($1, $2, $3, $4, 'text', $5, NOW())
-             RETURNING *`,
-            [msg.channel_id, 'mike', 'Mike', preview, DEFAULT_WORKSPACE]
-          );
-          if (rbResult.rows[0]) publishMessage(rbResult.rows[0]);
-          return;
-        }
-      }
-    } catch (rbErr) {
-      console.warn('[ChatRuntime] Runbook detection error (non-blocking):', rbErr.message);
-    }
-
-    const swarmCoordinator = getSwarmCoordinator();
-    try {
-      const routing = await swarmCoordinator.analyzeAndRoute(msg, channelAgents);
-      if (routing?.routed) {
-          const swarmResult = await pool.query(
-            `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
-             VALUES ($1, $2, $3, $4, 'text', $5, NOW())
-             RETURNING *`,
-            [
-              msg.channel_id,
-              'mike',
-              'Mike',
-              `Bien reçu. J'orchestre l'équipe et on lance l'exécution. (${routing.created_count} tâche(s) distribuée(s))`,
-              DEFAULT_WORKSPACE
-            ]
-          );
-          if (swarmResult.rows[0]) publishMessage(swarmResult.rows[0]);
-          return;
-        }
-    } catch (swarmErr) {
-      console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', swarmErr.message);
-    }
-
-    // Route: @mention or random
-    let targetAgent = findMentionedAgent(msg.content, channelAgents);
-    if (!targetAgent) {
-      const idx = Math.floor(Math.random() * channelAgents.length);
-      targetAgent = channelAgents[idx];
-    }
-
-    console.log(`[ChatRuntime] Routing to ${targetAgent.name} in channel ${msg.channel_id}`);
-
-    // Load soul from Snipara
-    const soul = await getAgentSoul(targetAgent);
-
-    // Build conversation context
-    const history = await getRecentHistory(msg.channel_id, 10);
-    history.push({ role: 'user', content: msg.content });
-
-    // Call LLM with Snipara-enriched soul
-    const response = await llmChat(
-      {
-        model: targetAgent.model,
-        provider: targetAgent.provider,
-        system_prompt: soul,
-        temperature: parseFloat(targetAgent.temperature) || 0.7,
-        max_tokens: targetAgent.max_tokens || 4096,
-        workspace_id: targetAgent.workspace_id || DEFAULT_WORKSPACE,
-      },
-      history,
-      pool // pass db for OAuth token resolution (codex/chatgpt)
-    );
-
-    // Insert agent response
-    const replyResult = await pool.query(
-      `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
-       VALUES ($1, $2, $3, $4, 'text', $5, NOW())
-       RETURNING *`,
-      [msg.channel_id, targetAgent.id, targetAgent.name, response.content, DEFAULT_WORKSPACE]
-    );
-
-    // Push reply to connected WebSocket clients
-    if (replyResult.rows[0]) publishMessage(replyResult.rows[0]);
-
-    console.log(`[ChatRuntime] ${targetAgent.name} replied (${response.latency_ms}ms, ${response.provider}/${response.model}, soul: ${soul.length} chars)`);
-
-    // Remember this interaction in Snipara (async)
-    const agentName = targetAgent.username || targetAgent.name.toLowerCase();
-    rememberInteraction(agentName, msg.content, response.content);
-
   } catch (err) {
-    console.error(`[ChatRuntime] Error processing message ${msg.id}:`, err.message);
-    processedIds.add(msg.id);
+    console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
   }
+
+  const resolution = resolveRequestedAgent(message, channelAgents);
+  const targetAgent = resolution?.agent;
+  if (!targetAgent) {
+    throw new Error('Unable to resolve requested agent');
+  }
+
+  const soul = await getAgentSoul(targetAgent);
+  const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
+
+  const response = await llmChat(
+    {
+      id: targetAgent.id,
+      model: targetAgent.model,
+      provider: targetAgent.provider,
+      system_prompt: soul,
+      temperature: parseFloat(targetAgent.temperature) || 0.7,
+      max_tokens: targetAgent.max_tokens || 4096,
+      workspace_id: workspaceId || targetAgent.workspace_id
+    },
+    history,
+    pool,
+    {
+      chatActionContext: {
+        workspaceId,
+        messageId: message.id,
+        channelId: message.channel_id,
+        requestedAgentId: String(targetAgent.id),
+        displayAgentId: String(targetAgent.id),
+        orchestratedBy: 'jarvis',
+      },
+    }
+  );
+
+  await insertChatMessage(pool, null, SCHEMA, {
+    channel_id: message.channel_id,
+    sender_id: String(targetAgent.id),
+    sender_name: targetAgent.name,
+    content: response.content,
+    message_type: 'text',
+    workspace_id: workspaceId,
+    processed_at: new Date(),
+    processing_state: 'processed',
+    reply_to_message_id: message.id,
+    requested_agent_id: String(targetAgent.id),
+    display_agent_id: String(targetAgent.id),
+    orchestrated_by: 'jarvis',
+    executed_by: String(targetAgent.id),
+    metadata: {
+      orchestration_status: 'completed',
+      requested_agent_username: targetAgent.username || null,
+      requested_agent_reason: resolution?.reason || 'unknown',
+      llm_provider: response.provider || null,
+      llm_model: response.model || null,
+      input_tokens: response.usage?.input_tokens || null,
+      output_tokens: response.usage?.output_tokens || null,
+    }
+  });
+
+  const agentName = targetAgent.username || String(targetAgent.name || '').toLowerCase();
+  rememberInteraction(agentName, workspaceId, message.content, response.content);
+}
+
+async function processMessageById(messageId, workspaceId = DEFAULT_WORKSPACE) {
+  const claimed = await claimMessage(messageId, workspaceId);
+  if (!claimed) return null;
+
+  try {
+    await handleMessage(claimed);
+    await markProcessed(claimed.id, claimed.workspace_id);
+    return { ok: true };
+  } catch (err) {
+    const failure = await markFailed(claimed, err);
+    if (failure.terminal) {
+      await postTerminalFailure(claimed, failure).catch((postErr) => {
+        console.error('[ChatRuntime] Failed to publish terminal failure:', postErr.message);
+      });
+    }
+    throw err;
+  }
+}
+
+async function processMessage(message) {
+  if (message?.id) {
+    return processMessageById(message.id, message.workspace_id);
+  }
+  return handleMessage({ ...message, workspace_id: normalizeWorkspaceId(message?.workspace_id) });
+}
+
+async function pollPendingMessages() {
+  if (processingColumnsAvailable !== false) {
+    try {
+      const result = await pool.query(
+        `SELECT m.id, m.workspace_id
+         FROM ${SCHEMA}.chat_messages m
+         WHERE m.processing_state IN ('pending', 'failed')
+           AND COALESCE(m.next_retry_at, NOW()) <= NOW()
+           AND m.created_at > NOW() - INTERVAL '1 day'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM ${SCHEMA}.agents a
+             WHERE a.workspace_id = m.workspace_id
+               AND (a.id::text = m.sender_id OR LOWER(a.username) = LOWER(m.sender_id))
+           )
+         ORDER BY m.created_at ASC
+         LIMIT 10`,
+        []
+      );
+      return result.rows;
+    } catch (err) {
+      if (!isMissingColumnError(err)) throw err;
+      processingColumnsAvailable = false;
+    }
+  }
+
+  const legacy = await pool.query(
+    `SELECT m.id, m.workspace_id
+     FROM ${SCHEMA}.chat_messages m
+     WHERE m.processed_at IS NULL
+       AND m.created_at > NOW() - INTERVAL '1 day'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM ${SCHEMA}.agents a
+         WHERE a.workspace_id = m.workspace_id
+           AND (a.id::text = m.sender_id OR LOWER(a.username) = LOWER(m.sender_id))
+       )
+     ORDER BY m.created_at ASC
+     LIMIT 10`,
+    []
+  );
+  return legacy.rows;
 }
 
 async function pollOnce() {
   try {
-    const result = await pool.query(
-      `SELECT m.* FROM ${SCHEMA}.chat_messages m
-       WHERE m.processed_at IS NULL
-         AND m.workspace_id = $1
-         AND m.sender_id NOT IN (SELECT id::text FROM ${SCHEMA}.agents WHERE workspace_id = $1)
-         AND m.created_at > NOW() - INTERVAL '5 minutes'
-       ORDER BY m.created_at ASC
-       LIMIT 10`,
-      [DEFAULT_WORKSPACE]
-    );
-
-    for (const msg of result.rows) {
-      if (processedIds.has(msg.id)) continue;
-      processedIds.add(msg.id);
-      await processMessage(msg);
+    const rows = await pollPendingMessages();
+    for (const row of rows) {
+      try {
+        await processMessageById(row.id, row.workspace_id);
+      } catch (err) {
+        console.error(`[ChatRuntime] Error processing message ${row.id}:`, err.message);
+      }
     }
 
-    if (processedIds.size > 1000) {
-      const arr = [...processedIds];
-      arr.slice(0, arr.length - 500).forEach(id => processedIds.delete(id));
-    }
-
-    // Success: reset error state and interval
     if (consecutiveErrors > 0) {
       console.log('[ChatRuntime] DB connection restored — resuming normal polling');
     }
@@ -434,32 +617,25 @@ async function pollOnce() {
     lastErrorLogTime = 0;
     pollInterval = POLL_INTERVAL;
   } catch (err) {
-    consecutiveErrors++;
+    consecutiveErrors += 1;
     const now = Date.now();
     const sameError = err.message === lastErrorMessage;
     const throttled = sameError && (now - lastErrorLogTime) < ERROR_LOG_THROTTLE;
 
-    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-      pollInterval = MAX_POLL_INTERVAL;
-      if (!throttled) {
-        console.error(`[ChatRuntime] Disabled — DB unavailable (will retry in 60s): ${err.message}`);
-        lastErrorMessage = err.message;
-        lastErrorLogTime = now;
-      }
-    } else if (!throttled) {
+    if (!throttled) {
       console.error('[ChatRuntime] Poll error:', err.message);
       lastErrorMessage = err.message;
       lastErrorLogTime = now;
-      // Exponential backoff: double interval up to max
-      pollInterval = Math.min(pollInterval * 2, MAX_POLL_INTERVAL);
     }
+
+    pollInterval = Math.min(Math.max(POLL_INTERVAL * consecutiveErrors, POLL_INTERVAL), MAX_POLL_INTERVAL);
   }
 }
 
 function start() {
   if (running) return;
   running = true;
-  console.log(`[ChatRuntime] Started v2 — Snipara ${SNIPARA_KEY ? 'connected' : 'DISABLED (no key)'} — polling every 3s`);
+  console.log(`[ChatRuntime] Started v3 — polling every ${POLL_INTERVAL}ms`);
 
   const tick = async () => {
     if (!running) return;
@@ -475,4 +651,25 @@ function stop() {
   console.log('[ChatRuntime] Stopped');
 }
 
-module.exports = { start, stop, getMemoryScope, processMessage };
+module.exports = {
+  start,
+  stop,
+  processMessage,
+  processMessageById,
+  getMemoryScope,
+  loadAgents,
+  getChannelAgents,
+  getRecentHistory,
+  _test: {
+    getRetryDelayMs,
+    buildFailureMessage,
+    claimMessage,
+    markFailed,
+    markProcessed,
+    handleMessage,
+    pollOnce,
+    resolveRequestedAgent,
+    findJarvisAgent,
+    sortAgentsDeterministically,
+  }
+};

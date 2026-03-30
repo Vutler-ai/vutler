@@ -36,7 +36,9 @@ const FALLBACK_MODELS = [
 ];
 
 const TOOLS = [
-  { key: 'file_access', label: 'File Access' },
+  { key: 'workspace_drive', label: 'Workspace Drive' },
+  { key: 'google_drive', label: 'Google Drive' },
+  { key: 'google_calendar', label: 'Google Calendar' },
   { key: 'network_access', label: 'Network Access' },
   { key: 'code_execution', label: 'Code Execution' },
   { key: 'web_search', label: 'Web Search' },

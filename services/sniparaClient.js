@@ -7,6 +7,7 @@
  */
 
 const https = require('https');
+const { resolveSniparaConfig } = require('./sniparaResolver');
 
 const SNIPARA_API = process.env.SNIPARA_MCP_URL ||
   process.env.SNIPARA_API_URL ||
@@ -58,9 +59,11 @@ function httpPost(url, body, token) {
  * @param {object} opts - Optional: { type, importance }
  * @returns {Promise<object|null>}
  */
-async function remember(scope, content, opts = {}) {
+async function remember(scope, content, opts = {}, runtime = {}) {
   try {
-    const result = await httpPost(SNIPARA_API, {
+    const config = await resolveSniparaConfig(runtime.db, runtime.workspaceId);
+    if (!config?.configured || !config.apiKey) return null;
+    const result = await httpPost(config.apiUrl || SNIPARA_API, {
       jsonrpc: '2.0',
       method: 'tools/call',
       params: {
@@ -72,7 +75,7 @@ async function remember(scope, content, opts = {}) {
           importance: opts.importance || 5,
         },
       },
-    }, SNIPARA_TOKEN);
+    }, config.apiKey);
 
     console.log(`[Memory] Remembered in scope "${scope}": "${content.slice(0, 80)}..." (importance: ${opts.importance || 5})`);
     return result;
@@ -89,9 +92,11 @@ async function remember(scope, content, opts = {}) {
  * @param {object} opts - Optional extra params
  * @returns {Promise<object|null>}
  */
-async function recall(scope, query, opts = {}) {
+async function recall(scope, query, opts = {}, runtime = {}) {
   try {
-    const result = await httpPost(SNIPARA_API, {
+    const config = await resolveSniparaConfig(runtime.db, runtime.workspaceId);
+    if (!config?.configured || !config.apiKey) return null;
+    const result = await httpPost(config.apiUrl || SNIPARA_API, {
       jsonrpc: '2.0',
       method: 'tools/call',
       params: {
@@ -102,7 +107,7 @@ async function recall(scope, query, opts = {}) {
           ...opts,
         },
       },
-    }, SNIPARA_TOKEN);
+    }, config.apiKey);
 
     console.log(`[Memory] Recalled in scope "${scope}" for query: "${query.slice(0, 60)}..."`);
     return result;
@@ -117,16 +122,18 @@ async function recall(scope, query, opts = {}) {
  * @param {string} scope - Memory scope
  * @returns {Promise<object|null>}
  */
-async function getContext(scope) {
+async function getContext(scope, runtime = {}) {
   try {
-    const result = await httpPost(SNIPARA_API, {
+    const config = await resolveSniparaConfig(runtime.db, runtime.workspaceId);
+    if (!config?.configured || !config.apiKey) return null;
+    const result = await httpPost(config.apiUrl || SNIPARA_API, {
       jsonrpc: '2.0',
       method: 'tools/call',
       params: {
         name: 'rlm_context_query',
         arguments: { scope },
       },
-    }, SNIPARA_TOKEN);
+    }, config.apiKey);
 
     return result;
   } catch (err) {

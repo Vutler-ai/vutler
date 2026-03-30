@@ -8,20 +8,18 @@ const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
 
 const MODEL_CATALOG = {
   openai: [
-    { id: "gpt-5.4", name: "GPT-5.4", tier: "premium", context: 1000000 },
-    { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", tier: "budget", context: 1000000 },
-    { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", tier: "coding", context: 1000000 },
-    { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", tier: "fast-coding", context: 128000 },
+    { id: "gpt-4o", name: "GPT-4o", tier: "premium", context: 128000 },
+    { id: "gpt-4o-mini", name: "GPT-4o Mini", tier: "budget", context: 128000 },
     { id: "o3", name: "o3", tier: "reasoning", context: 200000 }
   ],
   anthropic: [
     { id: "claude-opus-4-20250514", name: "Claude Opus 4", tier: "premium", context: 200000 },
     { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", tier: "standard", context: 200000 },
-    { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", tier: "budget", context: 200000 }
+    { id: "claude-3-5-haiku-latest", name: "Claude 3.5 Haiku", tier: "budget", context: 200000 }
   ],
   openrouter: [
     { id: "openrouter/auto", name: "Auto (best model per prompt)", tier: "auto", context: 200000 },
-    { id: "openai/gpt-5.4", name: "GPT-5.4 (OpenRouter)", tier: "premium", context: 1000000 },
+    { id: "openai/gpt-4o", name: "GPT-4o (OpenRouter)", tier: "premium", context: 128000 },
     { id: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4 (OpenRouter)", tier: "standard", context: 200000 },
     { id: "meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B (OpenRouter)", tier: "budget", context: 131072 },
     { id: "google/gemini-2.5-pro-preview", name: "Gemini 2.5 Pro (OpenRouter)", tier: "premium", context: 1000000 },
@@ -36,13 +34,6 @@ const MODEL_CATALOG = {
     { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B", tier: "fast", context: 128000 },
     { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B", tier: "ultra-fast", context: 128000 },
     { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B", tier: "fast", context: 32768 }
-  ],
-  codex: [
-    { id: "codex/gpt-5.4", name: "GPT-5.4 (Codex)", tier: "premium", context: 1000000 },
-    { id: "codex/gpt-5.4-mini", name: "GPT-5.4 Mini (Codex)", tier: "budget", context: 1000000 },
-    { id: "codex/gpt-5.3-codex", name: "GPT-5.3 Codex (Codex)", tier: "coding", context: 1000000 },
-    { id: "codex/gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark (Codex)", tier: "fast-coding", context: 128000 },
-    { id: "codex/o3", name: "o3 (Codex)", tier: "reasoning", context: 200000 }
   ]
 };
 
@@ -51,15 +42,10 @@ const DEFAULT_BASE_URLS = {
   anthropic: "https://api.anthropic.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
   mistral: "https://api.mistral.ai/v1",
-  groq: "https://api.groq.com/openai/v1",
-  codex: "https://api.openai.com/v1"
+  groq: "https://api.groq.com/openai/v1"
 };
 
-// SECURITY: workspace ID must come from JWT only — never from user-controlled sources (audit 2026-03-29)
-const getWorkspaceId = (req) => {
-  if (!req.workspaceId) throw new Error('Authentication required');
-  return req.workspaceId;
-};
+const getWorkspaceId = (req) => req.workspaceId || req.headers["x-workspace-id"] || req.query.workspace_id || DEFAULT_WORKSPACE;
 
 const maskApiKey = (apiKey) => {
   if (!apiKey) return null;
@@ -86,22 +72,6 @@ async function testConnection({ provider, apiKey, baseUrl }) {
   if (!model) throw new Error("Unsupported provider");
 
   const base = (baseUrl || DEFAULT_BASE_URLS[provider] || "").replace(/\/$/, "");
-
-  // SECURITY: block SSRF via private/internal IPs (audit 2026-03-28)
-  try {
-    const url = new URL(base);
-    const hostname = url.hostname;
-    const BLOCKED_PATTERNS = [
-      /^localhost$/i, /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./,
-      /^169\.254\./, /^0\./, /^\[::1\]$/, /^\[fe80:/i, /^\[fd/i, /^\[fc/i,
-    ];
-    if (BLOCKED_PATTERNS.some(p => p.test(hostname))) {
-      throw new Error(`Blocked: base_url points to private/internal address (${hostname})`);
-    }
-  } catch (e) {
-    if (e.message.startsWith('Blocked:')) throw e;
-    throw new Error('Invalid base_url');
-  }
   const msg = "Say hello";
 
   if (provider === "anthropic") {
@@ -164,9 +134,6 @@ router.post("/providers", async (req, res) => {
       return res.status(400).json({ success: false, error: "unsupported provider" });
     }
 
-    // SECURITY TODO: api_key is stored as plain text. Add column-level encryption
-    // (e.g. pgcrypto's pgp_sym_encrypt) or an envelope encryption scheme before
-    // this service handles production multi-tenant workloads.
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
        VALUES ($1, $2, $3, $4, $5, $6, $7)

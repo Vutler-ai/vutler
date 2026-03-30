@@ -26,7 +26,7 @@ async function main() {
         status === 201 || status === 200,
         `Expected 201 or 200, got ${status}: ${JSON.stringify(data)}`
       );
-      const task = data?.data ?? data?.task ?? data;
+      const task = data?.data?.task ?? data?.data ?? data?.task ?? data;
       assert(task && task.id, `No id in response: ${JSON.stringify(data)}`);
       createdTaskId = task.id;
     }],
@@ -63,7 +63,7 @@ async function main() {
         status === 201 || status === 200,
         `Expected 201 or 200, got ${status}: ${JSON.stringify(data)}`
       );
-      const subtask = data?.data ?? data?.subtask ?? data;
+      const subtask = data?.data?.subtask ?? data?.data ?? data?.subtask ?? data;
       assert(subtask && subtask.id, `No id in response: ${JSON.stringify(data)}`);
       createdSubtaskId = subtask.id;
     }],

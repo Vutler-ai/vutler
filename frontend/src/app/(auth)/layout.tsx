@@ -2,6 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { AuthProvider } from '@/lib/auth/auth-context';
 
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthProvider>

@@ -4,6 +4,7 @@ import type {
   Channel,
   ChannelMember,
   Message,
+  ChatActionRun,
   CreateChannelPayload,
   SendMessagePayload,
   SuccessResponse,
@@ -46,6 +47,24 @@ export async function getMessages(
     `/api/v1/chat/channels/${channelId}/messages?limit=${limit}`
   );
   return Array.isArray(data) ? data : (data.messages ?? []);
+}
+
+export async function getChatActionRuns(filters: {
+  channelId?: string;
+  messageId?: string;
+  status?: string;
+  limit?: number;
+} = {}): Promise<ChatActionRun[]> {
+  const params = new URLSearchParams();
+  if (filters.channelId) params.set('channel_id', filters.channelId);
+  if (filters.messageId) params.set('message_id', filters.messageId);
+  if (filters.status) params.set('status', filters.status);
+  params.set('limit', String(filters.limit || 50));
+  const query = params.toString();
+  const data = await apiFetch<{ data?: ChatActionRun[] } | ChatActionRun[]>(
+    `/api/v1/chat/action-runs${query ? `?${query}` : ''}`
+  );
+  return Array.isArray(data) ? data : (data.data ?? []);
 }
 
 export async function sendMessage(

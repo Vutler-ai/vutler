@@ -2,6 +2,53 @@
 
 const https = require('https');
 const sniparaClient = require('./sniparaClient');
+const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
+
+function formatToolResultContent(result) {
+  if (!result) return 'Tool completed with no result.';
+  if (result.success === false) return `Error: ${result.error || 'Tool execution failed'}`;
+
+  const payload = Object.prototype.hasOwnProperty.call(result, 'data') ? result.data : result;
+  if (typeof payload === 'string') return payload;
+
+  try {
+    return JSON.stringify(payload);
+  } catch (_) {
+    return 'Tool completed successfully.';
+  }
+}
+
+async function startToolActionRun(db, chatActionContext, agent, actionKey, adapter, inputJson) {
+  if (!db || !chatActionContext?.messageId || !chatActionContext?.workspaceId || !chatActionContext?.channelId) {
+    return null;
+  }
+
+  return insertChatActionRun(db, 'tenant_vutler', {
+    workspace_id: chatActionContext.workspaceId,
+    chat_message_id: chatActionContext.messageId,
+    channel_id: chatActionContext.channelId,
+    requested_agent_id: chatActionContext.requestedAgentId || agent?.id || null,
+    display_agent_id: chatActionContext.displayAgentId || agent?.id || null,
+    orchestrated_by: chatActionContext.orchestratedBy || 'jarvis',
+    executed_by: agent?.id || null,
+    action_key: actionKey,
+    adapter,
+    status: 'running',
+    input_json: inputJson,
+  });
+}
+
+async function finishToolActionRun(db, runId, agentId, result, err) {
+  if (!db || !runId) return;
+
+  const isError = Boolean(err) || result?.success === false;
+  await updateChatActionRun(db, 'tenant_vutler', runId, {
+    status: isError ? 'error' : 'success',
+    executed_by: agentId || null,
+    output_json: isError ? null : (result?.data ?? result ?? null),
+    error_json: isError ? { error: err?.message || result?.error || 'Tool execution failed' } : null,
+  }).catch(() => {});
+}
 
 // ── Memory tool definitions injected when an agent has a Snipara scope ────────
 
@@ -607,6 +654,7 @@ async function chat(agent, messages, db, opts = {}) {
   ];
 
   let lastErr;
+  const chatActionContext = opts.chatActionContext || null;
   for (const a of attempts) {
     const providerCfg = PROVIDERS[a.provider];
     if (!providerCfg) {
@@ -704,12 +752,19 @@ async function chat(agent, messages, db, opts = {}) {
           const args = toolCall.arguments || {};
 
           if (toolCall.name === 'remember' && memoryScope) {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'remember', 'memory', args);
             const importance = args.importance || 5;
             console.log(`[Memory] Agent ${agentName} remembered: "${(args.content || '').slice(0, 100)}" (importance: ${importance})`);
-            await sniparaClient.remember(memoryScope, args.content || '', {
-              type: args.type || 'fact',
-              importance,
-            });
+            try {
+              await sniparaClient.remember(memoryScope, args.content || '', {
+                type: args.type || 'fact',
+                importance,
+              }, { db, workspaceId });
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, { success: true, data: { stored: true } }, null);
+            } catch (rememberErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, rememberErr);
+              throw rememberErr;
+            }
             // remember doesn't need a re-call — inject a confirmation as tool result
             currentMessages = [
               ...currentMessages,
@@ -719,10 +774,18 @@ async function chat(agent, messages, db, opts = {}) {
             continueLoop = true;
 
           } else if (toolCall.name === 'recall' && memoryScope) {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'recall', 'memory', args);
             const query = args.query || '';
             console.log(`[Memory] Agent ${agentName} recalling: "${query.slice(0, 80)}"`);
-            const recallResult = await sniparaClient.recall(memoryScope, query);
-            const recalledText = sniparaClient.extractText(recallResult) || 'No relevant memories found.';
+            let recalledText = 'No relevant memories found.';
+            try {
+              const recallResult = await sniparaClient.recall(memoryScope, query, {}, { db, workspaceId });
+              recalledText = sniparaClient.extractText(recallResult) || 'No relevant memories found.';
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, { success: true, data: { result: recalledText } }, null);
+            } catch (recallErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, recallErr);
+              throw recallErr;
+            }
             // Inject recall result and let LLM continue
             currentMessages = [
               ...currentMessages,
@@ -732,6 +795,7 @@ async function chat(agent, messages, db, opts = {}) {
             continueLoop = true;
 
           } else if (toolCall.name === 'vutler_post_social_media' && hasSocialSkill) {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_post_social_media', 'social', args);
             const caption = args.caption || '';
             console.log(`[Social] Agent ${agentName} posting: "${caption.slice(0, 100)}"`);
             try {
@@ -774,11 +838,52 @@ async function chat(agent, messages, db, opts = {}) {
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
                 { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
               ];
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, {
+                success: true,
+                data: {
+                  account_count: accounts.length,
+                  post_id: postData.id || null,
+                },
+              }, null);
             } catch (socialErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, socialErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
                 { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
+              ];
+            }
+            continueLoop = true;
+
+          } else if (toolCall.name && toolCall.name.startsWith('skill_')) {
+            const skillKey = toolCall.name.slice('skill_'.length);
+            console.log(`[Skills] Agent ${agentName} calling skill: ${skillKey}(${JSON.stringify(args).slice(0, 100)})`);
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, skillKey, 'skill', args);
+            try {
+              const { getSkillRegistry } = require('./skills');
+              const skillResult = await getSkillRegistry({ wsConnections: opts.wsConnections }).execute(skillKey, {
+                workspaceId,
+                agentId: agent?.id || null,
+                params: args,
+                model: attempt.model,
+                provider: attempt.provider,
+                chatActionRunId: actionRun?.id || null,
+                chatActionContext,
+              });
+
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, skillResult, null);
+
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: formatToolResultContent(skillResult) },
+              ];
+            } catch (skillErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, skillErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: `Error: ${skillErr.message}` },
               ];
             }
             continueLoop = true;
@@ -789,17 +894,20 @@ async function chat(agent, messages, db, opts = {}) {
             if (NEXUS_TOOL_NAMES.has(toolCall.name)) {
               const agentName = agent?.name || agent?.username || 'agent';
               console.log(`[Nexus] Agent ${agentName} calling tool: ${toolCall.name}(${JSON.stringify(args).slice(0, 100)})`);
+              const actionRun = await startToolActionRun(db, chatActionContext, agent, toolCall.name, 'nexus', args);
               try {
                 const toolResult = await executeNexusTool(nexusNodeId, toolCall.name, args, opts.wsConnections);
                 const content = toolResult.success
                   ? JSON.stringify(toolResult.data)
                   : `Error: ${toolResult.error || 'Tool execution failed'}`;
+                await finishToolActionRun(db, actionRun?.id, agent?.id || null, toolResult, null);
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
                   { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content },
                 ];
               } catch (nexusErr) {
+                await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, nexusErr);
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },

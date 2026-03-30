@@ -1,30 +1,4 @@
-const { execFileSync, spawn } = require('child_process');
-
-/**
- * Parse a shell command string into [executable, ...args].
- * Handles quoted arguments (single and double quotes) so that
- * e.g. `grep "hello world" file.txt` splits correctly.
- */
-function _parseCmd(cmd) {
-  const args = [];
-  let current = '';
-  let inSingle = false;
-  let inDouble = false;
-  for (let i = 0; i < cmd.length; i++) {
-    const ch = cmd[i];
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-    } else if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-    } else if (ch === ' ' && !inSingle && !inDouble) {
-      if (current.length) { args.push(current); current = ''; }
-    } else {
-      current += ch;
-    }
-  }
-  if (current.length) args.push(current);
-  return args;
-}
+const { execSync, spawn } = require('child_process');
 
 class ShellProvider {
   constructor(config = {}) {
@@ -42,28 +16,11 @@ class ShellProvider {
     if (this.running >= this.maxConcurrent) throw new Error('Max concurrent commands reached');
   }
 
-  /**
-   * Wrap an argument in double-quotes if it contains spaces or special chars.
-   * Used when building display strings; actual execution passes args as an array.
-   */
-  _escapeArg(arg) {
-    if (/[\s"'\\$`]/.test(arg)) {
-      return '"' + arg.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
-    }
-    return arg;
-  }
-
   exec(cmd) {
     this._checkAllowed(cmd);
     this.running++;
     try {
-      const [executable, ...args] = _parseCmd(cmd);
-      // execFileSync avoids spawning a shell, preventing injection via cmd string
-      const output = execFileSync(executable, args, {
-        timeout: this.timeout,
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const output = execSync(cmd, { timeout: this.timeout, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
       return { success: true, output };
     } catch (e) {
       return { success: false, error: e.message, output: e.stdout || '' };
@@ -75,9 +32,8 @@ class ShellProvider {
   async execAsync(cmd) {
     this._checkAllowed(cmd);
     return new Promise((resolve, reject) => {
-      const [executable, ...args] = _parseCmd(cmd);
-      // Use the parsed args array instead of naive split(' ') to handle quoted args
-      const proc = spawn(executable, args, { timeout: this.timeout });
+      const parts = cmd.split(' ');
+      const proc = spawn(parts[0], parts.slice(1), { timeout: this.timeout });
       let stdout = '', stderr = '';
       proc.stdout.on('data', d => stdout += d);
       proc.stderr.on('data', d => stderr += d);

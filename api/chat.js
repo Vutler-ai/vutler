@@ -8,22 +8,16 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const llmRouter = require('../services/llmRouter');
-const { publishMessage } = require('./ws-chat');
 
 const SCHEMA = 'tenant_vutler';
-
-// SECURITY: workspace from JWT only (audit 2026-03-29)
-router.use((req, res, next) => {
-  if (!req.workspaceId) return res.status(401).json({ success: false, error: 'Authentication required' });
-  next();
-});
+const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 // ── Agent response helper (runs async, does not block user) ──
 async function _triggerAgentResponse(req, channelId, wsId) {
   try {
     // Find agents in this channel
     const agentResult = await pool.query(
-      `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens, a.workspace_id
+      `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens
        FROM ${SCHEMA}.chat_channel_members cm
        JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id
        WHERE cm.channel_id = $1
@@ -70,41 +64,21 @@ let llmResult;
         system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
         temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
         max_tokens: agent.max_tokens || 4096,
-        workspace_id: agent.workspace_id || req.workspaceId || req.user?.workspace_id,
       },
-      messages,
-      pool // pass db for OAuth token resolution (codex/chatgpt)
+      messages
     );
 }
 
     console.log(`[Chat] Agent response from ${agent.name}: ${llmResult.content.substring(0, 100)}... (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
 
-    // Save agent response and publish via WebSocket
-    const insertResult = await pool.query(
+    // Save agent response
+    await pool.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id)
-       VALUES ($1, $2, $3, $4, 'text', $5)
-       RETURNING id, created_at`,
+       VALUES ($1, $2, $3, $4, 'text', $5)`,
       [channelId, agent.id.toString(), agent.name, llmResult.content, wsId]
     );
 
-    const saved = insertResult.rows[0];
     console.log(`[Chat] Agent message saved for ${agent.name}`);
-
-    // Push to all connected WebSocket clients in the channel
-    try {
-      publishMessage({
-        id: saved.id,
-        channel_id: channelId,
-        sender_id: agent.id.toString(),
-        sender_name: agent.name,
-        content: llmResult.content,
-        message_type: 'text',
-        workspace_id: wsId,
-        created_at: saved.created_at,
-      });
-    } catch (wsErr) {
-      console.warn('[Chat] WebSocket publish failed (non-fatal):', wsErr.message);
-    }
   } catch (err) {
     console.error('[Chat] Agent response error:', err.message);
   }
@@ -113,7 +87,7 @@ let llmResult;
 // GET /channels — list all channels
 router.get('/channels', async (req, res) => {
   try {
-    const wsId = req.workspaceId;
+    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
     const result = await pool.query(
       `SELECT c.*, 
         (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) as message_count,
@@ -174,7 +148,7 @@ router.post('/send', async (req, res) => {
 
     const sId = sender_id || req.headers['x-user-id'] || 'user';
     const sName = sender_name || req.headers['x-user-name'] || 'User';
-    const wsId = req.workspaceId;
+    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
 
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, parent_id, workspace_id)
@@ -210,7 +184,7 @@ router.post('/channels', async (req, res) => {
       return res.status(400).json({ success: false, error: 'name is required' });
     }
 
-    const wsId = req.workspaceId;
+    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
     const createdBy = req.headers['x-user-id'] || 'system';
 
     // For DM channels, return existing if found
@@ -254,7 +228,7 @@ router.post('/channels', async (req, res) => {
 // GET /agents — list available agents
 router.get('/agents', async (req, res) => {
   try {
-    const wsId = req.workspaceId;
+    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
     const result = await pool.query(
       `SELECT id, name, username, status, avatar, role, description, model, provider
        FROM ${SCHEMA}.agents

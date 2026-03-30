@@ -37,7 +37,7 @@ class LLMProvider {
 
   async _cloud(messages, opts) {
     // Proxy through Vutler Cloud
-    const body = JSON.stringify({ model: opts.model || 'gpt-5.4', messages });
+    const body = JSON.stringify({ model: opts.model || 'gpt-4o', messages });
     return this._post((opts.server || 'https://app.vutler.ai') + '/api/v1/llm/chat', body, { 'Authorization': 'Bearer ' + (opts.key || process.env.NEXUS_KEY) });
   }
 

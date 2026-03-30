@@ -21,6 +21,7 @@ import {
   createChannel,
   deleteChannel,
   getMessages,
+  getChatActionRuns,
   sendMessage as apiSendMessage,
   getChannelMembers,
   addChannelMember as apiAddChannelMember,
@@ -31,7 +32,7 @@ import {
 } from "@/lib/api/endpoints/chat";
 import { ChatWebSocket } from "@/lib/websocket";
 import { useApi } from "@/hooks/use-api";
-import type { Agent, Channel, Message, ChannelMember } from "@/lib/api/types";
+import type { Agent, Channel, Message, ChannelMember, ChatActionRun } from "@/lib/api/types";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +73,16 @@ function formatFileSize(bytes: number): string {
 
 function isImageMime(mime: string): boolean {
   return mime.startsWith("image/");
+}
+
+function formatJsonPreview(value: unknown): string {
+  if (value == null) return "No data";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -142,6 +153,9 @@ export default function ChatPage() {
   const directChannels = channels.filter((c) => c.type === "direct");
 
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
+  const [actionRuns, setActionRuns] = useState<ChatActionRun[]>([]);
+  const [actionRunsLoading, setActionRunsLoading] = useState(false);
 
   // Auto-select first channel once loaded
   useEffect(() => {
@@ -154,26 +168,36 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const selectedChannelIdRef = useRef<string | null>(null);
 
   const loadMessages = useCallback(async (channelId: string) => {
     setMessagesLoading(true);
     try {
       const msgs = await getMessages(channelId, 50);
       setMessages(msgs);
+      setSelectedMessageId((current) => msgs.some((msg) => msg.id === current) ? current : (msgs.at(-1)?.id ?? null));
     } catch {
       setMessages([]);
+      setSelectedMessageId(null);
     } finally {
       setMessagesLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    selectedChannelIdRef.current = selectedChannel?.id ?? null;
     if (selectedChannel) {
       loadMessages(selectedChannel.id);
     } else {
       setMessages([]);
     }
   }, [selectedChannel, loadMessages]);
+
+  const refreshSelectedChannel = useCallback(async () => {
+    const channelId = selectedChannelIdRef.current;
+    if (!channelId) return;
+    await loadMessages(channelId);
+  }, [loadMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -191,7 +215,7 @@ export default function ChatPage() {
     const ws = new ChatWebSocket(token);
     wsRef.current = ws;
 
-    ws.on("message:new", (msg: Message) => {
+    const offMessageNew = ws.on("message:new", (msg: Message) => {
       setMessages((prev) => {
         const byId = prev.findIndex((m) => m.id === msg.id);
         if (byId >= 0) {
@@ -211,7 +235,7 @@ export default function ChatPage() {
       });
     });
 
-    ws.on(
+    const offTyping = ws.on(
       "message:typing",
       (data: { channelId: string; userId: string; userName: string }) => {
         setTypingUsers((prev) => ({ ...prev, [data.userId]: data.userName }));
@@ -227,12 +251,26 @@ export default function ChatPage() {
       }
     );
 
+    const offConnected = ws.on("_connected", () => {
+      refreshSelectedChannel().catch(() => {});
+    });
+
+    const offJoined = ws.on("channel:joined", (data: { channelId: string }) => {
+      if (data.channelId === selectedChannelIdRef.current) {
+        refreshSelectedChannel().catch(() => {});
+      }
+    });
+
     ws.connect();
     return () => {
+      offMessageNew();
+      offTyping();
+      offConnected();
+      offJoined();
       ws.destroy();
       wsRef.current = null;
     };
-  }, []);
+  }, [refreshSelectedChannel]);
 
   useEffect(() => {
     if (!selectedChannel || !wsRef.current) return;
@@ -241,6 +279,34 @@ export default function ChatPage() {
       wsRef.current?.leaveChannel(selectedChannel.id);
     };
   }, [selectedChannel?.id]);
+
+  useEffect(() => {
+    if (!selectedChannel || !selectedMessageId) {
+      setActionRuns([]);
+      return;
+    }
+
+    let cancelled = false;
+    setActionRunsLoading(true);
+    getChatActionRuns({
+      channelId: selectedChannel.id,
+      messageId: selectedMessageId,
+      limit: 20,
+    })
+      .then((runs) => {
+        if (!cancelled) setActionRuns(runs);
+      })
+      .catch(() => {
+        if (!cancelled) setActionRuns([]);
+      })
+      .finally(() => {
+        if (!cancelled) setActionRunsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedChannel?.id, selectedMessageId]);
 
   // ── send message ──
   const [inputMessage, setInputMessage] = useState("");
@@ -327,6 +393,10 @@ export default function ChatPage() {
         next[idx] = { ...sent, attachments: sent.attachments ?? (attachments.length > 0 ? (sent.attachments ?? []) : tempMessage.attachments) };
         return next;
       });
+
+      if (!wsRef.current?.connected) {
+        await loadMessages(selectedChannel.id);
+      }
     } catch (err) {
       setSendError(err instanceof Error ? err.message : "Failed to send message");
       setMessages((prev) => prev.filter((m) => m.id !== clientMessageId));
@@ -706,7 +776,8 @@ export default function ChatPage() {
             )}
 
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex-1 min-h-0 flex">
+              <div className="flex-1 overflow-y-auto px-4 py-4">
               {messagesLoading ? (
                 <MessageSkeleton />
               ) : messages.length === 0 ? (
@@ -782,11 +853,12 @@ export default function ChatPage() {
                           )}
 
                           <div
+                            onClick={() => setSelectedMessageId(msg.id)}
                             className={`rounded-2xl px-3.5 py-2 text-sm leading-relaxed text-white ${
                               isOwn
                                 ? "bg-blue-600/20 rounded-tr-sm"
                                 : "bg-[#14151f] rounded-tl-sm"
-                            }`}
+                            } ${selectedMessageId === msg.id ? "ring-1 ring-emerald-400/70" : ""} cursor-pointer transition`}
                           >
                             {msg.content && (
                               <p className="whitespace-pre-wrap break-words">
@@ -859,6 +931,70 @@ export default function ChatPage() {
                   <div ref={messagesEndRef} />
                 </div>
               )}
+              </div>
+
+              <aside className="hidden xl:flex w-80 shrink-0 border-l border-white/[0.07] bg-[#0d0e1a]">
+                <div className="flex h-full w-full flex-col">
+                  <div className="border-b border-white/[0.07] px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
+                      Action Runs
+                    </p>
+                    <p className="mt-1 text-sm text-gray-300">
+                      {selectedMessageId ? `Message ${selectedMessageId.slice(0, 8)}` : "Select a message"}
+                    </p>
+                  </div>
+                  <div className="flex-1 overflow-y-auto px-4 py-4">
+                    {!selectedMessageId ? (
+                      <p className="text-sm text-gray-500">Select a message bubble to inspect orchestration actions.</p>
+                    ) : actionRunsLoading ? (
+                      <div className="space-y-3">
+                        <Skeleton className="h-20 w-full rounded-xl bg-white/5" />
+                        <Skeleton className="h-20 w-full rounded-xl bg-white/5" />
+                      </div>
+                    ) : actionRuns.length === 0 ? (
+                      <p className="text-sm text-gray-500">No action runs recorded for this message.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {actionRuns.map((run) => (
+                          <div key={run.id} className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-medium text-white">{run.action_key}</p>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{run.adapter}</p>
+                              </div>
+                              <Badge
+                                className={
+                                  run.status === "success"
+                                    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/20"
+                                    : run.status === "error"
+                                      ? "bg-red-500/15 text-red-300 border-red-500/20"
+                                      : "bg-amber-500/15 text-amber-300 border-amber-500/20"
+                                }
+                              >
+                                {run.status}
+                              </Badge>
+                            </div>
+                            <div className="mt-3 space-y-3">
+                              <div>
+                                <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-gray-500">Input</p>
+                                <pre className="max-h-32 overflow-auto rounded-lg bg-[#08090f] p-2 text-[11px] text-gray-300">{formatJsonPreview(run.input_json)}</pre>
+                              </div>
+                              <div>
+                                <p className="mb-1 text-[11px] uppercase tracking-[0.16em] text-gray-500">
+                                  {run.error_json ? "Error" : "Output"}
+                                </p>
+                                <pre className="max-h-32 overflow-auto rounded-lg bg-[#08090f] p-2 text-[11px] text-gray-300">
+                                  {formatJsonPreview(run.error_json || run.output_json)}
+                                </pre>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </aside>
             </div>
 
             {/* Input area */}

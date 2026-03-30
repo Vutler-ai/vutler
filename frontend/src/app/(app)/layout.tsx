@@ -1,5 +1,6 @@
 'use client';
 
+
 import { AuthProvider, useAuth } from '@/lib/auth/auth-context';
 import { AuthGuard } from '@/lib/auth/auth-guard';
 import AppShell from '@/components/layout/app-shell';

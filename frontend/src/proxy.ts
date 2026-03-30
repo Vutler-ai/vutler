@@ -12,7 +12,7 @@ const AUTH_ROUTES = ['/login', '/register', '/forgot-password'];
 const APP_DOMAIN = 'app.vutler.ai';
 const SITE_DOMAINS = ['vutler.ai', 'www.vutler.ai'];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const hostname = request.headers.get('host')?.split(':')[0] || '';
   const { pathname } = request.nextUrl;
 

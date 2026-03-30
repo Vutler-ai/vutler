@@ -794,7 +794,7 @@
   },
   "calendar_management": {
     "type": "integration",
-    "integration_provider": "calendar",
+    "integration_provider": "google_calendar",
     "fallback_type": "llm_prompt",
     "requires_nexus": false,
     "params_schema": {
@@ -809,7 +809,7 @@
   },
   "availability_matching": {
     "type": "integration",
-    "integration_provider": "calendar",
+    "integration_provider": "google_calendar",
     "fallback_type": "llm_prompt",
     "requires_nexus": false,
     "params_schema": {
@@ -825,7 +825,7 @@
   },
   "reminder_sending": {
     "type": "integration",
-    "integration_provider": "calendar",
+    "integration_provider": "google_calendar",
     "fallback_type": "llm_prompt",
     "requires_nexus": false,
     "params_schema": {
@@ -840,7 +840,7 @@
   },
   "rescheduling": {
     "type": "integration",
-    "integration_provider": "calendar",
+    "integration_provider": "google_calendar",
     "fallback_type": "llm_prompt",
     "requires_nexus": false,
     "params_schema": {
@@ -1767,7 +1767,7 @@
   },
   "appointment_scheduling": {
     "type": "integration",
-    "integration_provider": "calendar",
+    "integration_provider": "google_calendar",
     "fallback_type": "llm_prompt",
     "requires_nexus": false,
     "params_schema": {
@@ -1779,6 +1779,177 @@
         "preferred_slots": { "type": "array", "items": { "type": "string" } }
       },
       "required": ["appointment_type", "participants"]
+    }
+  },
+  "workspace_drive_list": {
+    "type": "integration",
+    "integration_provider": "workspace_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Folder path inside the workspace drive" }
+      },
+      "required": []
+    }
+  },
+  "workspace_drive_search": {
+    "type": "integration",
+    "integration_provider": "workspace_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "searchQuery": { "type": "string", "description": "Text to search in workspace drive file paths" },
+        "path": { "type": "string", "description": "Optional folder prefix to scope the search" }
+      },
+      "required": ["searchQuery"]
+    }
+  },
+  "workspace_drive_read": {
+    "type": "integration",
+    "integration_provider": "workspace_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Exact path of the file to read" },
+        "fileId": { "type": "string", "description": "Hashed file ID returned by workspace drive list/search" }
+      },
+      "required": []
+    }
+  },
+  "workspace_drive_write": {
+    "type": "integration",
+    "integration_provider": "workspace_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Target file path inside the workspace drive" },
+        "content": { "type": "string", "description": "UTF-8 text content to write" },
+        "mimeType": { "type": "string", "description": "Optional MIME type for the file" }
+      },
+      "required": ["path", "content"]
+    }
+  },
+  "google_drive_list": {
+    "type": "integration",
+    "integration_provider": "google_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "pageSize": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
+        "pageToken": { "type": "string" },
+        "orderBy": { "type": "string", "description": "Google Drive orderBy clause" }
+      },
+      "required": []
+    }
+  },
+  "google_drive_search": {
+    "type": "integration",
+    "integration_provider": "google_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "searchQuery": { "type": "string", "description": "Text query for Google Drive search" },
+        "mimeType": { "type": "string", "description": "Optional MIME type filter" }
+      },
+      "required": ["searchQuery"]
+    }
+  },
+  "google_drive_read": {
+    "type": "integration",
+    "integration_provider": "google_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "fileId": { "type": "string", "description": "Google Drive file ID" }
+      },
+      "required": ["fileId"]
+    }
+  },
+  "google_calendar_list": {
+    "type": "integration",
+    "integration_provider": "google_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "timeMin": { "type": "string", "format": "date-time" },
+        "timeMax": { "type": "string", "format": "date-time" },
+        "maxResults": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+      },
+      "required": []
+    }
+  },
+  "google_calendar_create": {
+    "type": "integration",
+    "integration_provider": "google_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "event": { "type": "object", "description": "Calendar event payload with summary, start, end, attendees, description and location" }
+      },
+      "required": ["event"]
+    }
+  },
+  "google_calendar_update": {
+    "type": "integration",
+    "integration_provider": "google_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "description": "Calendar event ID to update" },
+        "summary": { "type": "string" },
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "location": { "type": "string" }
+      },
+      "required": ["eventId"]
+    }
+  },
+  "google_calendar_delete": {
+    "type": "integration",
+    "integration_provider": "google_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "description": "Calendar event ID to delete" }
+      },
+      "required": ["eventId"]
+    }
+  },
+  "google_calendar_check_availability": {
+    "type": "integration",
+    "integration_provider": "google_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "timeMin": { "type": "string", "format": "date-time" },
+        "timeMax": { "type": "string", "format": "date-time" }
+      },
+      "required": []
     }
   },
   "insurance_verification": {
@@ -1810,96 +1981,6 @@
         "clinical_notes_format": { "type": "string", "enum": ["soap", "narrative", "structured"], "default": "soap" }
       },
       "required": ["patient_responses"]
-    }
-  },
-  "google_drive_list": {
-    "type": "integration",
-    "integration_provider": "drive",
-    "fallback_type": "llm_prompt",
-    "requires_nexus": false,
-    "params_schema": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["list"], "default": "list" },
-        "pageSize": { "type": "integer", "default": 20 },
-        "orderBy": { "type": "string", "default": "modifiedTime desc" }
-      }
-    }
-  },
-  "google_drive_search": {
-    "type": "integration",
-    "integration_provider": "drive",
-    "fallback_type": "llm_prompt",
-    "requires_nexus": false,
-    "params_schema": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["search"], "default": "search" },
-        "searchQuery": { "type": "string", "description": "Text to search for in Google Drive files" },
-        "mimeType": { "type": "string", "description": "Filter by MIME type" }
-      },
-      "required": ["searchQuery"]
-    }
-  },
-  "google_drive_read": {
-    "type": "integration",
-    "integration_provider": "drive",
-    "fallback_type": "llm_prompt",
-    "requires_nexus": false,
-    "params_schema": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["read", "download"], "default": "read" },
-        "fileId": { "type": "string", "description": "Google Drive file ID" }
-      },
-      "required": ["fileId"]
-    }
-  },
-  "gmail_list": {
-    "type": "integration",
-    "integration_provider": "email",
-    "fallback_type": "llm_prompt",
-    "requires_nexus": false,
-    "params_schema": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["list_messages"], "default": "list_messages" },
-        "query": { "type": "string", "description": "Gmail search query (e.g. 'from:boss subject:urgent')" },
-        "maxResults": { "type": "integer", "default": 20 },
-        "labelIds": { "type": "array", "items": { "type": "string" } }
-      }
-    }
-  },
-  "gmail_read": {
-    "type": "integration",
-    "integration_provider": "email",
-    "fallback_type": "llm_prompt",
-    "requires_nexus": false,
-    "params_schema": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["read_message"], "default": "read_message" },
-        "messageId": { "type": "string", "description": "Gmail message ID" }
-      },
-      "required": ["messageId"]
-    }
-  },
-  "gmail_send": {
-    "type": "integration",
-    "integration_provider": "email",
-    "fallback_type": "llm_prompt",
-    "requires_nexus": false,
-    "params_schema": {
-      "type": "object",
-      "properties": {
-        "action": { "type": "string", "enum": ["send_message"], "default": "send_message" },
-        "to": { "type": "string", "format": "email", "description": "Recipient email" },
-        "subject": { "type": "string" },
-        "body": { "type": "string", "description": "Email body text" },
-        "cc": { "type": "string" },
-        "bcc": { "type": "string" }
-      },
-      "required": ["to", "subject", "body"]
     }
   }
 }

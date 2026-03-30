@@ -1,166 +1,247 @@
 /**
- * Task Executor — picks up pending tasks from PG and executes them via LLM.
- *
- * The chatRuntime creates tasks via swarmCoordinator.analyzeAndRoute(), but
- * nothing was executing them. This worker polls for pending tasks every 10s,
- * loads the assigned agent's config + soul, calls the LLM, and persists the
- * result.
+ * Task Executor — atomically claims pending tasks and executes them via LLM.
  */
 'use strict';
 
+const os = require('os');
 const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
+const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
+const { insertChatMessage } = require('../../../services/chatMessages');
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
-const POLL_INTERVAL = 10_000;  // 10s between polls
-const STALE_THRESHOLD_MIN = 1440; // skip tasks older than 24h
+const POLL_INTERVAL = 10_000;
+const STALE_THRESHOLD_MIN = 1440;
 const BATCH_SIZE = 5;
+const AGENT_CACHE_TTL = 60_000;
+const WORKER_ID = `${os.hostname()}:${process.pid}`;
 
 let running = false;
-let wsConnections = null; // Set by index.js after WS server starts
+let wsConnections = null;
 let consecutiveErrors = 0;
+const agentCache = new Map();
 
-// ── Agent cache ──────────────────────────────────────────────────────────────
-let agentCache = null;
-let agentCacheTime = 0;
-const CACHE_TTL = 60_000;
+function normalizeWorkspaceId(workspaceId) {
+  return workspaceId || '00000000-0000-0000-0000-000000000001';
+}
 
-async function loadAgents() {
+async function loadAgents(workspaceId) {
+  const ws = normalizeWorkspaceId(workspaceId);
+  const cached = agentCache.get(ws);
   const now = Date.now();
-  if (agentCache && (now - agentCacheTime) < CACHE_TTL) return agentCache;
-  const res = await pool.query(
+  if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
+
+  const result = await pool.query(
     `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role, workspace_id
-     FROM ${SCHEMA}.agents WHERE workspace_id = $1`,
-    [DEFAULT_WORKSPACE]
+     FROM ${SCHEMA}.agents
+     WHERE workspace_id = $1`,
+    [ws]
   );
-  agentCache = res.rows;
-  agentCacheTime = now;
-  return agentCache;
+
+  agentCache.set(ws, { rows: result.rows, time: now });
+  return result.rows;
 }
 
 function findAgent(assignee, agents) {
   if (!assignee) return null;
   const lower = String(assignee).toLowerCase();
-  return agents.find(a =>
-    a.username === lower ||
-    a.name.toLowerCase() === lower ||
-    a.id === assignee
-  );
+  return agents.find((agent) =>
+    String(agent.id) === String(assignee)
+    || String(agent.username || '').toLowerCase() === lower
+    || String(agent.name || '').toLowerCase() === lower
+  ) || null;
 }
 
-// ── Core execution ───────────────────────────────────────────────────────────
-
-async function executeTask(task) {
-  const agents = await loadAgents();
-  const agent = findAgent(task.assignee || task.assigned_agent, agents);
-
-  if (!agent) {
-    console.warn(`[TaskExecutor] No agent found for assignee "${task.assignee}" — marking failed`);
-    await updateTask(task.id, 'failed', null, { error: 'Agent not found' });
-    return;
+function parseMetadata(value) {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      return {};
+    }
   }
-
-  // Mark in_progress
-  await updateTask(task.id, 'in_progress');
-
-  const systemPrompt = agent.system_prompt || `You are ${agent.name}, a helpful assistant.`;
-  const userMessage = `## Task: ${task.title}\n\n${task.description || ''}\n\nRespond with the completed output. Be concise and actionable.`;
-
-  const start = Date.now();
-  try {
-    const response = await llmChat(
-      {
-        model: agent.model,
-        provider: agent.provider,
-        system_prompt: systemPrompt,
-        temperature: parseFloat(agent.temperature) || 0.7,
-        max_tokens: agent.max_tokens || 4096,
-        workspace_id: agent.workspace_id || DEFAULT_WORKSPACE,
-      },
-      [{ role: 'user', content: userMessage }],
-      pool, // pass db for OAuth token resolution (codex/chatgpt)
-      { wsConnections } // pass WS connections for Nexus tool bridge
-    );
-
-    const latencyMs = Date.now() - start;
-    const metadata = {
-      result: response.content,
-      model: response.model || agent.model,
-      provider: response.provider || agent.provider,
-      latency_ms: latencyMs,
-      usage: response.usage || null,
-      executed_by: agent.name,
-      execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct',
-    };
-
-    await updateTask(task.id, 'completed', response.content, metadata);
-    console.log(`[TaskExecutor] ✅ "${task.title}" by ${agent.name} (${latencyMs}ms, ${agent.provider}/${agent.model})`);
-
-  } catch (err) {
-    const latencyMs = Date.now() - start;
-    console.error(`[TaskExecutor] ❌ "${task.title}" failed: ${err.message}`);
-    await updateTask(task.id, 'failed', null, {
-      error: err.message,
-      latency_ms: latencyMs,
-      executed_by: agent.name,
-      execution_mode: 'llm_direct',
-    });
-  }
+  return value;
 }
 
-async function updateTask(taskId, status, output, metadata) {
-  // No 'output' column in tasks table — store everything in metadata jsonb
+async function postTaskChatResult(task, content, senderId, senderName) {
+  const metadata = parseMetadata(task.metadata);
+  if (metadata.origin !== 'chat' || !metadata.origin_chat_channel_id) return;
+
+  await insertChatMessage(pool, null, SCHEMA, {
+    channel_id: metadata.origin_chat_channel_id,
+    sender_id: senderId,
+    sender_name: senderName,
+    content,
+    message_type: 'text',
+    workspace_id: normalizeWorkspaceId(task.workspace_id),
+    processed_at: new Date(),
+    processing_state: 'processed',
+    reply_to_message_id: metadata.origin_chat_message_id || null
+  });
+}
+
+async function updateTask(taskId, status, output, metadata = {}) {
   const mergedMeta = { ...(metadata || {}) };
   if (output !== undefined && output !== null) {
     mergedMeta.result = typeof output === 'string' ? output : JSON.stringify(output);
   }
 
   const sets = ['status = $2', 'updated_at = NOW()'];
-  const vals = [taskId, status];
+  const values = [taskId, status];
 
   if (Object.keys(mergedMeta).length > 0) {
     sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb`);
-    vals.push(JSON.stringify(mergedMeta));
+    values.push(JSON.stringify(mergedMeta));
   }
 
   if (status === 'completed' || status === 'failed') {
     sets.push('resolved_at = NOW()');
+    sets.push('locked_at = NULL');
+    sets.push('locked_by = NULL');
   }
 
-  await pool.query(
-    `UPDATE ${SCHEMA}.tasks SET ${sets.join(', ')} WHERE id = $1`,
-    vals
-  );
+  await pool.query(`UPDATE ${SCHEMA}.tasks SET ${sets.join(', ')} WHERE id = $1`, values);
 }
 
-// ── Poll loop ────────────────────────────────────────────────────────────────
+function buildTaskPrompt(task) {
+  return [
+    `## Task: ${task.title}`,
+    task.description || '',
+    '',
+    'Respond with the completed output. Be concise and actionable.'
+  ].join('\n');
+}
 
-async function pollOnce() {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.tasks
+async function claimPendingTasks(limit = BATCH_SIZE) {
+  const result = await pool.query(
+    `WITH candidate AS (
+       SELECT id
+       FROM ${SCHEMA}.tasks
        WHERE status = 'pending'
-         AND workspace_id = $1
          AND created_at > NOW() - INTERVAL '${STALE_THRESHOLD_MIN} minutes'
        ORDER BY
          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
          created_at ASC
-       LIMIT $2`,
-      [DEFAULT_WORKSPACE, BATCH_SIZE]
-    );
+       LIMIT $1
+       FOR UPDATE SKIP LOCKED
+     )
+     UPDATE ${SCHEMA}.tasks t
+     SET status = 'in_progress',
+         updated_at = NOW(),
+         locked_at = NOW(),
+         locked_by = $2,
+         execution_attempts = COALESCE(execution_attempts, 0) + 1
+     FROM candidate
+     WHERE t.id = candidate.id
+     RETURNING t.*`,
+    [limit, WORKER_ID]
+  );
+  return result.rows;
+}
 
-    if (result.rows.length > 0) {
-      console.log(`[TaskExecutor] Found ${result.rows.length} pending task(s)`);
+async function failTask(task, err, extraMetadata = {}) {
+  const message = String(err?.message || err || 'Unknown error');
+  await updateTask(task.id, 'failed', null, {
+    error: message,
+    ...(task.snipara_task_id ? { snipara_sync_status: 'not_completed' } : {}),
+    ...extraMetadata
+  });
+
+  await postTaskChatResult(
+    task,
+    `La tache \"${task.title}\" a echoue: ${message}`,
+    'jarvis',
+    'Jarvis'
+  ).catch((chatErr) => {
+    console.error('[TaskExecutor] Failed to post failure in chat:', chatErr.message);
+  });
+}
+
+async function executeTask(task) {
+  const workspaceId = normalizeWorkspaceId(task.workspace_id);
+  const agents = await loadAgents(workspaceId);
+  const agent = findAgent(task.assignee || task.assigned_agent, agents);
+
+  if (!agent) {
+    await failTask(task, new Error(`Agent not found for assignee ${task.assignee || task.assigned_agent || 'unknown'}`));
+    return;
+  }
+
+  const swarmCoordinator = getSwarmCoordinator();
+  const agentRef = agent.username || String(agent.id);
+  const startedAt = Date.now();
+
+  try {
+    if (task.snipara_task_id) {
+      await swarmCoordinator.claimTask(task.snipara_task_id, agentRef, workspaceId);
     }
 
-    for (const task of result.rows) {
+    const response = await llmChat(
+      {
+        model: agent.model,
+        provider: agent.provider,
+        system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful assistant.`,
+        temperature: parseFloat(agent.temperature) || 0.7,
+        max_tokens: agent.max_tokens || 4096,
+        workspace_id: workspaceId
+      },
+      [{ role: 'user', content: buildTaskPrompt(task) }],
+      pool,
+      { wsConnections }
+    );
+
+    const latencyMs = Date.now() - startedAt;
+    const successMeta = {
+      result: response.content,
+      model: response.model || agent.model,
+      provider: response.provider || agent.provider,
+      latency_ms: latencyMs,
+      usage: response.usage || null,
+      executed_by: agent.name,
+      execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct'
+    };
+
+    if (task.snipara_task_id) {
+      try {
+        await swarmCoordinator.completeTask(task.snipara_task_id, agentRef, response.content, workspaceId);
+      } catch (syncErr) {
+        await failTask(task, syncErr, { ...successMeta, result: response.content });
+        return;
+      }
+    }
+
+    await updateTask(task.id, 'completed', response.content, successMeta);
+    await postTaskChatResult(task, response.content, String(agent.id), agent.name).catch((chatErr) => {
+      console.error('[TaskExecutor] Failed to post completion in chat:', chatErr.message);
+    });
+
+    console.log(`[TaskExecutor] Completed "${task.title}" by ${agent.name} (${latencyMs}ms)`);
+  } catch (err) {
+    const latencyMs = Date.now() - startedAt;
+    console.error(`[TaskExecutor] Failed "${task.title}":`, err.message);
+    await failTask(task, err, {
+      latency_ms: latencyMs,
+      executed_by: agent.name,
+      execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct'
+    });
+  }
+}
+
+async function pollOnce() {
+  try {
+    const tasks = await claimPendingTasks();
+    if (tasks.length > 0) {
+      console.log(`[TaskExecutor] Claimed ${tasks.length} pending task(s) as ${WORKER_ID}`);
+    }
+
+    for (const task of tasks) {
       await executeTask(task);
     }
 
     consecutiveErrors = 0;
   } catch (err) {
-    consecutiveErrors++;
+    consecutiveErrors += 1;
     if (consecutiveErrors <= 10) {
       console.error('[TaskExecutor] Poll error:', err.message, err.stack?.split('\n')[1]?.trim());
     }
@@ -170,7 +251,7 @@ async function pollOnce() {
 function start() {
   if (running) return;
   running = true;
-  console.log('[TaskExecutor] Started — polling every 10s for pending tasks');
+  console.log(`[TaskExecutor] Started — polling every ${POLL_INTERVAL}ms as ${WORKER_ID}`);
 
   const tick = async () => {
     if (!running) return;
@@ -178,7 +259,6 @@ function start() {
     setTimeout(tick, POLL_INTERVAL);
   };
 
-  // Start after a 15s delay (let other services boot first)
   setTimeout(tick, 15_000);
 }
 
@@ -192,4 +272,16 @@ function setWsConnections(connections) {
   console.log('[TaskExecutor] WebSocket connections linked — Nexus tool bridge active');
 }
 
-module.exports = { start, stop, executeTask, setWsConnections };
+module.exports = {
+  start,
+  stop,
+  executeTask,
+  setWsConnections,
+  claimPendingTasks,
+  updateTask,
+  _test: {
+    buildTaskPrompt,
+    failTask,
+    postTaskChatResult
+  }
+};

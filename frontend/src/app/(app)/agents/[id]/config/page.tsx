@@ -25,13 +25,7 @@ interface AgentConfig {
   llm_routing: 'cloud' | 'local';
   model: string;
   custom_endpoint: string;
-  permissions: {
-    file_access: boolean;
-    network_access: boolean;
-    code_execution: boolean;
-    web_search: boolean;
-    tool_use: boolean;
-  };
+  tools: string[];
   secrets: { key: string; value: string }[];
   system_prompt: string;
   mbti?: string;
@@ -64,12 +58,14 @@ const FALLBACK_MODELS: LLMModel[] = [
   { provider: 'custom', model_name: 'custom' },
 ];
 
-const PERMISSIONS = [
-  { key: 'file_access' as const, label: 'File Access', desc: 'Read/write files on the system' },
-  { key: 'network_access' as const, label: 'Network Access', desc: 'Make HTTP requests' },
-  { key: 'code_execution' as const, label: 'Code Execution', desc: 'Execute code in sandbox' },
-  { key: 'web_search' as const, label: 'Web Search', desc: 'Search the internet' },
-  { key: 'tool_use' as const, label: 'Tool Use', desc: 'Use external tools and APIs' },
+const TOOLS = [
+  { key: 'workspace_drive', label: 'Workspace Drive', desc: 'Read and write files in the internal workspace drive' },
+  { key: 'google_drive', label: 'Google Drive', desc: 'Read files from the connected Google Drive integration' },
+  { key: 'google_calendar', label: 'Google Calendar', desc: 'Create and update events through the connected Google Calendar integration' },
+  { key: 'network_access', label: 'Network Access', desc: 'Make HTTP requests' },
+  { key: 'code_execution', label: 'Code Execution', desc: 'Execute code in sandbox' },
+  { key: 'web_search', label: 'Web Search', desc: 'Search the internet' },
+  { key: 'tool_use', label: 'Tool Use', desc: 'Use external tools and APIs' },
 ];
 
 const PROVIDER_NAMES: Record<string, string> = {
@@ -131,13 +127,7 @@ const DEFAULT_CONFIG: AgentConfig = {
   llm_routing: 'cloud',
   model: 'claude-sonnet-4-20250514',
   custom_endpoint: '',
-  permissions: {
-    file_access: false,
-    network_access: false,
-    code_execution: false,
-    web_search: false,
-    tool_use: false,
-  },
+  tools: [],
   secrets: [],
   system_prompt: '',
   mbti: '',
@@ -497,6 +487,9 @@ export default function AgentConfigPage() {
           if (cfg.type && !Array.isArray(cfg.type)) {
             cfg.type = cfg.type === 'bot' ? [] : [cfg.type];
           }
+          cfg.tools = Array.isArray(cfg.tools)
+            ? cfg.tools.filter((value: string) => TOOLS.some((tool) => tool.key === value))
+            : [];
           setConfig(prev => ({ ...prev, ...cfg }));
         }
       } catch {
@@ -515,8 +508,13 @@ export default function AgentConfigPage() {
     return acc;
   }, {} as Record<string, LLMModel[]>);
 
-  const setPerm = (key: keyof AgentConfig['permissions'], value: boolean) =>
-    setConfig(prev => ({ ...prev, permissions: { ...prev.permissions, [key]: value } }));
+  const setTool = (key: string, value: boolean) =>
+    setConfig(prev => ({
+      ...prev,
+      tools: value
+        ? Array.from(new Set([...(prev.tools || []), key]))
+        : (prev.tools || []).filter((tool) => tool !== key),
+    }));
 
   const addSecret = () => {
     if (!newSecretKey.trim()) return;
@@ -710,23 +708,23 @@ export default function AgentConfigPage() {
           )}
         </section>
 
-        {/* Permissions */}
+        {/* Tools */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Permissions</h3>
+          <h3 className="text-base font-semibold text-white mb-4">Tools</h3>
           <div className="space-y-2">
-            {PERMISSIONS.map(perm => (
+            {TOOLS.map((tool) => (
               <label
-                key={perm.key}
+                key={tool.key}
                 className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer"
               >
                 <div>
-                  <div className="text-white text-sm font-medium">{perm.label}</div>
-                  <div className="text-xs text-[#6b7280]">{perm.desc}</div>
+                  <div className="text-white text-sm font-medium">{tool.label}</div>
+                  <div className="text-xs text-[#6b7280]">{tool.desc}</div>
                 </div>
                 <input
                   type="checkbox"
-                  checked={config.permissions[perm.key]}
-                  onChange={e => setPerm(perm.key, e.target.checked)}
+                  checked={(config.tools || []).includes(tool.key)}
+                  onChange={e => setTool(tool.key, e.target.checked)}
                   className="size-5 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
                 />
               </label>

@@ -130,7 +130,32 @@ export interface Message {
   sender_name: string;
   created_at: string;
   client_message_id?: string | null;
+  reply_to_message_id?: string | null;
+  requested_agent_id?: string | null;
+  display_agent_id?: string | null;
+  orchestrated_by?: string | null;
+  executed_by?: string | null;
+  metadata?: Record<string, unknown> | null;
   attachments?: Attachment[];
+}
+
+export interface ChatActionRun {
+  id: string;
+  workspace_id: string;
+  chat_message_id: string;
+  channel_id: string;
+  requested_agent_id?: string | null;
+  display_agent_id?: string | null;
+  orchestrated_by?: string | null;
+  executed_by?: string | null;
+  action_key: string;
+  adapter: string;
+  status: string;
+  input_json?: Record<string, unknown> | null;
+  output_json?: Record<string, unknown> | null;
+  error_json?: Record<string, unknown> | null;
+  started_at: string;
+  completed_at?: string | null;
 }
 
 export interface Channel {

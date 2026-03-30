@@ -701,6 +701,78 @@
     "category": "real-estate",
     "icon": "calendar"
   },
+  "workspace_drive_list": {
+    "name": "Workspace Drive List",
+    "description": "List files and folders stored in the internal workspace drive backed by the shared workspace storage layer",
+    "category": "operations",
+    "icon": "folder"
+  },
+  "workspace_drive_search": {
+    "name": "Workspace Drive Search",
+    "description": "Search the internal workspace drive for files by path or name without relying on external providers",
+    "category": "operations",
+    "icon": "search"
+  },
+  "workspace_drive_read": {
+    "name": "Workspace Drive Read",
+    "description": "Read text content from a file stored in the internal workspace drive using a path or file ID",
+    "category": "operations",
+    "icon": "file-text"
+  },
+  "workspace_drive_write": {
+    "name": "Workspace Drive Write",
+    "description": "Create or update a text file inside the internal workspace drive for workspace-scoped collaboration",
+    "category": "operations",
+    "icon": "edit-3"
+  },
+  "google_drive_list": {
+    "name": "Google Drive List",
+    "description": "List files available through the connected Google Drive integration in read-only mode",
+    "category": "operations",
+    "icon": "cloud"
+  },
+  "google_drive_search": {
+    "name": "Google Drive Search",
+    "description": "Search the connected Google Drive for relevant files and documents in read-only mode",
+    "category": "operations",
+    "icon": "search"
+  },
+  "google_drive_read": {
+    "name": "Google Drive Read",
+    "description": "Read metadata and exported content from a specific Google Drive file using its Google file ID",
+    "category": "operations",
+    "icon": "file"
+  },
+  "google_calendar_list": {
+    "name": "Google Calendar List",
+    "description": "List upcoming events from the connected Google Calendar within a requested time window",
+    "category": "operations",
+    "icon": "calendar"
+  },
+  "google_calendar_create": {
+    "name": "Google Calendar Create",
+    "description": "Create a new event in the connected Google Calendar with attendees, timing, and context",
+    "category": "operations",
+    "icon": "calendar-plus"
+  },
+  "google_calendar_update": {
+    "name": "Google Calendar Update",
+    "description": "Update an existing Google Calendar event when the timing, summary, or details change",
+    "category": "operations",
+    "icon": "refresh-cw"
+  },
+  "google_calendar_delete": {
+    "name": "Google Calendar Delete",
+    "description": "Delete a Google Calendar event from the connected workspace calendar",
+    "category": "operations",
+    "icon": "calendar-x"
+  },
+  "google_calendar_check_availability": {
+    "name": "Google Calendar Availability",
+    "description": "Check free/busy availability on the connected Google Calendar for a given time range",
+    "category": "operations",
+    "icon": "clock"
+  },
   "insurance_verification": {
     "name": "Insurance Verification",
     "description": "Verify patient insurance eligibility, benefits, copays, and prior authorization requirements before appointments",
@@ -712,41 +784,5 @@
     "description": "Guide patients through intake forms, collect medical history, and prepare clinical notes for provider review",
     "category": "healthcare",
     "icon": "user-plus"
-  },
-  "google_drive_list": {
-    "name": "Google Drive List",
-    "description": "List and browse files in the user's Google Drive",
-    "category": "productivity",
-    "icon": "folder"
-  },
-  "google_drive_search": {
-    "name": "Google Drive Search",
-    "description": "Search for files in Google Drive by name, content, or type",
-    "category": "productivity",
-    "icon": "search"
-  },
-  "google_drive_read": {
-    "name": "Google Drive Read",
-    "description": "Read file metadata or download text content from Google Drive",
-    "category": "productivity",
-    "icon": "file-text"
-  },
-  "gmail_list": {
-    "name": "Gmail List",
-    "description": "List and filter emails from the user's Gmail inbox",
-    "category": "communication",
-    "icon": "mail"
-  },
-  "gmail_read": {
-    "name": "Gmail Read",
-    "description": "Read the full content of a specific Gmail message",
-    "category": "communication",
-    "icon": "mail-open"
-  },
-  "gmail_send": {
-    "name": "Gmail Send",
-    "description": "Draft an email via Gmail (requires human approval before sending)",
-    "category": "communication",
-    "icon": "send"
   }
 }

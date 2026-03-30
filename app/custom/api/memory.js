@@ -12,39 +12,7 @@
 const express = require('express');
 const { authenticateAgent } = require('../lib/auth');
 const router = express.Router();
-
-const SNIPARA_URL = process.env.SNIPARA_API_URL || 'https://api.snipara.com/mcp/test-workspace-api-vutler';
-const SNIPARA_KEY = process.env.SNIPARA_API_KEY || '';
-
-async function sniparaCall(name, args) {
-  if (!SNIPARA_KEY) return null;
-  const resp = await fetch(SNIPARA_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${SNIPARA_KEY}`,
-    },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/call',
-      params: { name, arguments: args },
-    }),
-  });
-
-  if (!resp.ok) throw new Error(`Snipara HTTP ${resp.status}`);
-  const data = await resp.json();
-  if (data.error) throw new Error(data.error.message || 'Snipara error');
-
-  const result = data.result;
-  if (!result) return null;
-  if (result.structuredContent) return result.structuredContent;
-  if (Array.isArray(result.content)) {
-    const txt = result.content.map((x) => x.text || '').join('\n');
-    try { return JSON.parse(txt); } catch { return txt; }
-  }
-  return result;
-}
+const { callSniparaTool, resolveSniparaConfig } = require('../../../services/sniparaResolver');
 
 function normalizeMemories(raw, fallbackScope) {
   if (!raw) return [];
@@ -67,22 +35,25 @@ function normalizeMemories(raw, fallbackScope) {
  */
 router.get('/memory', authenticateAgent, async (req, res) => {
   try {
+    const pg = req.app.locals.pg || require('../../../lib/vaultbrix');
+    const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const limit = parseInt(req.query.limit) || 50;
     const type = req.query.type;
     const agentId = req.agent?.id || req.query.agent_id;
 
-    if (!SNIPARA_KEY) {
+    const config = await resolveSniparaConfig(pg, workspaceId);
+    if (!config.configured) {
       return res.json({ success: true, data: [], meta: { total: 0, limit, snipara: false } });
     }
 
     const query = type ? `type:${type}` : `agent ${agentId || 'workspace'} memories`;
-    const recalled = await sniparaCall('rlm_recall', {
+    const recalled = await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_recall', args: {
       query,
       agent_id: agentId,
       scope: 'agent',
       category: agentId,
       limit,
-    });
+    }});
 
     const memories = normalizeMemories(recalled, 'agent');
     return res.json({
@@ -106,6 +77,8 @@ router.get('/memory', authenticateAgent, async (req, res) => {
  */
 router.post('/memory', authenticateAgent, async (req, res) => {
   try {
+    const pg = req.app.locals.pg || require('../../../lib/vaultbrix');
+    const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const { content, type, tags, importance } = req.body;
     const agentId = req.agent?.id;
 
@@ -113,7 +86,8 @@ router.post('/memory', authenticateAgent, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required field: content' });
     }
 
-    if (!SNIPARA_KEY) {
+    const config = await resolveSniparaConfig(pg, workspaceId);
+    if (!config.configured) {
       const memory = {
         id: `mem_${Date.now()}`,
         content,
@@ -125,7 +99,7 @@ router.post('/memory', authenticateAgent, async (req, res) => {
       return res.json({ success: true, data: memory });
     }
 
-    await sniparaCall('rlm_remember', {
+    await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_remember', args: {
       text: content,
       type: type || 'fact',
       importance: Math.min(1, Math.max(0, Number(importance) || 0.5)),
@@ -137,7 +111,7 @@ router.post('/memory', authenticateAgent, async (req, res) => {
         source: 'vutler-agent',
         created_at: new Date().toISOString(),
       },
-    });
+    }});
 
     const memory = {
       id: `mem_${Date.now()}`,
@@ -165,6 +139,8 @@ router.post('/memory', authenticateAgent, async (req, res) => {
  */
 router.get('/memory/search', authenticateAgent, async (req, res) => {
   try {
+    const pg = req.app.locals.pg || require('../../../lib/vaultbrix');
+    const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const { q, limit: limitStr } = req.query;
     const agentId = req.agent?.id;
 
@@ -172,17 +148,18 @@ router.get('/memory/search', authenticateAgent, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required parameter: q (query)' });
     }
 
-    if (!SNIPARA_KEY) {
+    const config = await resolveSniparaConfig(pg, workspaceId);
+    if (!config.configured) {
       return res.json({ success: true, data: [], query: q, meta: { snipara: false } });
     }
 
-    const recalled = await sniparaCall('rlm_recall', {
+    const recalled = await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_recall', args: {
       query: q,
       agent_id: agentId,
       scope: 'agent',
       category: agentId,
       limit: parseInt(limitStr) || 10,
-    });
+    }});
 
     const memories = normalizeMemories(recalled, 'agent');
     return res.json({ success: true, data: memories, query: q });
@@ -202,18 +179,21 @@ router.get('/memory/search', authenticateAgent, async (req, res) => {
  */
 router.delete('/memory/:id', authenticateAgent, async (req, res) => {
   try {
+    const pg = req.app.locals.pg || require('../../../lib/vaultbrix');
+    const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const { id } = req.params;
     const agentId = req.agent?.id;
 
-    if (SNIPARA_KEY) {
-      await sniparaCall('rlm_remember', {
+    const config = await resolveSniparaConfig(pg, workspaceId);
+    if (config.configured) {
+      await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_remember', args: {
         text: `[DELETED memory ${id}]`,
         type: 'fact',
         importance: 0,
         scope: 'agent',
         category: agentId,
         metadata: { deleted: true, memory_id: id, deleted_at: new Date().toISOString() },
-      }).catch(() => {});
+      }}).catch(() => {});
     }
 
     return res.json({ success: true, data: { id, deleted: true } });

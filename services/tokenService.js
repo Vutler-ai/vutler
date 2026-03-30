@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 
-const TOKEN_SECRET = process.env.JWT_SECRET || 'REDACTED_JWT_FALLBACK';
+const TOKEN_SECRET = process.env.JWT_SECRET;
+if (!TOKEN_SECRET) { console.error('[TokenService] FATAL: JWT_SECRET env var is required'); process.exit(1); }
 const TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const ROLE_PATTERNS = {

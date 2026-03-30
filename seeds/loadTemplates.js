@@ -43,9 +43,9 @@ function getAgentSkills() {
 }
 
 /**
- * Upserts agent templates from agent-templates.json into the DB.
- * Safe to call on every startup — uses INSERT ... ON CONFLICT DO NOTHING
- * based on the template name (since we don't control the serial id).
+ * Syncs agent templates from agent-templates.json into the DB.
+ * Safe to call on every startup — updates existing rows by name and inserts
+ * any missing templates.
  */
 async function seedTemplatesToDb(db) {
   const templates = getAgentTemplates();
@@ -65,12 +65,40 @@ async function seedTemplatesToDb(db) {
   for (const tpl of templates) {
     try {
       const systemPrompt = tpl.system_prompt || '';
-      const result = await db.query(
+      const updateResult = await db.query(
+        `UPDATE ${SCHEMA}.marketplace_templates
+            SET description = $2,
+                category = $3,
+                model = $4,
+                system_prompt = $5,
+                skills = $6::jsonb,
+                tools = $7::jsonb,
+                avatar = $8
+          WHERE name = $1`,
+        [
+          tpl.name,
+          tpl.description || '',
+          tpl.category || 'custom',
+          tpl.model || 'gpt-4o',
+          systemPrompt,
+          JSON.stringify(tpl.skills || []),
+          JSON.stringify(tpl.tools || []),
+          tpl.avatar || null,
+        ]
+      );
+      if (updateResult.rowCount > 0) {
+        inserted++;
+        continue;
+      }
+
+      const insertResult = await db.query(
         `INSERT INTO ${SCHEMA}.marketplace_templates
            (workspace_id, agent_id, name, description, category, model, system_prompt,
             skills, tools, permissions, pricing, price, verified, avatar)
-         VALUES (1, 0, $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, '{}'::jsonb, 'free', 0, true, $8)
-         ON CONFLICT DO NOTHING`,
+         SELECT 1, 0, $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, '{}'::jsonb, 'free', 0, true, $8
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${SCHEMA}.marketplace_templates WHERE name = $1
+          )`,
         [
           tpl.name,
           tpl.description || '',
@@ -82,7 +110,7 @@ async function seedTemplatesToDb(db) {
           tpl.avatar || null,
         ]
       );
-      if (result.rowCount > 0) inserted++;
+      if (insertResult.rowCount > 0) inserted++;
     } catch (err) {
       console.warn(`[SEEDS] Could not insert template "${tpl.name}":`, err.message);
     }

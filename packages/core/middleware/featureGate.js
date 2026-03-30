@@ -13,10 +13,6 @@
 
 // ---------------------------------------------------------------------------
 // Plan definitions
-//
-// NOTE: LLM usage is BYOK (Bring Your Own Key) — users connect their own
-// OpenRouter, Anthropic, or OpenAI key. There are no token_month limits on
-// any plan. Token tracking in /usage is for monitoring only, not enforcement.
 // ---------------------------------------------------------------------------
 
 const PLANS = {
@@ -24,8 +20,8 @@ const PLANS = {
     label: 'Free',
     tier: 'free',
     products: [],
-    features: ['chat', 'dashboard'],
-    limits: { agents: 1, storage_gb: 0.5, users: 1, social_posts_month: 0 },
+    features: [],
+    limits: { agents: 1, tokens_month: 50000, storage_gb: 1 },
     snipara: ['context'],
     price: { monthly: 0, yearly: 0 },
   },
@@ -33,17 +29,17 @@ const PLANS = {
     label: 'Office Starter',
     tier: 'office',
     products: ['office'],
-    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'pixel-office'],
-    limits: { agents: 0, storage_gb: 5, users: 1, social_posts_month: 0 },
+    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    limits: { agents: 0, tokens_month: 100000, storage_gb: 10 },
     snipara: ['context'],
     price: { monthly: 2900, yearly: 29000 },
   },
   office_team: {
-    label: 'Office Pro',
+    label: 'Office Team',
     tier: 'office',
     products: ['office'],
     features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
-    limits: { agents: 0, storage_gb: 50, users: 5, social_posts_month: 0 },
+    limits: { agents: 0, tokens_month: 500000, storage_gb: 100 },
     snipara: ['context'],
     price: { monthly: 7900, yearly: 79000 },
   },
@@ -51,8 +47,8 @@ const PLANS = {
     label: 'Agents Starter',
     tier: 'agents',
     products: ['agents'],
-    features: ['agents', 'nexus', 'sandbox', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard', 'cloud_sandbox', 'mobile_dispatch'],
-    limits: { agents: 10, storage_gb: 5, users: 1, social_posts_month: 10 },
+    features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    limits: { agents: 25, tokens_month: 250000, storage_gb: 10, nexus_nodes: 2, nexus_local: 2, nexus_enterprise: 0 },
     snipara: ['context', 'memory'],
     price: { monthly: 2900, yearly: 29000 },
   },
@@ -60,8 +56,8 @@ const PLANS = {
     label: 'Agents Pro',
     tier: 'agents',
     products: ['agents'],
-    features: ['agents', 'nexus', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard', 'cloud_sandbox', 'mobile_dispatch', 'enterprise_nexus'],
-    limits: { agents: 50, storage_gb: 25, users: 5, social_posts_month: 50 },
+    features: ['agents', 'nexus', 'marketplace', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 3 },
     snipara: ['context', 'memory'],
     price: { monthly: 7900, yearly: 79000 },
   },
@@ -70,7 +66,7 @@ const PLANS = {
     tier: 'full',
     products: ['office', 'agents'],
     features: ['*'],
-    limits: { agents: 50, storage_gb: 100, users: 10, social_posts_month: 100 },
+    limits: { agents: 100, tokens_month: 1000000, storage_gb: 100, nexus_nodes: 10, nexus_local: 10, nexus_enterprise: 5 },
     snipara: ['context', 'memory'],
     price: { monthly: 12900, yearly: 129000 },
   },
@@ -79,16 +75,16 @@ const PLANS = {
     tier: 'full',
     products: ['office', 'agents'],
     features: ['*'],
-    limits: { agents: 100, storage_gb: 250, users: 20, social_posts_month: 500 },
+    limits: { agents: -1, tokens_month: -1, storage_gb: -1, nexus_nodes: -1, nexus_local: -1, nexus_enterprise: -1 },
     snipara: ['context', 'memory'],
-    price: { monthly: 19900, yearly: 0 }, // $199+/mo, annual is custom
+    price: { monthly: 0, yearly: 0 }, // custom pricing
   },
   beta: {
     label: 'Beta',
     tier: 'full',
     products: ['office', 'agents'],
     features: ['*'],
-    limits: { agents: 50, storage_gb: 50, users: 5, social_posts_month: 100 },
+    limits: { agents: 50, tokens_month: 500000, storage_gb: 50, nexus_nodes: 5, nexus_local: 5, nexus_enterprise: 1 },
     snipara: ['context', 'memory'],
     price: { monthly: 0, yearly: 0 },
   },
