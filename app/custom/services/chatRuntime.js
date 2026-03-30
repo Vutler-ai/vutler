@@ -381,12 +381,12 @@ async function handleMessage(message) {
           .map((step) => `  ${step.order}. ${step.action}${step.target ? ` [vault: ${step.target}]` : ''}`)
           .join('\n');
         const preview =
-          `J'ai detecte un runbook dans ton message.\n\n` +
+          'J\'ai detecte un runbook dans ton message.\n\n' +
           `**${runbook.name}**\n${runbook.description ? `${runbook.description}\n` : ''}` +
           `\nEtapes (${runbook.steps.length}) :\n${stepsPreview}\n\n` +
-          `Pour lancer l'execution: \`POST /api/v1/runbooks/execute\` avec ce runbook, ou confirme ici avec \"yes, execute\".`;
+          'Pour lancer l\'execution: `POST /api/v1/runbooks/execute` avec ce runbook, ou confirme ici avec \'yes, execute\'.';
 
-      await insertChatMessage(pool, null, SCHEMA, {
+        await insertChatMessage(pool, null, SCHEMA, {
           channel_id: message.channel_id,
           sender_id: 'mike',
           sender_name: 'Mike',
@@ -495,6 +495,7 @@ async function handleMessage(message) {
       llm_model: response.model || null,
       input_tokens: response.usage?.input_tokens || null,
       output_tokens: response.usage?.output_tokens || null,
+      resource_artifacts: response.resource_artifacts || [],
     }
   });
 

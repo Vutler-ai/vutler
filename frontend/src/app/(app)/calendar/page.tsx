@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Plus, MapPin, Clock, Target, CreditCard, Bot, Lock } from "lucide-react";
 import {
   Dialog,
@@ -116,12 +117,43 @@ function CalendarSkeleton() {
 
 export default function CalendarPage() {
   const router = useRouter();
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const searchParams = useSearchParams();
+  const requestedEventId = searchParams.get("event");
+  const initialDate = (() => {
+    const raw = searchParams.get("date");
+    if (!raw) return new Date();
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  })();
+  const [currentDate, setCurrentDate] = useState(initialDate);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [form, setForm] = useState<EventFormState>(DEFAULT_FORM);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const autoOpenedEventIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const raw = searchParams.get("date");
+    if (!raw) return;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return;
+    setCurrentDate((current) => (current.toDateString() === parsed.toDateString() ? current : parsed));
+  }, [searchParams]);
+
+  const openEvent = useCallback((event: CalendarEvent) => {
+    setEditingEvent(event);
+    setForm({
+      title: event.title,
+      description: event.description ?? "",
+      start: toLocalDateTimeString(event.start),
+      end: toLocalDateTimeString(event.end),
+      location: "",
+      color: event.color ?? COLORS[0].value,
+    });
+    setActionError(null);
+    setDialogOpen(true);
+  }, []);
 
   const startOfMonth = new Date(
     currentDate.getFullYear(),
@@ -193,17 +225,7 @@ export default function CalendarPage() {
 
   const openEdit = (e: CalendarEvent, evt: React.MouseEvent) => {
     evt.stopPropagation();
-    setEditingEvent(e);
-    setForm({
-      title: e.title,
-      description: e.description ?? "",
-      start: toLocalDateTimeString(e.start),
-      end: toLocalDateTimeString(e.end),
-      location: "",
-      color: e.color ?? COLORS[0].value,
-    });
-    setActionError(null);
-    setDialogOpen(true);
+    openEvent(e);
   };
 
   const closeDialog = () => {
@@ -269,6 +291,25 @@ export default function CalendarPage() {
     .filter((e) => new Date(e.start) >= new Date())
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
     .slice(0, 6);
+
+  useEffect(() => {
+    if (!requestedEventId || events.length === 0) return;
+    const match = events.find((event) => event.id === requestedEventId || event.sourceId === requestedEventId);
+    if (!match) return;
+    if (autoOpenedEventIdRef.current === match.id && editingEvent?.id === match.id) return;
+
+    const eventDate = new Date(match.start);
+    if (!Number.isNaN(eventDate.getTime())) {
+      setCurrentDate((current) =>
+        current.getMonth() === eventDate.getMonth() && current.getFullYear() === eventDate.getFullYear()
+          ? current
+          : eventDate
+      );
+    }
+
+    openEvent(match);
+    autoOpenedEventIdRef.current = match.id;
+  }, [requestedEventId, events, editingEvent?.id, openEvent]);
 
   const grid = getDaysGrid();
   const today = new Date();

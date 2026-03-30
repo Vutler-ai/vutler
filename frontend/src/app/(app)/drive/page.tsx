@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { useApi } from "@/hooks/use-api";
 import {
   getFiles,
@@ -8,6 +9,8 @@ import {
   downloadFile,
   deleteFile,
   createFolder,
+  previewFile,
+  type DrivePreviewResponse,
 } from "@/lib/api/endpoints/drive";
 import type { DriveFile } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
@@ -157,6 +160,16 @@ function sortFiles(
   });
 }
 
+function isImagePreview(file: DriveFile) {
+  const mime = file.mime_type ?? "";
+  return mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name);
+}
+
+function isPdfPreview(file: DriveFile) {
+  const mime = file.mime_type ?? "";
+  return mime.includes("pdf") || /\.pdf$/i.test(file.name);
+}
+
 // ─── Grid Card ────────────────────────────────────────────────────────────────
 
 function GridCard({
@@ -251,7 +264,15 @@ function ListSkeleton() {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function DrivePage() {
-  const [currentPath, setCurrentPath] = useState("/");
+  const searchParams = useSearchParams();
+  const initialPath = (() => {
+    const raw = searchParams.get("path");
+    if (!raw) return "/";
+    const decoded = raw.startsWith("/") ? raw : `/${raw}`;
+    return decoded || "/";
+  })();
+  const requestedFileId = searchParams.get("file");
+  const [currentPath, setCurrentPath] = useState(initialPath);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("name");
@@ -261,6 +282,7 @@ export default function DrivePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const autoOpenedFileIdRef = useRef<string | null>(null);
 
   // new folder dialog
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
@@ -273,6 +295,11 @@ export default function DrivePage() {
 
   // global action error
   const [actionError, setActionError] = useState<string | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<DriveFile | null>(null);
+  const [previewData, setPreviewData] = useState<DrivePreviewResponse | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // data via SWR
   const cacheKey = `/api/v1/drive/files?path=${encodeURIComponent(currentPath)}`;
@@ -297,16 +324,75 @@ export default function DrivePage() {
     setSearch("");
   }, []);
 
+  const closePreview = useCallback(() => {
+    setPreviewTarget(null);
+    setPreviewData(null);
+    setPreviewError(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+  }, [previewUrl]);
+
+  const openPreview = useCallback(async (file: DriveFile) => {
+    setPreviewTarget(file);
+    setPreviewData(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+
+    try {
+      const data = await previewFile(file.id, file.path);
+      setPreviewData(data);
+
+      if (data.type === "binary" && (isImagePreview(file) || isPdfPreview(file))) {
+        const blob = await downloadFile(file.id, file.path);
+        const url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+      }
+    } catch (err: unknown) {
+      setPreviewError(err instanceof Error ? err.message : "Preview failed");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [previewUrl]);
+
+  useEffect(() => {
+    const raw = searchParams.get("path");
+    const nextPath = raw ? (raw.startsWith("/") ? raw : `/${raw}`) : "/";
+    setCurrentPath((current) => (current === nextPath ? current : nextPath));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!requestedFileId || !rawFiles || rawFiles.length === 0) return;
+    if (autoOpenedFileIdRef.current === requestedFileId) return;
+    const match = rawFiles.find((file) => file.id === requestedFileId);
+    if (!match || match.type !== "file") return;
+    autoOpenedFileIdRef.current = requestedFileId;
+    openPreview(match).catch(() => {});
+  }, [requestedFileId, rawFiles, openPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
   const openFile = useCallback(
     (file: DriveFile) => {
       if (file.type === "folder") {
         navigate(file.path);
       } else {
-        handleDownload(file);
+        openPreview(file).catch(() => {});
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, currentPath]
+    [navigate, openPreview]
   );
 
   // sort toggle
@@ -612,6 +698,79 @@ export default function DrivePage() {
           </Table>
         )}
       </div>
+
+      {/* File Preview */}
+      <Dialog open={!!previewTarget} onOpenChange={(open) => !open && closePreview()}>
+        <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-4xl">
+          <DialogHeader>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <DialogTitle className="truncate">
+                  {previewTarget?.name || "Preview"}
+                </DialogTitle>
+                {previewTarget && (
+                  <p className="mt-1 text-xs text-slate-400 truncate">{previewTarget.path}</p>
+                )}
+              </div>
+              {previewTarget && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDownload(previewTarget)}
+                  className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10 gap-1.5"
+                >
+                  <Download size={14} />
+                  Download
+                </Button>
+              )}
+            </div>
+          </DialogHeader>
+
+          <div className="min-h-[24rem] rounded-xl border border-white/10 bg-[#08090f] p-3">
+            {previewLoading ? (
+              <div className="flex h-80 items-center justify-center text-sm text-slate-400">
+                Loading preview…
+              </div>
+            ) : previewError ? (
+              <div className="flex h-80 items-center justify-center text-sm text-red-400">
+                {previewError}
+              </div>
+            ) : previewData?.type === "text" && previewData.content ? (
+              <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">
+                {previewData.content}
+              </pre>
+            ) : previewUrl && previewTarget && isImagePreview(previewTarget) ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previewUrl}
+                alt={previewTarget.name}
+                className="mx-auto max-h-[70vh] w-auto rounded-lg object-contain"
+              />
+            ) : previewUrl && previewTarget && isPdfPreview(previewTarget) ? (
+              <iframe
+                src={previewUrl}
+                title={previewTarget.name}
+                className="h-[70vh] w-full rounded-lg border border-white/10 bg-black"
+              />
+            ) : (
+              <div className="flex h-80 flex-col items-center justify-center gap-3 text-center text-sm text-slate-400">
+                <p>Preview unavailable for this file type.</p>
+                {previewTarget && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDownload(previewTarget)}
+                    className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10 gap-1.5"
+                  >
+                    <Download size={14} />
+                    Download to view
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* New Folder Dialog */}
       <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>

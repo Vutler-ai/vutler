@@ -1,6 +1,18 @@
 import { apiFetch, authFetch } from '../client';
 import type { DriveFile, CreateFolderPayload, SuccessResponse } from '../types';
 
+export interface DrivePreviewResponse {
+  success: boolean;
+  type?: 'text' | 'binary';
+  name?: string;
+  path?: string;
+  mimeType?: string;
+  modified?: string;
+  content?: string;
+  url?: string;
+  error?: string;
+}
+
 export async function getFiles(path: string = '/'): Promise<DriveFile[]> {
   const data = await apiFetch<{ files?: DriveFile[] } | DriveFile[]>(
     `/api/v1/drive/files?path=${encodeURIComponent(path)}`
@@ -57,4 +69,15 @@ export async function downloadFile(
   );
   if (!res.ok) throw new Error('Failed to download file');
   return res.blob();
+}
+
+export async function previewFile(
+  id: string,
+  path: string
+): Promise<DrivePreviewResponse> {
+  const res = await authFetch(
+    `/api/v1/drive/preview/${id}?path=${encodeURIComponent(path)}`
+  );
+  if (!res.ok) throw new Error('Failed to preview file');
+  return res.json();
 }

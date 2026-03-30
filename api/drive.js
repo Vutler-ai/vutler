@@ -256,6 +256,15 @@ router.get('/preview/:id', async (req, res) => {
 
     const ext = path.extname(match.key).toLowerCase();
     const fileName = match.key.split('/').pop();
+    const binaryMimeTypes = {
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.pdf': 'application/pdf',
+    };
 
     if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.pdf'].includes(ext)) {
       return res.json({
@@ -263,6 +272,8 @@ router.get('/preview/:id', async (req, res) => {
         type: 'binary',
         url: `/api/v1/drive/download/${req.params.id}`,
         name: fileName,
+        path: `/${match.key}`,
+        mimeType: binaryMimeTypes[ext] || 'application/octet-stream',
         modified: match.lastModified ? new Date(match.lastModified).toISOString() : undefined,
       });
     }
@@ -274,6 +285,8 @@ router.get('/preview/:id', async (req, res) => {
       success: true,
       type: 'text',
       name: fileName,
+      path: `/${match.key}`,
+      mimeType: 'text/plain; charset=utf-8',
       modified: match.lastModified ? new Date(match.lastModified).toISOString() : undefined,
       content,
     });

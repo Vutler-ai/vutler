@@ -19,6 +19,181 @@ function formatToolResultContent(result) {
   }
 }
 
+function normalizeDrivePath(pathValue) {
+  const raw = String(pathValue || '').trim();
+  if (!raw) return '';
+  const normalized = raw.startsWith('/') ? raw : `/${raw}`;
+  return normalized.replace(/\/{2,}/g, '/');
+}
+
+function getDriveParentPath(pathValue) {
+  const normalized = normalizeDrivePath(pathValue);
+  if (!normalized || normalized === '/') return '/';
+  const trimmed = normalized.replace(/\/+$/, '');
+  const idx = trimmed.lastIndexOf('/');
+  return idx <= 0 ? '/' : trimmed.slice(0, idx);
+}
+
+function buildDriveLink({ pathValue, fileId } = {}) {
+  const query = [];
+  const normalizedPath = normalizeDrivePath(pathValue);
+  if (normalizedPath) query.push(`path=${encodeURIComponent(normalizedPath)}`);
+  if (fileId) query.push(`file=${encodeURIComponent(String(fileId))}`);
+  return `/drive${query.length > 0 ? `?${query.join('&')}` : ''}`;
+}
+
+function safeCalendarLink(data = {}, args = {}) {
+  const eventId = data.id || data.eventId || data.event_id || data.googleEventId || data.sourceId || data.source_id || args.eventId || args.id || null;
+  const candidate = data.start || data.start_time || data.date || args.start || args.date || null;
+  const date = candidate ? String(candidate).slice(0, 10) : '';
+  if (eventId && date) return `/calendar?date=${encodeURIComponent(date)}&event=${encodeURIComponent(String(eventId))}`;
+  if (eventId) return `/calendar?event=${encodeURIComponent(String(eventId))}`;
+  if (date) return `/calendar?date=${encodeURIComponent(date)}`;
+  if (data.htmlLink) return String(data.htmlLink);
+  return '/calendar';
+}
+
+function safeEmailLink(data = {}, args = {}) {
+  const folder = String(data.folder || data.mailbox || data.box || args.folder || 'drafts').toLowerCase();
+  const uid = data.uid || data.id || data.messageId || data.message_id || data.draftId || data.draft_id || args.uid || args.id || args.messageId || args.draftId || null;
+  if (uid) return `/email?folder=${encodeURIComponent(folder)}&uid=${encodeURIComponent(String(uid))}`;
+  return `/email?folder=${encodeURIComponent(folder)}`;
+}
+
+function buildArtifact({ kind, label, href, note, action = 'Open' }) {
+  if (!href) return null;
+  return {
+    kind,
+    label,
+    href,
+    note: note ? String(note) : undefined,
+    action,
+  };
+}
+
+function extractResourceArtifacts(skillKey, result, args = {}) {
+  const artifacts = [];
+  const data = result?.data ?? {};
+  const skill = String(skillKey || '').toLowerCase();
+  const action = String(args.action || data.action || '').toLowerCase();
+
+  if (skill.includes('workspace_drive') || skill.includes('google_drive')) {
+    const fileLike =
+      data.created ||
+      data.file ||
+      data.updated ||
+      data.written ||
+      data.downloaded ||
+      data.read ||
+      data;
+
+    const pathValue =
+      fileLike?.path ||
+      data.path ||
+      data.to ||
+      data.filePath ||
+      data.targetPath ||
+      data.source?.path ||
+      data.folder?.path ||
+      args.path ||
+      args.filePath ||
+      args.targetPath ||
+      null;
+
+    const fileId = fileLike?.id || data.id || data.fileId || data.file_id || args.fileId || args.id || null;
+    const isFolder = String(fileLike?.type || data.type || '').toLowerCase() === 'folder' || action === 'create_folder' || Boolean(data.created && !fileId);
+    const isExactFileAction = ['read', 'download', 'write_text', 'create', 'update'].includes(action) || Boolean(fileId && !isFolder);
+    const shouldRenderDriveArtifact = isFolder || isExactFileAction;
+
+    if (!shouldRenderDriveArtifact && !skill.includes('google_drive')) {
+      return artifacts;
+    }
+
+    if (skill.includes('google_drive')) {
+      const webViewLink = fileLike?.webViewLink || data.webViewLink || data.htmlLink || null;
+      const href = webViewLink || (fileId ? buildDriveLink({ pathValue: pathValue ? getDriveParentPath(pathValue) : '', fileId }) : null);
+      const note = fileLike?.name || data.name || pathValue || undefined;
+      const artifact = buildArtifact({
+        kind: isFolder ? 'drive-folder' : 'drive-file',
+        label: isFolder ? 'Open folder in Drive' : 'Open file in Drive',
+        href,
+        note,
+      });
+      if (artifact) artifacts.push(artifact);
+    } else if (skill.includes('workspace_drive')) {
+      const href = isFolder
+        ? buildDriveLink({ pathValue })
+        : buildDriveLink({
+          pathValue: pathValue ? getDriveParentPath(pathValue) : args.path || '',
+          fileId: isExactFileAction ? fileId : null,
+        });
+      const note = fileLike?.name || pathValue || undefined;
+      const artifact = buildArtifact({
+        kind: isFolder ? 'drive-folder' : 'drive-file',
+        label: isFolder ? 'Open folder in Drive' : 'Open file in Drive',
+        href,
+        note,
+      });
+      if (artifact) artifacts.push(artifact);
+    }
+  }
+
+  if (skill.includes('calendar')) {
+    const href = safeCalendarLink(data, args);
+    const eventLabel = data.summary || data.title || data.event?.summary || 'Calendar item';
+    const artifact = buildArtifact({
+      kind: 'calendar-event',
+      label: data.htmlLink ? 'Open calendar event' : 'Open calendar',
+      href,
+      note: eventLabel,
+    });
+    if (artifact) artifacts.push(artifact);
+  }
+
+  if (skill.includes('email')) {
+    const href = safeEmailLink(data, args);
+    const draftId = data.draftId || data.draft_id || data.id || data.uid || data.messageId || data.message_id || null;
+    const subject = data.subject || data.message || data.bodyPreview || data.snippet || undefined;
+    const artifact = buildArtifact({
+      kind: draftId ? 'email-draft' : 'email-message',
+      label: draftId ? 'Open email draft' : 'Open email',
+      href,
+      note: draftId ? `Draft ${draftId}` : subject,
+    });
+    if (artifact) artifacts.push(artifact);
+  }
+
+  return artifacts.filter((artifact) => artifact?.href);
+}
+
+function dedupeArtifacts(artifacts = []) {
+  const unique = [];
+  const seen = new Set();
+  for (const artifact of artifacts) {
+    if (!artifact?.href || seen.has(artifact.href)) continue;
+    seen.add(artifact.href);
+    unique.push(artifact);
+  }
+  return unique;
+}
+
+function appendResourceArtifacts(content, artifacts = []) {
+  const current = String(content || '').trim();
+  const unique = dedupeArtifacts(artifacts).filter((artifact) => !current.includes(artifact.href));
+
+  if (unique.length === 0) return { content, artifacts: dedupeArtifacts(artifacts) };
+
+  const block = ['Liens utiles:', ...unique.map((artifact) => {
+    const note = artifact.note ? ` — ${artifact.note}` : '';
+    return `- [${artifact.label}](${artifact.href})${note}`;
+  })].join('\n');
+
+  return {
+    content: current ? `${current}\n\n${block}` : block,
+    artifacts: dedupeArtifacts(artifacts),
+  };
+}
+
 async function startToolActionRun(db, chatActionContext, agent, actionKey, adapter, inputJson) {
   if (!db || !chatActionContext?.messageId || !chatActionContext?.workspaceId || !chatActionContext?.channelId) {
     return null;
@@ -469,7 +644,9 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
                 // Some endpoints return the final object directly
                 lastResponseObj = evt;
               }
-            } catch (_) {}
+            } catch (_) {
+              continue;
+            }
           }
         }
         if (lastResponseObj) {
@@ -477,7 +654,7 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
         } else {
           // Fallback: try to parse the entire raw as JSON (non-streaming response)
           try { resolve(JSON.parse(raw)); }
-          catch { reject(new Error(`LLM stream parse error: no valid response event found`)); }
+          catch { reject(new Error('LLM stream parse error: no valid response event found')); }
         }
       });
     });
@@ -539,13 +716,13 @@ function normalizeResponse(provider, model, result, latency_ms) {
   const message = result.choices?.[0]?.message || {};
   const rawToolCalls = message.tool_calls || null;
   const toolCalls = rawToolCalls
-    ? rawToolCalls.map(tc => ({
-        id: tc.id,
-        name: tc.function?.name,
-        arguments: (() => {
-          try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
-        })(),
-      }))
+    ? rawToolCalls.map((tc) => ({
+      id: tc.id,
+      name: tc.function?.name,
+      arguments: (() => {
+        try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
+      })(),
+    }))
     : null;
 
   return {
@@ -589,7 +766,9 @@ async function logUsage(db, workspaceId, agent, llmResult) {
         llmResult.latency_ms || 0,
       ]
     );
-  } catch (_) {}
+  } catch (_) {
+    return;
+  }
 }
 
 async function runOnce(attempt, messages, tools) {
@@ -662,6 +841,9 @@ async function chat(agent, messages, db, opts = {}) {
   if (hasSocialSkill) {
     effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }
+  if (Array.isArray(agentSkills) && agentSkills.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email')))) {
+    effectiveSystemPrompt += '\n\nWhen you create or update a file, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. If a direct webViewLink or external URL is available, include it too.';
+  }
 
   const attempts = [
     { provider: primaryProvider, model },
@@ -730,6 +912,7 @@ async function chat(agent, messages, db, opts = {}) {
       // ── Tool-call loop (max 3 iterations to prevent infinite loops) ──────────
       let currentMessages = [...messages];
       let llmResult;
+      const resourceArtifacts = [];
       const MAX_TOOL_ITERATIONS = 3;
 
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
@@ -846,7 +1029,9 @@ async function chat(agent, messages, db, opts = {}) {
                      VALUES ($1, $2, 'multi', $3, $4, 'processing')`,
                     [workspaceId, agent?.id || null, postData.id || null, caption.slice(0, 500)]
                   );
-                } catch (_) {}
+                } catch (_) {
+                  void 0;
+                }
               }
               currentMessages = [
                 ...currentMessages,
@@ -890,6 +1075,7 @@ async function chat(agent, messages, db, opts = {}) {
 
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, skillResult, null);
               await storeToolObservation(db, workspaceId, agent, toolCall.name, args, skillResult);
+              resourceArtifacts.push(...extractResourceArtifacts(toolCall.name, skillResult, args));
 
               currentMessages = [
                 ...currentMessages,
@@ -942,6 +1128,15 @@ async function chat(agent, messages, db, opts = {}) {
       }
 
       await logUsage(db, workspaceId, agent, llmResult);
+
+      const enriched = appendResourceArtifacts(llmResult.content || '', resourceArtifacts);
+      if (enriched.content !== (llmResult.content || '')) {
+        llmResult = { ...llmResult, content: enriched.content };
+      }
+      llmResult = {
+        ...llmResult,
+        resource_artifacts: enriched.artifacts,
+      };
 
       // Debit trial tokens if using the shared trial provider
       if (a.provider === 'vutler-trial' && llmResult.usage) {

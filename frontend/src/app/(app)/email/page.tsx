@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import DOMPurify from "dompurify";
 import { apiFetch } from "@/lib/api/client";
 import {
@@ -137,6 +138,14 @@ function avatarFallback(name: string): string {
     .slice(0, 2)
     .toUpperCase();
 }
+
+const EMAIL_FOLDER_SET = new Set<EmailFolder | "pending" | "archive" | "drafts">([
+  "inbox",
+  "sent",
+  "archive",
+  "drafts",
+  "pending",
+]);
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
@@ -950,7 +959,15 @@ function ComposeDialog({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmailPage() {
-  const [folder, setFolder] = useState<EmailFolder | "pending" | "archive" | "drafts">("inbox");
+  const searchParams = useSearchParams();
+  const requestedEmailUid = searchParams.get("uid");
+  const initialFolder = (() => {
+    const raw = searchParams.get("folder");
+    return raw && EMAIL_FOLDER_SET.has(raw as EmailFolder | "pending" | "archive" | "drafts")
+      ? (raw as EmailFolder | "pending" | "archive" | "drafts")
+      : "inbox";
+  })();
+  const [folder, setFolder] = useState<EmailFolder | "pending" | "archive" | "drafts">(initialFolder);
   const [emails, setEmails] = useState<AugmentedEmail[]>([]);
   const [loadingEmails, setLoadingEmails] = useState(true);
   const [agents, setAgents] = useState<AgentEntry[]>([]);
@@ -969,7 +986,7 @@ export default function EmailPage() {
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
 
   // Load emails
-  const loadEmails = async () => {
+  const loadEmails = useCallback(async () => {
     setLoadingEmails(true);
     try {
       if (folder === "pending") {
@@ -989,7 +1006,7 @@ export default function EmailPage() {
     } finally {
       setLoadingEmails(false);
     }
-  };
+  }, [folder]);
 
   // Load pending approvals count for sidebar badge
   const loadPendingApprovals = async () => {
@@ -1005,7 +1022,7 @@ export default function EmailPage() {
   const loadAgents = async () => {
     try {
       const data = await apiFetch<{ agents?: AgentEntry[] } | AgentEntry[]>("/api/v1/agents");
-      const list = Array.isArray(data) ? data : ((data as any).agents ?? []);
+      const list = Array.isArray(data) ? data : ("agents" in data ? data.agents ?? [] : []);
       setAgents(list);
     } catch {
       setAgents([]);
@@ -1024,7 +1041,22 @@ export default function EmailPage() {
 
   useEffect(() => {
     loadEmails();
-  }, [folder]);
+  }, [loadEmails]);
+
+  useEffect(() => {
+    const raw = searchParams.get("folder");
+    if (!raw || !EMAIL_FOLDER_SET.has(raw as EmailFolder | "pending" | "archive" | "drafts")) return;
+    setFolder((current) => (current === raw ? current : (raw as EmailFolder | "pending" | "archive" | "drafts")));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!requestedEmailUid || emails.length === 0) return;
+    const match = emails.find((email) => email.uid === requestedEmailUid);
+    if (!match) return;
+    if (selectedEmail?.uid === match.uid) return;
+    setSelectedEmail({ ...match, unread: false });
+    setMobileView("viewer");
+  }, [requestedEmailUid, emails, selectedEmail?.uid]);
 
   useEffect(() => {
     loadAgents();

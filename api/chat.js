@@ -40,16 +40,22 @@ async function _triggerAgentResponse(req, channelId, wsId) {
       [channelId]
     );
 
-    const messages = historyResult.rows.reverse().map(m => ({
+    const messages = historyResult.rows.reverse().map((m) => ({
       role: m.sender_id === agent.id.toString() ? 'assistant' : 'user',
       content: m.sender_name && m.sender_id !== agent.id.toString()
         ? `[${m.sender_name}]: ${m.content}`
-        : m.content
+        : m.content,
     }));
 
-let llmResult;
+    let llmResult;
     try {
-      if (req && req.app && req.app.locals && req.app.locals.chatRuntime && typeof req.app.locals.chatRuntime.processMessage === 'function') {
+      if (
+        req &&
+        req.app &&
+        req.app.locals &&
+        req.app.locals.chatRuntime &&
+        typeof req.app.locals.chatRuntime.processMessage === 'function'
+      ) {
         llmResult = await req.app.locals.chatRuntime.processMessage(agent, messages);
       } else {
         throw new Error('chatRuntime not available, using llmRouter');
@@ -58,24 +64,35 @@ let llmResult;
       console.log('[Chat] ChatRuntime fallback to llmRouter:', crErr.message);
       // Call LLM via router
       llmResult = await llmRouter.chat(
-      {
-        model: agent.model || 'claude-sonnet-4-20250514',
-        provider: agent.provider || undefined,
-        system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
-        temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
-        max_tokens: agent.max_tokens || 4096,
-      },
-      messages
-    );
-}
+        {
+          model: agent.model || 'claude-sonnet-4-20250514',
+          provider: agent.provider || undefined,
+          system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
+          temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
+          max_tokens: agent.max_tokens || 4096,
+        },
+        messages
+      );
+    }
 
     console.log(`[Chat] Agent response from ${agent.name}: ${llmResult.content.substring(0, 100)}... (${llmResult.latency_ms}ms, ${llmResult.provider}/${llmResult.model})`);
 
     // Save agent response
     await pool.query(
-      `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id)
-       VALUES ($1, $2, $3, $4, 'text', $5)`,
-      [channelId, agent.id.toString(), agent.name, llmResult.content, wsId]
+      `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, workspace_id, metadata)
+       VALUES ($1, $2, $3, $4, 'text', $5, $6::jsonb)`,
+      [
+        channelId,
+        agent.id.toString(),
+        agent.name,
+        llmResult.content,
+        wsId,
+        JSON.stringify({
+          resource_artifacts: llmResult.resource_artifacts || [],
+          llm_provider: llmResult.provider || null,
+          llm_model: llmResult.model || null,
+        }),
+      ]
     );
 
     console.log(`[Chat] Agent message saved for ${agent.name}`);
@@ -162,7 +179,7 @@ router.post('/send', async (req, res) => {
 
     // Trigger agent response async — but NOT if sender is an agent (prevents loop)
     const isAgentSender = await pool.query(
-      `SELECT id FROM ${SCHEMA}.agents WHERE id::text = \$1 OR username = \$2 LIMIT 1`,
+      `SELECT id FROM ${SCHEMA}.agents WHERE id::text = $1 OR username = $2 LIMIT 1`,
       [sId, sName.toLowerCase()]
     );
     if (isAgentSender.rows.length === 0) {

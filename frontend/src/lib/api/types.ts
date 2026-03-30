@@ -135,7 +135,10 @@ export interface Message {
   display_agent_id?: string | null;
   orchestrated_by?: string | null;
   executed_by?: string | null;
-  metadata?: Record<string, unknown> | null;
+  metadata?: {
+    resource_artifacts?: ChatResourceArtifact[];
+    [key: string]: unknown;
+  } | null;
   attachments?: Attachment[];
 }
 
@@ -156,6 +159,14 @@ export interface ChatActionRun {
   error_json?: Record<string, unknown> | null;
   started_at: string;
   completed_at?: string | null;
+}
+
+export interface ChatResourceArtifact {
+  kind?: string;
+  label: string;
+  href: string;
+  note?: string;
+  action?: string;
 }
 
 export interface Channel {
