@@ -4,6 +4,10 @@
 
 Use this runbook after backend, frontend, migration, or orchestration changes that affect chat, tasks, Snipara, or realtime delivery.
 
+If the VPS checkout is dirty or if production must match one exact commit, use
+[production-deploy-clean-artifact.md](production-deploy-clean-artifact.md)
+instead of rebuilding directly from `/home/ubuntu/vutler`.
+
 The current staging host for Vutler is:
 
 - VPS: `83.228.222.180`
