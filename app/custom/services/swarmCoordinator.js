@@ -1,6 +1,7 @@
 "use strict";
 
 const pool = require("../../../lib/vaultbrix");
+const { chat: llmChat } = require("../../../services/llmRouter");
 
 const SCHEMA = "tenant_vutler";
 const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
@@ -297,6 +298,146 @@ class SwarmCoordinator {
   async createTaskFromChatMessage(content) {
     const task = this.extractTaskFromText(content);
     return this.createTask(task);
+  }
+
+  // ─── analyzeAndRoute ──────────────────────────────────────────────────────
+  // Analyse un message chat pour détecter une intent de tâche, décompose en
+  // sous-tâches via LLM, crée chaque tâche dans le swarm et retourne le résumé.
+  // Retourne { routed: false } si le message n'est pas une demande de travail.
+
+  isWorkRequest(content) {
+    const text = String(content || "").trim().toLowerCase();
+    if (this.detectTaskIntent(text)) return true;
+    if (text.length < 50) return false;
+    const actionVerbs = ["build", "create", "implement", "fix", "deploy", "analyze", "prepare", "crée", "fais", "déploie", "corrige", "analyse"];
+    const hits = actionVerbs.filter((v) => text.includes(v)).length;
+    const multiTopic = /,|;|\bet\b|\band\b/.test(text);
+    return hits >= 1 && multiTopic;
+  }
+
+  async recallWorkspaceContext(queryText) {
+    return this.sniparaCall("rlm_recall", {
+      query: String(queryText || "project context decisions standards").slice(0, 400),
+      scope: "project",
+      category: "workspace-decisions",
+      limit: 8
+    }).catch(() => "");
+  }
+
+  async updateSharedContext(text) {
+    if (!text) return;
+    await this.sniparaCall("rlm_shared_context", {
+      scope: "project",
+      category: "workspace-shared",
+      text: String(text).slice(0, 3000)
+    }).catch(() => {});
+  }
+
+  async decomposeWithLLM(messageText, channelAgents = []) {
+    const available = channelAgents.map((a) => (a.username || a.name || "").toLowerCase()).filter(Boolean);
+    const prompt = `Décompose la demande en 1-5 sous-tâches JSON strict uniquement: {"tasks":[{"title":"...","description":"...","priority":"high|medium|low","agent":"username"}]}. Agents disponibles: ${available.join(", ")}. Demande: ${messageText}`;
+    try {
+      const r = await llmChat(
+        { model: process.env.OPENAI_MODEL || "gpt-4o-mini", provider: "openai", temperature: 0.2, max_tokens: 900 },
+        [{ role: "user", content: prompt }]
+      );
+      const raw = String(r?.content || "{}");
+      const json = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
+      if (Array.isArray(json.tasks) && json.tasks.length) return json.tasks;
+    } catch (_) {}
+    return [{ title: String(messageText).slice(0, 120), description: messageText, priority: "medium" }];
+  }
+
+  resolveAgentForSubtask(task, channelAgents = []) {
+    const available = new Set(channelAgents.map((a) => (a.username || a.name || "").toLowerCase()));
+    const preferred = String(task.agent || "").toLowerCase();
+    if (preferred && available.has(preferred)) return preferred;
+    const bySkills = this.pickBestAgent(task);
+    if (!available.size || available.has(bySkills)) return bySkills;
+    return [...available][0] || bySkills;
+  }
+
+  async analyzeAndRoute(message, channelAgents = []) {
+    const text = typeof message === "string" ? message : (message?.content || "");
+    if (!this.isWorkRequest(text)) return { routed: false, reason: "not_work_request" };
+
+    const recalled = await this.recallWorkspaceContext(text);
+    const subtasks = await this.decomposeWithLLM(`${text}\n\nContexte workspace:\n${recalled || ""}`, channelAgents);
+    const created = [];
+    const { getWorkflowModeSelector } = require("../../../services/workflowMode");
+
+    for (const s of subtasks) {
+      const agent = this.resolveAgentForSubtask(s, channelAgents);
+      const workflow = getWorkflowModeSelector().score(s);
+      const enrichedDescription = `${s.description || ""}\n\n[Workflow: ${workflow.mode}]\n[Workspace context]\n${String(recalled || "").slice(0, 1200)}`;
+      const res = await this.createTask({
+        title: s.title,
+        description: enrichedDescription,
+        priority: s.priority || "medium",
+        for_agent_id: agent,
+        metadata: { workflow_mode: workflow.mode, workflow_score: workflow.score }
+      });
+      created.push({ ...res, subtask: s, agent });
+    }
+
+    await this.updateSharedContext(`Current priorities: ${subtasks.map((s) => s.title).join(" | ")}`);
+
+    return { routed: true, created_count: created.length, tasks: created };
+  }
+
+  // ─── syncFromSnipara ──────────────────────────────────────────────────────
+  // Pull toutes les tâches depuis Snipara et upsert dans PG en préservant la
+  // hiérarchie parent_id. Retourne { synced, errors, total }.
+
+  async syncFromSnipara() {
+    const data = await this.sniparaCall("rlm_tasks", { swarm_id: this.swarmId });
+    const arr = Array.isArray(data?.tasks) ? data.tasks : (Array.isArray(data) ? data : []);
+
+    let synced = 0;
+    let errors = 0;
+
+    // First pass: upsert all tasks (sans résolution parent_id)
+    const idMap = {}; // sniparaId -> pgUUID
+    for (const t of arr) {
+      const sniparaId = t.id || t.task_id;
+      if (!sniparaId) continue;
+      try {
+        const pgId = await this.upsertPgTaskFromSwarm({
+          swarmTaskId: sniparaId,
+          title: t.title,
+          description: t.description,
+          priority: t.priority,
+          status: t.status,
+          assignedTo: t.assigned_to || t.for_agent_id || t.agent_id,
+          source: "snipara-sync"
+        });
+        idMap[sniparaId] = pgId;
+        synced++;
+      } catch (e) {
+        console.error("[SwarmCoordinator] syncFromSnipara upsert error:", e.message);
+        errors++;
+      }
+    }
+
+    // Second pass: wire parent_id pour les tâches qui ont un parent
+    for (const t of arr) {
+      const sniparaId = t.id || t.task_id;
+      const parentSniparaId = t.parent_id || t.parent_task_id;
+      if (!sniparaId || !parentSniparaId) continue;
+      const pgId = idMap[sniparaId];
+      const pgParentId = idMap[parentSniparaId];
+      if (!pgId || !pgParentId) continue;
+      try {
+        await pool.query(
+          `UPDATE ${SCHEMA}.tasks SET parent_id = $1 WHERE id = $2 AND (parent_id IS NULL OR parent_id != $1)`,
+          [pgParentId, pgId]
+        );
+      } catch (e) {
+        console.error("[SwarmCoordinator] syncFromSnipara parent_id wire error:", e.message);
+      }
+    }
+
+    return { synced, errors, total: arr.length };
   }
 
   async postTaskMessageToAgentChannel(agentId, title, priority) {
