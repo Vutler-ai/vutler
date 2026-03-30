@@ -84,13 +84,8 @@ function AgentAvatar({ agent, size = 8 }: { agent: Agent; size?: number }) {
 
 // ─── Deploy Modal (multi-step) ────────────────────────────────────────────────
 
-type DeployStep = 'select' | 'local-agents' | 'local-routing' | 'local-token' | 'ent-basics' | 'ent-primary' | 'ent-pool' | 'ent-spawn-rules' | 'ent-token';
+type DeployStep = 'select' | 'local-config' | 'local-token' | 'ent-basics' | 'ent-primary' | 'ent-pool' | 'ent-spawn-rules' | 'ent-token';
 type DeployMode = 'local' | 'enterprise';
-
-interface RoutingRule {
-  pattern: string;
-  agentId: string;
-}
 
 function DeployModal({
   onClose,
@@ -101,21 +96,25 @@ function DeployModal({
   initialMode?: DeployMode;
   initialClientName?: string;
 }) {
-  const [step, setStep] = useState<DeployStep>(initialMode === 'local' ? 'local-agents' : initialMode === 'enterprise' ? 'ent-basics' : 'select');
+  const [step, setStep] = useState<DeployStep>(initialMode === 'local' ? 'local-config' : initialMode === 'enterprise' ? 'ent-basics' : 'select');
   const [mode, setMode] = useState<DeployMode>(initialMode ?? 'local');
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Workspace agents
+  // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
 
-  // Local: step 1 — multi-select agents
-  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
-  // Local: step 2 — routing rules (pattern → agentId)
-  const [routingRules, setRoutingRules] = useState<RoutingRule[]>([]);
+  // Local: config
+  const [localNodeName, setLocalNodeName] = useState('');
+  const [permFilesystem, setPermFilesystem] = useState(true);
+  const [permShell, setPermShell] = useState(false);
+  const [permMail, setPermMail] = useState(true);
+  const [permCalendar, setPermCalendar] = useState(true);
+  const [permContacts, setPermContacts] = useState(true);
+  const [permClipboard, setPermClipboard] = useState(false);
 
   // Enterprise: step 1 — basics
   const [nodeName, setNodeName] = useState('');
@@ -131,8 +130,12 @@ function DeployModal({
   const [newSpawnPattern, setNewSpawnPattern] = useState('');
   const [newSpawnAgentName, setNewSpawnAgentName] = useState('');
 
+  const toggleAgentId = (id: string, ids: string[], setIds: (v: string[]) => void) => {
+    setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  };
+
   useEffect(() => {
-    const needsAgents = ['local-agents', 'local-routing', 'ent-primary', 'ent-pool'].includes(step);
+    const needsAgents = ['ent-primary', 'ent-pool'].includes(step);
     if (needsAgents && agents.length === 0 && !agentsLoading) {
       setAgentsLoading(true);
       getAgents()
@@ -142,30 +145,18 @@ function DeployModal({
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-generate routing rules when moving from agent selection to routing step
-  const goToLocalRouting = () => {
-    const generated = selectedAgentIds.map((id) => {
-      const a = agents.find((ag) => ag.id === id);
-      return { pattern: a?.name?.toLowerCase().replace(/\s+/g, '-') ?? id, agentId: id };
-    });
-    setRoutingRules(generated);
-    setStep('local-routing');
-  };
-
-  const toggleAgentId = (id: string, ids: string[], setIds: (v: string[]) => void) => {
-    setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
-  };
-
   const handleGenerate = async () => {
     setError('');
     setLoading(true);
     try {
       let result: { token: string };
       if (mode === 'local') {
+        const permissions = { filesystem: permFilesystem, shell: permShell, mail: permMail, calendar: permCalendar, contacts: permContacts, clipboard: permClipboard };
         result = await deployLocal({
-          agentIds: selectedAgentIds,
-          routingRules,
-        });
+          agentIds: ['local-node'],
+          nodeName: localNodeName.trim() || undefined,
+          permissions,
+        } as any);
         setToken(result.token);
         setStep('local-token');
       } else {
@@ -206,9 +197,8 @@ function DeployModal({
 
   const stepLabel: Record<DeployStep, string> = {
     select: 'Choose type',
-    'local-agents': '1 of 3 — Select agents',
-    'local-routing': '2 of 3 — Routing rules',
-    'local-token': '3 of 3 — Token',
+    'local-config': '1 of 2 — Configure node',
+    'local-token': '2 of 2 — Install & Connect',
     'ent-basics': '1 of 5 — Basics',
     'ent-primary': '2 of 5 — Primary agent',
     'ent-pool': '3 of 5 — Agent pool',
@@ -242,9 +232,9 @@ function DeployModal({
                 {
                   m: 'local' as DeployMode,
                   icon: '💻',
-                  label: 'Clone Agent',
+                  label: 'Personal Node',
                   badge: 'Local',
-                  desc: 'Run existing agents on your local machine. Shared memory and personality.',
+                  desc: 'Connect your computer so agents can search files, read emails, calendar, and more.',
                   badgeCls: MODE_BADGE.local,
                   borderHover: 'hover:border-blue-500/50',
                   bgHover: 'hover:bg-blue-900/5',
@@ -264,7 +254,7 @@ function DeployModal({
               ] as const).map(({ m, icon, label, badge, desc, badgeCls, borderHover, bgHover, textHover }) => (
                 <button
                   key={m}
-                  onClick={() => { setMode(m); setStep(m === 'local' ? 'local-agents' : 'ent-basics'); }}
+                  onClick={() => { setMode(m); setStep(m === 'local' ? 'local-config' : 'ent-basics'); }}
                   className={`flex flex-col items-start gap-2 p-4 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] ${borderHover} ${bgHover} rounded-xl text-left transition-all group`}
                 >
                   <span className="text-2xl">{icon}</span>
@@ -277,91 +267,51 @@ function DeployModal({
           </div>
         )}
 
-        {/* ── LOCAL: Step 1 — multi-select agents ── */}
-        {step === 'local-agents' && (
+        {/* ── LOCAL: Step 1 — configure node & permissions ── */}
+        {step === 'local-config' && (
           <div className="space-y-4">
             {!initialMode && (
               <button onClick={() => setStep('select')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
             )}
-            <p className="text-[#9ca3af] text-sm">Select one or more agents to deploy to this local node.</p>
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-              {agentsLoading && (
-                <div className="space-y-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-12 bg-[#0a0b14] rounded-lg animate-pulse" />
-                  ))}
-                </div>
-              )}
-              {!agentsLoading && agents.map((agent) => {
-                const checked = selectedAgentIds.includes(agent.id);
-                return (
-                  <label
-                    key={agent.id}
-                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
-                      checked
-                        ? 'border-[#3b82f6]/60 bg-[#3b82f6]/5'
-                        : 'border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-[rgba(255,255,255,0.14)]'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleAgentId(agent.id, selectedAgentIds, setSelectedAgentIds)}
-                      className="w-4 h-4 accent-[#3b82f6] shrink-0"
-                    />
-                    <AgentAvatar agent={agent} size={8} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white font-medium truncate">{agent.name}</p>
-                      {agent.model && <p className="text-xs text-[#6b7280] truncate">{agent.model}</p>}
-                    </div>
-                  </label>
-                );
-              })}
-              {!agentsLoading && agents.length === 0 && (
-                <p className="text-sm text-[#6b7280] text-center py-6">No agents found in your workspace.</p>
-              )}
-            </div>
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-            <button
-              onClick={() => {
-                if (selectedAgentIds.length === 0) { setError('Select at least one agent'); return; }
-                setError('');
-                goToLocalRouting();
-              }}
-              className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-            >
-              Next →
-            </button>
-          </div>
-        )}
+            <p className="text-[#9ca3af] text-sm">Name your node and choose what your agents can access on this machine.</p>
 
-        {/* ── LOCAL: Step 2 — routing rules ── */}
-        {step === 'local-routing' && (
-          <div className="space-y-4">
-            <button onClick={() => setStep('local-agents')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
-            <p className="text-[#9ca3af] text-sm">Review auto-generated routing rules. Edit patterns as needed.</p>
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {routingRules.map((rule, idx) => {
-                const agentName = agents.find((a) => a.id === rule.agentId)?.name ?? rule.agentId;
-                return (
-                  <div key={idx} className="flex items-center gap-2 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2">
-                    <input
-                      type="text"
-                      value={rule.pattern}
-                      onChange={(e) => {
-                        const updated = [...routingRules];
-                        updated[idx] = { ...updated[idx], pattern: e.target.value };
-                        setRoutingRules(updated);
-                      }}
-                      placeholder="pattern"
-                      className="flex-1 bg-transparent text-white text-xs placeholder-[#4b5563] focus:outline-none"
-                    />
-                    <span className="text-[#4b5563] text-xs shrink-0">→</span>
-                    <span className="text-[#9ca3af] text-xs truncate max-w-[120px] shrink-0">{agentName}</span>
-                  </div>
-                );
-              })}
+            <div className="space-y-1.5">
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Node Name</label>
+              <input
+                type="text"
+                value={localNodeName}
+                onChange={(e) => setLocalNodeName(e.target.value)}
+                placeholder="e.g. MacBook Pro Antoine"
+                className={inputCls}
+              />
             </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Permissions</label>
+              <div className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg divide-y divide-[rgba(255,255,255,0.05)]">
+                {([
+                  { label: 'Files & Search', desc: 'Search, read, and browse files', on: permFilesystem, toggle: () => setPermFilesystem(!permFilesystem), icon: '📁' },
+                  { label: 'Mail', desc: 'Read and search emails', on: permMail, toggle: () => setPermMail(!permMail), icon: '✉️' },
+                  { label: 'Calendar', desc: 'Read upcoming events', on: permCalendar, toggle: () => setPermCalendar(!permCalendar), icon: '📅' },
+                  { label: 'Contacts', desc: 'Search contacts', on: permContacts, toggle: () => setPermContacts(!permContacts), icon: '👤' },
+                  { label: 'Clipboard', desc: 'Read clipboard content', on: permClipboard, toggle: () => setPermClipboard(!permClipboard), icon: '📋' },
+                  { label: 'Shell', desc: 'Execute terminal commands', on: permShell, toggle: () => setPermShell(!permShell), icon: '⚡' },
+                ] as const).map(({ label, desc, on, toggle, icon }) => (
+                  <div key={label} className="flex items-center justify-between px-3 py-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base">{icon}</span>
+                      <div>
+                        <p className="text-sm text-white">{label}</p>
+                        <p className="text-xs text-[#6b7280]">{desc}</p>
+                      </div>
+                    </div>
+                    <Toggle on={on} onToggle={toggle} />
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-[#6b7280]">You can change these later in the Nexus app settings.</p>
+            </div>
+
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button
               onClick={handleGenerate}
@@ -369,7 +319,7 @@ function DeployModal({
               className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
               {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-              {loading ? 'Generating…' : 'Generate Token'}
+              {loading ? 'Generating…' : 'Generate & Continue →'}
             </button>
           </div>
         )}
