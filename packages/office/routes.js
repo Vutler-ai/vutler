@@ -65,6 +65,9 @@ mount('/calendar', 'calendar', '../../api/calendar');
 mount('/integrations', 'integrations', '../../api/integrations');
 mount('/providers', 'integrations', '../../api/providers');
 
+// ── Jira ────────────────────────────────────────────────────────────────────
+mount('/jira', 'integrations', '../../api/jira');
+
 // ── Dashboard ───────────────────────────────────────────────────────────────
 mount('/dashboard', 'dashboard', '../../api/dashboard');
 

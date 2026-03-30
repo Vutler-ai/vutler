@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const { pool } = require('../lib/postgres');
 const sniparaService = require('./sniparaService');
 const { executeTaskViaLLM } = require('./taskExecutor');
@@ -35,6 +36,68 @@ function classifyAndAssign(task) {
     return { agent: bestMatch.agent, priority: bestMatch.priority };
   }
   return { agent: 'dev-story-executor', priority: task.priority || 'P2' };
+}
+
+/**
+ * Match the most relevant skill for a task using keyword scoring (no LLM).
+ *
+ * @param {string} taskTitle
+ * @param {string} taskDescription
+ * @param {string[]} agentSkills - Array of skill keys the agent has
+ * @returns {string|null} Best matching skill key, or null if no match above threshold
+ */
+function matchSkillToTask(taskTitle, taskDescription, agentSkills) {
+  if (!Array.isArray(agentSkills) || agentSkills.length === 0) return null;
+
+  let manifest = {};
+  try {
+    const manifestPath = path.join(__dirname, '../seeds/skill-handlers.json');
+    manifest = require(manifestPath);
+  } catch (err) {
+    console.warn('[TaskRouter] matchSkillToTask: could not load skill-handlers.json:', err.message);
+    return null;
+  }
+
+  const text = ((taskTitle || '') + ' ' + (taskDescription || '')).toLowerCase();
+  const words = text.match(/\w+/g) || [];
+  const wordSet = new Set(words);
+
+  const MATCH_THRESHOLD = 1;
+  let bestSkill = null;
+  let bestScore = MATCH_THRESHOLD - 1;
+
+  for (const skillKey of agentSkills) {
+    if (typeof skillKey !== 'string') continue;
+
+    // Tokenise the skill key itself (e.g. "lead_scoring" → ["lead", "scoring"])
+    const keyTokens = skillKey.toLowerCase().split(/[_\-\s]+/);
+
+    // Collect additional tokens from the manifest entry description / params
+    const manifestEntry = manifest[skillKey] || {};
+    const descTokens = [];
+    if (manifestEntry.description) {
+      const d = manifestEntry.description.toLowerCase().match(/\w+/g) || [];
+      descTokens.push(...d);
+    }
+    // Also tokenise param names for extra keyword surface
+    if (manifestEntry.params_schema?.properties) {
+      for (const paramKey of Object.keys(manifestEntry.params_schema.properties)) {
+        descTokens.push(...paramKey.toLowerCase().split(/[_\-\s]+/));
+        const paramDesc = manifestEntry.params_schema.properties[paramKey]?.description || '';
+        if (paramDesc) descTokens.push(...(paramDesc.toLowerCase().match(/\w+/g) || []));
+      }
+    }
+
+    const allTokens = [...keyTokens, ...descTokens];
+    const score = allTokens.reduce((s, t) => s + (wordSet.has(t) ? 1 : 0), 0);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestSkill = skillKey;
+    }
+  }
+
+  return bestSkill;
 }
 
 /**
@@ -75,6 +138,27 @@ async function createTask({ title, description, source, source_ref, priority, du
     }
     if (!priority) priority = 'P2';
 
+    // Skill matching: resolve the best skill for this task based on the assigned agent's skills.
+    // We look up the agent's skills from DB so we don't rely on the caller passing them in.
+    let enrichedMetadata = { ...(metadata || {}) };
+    if (assigned_agent && !enrichedMetadata.skill_key) {
+      try {
+        const agentRow = await pool.query(
+          `SELECT config FROM ${SCHEMA}.agents WHERE username = $1 LIMIT 1`,
+          [assigned_agent]
+        );
+        const agentConfig = agentRow.rows[0]?.config || {};
+        const agentSkills = agentConfig.skills || [];
+        const matchedSkill = matchSkillToTask(title, description, agentSkills);
+        if (matchedSkill) {
+          enrichedMetadata.skill_key = matchedSkill;
+          console.log(`[TaskRouter] Matched skill "${matchedSkill}" for agent "${assigned_agent}"`);
+        }
+      } catch (skillErr) {
+        console.warn('[TaskRouter] Skill matching failed (non-fatal):', skillErr.message);
+      }
+    }
+
     let reminder_at = null;
     let escalation_at = null;
     if (due_date) {
@@ -87,7 +171,7 @@ async function createTask({ title, description, source, source_ref, priority, du
       `INSERT INTO ${SCHEMA}.tasks (title, description, source, source_ref, priority, assignee, assigned_agent, created_by, due_date, reminder_at, escalation_at, workspace_id, metadata)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
-      [title, description || null, source || null, source_ref || null, priority, created_by || null, assigned_agent, created_by || null, due_date || null, reminder_at, escalation_at, workspace_id || '00000000-0000-0000-0000-000000000001', JSON.stringify(metadata || {})]
+      [title, description || null, source || null, source_ref || null, priority, created_by || null, assigned_agent, created_by || null, due_date || null, reminder_at, escalation_at, workspace_id || '00000000-0000-0000-0000-000000000001', JSON.stringify(enrichedMetadata)]
     );
 
     const task = result.rows[0];

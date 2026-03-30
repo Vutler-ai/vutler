@@ -6,7 +6,23 @@ const TOOL_TIMEOUT_MS = 30000;
 const TOOL_CALL_TYPE = 'tool.call';
 const pendingToolCalls = new Map();
 
+// ── Skill execution tool — allows the LLM to invoke a registered skill on the local Nexus node ──
+
+const SKILL_EXECUTION_TOOL = {
+  name: 'execute_skill',
+  description: 'Execute a specific agent skill on the local Nexus node',
+  input_schema: {
+    type: 'object',
+    properties: {
+      skill_key: { type: 'string', description: 'The skill identifier' },
+      params: { type: 'object', description: 'Skill-specific parameters' },
+    },
+    required: ['skill_key'],
+  },
+};
+
 const NEXUS_TOOLS = [
+  SKILL_EXECUTION_TOOL,
   {
     name: 'search_files',
     description: "Search for files on the user's local computer by name or content.",
@@ -92,6 +108,7 @@ const NEXUS_TOOL_NAMES = new Set(NEXUS_TOOLS.map((t) => t.name));
 function mapToolToNexus(toolName, args = {}) {
   const hasQuery = typeof args.query === 'string' && args.query.trim().length > 0;
   switch (toolName) {
+    case 'execute_skill':  return 'execute_skill';
     case 'search_files':   return 'search';
     case 'read_document':  return 'read_document';
     case 'list_directory':  return 'list_dir';
@@ -196,6 +213,7 @@ function handleToolResult(requestId, success, data, error) {
 module.exports = {
   NEXUS_TOOLS,
   NEXUS_TOOL_NAMES,
+  SKILL_EXECUTION_TOOL,
   getOnlineNexusNode,
   getNexusToolsForWorkspace,
   executeNexusTool,

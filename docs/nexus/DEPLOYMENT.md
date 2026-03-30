@@ -533,6 +533,105 @@ Restart Nexus after changes:
 pm2 restart nexus
 ```
 
+## Enterprise Configuration
+
+### Rate Limits
+
+Rate limiting is applied at the Express middleware level using `express-rate-limit`. The defaults are:
+
+| Endpoint | `windowMs` | `max` |
+|----------|-----------|-------|
+| `POST /runtime/heartbeat` | 60,000 ms (1 min) | 2 |
+| `POST /register` | 900,000 ms (15 min) | 5 |
+| `POST /keys` | 3,600,000 ms (1 hour) | 10 |
+
+To adjust these, edit `api/nexus.js` and modify the `rateLimit(...)` call for the relevant endpoint. The values are hardcoded — they are not controlled by environment variables.
+
+### Encryption Key Derivation
+
+The offline queue uses AES-256-GCM encryption. The key is derived from the Nexus API key at runtime:
+
+```
+key = PBKDF2-SHA512(apiKey, salt, iterations=100_000, keylen=32)
+```
+
+The salt is a 32-byte random value stored at `<queue_path>/.salt`. It is generated once on first startup and reused for all subsequent encryptions on that node.
+
+**Operational notes:**
+- If the API key changes, existing `.enc` queue files cannot be decrypted. Drain or purge the queue before rotating the key.
+- The salt file must be backed up alongside the queue if you need to decrypt archived items later.
+- Without an API key (`VUTLER_KEY` unset), queue files are written as plain-text `.json`. They are automatically migrated to `.enc` the first time a sync cycle runs with a key present.
+
+### DLQ Management
+
+The dead letter queue (DLQ) holds items that have failed 5 consecutive sync attempts. Default paths:
+
+```
+Queue:  ~/.vutler/offline-queue/
+DLQ:    ~/.vutler/queue/dlq/
+```
+
+Both paths are configurable via `opts.queue_path` and `opts.dlq_path` in `OfflineMonitor`.
+
+**Check DLQ state:**
+```javascript
+const { count, oldestTask, newestTask } = monitor.getDLQStatus();
+```
+
+**Requeue all DLQ items** (resets attempt counter):
+```javascript
+const { requeued } = monitor.retryDLQ();
+```
+
+**Requeue a single item by taskId prefix:**
+```javascript
+const { requeued, notFound } = monitor.retryDLQ('f47ac10b');
+```
+
+**Manual drain (remove all DLQ files):**
+```bash
+rm -rf ~/.vutler/queue/dlq/*.enc ~/.vutler/queue/dlq/*.json
+```
+
+**Inspect a DLQ meta file:**
+```bash
+cat ~/.vutler/queue/dlq/1743350400000-f47ac10b.meta.json
+# { "attempts": 5, "lastAttempt": "...", "lastError": "...", "movedToDLQ": "..." }
+```
+
+### Cron Whitelist
+
+Offline cron tasks run via `execFileSync` (no shell). Only binaries in the whitelist are accepted. To add a custom binary, edit `packages/nexus/lib/offline-monitor.js` and add it to `ALLOWED_CRON_BINARIES`:
+
+```javascript
+const ALLOWED_CRON_BINARIES = new Set([
+  // ... existing entries
+  'my-custom-tool',  // add here
+]);
+```
+
+The whitelist check uses `path.basename(tokens[0])`, so both `my-custom-tool` and `/usr/local/bin/my-custom-tool` resolve to the same base name for the check — the actual path passed in the config is used as the executable.
+
+Restart Nexus after modifying the whitelist.
+
+**Cron task config example** (in `offline_config`):
+```javascript
+offline_config: {
+  enabled: true,
+  cron_tasks: [
+    {
+      id: 'health-ping',
+      command: 'curl https://status.example.com/ping',
+      interval_seconds: 300
+    }
+  ]
+}
+```
+
+Each task is limited to 30 seconds execution time and 512 KB of output. Output is capped to 4 KB when stored in the queue.
+
+---
+
 ## Production Checklist
 
 Before deploying to production:
@@ -548,7 +647,11 @@ Before deploying to production:
 - [ ] Database migrations applied
 - [ ] Memory limits enforced (500MB max)
 - [ ] File permissions locked down (700 for .vutler/)
-- [ ] Backup strategy for permissions.json + offline queue
+- [ ] Backup strategy for permissions.json + offline queue + `.salt` file
+- [ ] DLQ path writable and monitored (`~/.vutler/queue/dlq/`)
+- [ ] Disk space > 500 MB available for queue path
+- [ ] `NEXUS_DEV_BYPASS` is NOT set in production `.env`
+- [ ] `max_seats` configured on enterprise nodes if seat enforcement is required
 - [ ] Graceful shutdown tested (SIGTERM → close WS → stop tasks)
 
 ## Scaling Considerations

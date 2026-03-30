@@ -289,6 +289,39 @@ async function processMessage(msg) {
       return;
     }
 
+    // ── Runbook detection ────────────────────────────────────────────────────
+    // If the message looks like a runbook (numbered action list, "runbook:",
+    // "execute these steps", etc.) parse it and send a preview for confirmation.
+    // The user confirms via the /runbooks/execute API; the chat just previews.
+    try {
+      const { isRunbookIntent, parseRunbookFromText } = require('../../../services/runbooks');
+      if (isRunbookIntent(msg.content)) {
+        console.log(`[ChatRuntime] Runbook intent detected in message ${msg.id}`);
+        const runbook = await parseRunbookFromText(msg.content).catch(() => null);
+        if (runbook && runbook.steps && runbook.steps.length >= 2) {
+          const stepsPreview = runbook.steps
+            .map((s) => `  ${s.order}. ${s.action}${s.target ? ` [vault: ${s.target}]` : ''}`)
+            .join('\n');
+          const preview =
+            `J'ai détecté un runbook dans ton message.\n\n` +
+            `**${runbook.name}**\n${runbook.description ? runbook.description + '\n' : ''}` +
+            `\nÉtapes (${runbook.steps.length}) :\n${stepsPreview}\n\n` +
+            `Pour lancer l'exécution : \`POST /api/v1/runbooks/execute\` avec ce runbook. ` +
+            `Ou confirme ici avec "yes, execute" pour que je le lance directement.`;
+
+          await pool.query(
+            `INSERT INTO ${SCHEMA}.chat_messages
+               (channel_id, sender_id, sender_name, content, message_type, workspace_id, processed_at)
+             VALUES ($1, $2, $3, $4, 'text', $5, NOW())`,
+            [msg.channel_id, 'mike', 'Mike', preview, DEFAULT_WORKSPACE]
+          );
+          return;
+        }
+      }
+    } catch (rbErr) {
+      console.warn('[ChatRuntime] Runbook detection error (non-blocking):', rbErr.message);
+    }
+
     const swarmCoordinator = getSwarmCoordinator();
     try {
       const routing = await swarmCoordinator.analyzeAndRoute(msg, channelAgents);

@@ -2,6 +2,7 @@
  * Nexus API — real deployment/runtime flow (API-key-first cloud)
  */
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { requireApiKey } = require('../lib/auth');
 const pool = require('../lib/vaultbrix');
 const {
@@ -13,6 +14,32 @@ const {
 } = require('../services/apiKeys');
 
 const router = express.Router();
+
+// Rate limiters for sensitive endpoints
+const heartbeatLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 2,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ success: false, error: 'Rate limit exceeded' }),
+});
+
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ success: false, error: 'Rate limit exceeded' }),
+});
+
+const keysCreateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => res.status(429).json({ success: false, error: 'Rate limit exceeded' }),
+});
+
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const HEARTBEAT_ONLINE_SECONDS = 90;
@@ -93,6 +120,31 @@ async function ensureNexusNodesTable() {
   } catch (err) {
     console.warn('[NEXUS] ensureNexusNodesTable warning (table may already exist):', err.message);
   }
+}
+
+/**
+ * Validate seat quota for a given node.
+ * @param {string} nodeId
+ * @param {string} workspaceId
+ * @returns {{ allowed: boolean, current: number, max: number|null }}
+ */
+async function validateSeatQuota(nodeId, workspaceId) {
+  const nodeRes = await pool.query(
+    `SELECT agents_deployed, config FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+    [nodeId, workspaceId]
+  );
+  if (!nodeRes.rows.length) return null; // node not found — caller handles 404
+
+  const row = nodeRes.rows[0];
+  const agentsDeployed = Array.isArray(row.agents_deployed) ? row.agents_deployed : [];
+  const current = agentsDeployed.length;
+  const max = row.config?.max_seats ?? row.config?.seats ?? null;
+
+  return {
+    allowed: max === null || current < max,
+    current,
+    max,
+  };
 }
 
 function mapNode(row) {
@@ -213,7 +265,7 @@ router.get('/keys', async (req, res) => {
   }
 });
 
-router.post('/keys', async (req, res) => {
+router.post('/keys', keysCreateLimiter, async (req, res) => {
   try {
     await ensureApiKeysTable();
     const created = await createApiKey({
@@ -322,7 +374,7 @@ router.post('/deploy/plan', async (req, res) => {
 });
 
 // Runtime heartbeat requires API key auth (strict)
-router.post('/runtime/heartbeat', requireApiKey, async (req, res) => {
+router.post('/runtime/heartbeat', heartbeatLimiter, requireApiKey, async (req, res) => {
   try {
     await ensureNexusTables();
 
@@ -511,7 +563,7 @@ router.get('/status', async (req, res) => {
   }
 });
 
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     // Extract API key from Authorization header or body
     const authHeader = req.headers['authorization'] || '';
@@ -529,56 +581,34 @@ router.post('/register', async (req, res) => {
     let workspaceId = DEFAULT_WORKSPACE;
     let nodeId;
     let authMethod;
-    const isDev = process.env.NODE_ENV !== 'production';
 
-    // In dev mode: accept any key prefixed with "vutler_" without DB validation
-    if (isDev && secret.startsWith('vutler_')) {
-      try {
-        await ensureApiKeysTable();
-        await ensureNexusNodesTable();
-        const keyRecord = await resolveApiKey(secret);
-        if (keyRecord) {
-          workspaceId = keyRecord.workspace_id;
-          authMethod = 'api_key';
-        }
-      } catch (_) { /* DB down in dev — ignore */ }
-
-      if (!authMethod) {
-        console.warn('[NEXUS] Dev mode — accepting key without DB validation');
-        authMethod = 'dev_mode';
-      }
-
-      nodeId = require('crypto').randomUUID();
-      // Try to persist to DB (best effort)
-      try {
-        const insert = await pool.query(
-          `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
-           VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
-           RETURNING id`,
-          [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
-        );
-        nodeId = insert.rows[0].id;
-      } catch (_) { /* DB down — use random UUID */ }
-
-    } else {
-      // Production mode: strict DB validation
-      await ensureApiKeysTable();
-      await ensureNexusNodesTable();
-      const keyRecord = await resolveApiKey(secret);
-      if (!keyRecord) {
-        return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
-      }
-      workspaceId = keyRecord.workspace_id;
-      authMethod = 'api_key';
-
-      const insert = await pool.query(
-        `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
-         VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
-         RETURNING id`,
-        [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
-      );
-      nodeId = insert.rows[0].id;
+    // Security guard: dev mode bypass is strictly forbidden in production
+    if (process.env.NODE_ENV === 'production' && process.env.NEXUS_DEV_BYPASS === 'true') {
+      console.error('[NEXUS][SECURITY] NEXUS_DEV_BYPASS is set in production — ignoring. This is a critical misconfiguration.');
     }
+
+    // Always validate the API key against the DB regardless of environment
+    await ensureApiKeysTable();
+    await ensureNexusNodesTable();
+    const keyRecord = await resolveApiKey(secret);
+
+    if (!keyRecord) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[NEXUS] Dev mode — key not found in DB, rejecting (no bypass allowed):', secret.slice(0, 12) + '...');
+      }
+      return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
+    }
+
+    workspaceId = keyRecord.workspace_id;
+    authMethod = 'api_key';
+
+    const insert = await pool.query(
+      `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+       VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+       RETURNING id`,
+      [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+    );
+    nodeId = insert.rows[0].id;
 
     console.log(`[NEXUS] Node registered: ${nodeName} (${nodeId}) [${authMethod}]`);
 
@@ -664,6 +694,34 @@ router.post('/smoke-test', async (req, res) => {
 
 
 // Node runtime operations
+
+/**
+ * GET /:nodeId/seats
+ * Returns seat quota status for an enterprise node.
+ */
+router.get('/:nodeId/seats', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+
+    const quota = await validateSeatQuota(nodeId, workspaceId);
+    if (!quota) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    res.json({
+      success: true,
+      data: {
+        current: quota.current,
+        max: quota.max,
+        available: quota.max !== null ? quota.max - quota.current : null,
+      },
+    });
+  } catch (err) {
+    console.error('[NEXUS] Seats error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.put('/:id', async (req, res) => {
   try {
     await ensureNexusNodesTable();
@@ -713,6 +771,15 @@ router.post('/:id/deploy', async (req, res) => {
 
     const nodeRes = await pool.query(`SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`, [req.params.id, workspaceId]);
     if (!nodeRes.rows.length) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    // Seat quota enforcement
+    const quota = await validateSeatQuota(req.params.id, workspaceId);
+    if (quota && !quota.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: `Seat quota exceeded (${quota.current}/${quota.max})`,
+      });
+    }
 
     const node = nodeRes.rows[0];
     const deployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
@@ -1030,11 +1097,16 @@ router.post('/:nodeId/agents/create', async (req, res) => {
       return res.status(403).json({ success: false, error: 'agent creation is only available in enterprise mode' });
     }
 
-    const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
-    const maxSeats = node.config?.max_seats || null;
-    if (maxSeats !== null && agentsDeployed.length >= maxSeats) {
-      return res.status(400).json({ success: false, error: `Node is at capacity (${maxSeats} seats)` });
+    // Seat quota enforcement
+    const quota = await validateSeatQuota(nodeId, workspaceId);
+    if (quota && !quota.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: `Seat quota exceeded (${quota.current}/${quota.max})`,
+      });
     }
+
+    const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
 
     const {
       name, username, role = 'general', system_prompt, model = 'gpt-5.4',
@@ -1076,15 +1148,147 @@ router.post('/:nodeId/agents/create', async (req, res) => {
       [nodeId, workspaceId, JSON.stringify(agentsDeployed)]
     );
 
-    const seatsUsed = agentsDeployed.length;
-
     res.status(201).json({
       success: true,
       agent: { ...agent, snipara_instance_id: sniparaInstanceId },
-      seats: { used: seatsUsed, max: maxSeats },
+      seats: { used: agentsDeployed.length, max: quota?.max ?? null },
     });
   } catch (err) {
     console.error('[NEXUS] Create agent error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Metrics endpoints ─────────────────────────────────────────────────────────
+
+const nexusMetrics = require('../services/nexusMetrics');
+
+/**
+ * GET /metrics
+ * Global metrics snapshot for the workspace.
+ */
+router.get('/metrics', async (req, res) => {
+  try {
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const data = nexusMetrics.getMetrics(workspaceId);
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[NEXUS-METRICS] GET /metrics error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /metrics/:nodeId
+ * Metrics scoped to a specific node (filters byAgent to agents deployed on that node).
+ */
+router.get('/metrics/:nodeId', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+
+    // Verify node belongs to this workspace
+    const nodeRes = await pool.query(
+      `SELECT agents_deployed FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`,
+      [nodeId, workspaceId]
+    );
+    if (!nodeRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    const agentsDeployed = Array.isArray(nodeRes.rows[0].agents_deployed)
+      ? nodeRes.rows[0].agents_deployed
+      : [];
+    const nodeAgentIds = new Set(
+      agentsDeployed.map(a => (typeof a === 'string' ? a : a.id)).filter(Boolean)
+    );
+
+    // Get full workspace metrics and filter byAgent to this node's agents
+    const snapshot = nexusMetrics.getMetrics(workspaceId);
+    const filteredByAgent = snapshot.byAgent.filter(b => nodeAgentIds.has(b.agentId));
+
+    const nodeTasks = filteredByAgent.reduce((sum, b) => sum + b.tasks, 0);
+    const nodeSuccess = filteredByAgent.reduce((sum, b) => sum + b.success, 0);
+    const nodeFailures = filteredByAgent.reduce((sum, b) => sum + b.failures, 0);
+
+    res.json({
+      success: true,
+      data: {
+        nodeId,
+        workspaceId,
+        totalTasks: nodeTasks,
+        successCount: nodeSuccess,
+        failureCount: nodeFailures,
+        errorRate: nodeTasks > 0 ? +(nodeFailures / nodeTasks).toFixed(4) : 0,
+        byAgent: filteredByAgent,
+        snapshotAt: snapshot.snapshotAt,
+      },
+    });
+  } catch (err) {
+    console.error('[NEXUS-METRICS] GET /metrics/:nodeId error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /metrics/agents/:agentId
+ * Metrics for a single agent within the workspace.
+ */
+router.get('/metrics/agents/:agentId', async (req, res) => {
+  try {
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { agentId } = req.params;
+    const data = nexusMetrics.getAgentMetrics(workspaceId, agentId);
+    if (!data) {
+      // Return empty bucket rather than 404 — no tasks recorded yet is a valid state
+      return res.json({
+        success: true,
+        data: {
+          agentId,
+          workspaceId,
+          tasks: 0,
+          success: 0,
+          failures: 0,
+          errorRate: 0,
+          avgDurationMs: null,
+          totalDurationMs: 0,
+          snapshotAt: new Date().toISOString(),
+        },
+      });
+    }
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('[NEXUS-METRICS] GET /metrics/agents/:agentId error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /metrics/reset
+ * Flush metrics for this workspace (admin only — requires workspace ownership via JWT).
+ * Body: { all: true } flushes all workspaces (superadmin use only; rejected in production
+ * unless req.isSuperAdmin is set by upstream middleware).
+ */
+router.post('/metrics/reset', async (req, res) => {
+  try {
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { all = false } = req.body || {};
+
+    if (all) {
+      // Guard: only allow global reset in non-production or for superadmins
+      if (process.env.NODE_ENV === 'production' && !req.isSuperAdmin) {
+        return res.status(403).json({ success: false, error: 'Global reset requires superadmin in production' });
+      }
+      nexusMetrics.resetMetrics(null);
+      console.log(`[NEXUS-METRICS] Global reset triggered by workspace=${workspaceId}`);
+      return res.json({ success: true, message: 'All metrics reset' });
+    }
+
+    nexusMetrics.resetMetrics(workspaceId);
+    res.json({ success: true, message: `Metrics reset for workspace ${workspaceId}` });
+  } catch (err) {
+    console.error('[NEXUS-METRICS] POST /metrics/reset error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

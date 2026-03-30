@@ -154,6 +154,13 @@ class TaskOrchestrator {
         return { contacts: await cp.readContacts(params) };
       }
 
+      case 'execute_skill': {
+        this._require(params.skill_key, 'params.skill_key');
+        const { getLocalSkillExecutor } = require('./skill-executor');
+        const executor = getLocalSkillExecutor(this.providers);
+        return executor.execute(params.skill_key, params);
+      }
+
       default: {
         const { UnknownError: UE } = require('./errors');
         const err = new UE(new Error(`Unknown action: ${action}`));
