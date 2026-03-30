@@ -622,8 +622,7 @@ mount('/api/v1/webhooks', require('./api/webhook-routes'));
 mount('/api/v1/workspace', require('./api/workspace'));
 
 // ── Nexus installer downloads ─────────────────────────────────────────────────
-const path = require('path');
-const NEXUS_DIST_DIR = process.env.NEXUS_DIST_DIR || path.join(__dirname, 'packages', 'nexus', 'dist');
+const NEXUS_DIST_DIR = process.env.NEXUS_DIST_DIR || require('path').join(__dirname, 'packages', 'nexus', 'dist');
 app.get('/downloads/nexus-macos.dmg', (req, res) => {
   const file = path.join(NEXUS_DIST_DIR, 'vutler-nexus-macos.dmg');
   res.download(file, 'vutler-nexus-macos.dmg', (err) => {
