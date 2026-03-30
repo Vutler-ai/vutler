@@ -1,8 +1,9 @@
 'use strict';
 
 const {
-  DEFAULT_COUNT_LIMIT,
+  extractUserProfileMemoriesFromMessages,
   listAgentMemories,
+  rememberScopedMemory,
   softDeleteAgentMemory,
 } = require('./sniparaMemoryService');
 const { isNearDuplicate } = require('./memoryConsolidationService');
@@ -11,13 +12,17 @@ const { logMemoryEvent } = require('./memoryTelemetryService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_INTERVAL_MS = Number(process.env.MEMORY_MAINTENANCE_INTERVAL_MS) || (6 * 60 * 60 * 1000);
+const MAINTENANCE_SCAN_LIMIT = Number(process.env.MEMORY_MAINTENANCE_SCAN_LIMIT) || 1000;
 const SHORT_LIVED_TYPES = new Set(['action_log', 'tool_observation', 'task_episode', 'context']);
 const DEDUPE_TYPES = new Set(['user_profile', 'decision', 'fact']);
 const TYPE_LIMITS = {
   action_log: 20,
   tool_observation: 12,
   task_episode: 10,
+  fact: Number(process.env.MEMORY_FACT_LIMIT_PER_AGENT) || 750,
 };
+const USER_PROFILE_HARVEST_CHANNEL_LIMIT = Number(process.env.MEMORY_USER_PROFILE_CHANNEL_LIMIT) || 6;
+const USER_PROFILE_HARVEST_MESSAGE_LIMIT = Number(process.env.MEMORY_USER_PROFILE_MESSAGE_LIMIT) || 80;
 
 function retentionScore(memory) {
   const importance = Number(memory?.importance) || 0;
@@ -77,6 +82,96 @@ function collectMaintenanceCandidates(memories = []) {
   return Array.from(deletions.values());
 }
 
+async function harvestAgentUserProfiles({ db, workspaceId, agent }) {
+  if (!agent?.id && !agent?.username) return { harvested: [] };
+
+  const channelsResult = await db.query(
+    `SELECT cm.channel_id, MAX(m.created_at) AS last_message_at
+     FROM ${SCHEMA}.chat_channel_members cm
+     LEFT JOIN ${SCHEMA}.chat_messages m ON m.channel_id = cm.channel_id AND m.workspace_id = $2
+     WHERE cm.user_id = $1
+     GROUP BY cm.channel_id
+     ORDER BY last_message_at DESC NULLS LAST
+     LIMIT $3`,
+    [String(agent.id || agent.username), workspaceId, USER_PROFILE_HARVEST_CHANNEL_LIMIT]
+  );
+
+  const harvested = [];
+  const agentKey = String(agent.id || agent.username || '').toLowerCase();
+
+  for (const channelRow of channelsResult.rows) {
+    const membersResult = await db.query(
+      `SELECT a.id, a.username
+       FROM ${SCHEMA}.chat_channel_members cm
+       JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id OR LOWER(a.username) = LOWER(cm.user_id)
+       WHERE cm.channel_id = $1 AND a.workspace_id = $2`,
+      [channelRow.channel_id, workspaceId]
+    );
+    const assistantIds = new Set(
+      membersResult.rows.flatMap((row) => [
+        String(row.id || '').toLowerCase(),
+        String(row.username || '').toLowerCase(),
+      ]).filter(Boolean)
+    );
+
+    const messagesResult = await db.query(
+      `SELECT sender_id, sender_name, content, created_at
+       FROM ${SCHEMA}.chat_messages
+       WHERE channel_id = $1 AND workspace_id = $2
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [channelRow.channel_id, workspaceId, USER_PROFILE_HARVEST_MESSAGE_LIMIT]
+    );
+
+    const userMessages = messagesResult.rows
+      .filter((message) => {
+        const senderId = String(message.sender_id || '').toLowerCase();
+        return !assistantIds.has(senderId) && senderId !== agentKey;
+      })
+      .map((message) => ({
+        role: 'user',
+        content: String(message.content || ''),
+      }));
+
+    const memories = extractUserProfileMemoriesFromMessages(userMessages, agent.username || agent.name || null);
+    const payload = memories.map((memory) => ({
+      ...memory,
+      metadata: {
+        ...memory.metadata,
+        source_kind: 'chat_history',
+        channel_id: channelRow.channel_id,
+      },
+    }));
+
+    if (payload.length === 0) continue;
+
+    const persisted = [];
+    for (const memory of payload) {
+      try {
+        await rememberScopedMemory({
+          db,
+          workspaceId,
+          agent,
+          scopeKey: memory.scopeKey,
+          text: memory.text,
+          type: memory.type,
+          importance: memory.importance,
+          visibility: memory.visibility,
+          source: 'memory-user-profile-harvest',
+          metadata: memory.metadata,
+        });
+        persisted.push(memory);
+      } catch (err) {
+        console.warn('[MemoryMaintenance] user profile harvest failed:', err.message);
+      }
+    }
+
+    harvested.push(...persisted);
+  }
+
+  return { harvested };
+}
+
 async function maintainAgentMemories({ db, workspaceId, agent }) {
   const listed = await listAgentMemories({
     db,
@@ -84,12 +179,13 @@ async function maintainAgentMemories({ db, workspaceId, agent }) {
     agentIdOrUsername: agent?.id || agent?.username,
     includeInternal: true,
     includeExpired: true,
-    limit: DEFAULT_COUNT_LIMIT,
+    limit: MAINTENANCE_SCAN_LIMIT,
     fallbackAgent: agent || {},
   });
 
   const candidates = collectMaintenanceCandidates(listed.memories);
   const deleted = [];
+  const harvestedProfiles = await harvestAgentUserProfiles({ db, workspaceId, agent: listed.agent }).catch(() => ({ harvested: [] }));
 
   for (const candidate of candidates) {
     try {
@@ -110,6 +206,7 @@ async function maintainAgentMemories({ db, workspaceId, agent }) {
     agent: listed.agent?.username || listed.agent?.id || 'unknown-agent',
     scanned: listed.memories.length,
     deleted: deleted.length,
+    harvested_user_profiles: harvestedProfiles.harvested.length,
     reasons: deleted.reduce((acc, item) => {
       acc[item.reason] = (acc[item.reason] || 0) + 1;
       return acc;
@@ -120,6 +217,7 @@ async function maintainAgentMemories({ db, workspaceId, agent }) {
     agent: listed.agent,
     scanned: listed.memories.length,
     deleted,
+    harvested_user_profiles: harvestedProfiles.harvested.length,
   };
 }
 

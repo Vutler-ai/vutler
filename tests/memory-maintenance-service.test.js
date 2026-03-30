@@ -3,6 +3,7 @@
 jest.mock('../services/sniparaMemoryService', () => ({
   DEFAULT_COUNT_LIMIT: 200,
   listAgentMemories: jest.fn(async () => ({ agent: { username: 'alex' }, memories: [] })),
+  rememberScopedMemory: jest.fn(async () => ({ success: true })),
   softDeleteAgentMemory: jest.fn(async () => ({ success: true })),
 }));
 
@@ -53,6 +54,30 @@ describe('memoryMaintenanceService', () => {
     expect(candidates.map((item) => item.id).sort()).toEqual(['m1', 'm3']);
   });
 
+  test('compacts fact overflow using the configured per-agent limit', () => {
+    jest.isolateModules(() => {
+      const originalLimit = process.env.MEMORY_FACT_LIMIT_PER_AGENT;
+      process.env.MEMORY_FACT_LIMIT_PER_AGENT = '2';
+
+      const { collectMaintenanceCandidates: collect } = require('../services/memoryMaintenanceService');
+      const candidates = collect([
+        { id: 'f1', type: 'fact', text: 'Fact alpha', importance: 0.9, created_at: '2026-03-10T00:00:00.000Z' },
+        { id: 'f2', type: 'fact', text: 'Fact beta', importance: 0.8, created_at: '2026-03-09T00:00:00.000Z' },
+        { id: 'f3', type: 'fact', text: 'Fact gamma', importance: 0.7, created_at: '2026-03-08T00:00:00.000Z' },
+        { id: 'f4', type: 'fact', text: 'Fact delta', importance: 0.6, created_at: '2026-03-07T00:00:00.000Z' },
+      ]);
+
+      expect(candidates).toHaveLength(2);
+      expect(candidates.map((item) => item.id).sort()).toEqual(['f3', 'f4']);
+
+      if (originalLimit === undefined) {
+        delete process.env.MEMORY_FACT_LIMIT_PER_AGENT;
+      } else {
+        process.env.MEMORY_FACT_LIMIT_PER_AGENT = originalLimit;
+      }
+    });
+  });
+
   test('soft-deletes maintenance candidates for an agent', async () => {
     listAgentMemories.mockResolvedValue({
       agent: { username: 'alex', id: 'agent-1' },
@@ -81,8 +106,28 @@ describe('memoryMaintenanceService', () => {
       ],
     });
 
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (String(sql).includes('JOIN tenant_vutler.agents')) {
+          return { rows: [{ id: 'agent-1', username: 'alex' }] };
+        }
+        if (String(sql).includes('FROM tenant_vutler.chat_messages')) {
+          return {
+            rows: [
+              { sender_id: 'user-1', sender_name: 'User', content: "I'm Alex and I prefer concise answers." },
+              { sender_id: 'agent-1', sender_name: 'Alex', content: 'Understood.' },
+            ],
+          };
+        }
+        if (String(sql).includes('chat_channel_members')) {
+          return { rows: [{ channel_id: 'channel-1' }] };
+        }
+        return { rows: [] };
+      }),
+    };
+
     const result = await maintainAgentMemories({
-      db: {},
+      db,
       workspaceId: 'ws-1',
       agent: { id: 'agent-1', username: 'alex', role: 'engineering' },
     });

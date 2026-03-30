@@ -8,7 +8,7 @@ const {
 
 async function remember(scope, content, opts = {}, runtime = {}) {
   try {
-    const bindings = buildAgentMemoryBindings({ username: scope, role: runtime.role }, runtime.workspaceId);
+    const bindings = buildAgentMemoryBindings({ snipara_instance_id: scope, username: scope, role: runtime.role }, runtime.workspaceId);
     const result = await callSniparaTool({
       db: runtime.db,
       workspaceId: runtime.workspaceId,
@@ -38,7 +38,7 @@ async function remember(scope, content, opts = {}, runtime = {}) {
 
 async function recall(scope, query, opts = {}, runtime = {}) {
   try {
-    const bindings = buildAgentMemoryBindings({ username: scope, role: runtime.role }, runtime.workspaceId);
+    const bindings = buildAgentMemoryBindings({ snipara_instance_id: scope, username: scope, role: runtime.role }, runtime.workspaceId);
     const result = await callSniparaTool({
       db: runtime.db,
       workspaceId: runtime.workspaceId,
@@ -62,7 +62,7 @@ async function recall(scope, query, opts = {}, runtime = {}) {
 
 async function getContext(scope, runtime = {}) {
   try {
-    const bindings = buildAgentMemoryBindings({ username: scope, role: runtime.role }, runtime.workspaceId);
+    const bindings = buildAgentMemoryBindings({ snipara_instance_id: scope, username: scope, role: runtime.role }, runtime.workspaceId);
     return await callSniparaTool({
       db: runtime.db,
       workspaceId: runtime.workspaceId,

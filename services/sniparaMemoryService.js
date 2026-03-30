@@ -37,17 +37,45 @@ function normalizeImportance(value, fallback = 0.5) {
   return Math.min(1, Math.max(0, num));
 }
 
+function deriveAgentRef(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  const match = raw.match(/(?:^|-)agent-([a-z0-9][a-z0-9-_]*[a-z0-9])$/i);
+  if (match?.[1]) return match[1];
+
+  return raw;
+}
+
 function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
   const ws = normalizeWorkspaceId(workspaceId);
-  const agentRef = String(agent.username || agent.memory_scope || agent.snipara_instance_id || agent.id || agent.agent_id || 'unknown-agent');
+  const agentRef = deriveAgentRef(
+    agent.username ||
+    agent.memory_scope ||
+    agent.snipara_instance_id ||
+    agent.id ||
+    agent.agent_id ||
+    'unknown-agent'
+  );
   const role = normalizeRole(agent.role);
+  const canonicalAgentCategory = String(agent.snipara_instance_id || '').trim();
+  const aliasAgentCategory = `${ws}-agent-${agentRef}`;
+  const instanceCategories = [...new Set([
+    canonicalAgentCategory,
+    aliasAgentCategory,
+  ].filter(Boolean))];
 
   return {
     workspaceId: ws,
-    agentId: agent.id || agent.agent_id || null,
+    agentId: agent.snipara_instance_id || agent.id || agent.agent_id || null,
+    sniparaInstanceId: agent.snipara_instance_id || null,
     agentRef,
     role,
-    instance: { scope: 'agent', category: `${ws}-agent-${agentRef}` },
+    instance: {
+      scope: 'agent',
+      category: instanceCategories[0] || aliasAgentCategory,
+      categories: instanceCategories,
+    },
     template: { scope: 'project', category: `${ws}-template-${role}` },
     global: { scope: 'project', category: `${ws}-platform-standards` },
   };
@@ -57,7 +85,7 @@ async function resolveAgentRecord(db, workspaceId, agentIdOrUsername, fallback =
   const ws = normalizeWorkspaceId(workspaceId);
   if (db && agentIdOrUsername) {
     const result = await db.query(
-      `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, workspace_id
+      `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, workspace_id, snipara_instance_id
        FROM tenant_vutler.agents
        WHERE workspace_id = $2 AND (id::text = $1 OR username = $1)
        LIMIT 1`,
@@ -77,6 +105,7 @@ async function resolveAgentRecord(db, workspaceId, agentIdOrUsername, fallback =
     temperature: fallback.temperature,
     max_tokens: fallback.max_tokens,
     workspace_id: ws,
+    snipara_instance_id: fallback.snipara_instance_id || fallback.sniparaInstanceId || null,
   };
 }
 
@@ -87,6 +116,74 @@ function getRawMemoryArray(raw) {
   if (Array.isArray(raw.results)) return raw.results;
   if (Array.isArray(raw.items)) return raw.items;
   return [];
+}
+
+function getMemorySearchTerms(agent = {}, bindings = null, query = '') {
+  const terms = [
+    query,
+    bindings?.agentRef,
+    agent.username,
+    agent.name,
+    agent.snipara_instance_id,
+    agent.sniparaInstanceId,
+    agent.memory_scope,
+    bindings?.agentId,
+  ];
+  return String(terms.find((term) => String(term || '').trim()) || '').trim();
+}
+
+function memoryCategoryMatches(memory, categories = [], agentRef = '', agentId = '') {
+  const category = String(memory?.category || '').trim().toLowerCase();
+  if (!category) return false;
+
+  const normalizedCategories = categories.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+  if (normalizedCategories.includes(category)) return true;
+
+  const loweredRef = String(agentRef || '').trim().toLowerCase();
+  if (loweredRef && category.includes(loweredRef)) return true;
+
+  const loweredId = String(agentId || '').trim().toLowerCase();
+  if (loweredId && category.includes(loweredId)) return true;
+
+  return false;
+}
+
+function normalizeListedMemory(raw, fallbackScope, index = 0) {
+  const type = normalizeType(raw?.type || 'fact');
+  const scopeKey = normalizeScopeKey(raw?.scope || fallbackScope);
+  const visibility = getDefaultVisibility(type);
+  const createdAt = raw?.created_at || new Date().toISOString();
+  const governance = buildGovernanceMetadata({
+    type,
+    scopeKey,
+    visibility,
+    createdAt,
+    metadata: {
+      source: raw?.source || 'snipara',
+      confidence: raw?.confidence,
+      access_count: raw?.access_count,
+    },
+  });
+
+  return {
+    id: raw?.memory_id || raw?.id || `mem-${scopeKey}-${index}`,
+    text: raw?.content || raw?.text || raw?.description || '',
+    type,
+    importance: normalizeImportance(raw?.confidence, 0.5),
+    scope: raw?.scope || toScopeName(scopeKey),
+    scope_key: scopeKey,
+    category: raw?.category || governance.category || undefined,
+    created_at: createdAt,
+    expires_at: raw?.expires_at || governance.expires_at || null,
+    last_seen_at: createdAt,
+    last_used_at: null,
+    usage_count: Number(raw?.access_count) || 0,
+    duplicate_count: 0,
+    promotion_score: 0,
+    metadata: governance,
+    visibility: governance.visibility,
+    status: isMemoryExpired({ expires_at: raw?.expires_at || governance.expires_at, metadata: governance }) ? 'expired' : 'active',
+  };
 }
 
 function inferVisibility(memory) {
@@ -284,6 +381,79 @@ function compactRankedMemories(memories = []) {
   return compacted;
 }
 
+async function listStoredMemories({ db, workspaceId, search, limit = 50, offset = 0 }) {
+  const pageSize = Math.max(1, Math.min(50, limit));
+  const raw = await callSniparaTool({
+    db,
+    workspaceId,
+    toolName: 'rlm_memories',
+    args: {
+      search,
+      limit: pageSize,
+      offset,
+    },
+  }).catch(() => null);
+
+  if (!raw) {
+    return { memories: [], has_more: false, raw_count: 0 };
+  }
+
+  const memories = getRawMemoryArray(raw).map((memory, index) => normalizeListedMemory(memory, 'agent', index));
+  return {
+    memories,
+    has_more: Boolean(raw.has_more),
+    raw_count: memories.length,
+  };
+}
+
+async function collectStoredScopeMemories({
+  db,
+  workspaceId,
+  bindings,
+  scopeKey,
+  search,
+  limit = 50,
+}) {
+  const collected = [];
+  const pageSize = Math.max(1, Math.min(50, limit));
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore && collected.length < limit) {
+    const page = await listStoredMemories({
+      db,
+      workspaceId,
+      search,
+      limit: pageSize,
+      offset,
+    });
+
+    const batch = (page.memories || []).filter((memory) => {
+      if (scopeKey === 'instance') {
+        return memory.scope === 'agent' && memoryCategoryMatches(memory, bindings.instance.categories, bindings.agentRef, bindings.agentId);
+      }
+      if (scopeKey === 'template') {
+        return memory.scope === 'project' && memoryCategoryMatches(memory, [bindings.template.category], bindings.role, bindings.role);
+      }
+      if (scopeKey === 'global') {
+        return memory.scope === 'project' && memoryCategoryMatches(memory, [bindings.global.category], 'platform-standards', bindings.workspaceId);
+      }
+      return true;
+    });
+
+    collected.push(...batch);
+    hasMore = page.has_more;
+
+    if (!page.memories || page.memories.length === 0) break;
+    offset += page.memories.length;
+  }
+
+  return {
+    memories: collected.slice(0, limit),
+    has_more: hasMore || collected.length >= limit,
+  };
+}
+
 function selectRuntimeMemories({ instance = [], template = [], global = [], query = '', runtime = 'chat' }) {
   const budget = getRuntimeBudget(runtime);
   const rankedByScope = {
@@ -328,24 +498,54 @@ function selectRuntimeMemories({ instance = [], template = [], global = [], quer
 async function recallWithBindings({ db, workspaceId, bindings, query, limit = 20, scopeKey = 'instance' }) {
   const normalizedScope = normalizeScopeKey(scopeKey);
   const target = bindings[normalizedScope];
-  const args = { query, scope: target.scope, category: target.category, limit };
-  if (normalizedScope === 'instance') args.agent_id = bindings.agentRef;
+  const categories = [...new Set([
+    ...(Array.isArray(target?.categories) ? target.categories : []),
+    target?.category,
+  ].filter(Boolean))];
+  const agentId = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
+  const merged = [];
+  const seen = new Set();
 
-  const raw = await callSniparaTool({ db, workspaceId, toolName: 'rlm_recall', args }).catch(() => []);
-  return normalizeMemories(raw, normalizedScope);
+  for (const category of categories) {
+    const args = { query, scope: target.scope, category, limit };
+    if (normalizedScope === 'instance' && agentId) args.agent_id = agentId;
+
+    const raw = await callSniparaTool({ db, workspaceId, toolName: 'rlm_recall', args }).catch(() => []);
+    const normalized = normalizeMemories(raw, normalizedScope);
+    for (const memory of normalized) {
+      const dedupeKey = memory.id || `${memory.scope_key}|${canonicalizeText(memory.text)}|${memory.created_at}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      merged.push(memory);
+    }
+    if (merged.length >= limit) break;
+  }
+
+  return merged.slice(0, limit);
 }
 
 async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, role, limit = 20, includeInternal = false, includeExpired = false, fallbackAgent = {} }) {
   const agent = await resolveAgentRecord(db, workspaceId, agentIdOrUsername, { ...fallbackAgent, role: role || fallbackAgent.role });
   const bindings = buildAgentMemoryBindings(agent, workspaceId);
-  const rawMemories = await recallWithBindings({
+  const stored = await collectStoredScopeMemories({
     db,
     workspaceId,
     bindings,
-    query: query || `agent ${bindings.agentRef} memories`,
-    limit,
     scopeKey: 'instance',
+    search: getMemorySearchTerms(agent, bindings, query || bindings.agentRef || 'agent'),
+    limit,
   });
+  let rawMemories = stored.memories || [];
+  if (rawMemories.length === 0) {
+    rawMemories = await recallWithBindings({
+      db,
+      workspaceId,
+      bindings,
+      query: query || `agent ${bindings.agentRef} memories`,
+      limit,
+      scopeKey: 'instance',
+    });
+  }
   const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
   return {
     agent,
@@ -358,22 +558,33 @@ async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, ro
     hidden_count: summary.hidden_count,
     expired_count: summary.expired_count,
     deleted_count: summary.deleted_count,
-    has_more: rawMemories.length >= limit,
-    count_is_estimate: rawMemories.length >= limit,
+    has_more: stored.has_more || rawMemories.length >= limit,
+    count_is_estimate: stored.has_more || rawMemories.length >= limit,
   };
 }
 
 async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, query, limit = 20, includeInternal = false, includeExpired = false, fallbackAgent = {} }) {
   const agent = await resolveAgentRecord(db, workspaceId, agentIdOrUsername, { ...fallbackAgent, role: role || fallbackAgent.role });
   const bindings = buildAgentMemoryBindings(agent, workspaceId);
-  const rawMemories = await recallWithBindings({
+  const stored = await collectStoredScopeMemories({
     db,
     workspaceId,
     bindings,
-    query: query || `${bindings.role} knowledge best practices`,
-    limit,
     scopeKey: 'template',
+    search: getMemorySearchTerms(agent, bindings, query || bindings.role || 'template'),
+    limit,
   });
+  let rawMemories = stored.memories || [];
+  if (rawMemories.length === 0) {
+    rawMemories = await recallWithBindings({
+      db,
+      workspaceId,
+      bindings,
+      query: query || `${bindings.role} knowledge best practices`,
+      limit,
+      scopeKey: 'template',
+    });
+  }
   const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
   return {
     agent,
@@ -386,8 +597,8 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
     hidden_count: summary.hidden_count,
     expired_count: summary.expired_count,
     deleted_count: summary.deleted_count,
-    has_more: rawMemories.length >= limit,
-    count_is_estimate: rawMemories.length >= limit,
+    has_more: stored.has_more || rawMemories.length >= limit,
+    count_is_estimate: stored.has_more || rawMemories.length >= limit,
   };
 }
 
@@ -410,11 +621,17 @@ async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, inc
   const agent = await resolveAgentRecord(db, workspaceId, agentIdOrUsername, { ...fallbackAgent, role: role || fallbackAgent.role });
   const bindings = buildAgentMemoryBindings(agent, workspaceId);
 
-  const [instanceRaw, templateRaw, globalRaw, soulDoc] = await Promise.all([
-    recallWithBindings({ db, workspaceId, bindings, query: `agent ${bindings.agentRef}`, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'instance' }).catch(() => []),
-    recallWithBindings({ db, workspaceId, bindings, query: `${bindings.role} knowledge`, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'template' }).catch(() => []),
-    recallWithBindings({ db, workspaceId, bindings, query: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT, scopeKey: 'global' }).catch(() => []),
+  const [storedInstance, storedTemplate, storedGlobal, soulDoc] = await Promise.all([
+    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'instance', search: getMemorySearchTerms(agent, bindings, bindings.agentRef), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
+    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'template', search: getMemorySearchTerms(agent, bindings, bindings.role), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
+    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'global', search: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
     callSniparaTool({ db, workspaceId, toolName: 'rlm_load_document', args: { path: 'agents/SOUL.md' } }).catch(() => ''),
+  ]);
+
+  const [instanceRaw, templateRaw, globalRaw] = await Promise.all([
+    storedInstance.memories.length > 0 ? storedInstance.memories : recallWithBindings({ db, workspaceId, bindings, query: bindings.agentRef, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'instance' }).catch(() => []),
+    storedTemplate.memories.length > 0 ? storedTemplate.memories : recallWithBindings({ db, workspaceId, bindings, query: bindings.role, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'template' }).catch(() => []),
+    storedGlobal.memories.length > 0 ? storedGlobal.memories : recallWithBindings({ db, workspaceId, bindings, query: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT, scopeKey: 'global' }).catch(() => []),
   ]);
 
   const instanceSummary = summarizeMemoryCollection(instanceRaw, includeInternal);
@@ -489,7 +706,7 @@ async function rememberScopedMemory({
       ),
     },
   };
-  if (effectiveScopeKey === 'instance') args.agent_id = bindings.agentRef;
+  if (effectiveScopeKey === 'instance') args.agent_id = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
 
   await callSniparaTool({
     db,
@@ -539,7 +756,7 @@ async function promoteAgentMemoryToTemplate({ db, workspaceId, agent, memoryId, 
     toolName: 'rlm_recall',
     args: {
       query: `memory_id:${memoryId}`,
-      agent_id: bindings.agentRef,
+      agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
       scope: bindings.instance.scope,
       category: bindings.instance.category,
       limit: 1,

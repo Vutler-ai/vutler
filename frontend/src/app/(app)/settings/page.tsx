@@ -282,6 +282,7 @@ function WorkspaceTab({
   const [defaultProvider, setDefaultProvider] = useState(getStr(settings?.default_provider));
   const [sniparaKey, setSniparaKey] = useState(getStr((settings as Record<string, unknown>)?.snipara_api_key));
   const [sniparaProjectId, setSniparaProjectId] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_id));
+  const [sniparaProjectSlug, setSniparaProjectSlug] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -292,6 +293,7 @@ function WorkspaceTab({
       setDefaultProvider(getStr(settings.default_provider));
       setSniparaKey(getStr((settings as Record<string, unknown>)?.snipara_api_key));
       setSniparaProjectId(getStr((settings as Record<string, unknown>)?.snipara_project_id));
+      setSniparaProjectSlug(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
     }
   }, [settings]);
 
@@ -313,6 +315,9 @@ function WorkspaceTab({
       }
       if (sniparaProjectId) {
         payload.snipara_project_id = sniparaProjectId;
+      }
+      if (sniparaProjectSlug) {
+        payload.snipara_project_slug = sniparaProjectSlug;
       }
       await updateSettings(payload);
       onToast("Workspace settings saved", "success");
@@ -413,6 +418,15 @@ function WorkspaceTab({
                 value={sniparaProjectId}
                 onChange={(e) => setSniparaProjectId(e.target.value)}
                 placeholder="cmmf..."
+                className={cx.input}
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className={cx.label}>Project Slug</Label>
+              <Input
+                value={sniparaProjectSlug}
+                onChange={(e) => setSniparaProjectSlug(e.target.value)}
+                placeholder="vutler"
                 className={cx.input}
               />
             </div>

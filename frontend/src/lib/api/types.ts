@@ -569,6 +569,9 @@ export interface WorkspaceSettings {
   workspace_description?: SettingValue | string;
   timezone?: SettingValue | string;
   default_provider?: SettingValue | string;
+  snipara_api_key?: SettingValue | string;
+  snipara_project_id?: SettingValue | string;
+  snipara_project_slug?: SettingValue | string;
   beta_features?: Record<string, unknown>;
   [key: string]: unknown;
 }

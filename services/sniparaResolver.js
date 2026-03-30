@@ -1,9 +1,11 @@
 'use strict';
 
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_SNIPARA_PROJECT_SLUG = process.env.SNIPARA_PROJECT_SLUG || 'vutler';
 const DEFAULT_SNIPARA_URL = process.env.SNIPARA_MCP_URL ||
+  process.env.SNIPARA_PROJECT_MCP_URL ||
   process.env.SNIPARA_API_URL ||
-  'https://api.snipara.com/mcp/test-workspace-api-vutler';
+  `https://api.snipara.com/mcp/${DEFAULT_SNIPARA_PROJECT_SLUG}`;
 const DEFAULT_SNIPARA_KEY = process.env.SNIPARA_API_KEY ||
   process.env.RLM_TOKEN ||
   '';
@@ -21,6 +23,20 @@ function parseSettingValue(value) {
   return null;
 }
 
+function normalizeProjectSlug(projectSlug) {
+  return String(projectSlug || DEFAULT_SNIPARA_PROJECT_SLUG)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || DEFAULT_SNIPARA_PROJECT_SLUG;
+}
+
+function buildSniparaProjectUrl(projectSlug, fallbackUrl = DEFAULT_SNIPARA_URL) {
+  const slug = normalizeProjectSlug(projectSlug);
+  if (process.env.SNIPARA_PROJECT_MCP_URL && !projectSlug) return process.env.SNIPARA_PROJECT_MCP_URL;
+  return `https://api.snipara.com/mcp/${slug}` || fallbackUrl;
+}
+
 async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
   const ws = normalizeWorkspaceId(workspaceId);
   const cached = cache.get(ws);
@@ -31,6 +47,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
     apiUrl: DEFAULT_SNIPARA_URL,
     apiKey: DEFAULT_SNIPARA_KEY,
     projectId: null,
+    projectSlug: DEFAULT_SNIPARA_PROJECT_SLUG,
     configured: Boolean(DEFAULT_SNIPARA_KEY),
     source: DEFAULT_SNIPARA_KEY ? 'env' : 'none',
   };
@@ -41,13 +58,14 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
         `SELECT key, value
          FROM tenant_vutler.workspace_settings
          WHERE workspace_id = $1
-           AND key IN ('snipara_api_key', 'snipara_api_url', 'snipara_project_id')`,
+           AND key IN ('snipara_api_key', 'snipara_api_url', 'snipara_project_id', 'snipara_project_slug')`,
         [ws]
       );
 
       const map = new Map(settings.rows.map((row) => [row.key, parseSettingValue(row.value)]));
       const apiKey = map.get('snipara_api_key') || resolved.apiKey;
-      const apiUrl = map.get('snipara_api_url') || resolved.apiUrl;
+      const projectSlug = normalizeProjectSlug(map.get('snipara_project_slug') || DEFAULT_SNIPARA_PROJECT_SLUG);
+      const apiUrl = map.get('snipara_api_url') || buildSniparaProjectUrl(projectSlug, resolved.apiUrl);
       const projectId = map.get('snipara_project_id') || null;
 
       resolved = {
@@ -55,6 +73,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
         apiUrl,
         apiKey,
         projectId,
+        projectSlug,
         configured: Boolean(apiKey),
         source: map.get('snipara_api_key') ? 'workspace_settings' : resolved.source,
       };
@@ -69,11 +88,13 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
         ).catch(() => ({ rows: [] }));
         const row = legacy.rows?.[0];
         if (row?.snipara_api_key) {
+          const legacyProjectSlug = normalizeProjectSlug(map.get('snipara_project_slug') || DEFAULT_SNIPARA_PROJECT_SLUG);
           resolved = {
             workspaceId: ws,
-            apiUrl,
+            apiUrl: buildSniparaProjectUrl(legacyProjectSlug, apiUrl),
             apiKey: row.snipara_api_key,
             projectId: row.snipara_project_id || projectId,
+            projectSlug: legacyProjectSlug,
             configured: true,
             source: 'workspaces',
           };
@@ -152,8 +173,11 @@ function clearSniparaConfigCache(workspaceId) {
 
 module.exports = {
   DEFAULT_WORKSPACE,
+  DEFAULT_SNIPARA_PROJECT_SLUG,
   resolveSniparaConfig,
   callSniparaTool,
   parseSniparaResult,
   clearSniparaConfigCache,
+  normalizeProjectSlug,
+  buildSniparaProjectUrl,
 };

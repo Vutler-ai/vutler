@@ -6,7 +6,15 @@
 
 const axios = require('axios');
 
-const SNIPARA_API_URL = process.env.SNIPARA_API_URL || 'https://api.snipara.com/mcp/test-workspace-api-vutler';
+const {
+  buildSniparaProjectUrl,
+  DEFAULT_SNIPARA_PROJECT_SLUG,
+} = require('./sniparaResolver');
+const SNIPARA_API_BASE_URL = process.env.SNIPARA_API_BASE_URL || 'https://api.snipara.com';
+const SNIPARA_PROJECT_SLUG = process.env.SNIPARA_PROJECT_SLUG || DEFAULT_SNIPARA_PROJECT_SLUG;
+const SNIPARA_MCP_URL = process.env.SNIPARA_PROJECT_MCP_URL
+  || process.env.SNIPARA_MCP_URL
+  || buildSniparaProjectUrl(SNIPARA_PROJECT_SLUG);
 const SNIPARA_API_KEY = process.env.SNIPARA_API_KEY || 'REDACTED_SNIPARA_KEY_2';
 const SNIPARA_SWARM_ID = process.env.SNIPARA_SWARM_ID || 'cmmdu24k500g01ihbw32d44x2';
 
@@ -23,7 +31,7 @@ async function createProject(workspaceName, workspaceId) {
     if (!intKey) throw new Error('SNIPARA_INTEGRATION_KEY not set');
     
     const response = await axios.post(
-      SNIPARA_API_URL + '/clients',
+      `${SNIPARA_API_BASE_URL}/clients`,
       {
         name: workspaceName,
         email: 'workspace-' + workspaceId + '@vutler.ai',
@@ -58,7 +66,7 @@ async function createProject(workspaceName, workspaceId) {
 async function createTask(task, apiKey = SNIPARA_API_KEY) {
   try {
     const response = await axios.post(
-      SNIPARA_API_URL,
+      SNIPARA_MCP_URL,
       {
         method: 'rlm_task_create',
         params: {
@@ -101,7 +109,7 @@ async function createTask(task, apiKey = SNIPARA_API_KEY) {
 async function completeTask(swarmTaskId, apiKey = SNIPARA_API_KEY) {
   try {
     const response = await axios.post(
-      SNIPARA_API_URL,
+      SNIPARA_MCP_URL,
       {
         method: 'rlm_task_complete',
         params: {

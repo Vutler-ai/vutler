@@ -31,33 +31,74 @@ function buildMemory(scopeKey, type, visibility, importance, text, metadata = {}
   return { scopeKey, type, visibility, importance, text: compact, metadata };
 }
 
+function extractUserProfileMemoriesFromText(userText, userName) {
+  const text = compactText(userText, 500);
+  if (!text) return [];
+
+  const memories = [];
+  const add = (importance, textValue, metadata = {}) => {
+    const memory = buildMemory(
+      'instance',
+      'user_profile',
+      'reviewable',
+      importance,
+      textValue,
+      { memory_lane: 'user_profile', source_kind: 'conversation', user_name: userName || null, ...metadata }
+    );
+    if (memory) memories.push(memory);
+  };
+
+  const nameMatch = text.match(/(?:my name is|call me|i am called|je m'appelle|je suis|appelle-moi)\s+([^.,!\n;]+)/i);
+  if (nameMatch) {
+    add(0.92, `User identity: ${compactText(nameMatch[1], 80)}`, { signal: 'identity' });
+  }
+
+  const preferencePatterns = [
+    /(?:i prefer|i like|i dislike|i want|i need|i usually|i always|i never|je prefere|je préfère|j'aime|je n'aime pas|toujours|jamais|souvent|rarement)/i,
+    /(?:reply|answer|respond|speak|write) (?:in|with|using) [^.,!\n;]+/i,
+    /(?:use|prefer) (?:codex|claude|anthropic|gpt|openrouter|mistral|groq|google)[^.,!\n;]*/i,
+    /(?:timezone|time zone|fuseau horaire|language|langue|locale|dialect)/i,
+    /(?:based in|located in|working from|je suis basé|je travaille depuis)/i,
+  ];
+
+  const matchedPreference = preferencePatterns.find((pattern) => pattern.test(text));
+  if (matchedPreference) {
+    add(0.78, `User preference/context: ${text}`, { signal: 'preference', pattern: String(matchedPreference) });
+  }
+
+  const roleMatch = text.match(/(?:i am|i'm|je suis)\s+(?:a|an|the)?\s*([^.,!\n;]+?)(?:\s+(?:at|in|from|for|working as|working on|chez|dans)\b|[.,!\n;]|$)/i);
+  if (roleMatch) {
+    const roleText = compactText(roleMatch[1], 80);
+    if (roleText && !/^(here|there|ok|okay|fine|good|ready)$/i.test(roleText)) {
+      add(0.7, `User role/background: ${roleText}`, { signal: 'background' });
+    }
+  }
+
+  const goalMatch = text.match(/(?:i need|i want|i'm trying to|i am trying to|je veux|j'ai besoin de|we need|nous avons besoin de)\s+([^.,!\n;]+)/i);
+  if (goalMatch) {
+    add(0.66, `User goal: ${compactText(goalMatch[1], 100)}`, { signal: 'goal' });
+  }
+
+  const deduped = dedupeMemories(memories.filter(Boolean));
+  return deduped;
+}
+
+function extractUserProfileMemoriesFromMessages(messages = [], userName) {
+  const memories = [];
+  for (const message of messages || []) {
+    const content = typeof message === 'string' ? message : message?.content;
+    const role = typeof message === 'object' ? message?.role : null;
+    if (role && role !== 'user') continue;
+    memories.push(...extractUserProfileMemoriesFromText(content, userName));
+  }
+  return dedupeMemories(memories);
+}
+
 function deriveMemoriesFromConversation({ userMessage, assistantMessage, userName }) {
   const userText = compactText(userMessage, 500);
   const assistantText = compactText(assistantMessage, 500);
   const memories = [];
-
-  const nameMatch = userText.match(/(?:my name is|call me|je m'appelle|appelle-moi)\s+([^.,!\n]+)/i);
-  if (nameMatch) {
-    memories.push(buildMemory(
-      'instance',
-      'user_profile',
-      'reviewable',
-      0.85,
-      `User identity: ${compactText(nameMatch[1], 80)}`,
-      { memory_lane: 'user_profile', source_kind: 'conversation', user_name: userName || null }
-    ));
-  }
-
-  if (/(i prefer|i like|i dislike|always|never|timezone|fuseau horaire|je prefere|je préfère|j'aime|je n'aime pas|toujours|jamais)/i.test(userText)) {
-    memories.push(buildMemory(
-      'instance',
-      'user_profile',
-      'reviewable',
-      0.72,
-      `User preference/context: ${userText}`,
-      { memory_lane: 'user_profile', source_kind: 'conversation', user_name: userName || null }
-    ));
-  }
+  memories.push(...extractUserProfileMemoriesFromText(userText, userName));
 
   const decisionSource = [userText, assistantText].find((text) => /(decision|décision|we will|we'll|on utilise|always use|standard|policy|default|desormais|désormais|dorénavant)/i.test(text));
   if (decisionSource) {
@@ -209,6 +250,8 @@ async function recordToolObservation({ db, workspaceId, agent, toolName, args, r
 
 module.exports = {
   compactText,
+  extractUserProfileMemoriesFromText,
+  extractUserProfileMemoriesFromMessages,
   inferDecisionScope,
   deriveMemoriesFromConversation,
   deriveTaskEpisodeMemory,

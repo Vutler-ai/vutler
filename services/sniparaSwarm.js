@@ -1,5 +1,12 @@
 "use strict";
-const SNIPARA_URL = "https://api.snipara.com/mcp/test-workspace-api-vutler";
+const {
+  buildSniparaProjectUrl,
+  DEFAULT_SNIPARA_PROJECT_SLUG,
+} = require('./sniparaResolver');
+const SNIPARA_URL = process.env.SNIPARA_PROJECT_MCP_URL
+  || process.env.SNIPARA_MCP_URL
+  || process.env.SNIPARA_API_URL
+  || buildSniparaProjectUrl(process.env.SNIPARA_PROJECT_SLUG || DEFAULT_SNIPARA_PROJECT_SLUG);
 const SNIPARA_KEY = process.env.SNIPARA_API_KEY || "REDACTED_SNIPARA_KEY_2";
 const SWARM_ID = process.env.SNIPARA_SWARM_ID || "cmmdu24k500g01ihbw32d44x2";
 

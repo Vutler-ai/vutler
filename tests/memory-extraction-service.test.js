@@ -14,6 +14,7 @@ const {
   deriveMemoriesFromConversation,
   deriveTaskEpisodeMemory,
   deriveToolObservationMemory,
+  extractUserProfileMemoriesFromMessages,
   inferDecisionScope,
   extractConversationMemories,
 } = require('../services/memoryExtractionService');
@@ -33,6 +34,17 @@ describe('memoryExtractionService', () => {
 
     expect(memories.some((memory) => memory.type === 'user_profile' && /Alex/.test(memory.text))).toBe(true);
     expect(memories.some((memory) => memory.type === 'decision' && memory.scopeKey === 'template')).toBe(true);
+  });
+
+  test('extracts user profile memories from a message history', () => {
+    const memories = extractUserProfileMemoriesFromMessages([
+      { role: 'assistant', content: 'Hello' },
+      { role: 'user', content: "Hi, I'm Mike and I prefer concise answers in English." },
+      { role: 'user', content: 'My timezone is Europe/Zurich and I work in operations.' },
+    ], 'Mike');
+
+    expect(memories.some((memory) => memory.type === 'user_profile' && /Mike/.test(memory.text))).toBe(true);
+    expect(memories.some((memory) => memory.type === 'user_profile' && /timezone/i.test(memory.text))).toBe(true);
   });
 
   test('creates internal task episode memory from completed task output', () => {

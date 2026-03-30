@@ -13,11 +13,12 @@ describe('sniparaMemoryService', () => {
   test('namespaces agent and template categories by workspace', () => {
     const bindings = buildAgentMemoryBindings({ id: 'agent-1', username: 'mike', role: 'Engineering' }, 'ws-1');
 
-    expect(bindings.instance).toEqual({
+    expect(bindings.instance).toMatchObject({
       scope: 'agent',
       category: 'ws-1-agent-mike',
+      categories: ['ws-1-agent-mike'],
     });
-    expect(bindings.template).toEqual({
+    expect(bindings.template).toMatchObject({
       scope: 'project',
       category: 'ws-1-template-engineering',
     });
