@@ -703,6 +703,16 @@ async function start() {
     taskExecutor.start();
     app.locals.taskExecutor = taskExecutor;
 
+    // Memory maintenance — periodic cleanup / compaction of short-lived memories
+    try {
+      const { MemoryMaintenanceService } = require('./services/memoryMaintenanceService');
+      const memoryMaintenance = new MemoryMaintenanceService(app.locals.pg);
+      memoryMaintenance.start();
+      app.locals.memoryMaintenance = memoryMaintenance;
+    } catch (e) {
+      console.warn('[BOOT] Memory maintenance skipped:', e.message);
+    }
+
     // Swarm coordinator
     try {
       const { getSwarmCoordinator } = require('./services/swarmCoordinator');
