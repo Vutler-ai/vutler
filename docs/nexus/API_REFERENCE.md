@@ -719,11 +719,231 @@ All errors include a code for programmatic handling:
 
 ## Rate Limiting
 
-WebSocket connections are not rate-limited. However:
+WebSocket connections are not rate-limited. REST endpoints have the following limits:
 
-- Max concurrent tasks per Nexus: determined by AgentManager `seats` config (default 1)
+| Endpoint | Window | Max requests | HTTP on exceed |
+|----------|--------|-------------|----------------|
+| `POST /runtime/heartbeat` | 1 minute | 2 | 429 |
+| `POST /register` | 15 minutes | 5 | 429 |
+| `POST /keys` | 1 hour | 10 | 429 |
+
+Other limits:
+- Max concurrent deployed agents per node: configured via `config.max_seats` (default: unlimited)
 - Max task result size: 1 MB (capped by TaskOrchestrator)
-- Dashboard API: standard 100 req/min per IP
+
+Rate-limit responses follow the standard format:
+```json
+{ "success": false, "error": "Rate limit exceeded" }
+```
+
+Standard `RateLimit-*` response headers are included.
+
+## Enterprise REST Endpoints
+
+All enterprise endpoints are mounted under `/api/v1/nexus`. Authentication is via JWT (workspace sessions) unless noted otherwise.
+
+---
+
+### GET `/:nodeId/seats`
+
+Returns seat quota status for a node.
+
+**Auth:** JWT (workspace)
+
+**Path params:** `nodeId` — UUID of the nexus node
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "current": 2,
+    "max": 5,
+    "available": 3
+  }
+}
+```
+
+`max` is `null` when no seat limit is configured. `available` is `null` when `max` is `null`.
+
+**Error:** `404` if node is not found or does not belong to the workspace.
+
+---
+
+### GET `/metrics`
+
+Workspace-level metrics snapshot (in-memory, resets on process restart).
+
+**Auth:** JWT (workspace)
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "workspaceId": "workspace-abc123",
+    "totalTasks": 142,
+    "successCount": 138,
+    "failureCount": 4,
+    "errorRate": 0.0282,
+    "byAgent": [
+      {
+        "agentId": "agent-uuid-001",
+        "tasks": 80,
+        "success": 78,
+        "failures": 2,
+        "errorRate": 0.025,
+        "avgDurationMs": 1240,
+        "totalDurationMs": 99200
+      }
+    ],
+    "byTaskType": [
+      {
+        "taskType": "feature",
+        "count": 55,
+        "avgDurationMs": 980,
+        "totalDurationMs": 53900
+      }
+    ],
+    "hourlyBuckets": [
+      { "hour": "2026-03-30T14:00:00.000Z", "tasks": 12, "errors": 0 }
+    ],
+    "inFlightCount": 1,
+    "snapshotAt": "2026-03-30T15:30:00.000Z"
+  }
+}
+```
+
+Hourly buckets cover the last 24 hours and are sorted oldest → newest. The cleanup interval purges buckets older than 24 hours every hour.
+
+---
+
+### GET `/metrics/:nodeId`
+
+Node-scoped metrics. Aggregates counters for agents deployed on the given node.
+
+**Auth:** JWT (workspace)
+
+**Path params:** `nodeId` — UUID
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "nodeId": "node-uuid-001",
+    "workspaceId": "workspace-abc123",
+    "totalTasks": 45,
+    "successCount": 44,
+    "failureCount": 1,
+    "errorRate": 0.0222,
+    "byAgent": [ /* same shape as /metrics */ ],
+    "snapshotAt": "2026-03-30T15:30:00.000Z"
+  }
+}
+```
+
+**Error:** `404` if node not found.
+
+---
+
+### GET `/metrics/agents/:agentId`
+
+Single-agent metrics within the workspace.
+
+**Auth:** JWT (workspace)
+
+**Path params:** `agentId` — UUID
+
+**Response (agent with recorded tasks):**
+```json
+{
+  "success": true,
+  "data": {
+    "agentId": "agent-uuid-001",
+    "workspaceId": "workspace-abc123",
+    "tasks": 80,
+    "success": 78,
+    "failures": 2,
+    "errorRate": 0.025,
+    "avgDurationMs": 1240,
+    "totalDurationMs": 99200,
+    "snapshotAt": "2026-03-30T15:30:00.000Z"
+  }
+}
+```
+
+Returns an empty-bucket `200` (not `404`) when no tasks have been recorded for the agent yet.
+
+---
+
+### POST `/metrics/reset`
+
+Flush in-memory metrics for the workspace.
+
+**Auth:** JWT (workspace)
+
+**Body (optional):**
+```json
+{ "all": true }
+```
+
+`all: true` resets metrics for all workspaces. Requires `req.isSuperAdmin = true` in production — returns `403` otherwise.
+
+**Response:**
+```json
+{ "success": true, "message": "Metrics reset for workspace workspace-abc123" }
+```
+
+---
+
+### POST `/routing/report`
+
+Report a task result to the agent health tracker. Used to track consecutive failures and trigger cooldowns.
+
+**Auth:** JWT (workspace) or unauthenticated internal call
+
+**Body:**
+```json
+{
+  "agentId": "agent-uuid-001",
+  "success": true
+}
+```
+
+Both fields are required. `success` must be a boolean.
+
+On success: resets the agent's failure counter.
+On failure: increments the counter. At 3 consecutive failures, the agent enters a 30-second cooldown and is deprioritised by the router.
+
+**Response:**
+```json
+{ "success": true }
+```
+
+---
+
+### POST `/routing/cache/invalidate`
+
+Flush the routing rules cache. Call this after updating `nexus_routing_rules` in the database.
+
+**Auth:** JWT (workspace)
+
+**Body (optional):**
+```json
+{ "workspace_id": "workspace-abc123" }
+```
+
+Omit `workspace_id` to flush the cache for all workspaces.
+
+**Response:**
+```json
+{ "success": true, "flushed": "workspace-abc123" }
+```
+
+`flushed` is `"all"` when no workspace was specified.
+
+---
 
 ## Offline Behavior
 

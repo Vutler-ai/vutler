@@ -55,9 +55,11 @@ Nexus is a local AI agent execution runtime that bridges cloud-based task orches
 │                         ↓                                    │
 │ ┌─────────────────────────────────────────────────────────┐ │
 │ │ OfflineQueue & OfflineMonitor (Enterprise)              │ │
-│ │ - SQLite queue for disconnected scenarios               │ │
-│ │ - Automatic replay on reconnect                         │ │
-│ │ - Status persistence                                    │ │
+│ │ - AES-256-GCM encrypted queue (.enc files)             │ │
+│ │ - Exponential backoff retry (5 attempts)                │ │
+│ │ - Dead letter queue (DLQ) for exhausted items          │ │
+│ │ - Cron task runner (whitelist-validated binaries)       │ │
+│ │ - Disk space guard (abort < 100 MB, warn < 500 MB)     │ │
 │ └─────────────────────────────────────────────────────────┘ │
 │                         ↓                                    │
 │ ┌─────────────────────────────────────────────────────────┐ │
@@ -536,10 +538,149 @@ If WebSocket fails:
 | Task result size | 1MB max | Cap + compression |
 | Reconnect time | < 10s | Exponential backoff |
 
+## Security Hardening
+
+### Authentication
+
+The `/register` endpoint enforces strict API key validation against the database in all environments. The `NEXUS_DEV_BYPASS` env var is explicitly rejected in production — if it is set, the server logs a critical misconfiguration error and continues to require valid credentials. There is no dev-mode shortcut.
+
+```
+Authorization: Bearer <nexus_api_key>
+```
+
+Keys are resolved via `resolveApiKey()`, which checks the `tenant_vutler.api_keys` table. Revoked keys are rejected immediately.
+
+### Rate Limiting
+
+Sensitive endpoints are protected by `express-rate-limit`:
+
+| Endpoint | Window | Max requests |
+|----------|--------|-------------|
+| `POST /runtime/heartbeat` | 1 minute | 2 |
+| `POST /register` | 15 minutes | 5 |
+| `POST /keys` | 1 hour | 10 |
+
+All rate-limited endpoints return `429` with `{ success: false, error: "Rate limit exceeded" }` when the threshold is crossed. Standard `RateLimit-*` headers are emitted; legacy `X-RateLimit-*` headers are disabled.
+
+### Offline Queue Encryption (AES-256-GCM)
+
+Queue files written by `OfflineMonitor` are encrypted at rest using AES-256-GCM when an API key is available.
+
+**Key derivation:**
+- Algorithm: PBKDF2-SHA-512
+- Iterations: 100,000
+- Key length: 32 bytes (AES-256)
+- Salt: 32 random bytes, stored in `<queue_path>/.salt`, generated once per node
+- Input: Nexus API key (`opts.apiKey` → `node.apiKey` → `node.config.apiKey`)
+
+**Wire format (binary .enc files):**
+```
+[IV (16 B)] || [GCM auth tag (16 B)] || [ciphertext]
+```
+
+Decryption fails with an authentication error if the ciphertext has been tampered with. Corrupted files are moved to `<queue_path>/corrupted/` and excluded from future sync attempts.
+
+If no API key is configured, the monitor falls back to plain-text `.json` files and logs a warning. On the next sync cycle, legacy `.json` files are automatically migrated to `.enc` when a key becomes available.
+
+### Cron Command Injection Prevention
+
+Offline cron tasks run via `execFileSync` (no shell interpolation). Before any task is scheduled, `parseSafeCommand()` validates:
+
+1. **Binary whitelist** — only approved binaries are permitted:
+
+   | Category | Binaries |
+   |----------|---------|
+   | HTTP | `curl`, `wget` |
+   | Runtimes | `node`, `python`, `python3`, `ruby`, `php` |
+   | Shells | `bash`, `sh` |
+   | Text utils | `echo`, `printf`, `cat`, `ls`, `pwd`, `date`, `env`, `grep`, `awk`, `sed`, `sort`, `uniq`, `wc`, `head`, `tail`, `cut` |
+   | Data | `jq`, `yq` |
+   | Network | `ping`, `nslookup`, `dig` |
+   | VCS / pkg | `git`, `npm`, `npx`, `pnpm`, `yarn` |
+
+2. **Dangerous characters** — any argument containing `;`, `|`, `&`, `` ` ``, `$`, `<`, `>`, `(`, `)`, `{`, `}`, `[`, `]`, `\` is rejected.
+3. **Command length** — max 1,024 characters.
+4. **Fail-fast** — all tasks in a batch are validated before any timer is started. An invalid task is skipped; the rest are still scheduled.
+
+### Disk Space Monitoring
+
+Before writing to the offline queue, `OfflineMonitor.enqueue()` calls `df -k` to check available disk space:
+
+| Free space | Action |
+|-----------|--------|
+| > 500 MB | Normal write |
+| 100–500 MB | Write with `WARN` log entry |
+| < 100 MB | Reject with `Error: Insufficient disk space` |
+
+The check falls back to `Infinity` (non-blocking) in environments where `df` is unavailable.
+
+---
+
+## Enterprise Features
+
+### Seat Enforcement
+
+Agent deployment is gated by a seat quota stored in `nexus_nodes.config.max_seats` (or `config.seats`). The `validateSeatQuota()` function compares the current `agents_deployed` array length against the configured maximum.
+
+- `POST /:id/deploy` returns `403` with `Seat quota exceeded (current/max)` if the limit is reached.
+- `GET /:nodeId/seats` exposes the current quota status to the cloud dashboard.
+- A node with no `max_seats` configured has unlimited seats (`max: null`).
+
+### Load Balancing
+
+`nexusRouting.js` implements multi-agent routing with three complementary mechanisms:
+
+**Round-robin**: Each `workspaceId:taskType` key maintains an independent index. The index resets automatically when the candidate list changes (e.g., after a routing rule update).
+
+**Weight-based**: Agents can declare a `config.weight` (integer 1–10, default 1). A weight-3 agent is expanded to three slots in the pool, giving it three times the probability of being selected in a round-robin cycle.
+
+**Health-aware**: An agent is considered eligible only when:
+- `status = 'online'` in the DB
+- Last heartbeat is < 90 seconds old
+- Not in failure cooldown (< 3 consecutive failures, or cooldown window of 30 s expired)
+
+If no primary candidate is eligible, the router walks the `FALLBACK_CHAIN` map. If all fallbacks are also offline, the first candidate is returned anyway with `warning: 'primary_agent_offline'`.
+
+Routing rules are loaded from `tenant_vutler.nexus_routing_rules` (workspace-aware) with a 60-second in-memory cache. Static rules in `ROUTING_RULES` are used when no DB rows exist for the workspace.
+
+### Dead Letter Queue (DLQ)
+
+Failed offline sync items follow exponential backoff, then graduate to the DLQ:
+
+| Attempt | Backoff |
+|---------|---------|
+| 1 | 1 s |
+| 2 | 2 s |
+| 3 | 4 s |
+| 4 | 8 s |
+| 5 (final) | Moved to DLQ |
+
+DLQ files live in `<queue_path>/../queue/dlq/` (configurable via `opts.dlq_path`). Each file keeps a sidecar `.meta.json` with attempt count, last error, and DLQ timestamp.
+
+`getDLQStatus()` returns the count, oldest, and newest task filenames. `retryDLQ(taskId?)` moves files back into the main queue with a fresh attempt counter.
+
+### In-Memory Metrics
+
+`nexusMetrics.js` provides process-local counters with no database dependency. Metrics are scoped by `workspaceId` and retained for 24 hours in hourly buckets. A cleanup interval runs every hour to purge stale buckets.
+
+**Tracked dimensions:**
+
+| Dimension | Fields |
+|-----------|--------|
+| Workspace | `totalTasks`, `successCount`, `failureCount`, `errorRate` |
+| Per-agent | `tasks`, `success`, `failures`, `errorRate`, `avgDurationMs` |
+| Per-task-type | `count`, `avgDurationMs` |
+| Hourly | `hour` (ISO), `tasks`, `errors` |
+
+Metrics are recorded by calling `recordTaskStart(workspaceId, agentId, taskType, taskId)` at dispatch time and `recordTaskEnd(taskId, success, durationMs?)` at completion. Both calls are no-ops if the workspace or taskId is missing.
+
+---
+
 ## Security Considerations
 
 1. **No Raw Files**: Results contain metadata + extracted text, never raw file uploads
 2. **Encrypted Communication**: WSS with TLS, API key in Authorization header
 3. **Permission Boundaries**: Tasks rejected if outside allowed paths
 4. **Audit Logging**: All task execution logged with timestamp, agent ID, action, result
-5. **Offline Signature**: Queued tasks signed to prevent tampering during offline periods
+5. **Offline Queue**: Queue files encrypted at rest with AES-256-GCM when API key is present
+6. **Command Injection**: Cron tasks validated against binary whitelist before scheduling
