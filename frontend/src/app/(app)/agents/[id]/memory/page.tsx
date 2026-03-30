@@ -264,12 +264,26 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
             <span className="text-white font-medium">{context.template_count}{context.template_count_is_estimate ? '+' : ''}</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-[#6b7280]">Workspace memories</span>
+            <span className="text-white font-medium">{context.global_count ?? 0}{context.global_count_is_estimate ? '+' : ''}</span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-[#6b7280]">Hidden personal</span>
             <span className="text-white font-medium">{context.hidden_instance_count ?? 0}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-[#6b7280]">Hidden template</span>
             <span className="text-white font-medium">{context.hidden_template_count ?? 0}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[#6b7280]">Hidden workspace</span>
+            <span className="text-white font-medium">{context.hidden_global_count ?? 0}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-[#6b7280]">Expired memories</span>
+            <span className="text-white font-medium">
+              {(context.expired_instance_count ?? 0) + (context.expired_template_count ?? 0) + (context.expired_global_count ?? 0)}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-[#6b7280]">Role</span>

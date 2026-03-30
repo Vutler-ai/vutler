@@ -37,9 +37,10 @@ router.get('/agents/:agentId/memories', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const { agentId } = req.params;
-    const { q, include_internal, countOnly } = req.query;
+    const { q, include_internal, include_expired, countOnly } = req.query;
     const limit = parseLimit(req.query.limit, countOnly === 'true' ? DEFAULT_COUNT_LIMIT : 50);
     const includeInternal = include_internal === 'true';
+    const includeExpired = include_expired === 'true';
 
     const result = await listAgentMemories({
       db: pool,
@@ -48,17 +49,22 @@ router.get('/agents/:agentId/memories', async (req, res) => {
       query: q,
       limit,
       includeInternal,
+      includeExpired,
     });
 
     return res.json({
       success: true,
       memories: countOnly === 'true' ? [] : result.memories,
       count: result.count,
-      total_count: result.count,
-      visible_count: result.count,
+      total_count: result.total_count,
+      visible_count: result.visible_count,
+      hidden_count: result.hidden_count,
+      expired_count: result.expired_count,
+      deleted_count: result.deleted_count,
       has_more: result.has_more,
       count_is_estimate: result.count_is_estimate,
       visibility: includeInternal ? 'all' : 'reviewable',
+      include_expired: includeExpired,
       agent: {
         id: result.agent.id,
         username: result.agent.username,
@@ -75,10 +81,11 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const { agentId } = req.params;
-    const { include_internal } = req.query;
+    const { include_internal, include_expired } = req.query;
     const role = normalizeRole(req.query.role || 'general');
     const limit = parseLimit(req.query.limit, 50);
     const includeInternal = include_internal === 'true';
+    const includeExpired = include_expired === 'true';
 
     const result = await listTemplateMemories({
       db: pool,
@@ -87,6 +94,7 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
       role,
       limit,
       includeInternal,
+      includeExpired,
     });
 
     return res.json({
@@ -94,10 +102,15 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
       memories: result.memories,
       role,
       count: result.count,
-      total_count: result.count,
+      total_count: result.total_count,
+      visible_count: result.visible_count,
+      hidden_count: result.hidden_count,
+      expired_count: result.expired_count,
+      deleted_count: result.deleted_count,
       has_more: result.has_more,
       count_is_estimate: result.count_is_estimate,
       visibility: includeInternal ? 'all' : 'reviewable',
+      include_expired: includeExpired,
     });
   } catch (error) {
     console.error('[Memory API] template recall failed:', error.message);

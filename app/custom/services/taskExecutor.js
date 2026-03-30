@@ -8,7 +8,7 @@ const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
-const { buildRuntimeMemoryPrompt } = require('../../../services/sniparaMemoryService');
+const { buildRuntimeMemoryBundle } = require('../../../services/sniparaMemoryService');
 const { extractTaskMemories } = require('../../../services/memoryExtractionService');
 
 const SCHEMA = 'tenant_vutler';
@@ -162,16 +162,20 @@ async function failTask(task, err, extraMetadata = {}) {
 
 async function buildExecutionPrompt(agent, task, workspaceId) {
   const baseSystemPrompt = agent.system_prompt || `You are ${agent.name}, a helpful assistant.`;
-  const memoryPrompt = await buildRuntimeMemoryPrompt({
+  const memoryBundle = await buildRuntimeMemoryBundle({
     db: pool,
     workspaceId,
     agent,
     query: `${task.title} ${task.description || ''}`.trim(),
-  }).catch(() => '');
+    runtime: 'task',
+  }).catch(() => ({ prompt: '', stats: null }));
 
-  return memoryPrompt
-    ? `${baseSystemPrompt}\n\n${memoryPrompt}`
-    : baseSystemPrompt;
+  return {
+    prompt: memoryBundle.prompt
+      ? `${baseSystemPrompt}\n\n${memoryBundle.prompt}`
+      : baseSystemPrompt,
+    memoryStats: memoryBundle.stats || null,
+  };
 }
 
 async function executeTask(task) {
@@ -193,7 +197,7 @@ async function executeTask(task) {
       await swarmCoordinator.claimTask(task.snipara_task_id, agentRef, workspaceId);
     }
 
-    const effectiveSystemPrompt = await buildExecutionPrompt(agent, task, workspaceId);
+    const executionPrompt = await buildExecutionPrompt(agent, task, workspaceId);
     const response = await llmChat(
       {
         id: agent.id,
@@ -201,7 +205,7 @@ async function executeTask(task) {
         role: agent.role,
         model: agent.model,
         provider: agent.provider,
-        system_prompt: effectiveSystemPrompt,
+        system_prompt: executionPrompt.prompt,
         temperature: parseFloat(agent.temperature) || 0.7,
         max_tokens: agent.max_tokens || 4096,
         workspace_id: workspaceId
@@ -212,6 +216,15 @@ async function executeTask(task) {
     );
 
     const latencyMs = Date.now() - startedAt;
+    if (executionPrompt.memoryStats) {
+      console.info('[TaskExecutor] memory bundle', {
+        taskId: task.id,
+        agent: agentRef,
+        workspaceId,
+        runtime: executionPrompt.memoryStats.runtime,
+        selected: executionPrompt.memoryStats.selected,
+      });
+    }
     const successMeta = {
       result: response.content,
       model: response.model || agent.model,

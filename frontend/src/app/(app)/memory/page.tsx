@@ -203,6 +203,8 @@ function AgentMemoryCard({ agent }: AgentMemoryCardProps) {
 
   const count = summary?.count ?? 0;
   const countLabel = summary?.has_more || summary?.count_is_estimate ?     `${count}+` : `${count}`;
+  const hiddenLabel = summary?.hidden_count ? `, ${summary.hidden_count} hidden` : '';
+  const expiredLabel = summary?.expired_count ? `, ${summary.expired_count} expired` : '';
 
   return (
     <button
@@ -224,7 +226,7 @@ function AgentMemoryCard({ agent }: AgentMemoryCardProps) {
         <Skeleton className="h-3 w-20" />
       ) : (
         <p className="text-xs text-[#6b7280]">
-          <span className="text-white font-medium">{countLabel}</span> {count === 1 ? 'memory' : 'memories'}
+          <span className="text-white font-medium">{countLabel}</span> {count === 1 ? 'memory' : 'memories'}{hiddenLabel}{expiredLabel}
         </p>
       )}
     </button>

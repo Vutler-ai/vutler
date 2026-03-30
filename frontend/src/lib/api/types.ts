@@ -687,10 +687,19 @@ export interface Memory {
   type: string;
   importance: number;
   scope: 'agent' | 'template' | 'global' | string;
+  scope_key?: 'instance' | 'template' | 'global' | string;
   category?: string;
   created_at: string;
+  expires_at?: string | null;
+  last_seen_at?: string;
+  last_used_at?: string | null;
+  usage_count?: number;
+  duplicate_count?: number;
+  promotion_score?: number;
+  retrieval_score?: number;
   agent_id?: string;
   visibility?: 'internal' | 'reviewable' | 'user_visible' | string;
+  status?: 'active' | 'expired' | string;
   metadata?: Record<string, unknown>;
 }
 
@@ -699,6 +708,9 @@ export interface AgentMemoryListResponse {
   count: number;
   total_count?: number;
   visible_count?: number;
+  hidden_count?: number;
+  expired_count?: number;
+  deleted_count?: number;
   has_more?: boolean;
   count_is_estimate?: boolean;
 }
@@ -709,11 +721,17 @@ export interface AgentContext {
   soul?: string;
   template_count: number;
   instance_count: number;
+  global_count?: number;
   role: string;
   hidden_instance_count?: number;
   hidden_template_count?: number;
+  hidden_global_count?: number;
+  expired_instance_count?: number;
+  expired_template_count?: number;
+  expired_global_count?: number;
   instance_count_is_estimate?: boolean;
   template_count_is_estimate?: boolean;
+  global_count_is_estimate?: boolean;
 }
 
 export interface RememberPayload {

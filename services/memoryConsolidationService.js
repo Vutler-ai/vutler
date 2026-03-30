@@ -2,6 +2,7 @@
 
 const { buildAgentMemoryBindings, resolveAgentRecord, normalizeMemories } = require('./sniparaMemoryService');
 const { callSniparaTool } = require('./sniparaResolver');
+const { isMemoryExpired, getDefaultScopeKey } = require('./memoryPolicy');
 
 function canonicalizeText(text) {
   return String(text || '')
@@ -33,6 +34,7 @@ function overlapScore(left, right) {
 
 function isNearDuplicate(candidate, existing) {
   if (!candidate || !existing) return false;
+  if (isMemoryExpired(existing)) return false;
   if (String(candidate.type || '') !== String(existing.type || '')) return false;
 
   const candidateLane = candidate.metadata?.memory_lane || null;
@@ -76,7 +78,7 @@ async function findRecentDuplicate({ db, workspaceId, agent, memory }) {
     db,
     workspaceId,
     agent,
-    scopeKey: memory.scopeKey || 'instance',
+    scopeKey: memory.scopeKey || getDefaultScopeKey(memory.type),
     query,
     limit: 12,
   });

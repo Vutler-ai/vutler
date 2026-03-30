@@ -3,6 +3,7 @@
 const { rememberScopedMemory } = require('./sniparaMemoryService');
 const { filterNovelMemories } = require('./memoryConsolidationService');
 const { maybeAutoPromoteMemories } = require('./memoryPromotionService');
+const { logMemoryEvent, summarizeMemoryTypes, summarizeMemoryScopes } = require('./memoryTelemetryService');
 
 function compactText(value, max = 240) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
@@ -169,6 +170,18 @@ async function persistMemories({ db, workspaceId, agent, memories }) {
       memories: repeatedMemories,
     }).catch((err) => {
       console.warn('[MemoryExtraction] promotion failed:', err.message);
+    });
+  }
+
+  if ((memories || []).length > 0) {
+    logMemoryEvent('persist', {
+      workspaceId,
+      agent: agent?.username || agent?.id || 'unknown-agent',
+      attempted: (memories || []).length,
+      persisted: novelMemories.length,
+      repeated: repeatedMemories.length,
+      types: summarizeMemoryTypes(novelMemories),
+      scopes: summarizeMemoryScopes(novelMemories),
     });
   }
 

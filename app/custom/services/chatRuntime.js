@@ -8,6 +8,7 @@ const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
 const { extractConversationMemories } = require('../../../services/memoryExtractionService');
+const { buildRuntimeMemoryBundle } = require('../../../services/sniparaMemoryService');
 const { callSniparaTool, resolveSniparaConfig } = require('../../../services/sniparaResolver');
 
 const SCHEMA = 'tenant_vutler';
@@ -33,25 +34,6 @@ const agentCache = new Map();
 
 function normalizeWorkspaceId(workspaceId) {
   return workspaceId || DEFAULT_WORKSPACE;
-}
-
-function normalizeRole(role) {
-  return String(role || 'general')
-    .toLowerCase()
-    .replace(/[^a-z0-9-_]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'general';
-}
-
-function getMemoryScope(agentId, level, role, workspaceId = DEFAULT_WORKSPACE) {
-  const ws = normalizeWorkspaceId(workspaceId);
-  if (level === 'instance') {
-    return { scope: 'agent', category: `${ws}-agent-${String(agentId || 'unknown-agent')}` };
-  }
-  if (level === 'template') {
-    return { scope: 'project', category: `${ws}-template-${normalizeRole(role)}` };
-  }
-  return { scope: 'project', category: `${ws}-platform-standards` };
 }
 
 function getRetryDelayMs(attempts) {
@@ -207,41 +189,22 @@ async function getAgentSoul(agent) {
     return cached.soul;
   }
 
-  const role = agent.role || agent.username || agent.name;
-  const instanceScope = getMemoryScope(agentName, 'instance', role, workspaceId);
-  const templateScope = getMemoryScope(agentName, 'template', role, workspaceId);
-  const globalScope = getMemoryScope(agentName, 'global', role, workspaceId);
-
-  const [instanceMemories, templateMemories, globalMemories, context] = await Promise.all([
-    sniparaCall('rlm_recall', {
+  const [memoryBundle, context] = await Promise.all([
+    buildRuntimeMemoryBundle({
+      db: pool,
+      workspaceId,
+      agent,
       query: `${agentName} personality soul role instructions behavior preferences`,
-      agent_id: agentName,
-      scope: instanceScope.scope,
-      category: instanceScope.category,
-      limit: 8
-    }, workspaceId),
-    sniparaCall('rlm_recall', {
-      query: `${role} template best practices role instructions`,
-      scope: templateScope.scope,
-      category: templateScope.category,
-      limit: 6
-    }, workspaceId),
-    sniparaCall('rlm_recall', {
-      query: 'platform standards guardrails policies defaults',
-      scope: globalScope.scope,
-      category: globalScope.category,
-      limit: 6
-    }, workspaceId),
+      runtime: 'chat',
+    }).catch(() => ({ prompt: '', stats: null })),
     sniparaCall('rlm_context_query', {
       query: `${agentName} agent role responsibilities at Starbox Group`,
       max_tokens: 1000
     }, workspaceId)
   ]);
 
-  const recalled = [instanceMemories, templateMemories, globalMemories].filter(Boolean).join('\n\n');
-
   let soul = '';
-  if (recalled && recalled.trim()) soul += `## Your Memories\n${recalled}\n\n`;
+  if (memoryBundle.prompt && memoryBundle.prompt.trim()) soul += `${memoryBundle.prompt}\n\n`;
   if (context && String(context).trim()) soul += `## Context\n${context}\n\n`;
   soul += `## Identity\nYou are ${agent.name}, an AI agent at Starbox Group.\n`;
   soul += `Your username in the swarm is "${agentName}".\n`;
@@ -249,6 +212,15 @@ async function getAgentSoul(agent) {
   soul += 'Respond in the same language as the user (French or English).\n';
   soul += 'Be concise, helpful, and stay in character.\n';
   if (agent.system_prompt) soul += `\n## Additional Instructions\n${agent.system_prompt}\n`;
+
+  if (memoryBundle.stats) {
+    console.info('[ChatRuntime] memory bundle', {
+      agent: agentName,
+      workspaceId,
+      runtime: memoryBundle.stats.runtime,
+      selected: memoryBundle.stats.selected,
+    });
+  }
 
   soulCache.set(cacheKey, { soul, time: now });
   return soul;

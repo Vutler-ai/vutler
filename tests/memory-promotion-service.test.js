@@ -15,6 +15,7 @@ const {
   isNearDuplicate,
 } = require('../services/memoryConsolidationService');
 const {
+  computePromotionScore,
   getPromotionTarget,
   maybeAutoPromoteMemory,
 } = require('../services/memoryPromotionService');
@@ -37,6 +38,7 @@ describe('memoryPromotionService', () => {
   test('promotes repeated instance decisions to template scope', async () => {
     recallScopeMemories
       .mockResolvedValueOnce([
+        { text: 'Decision: Always use Codex for development.' },
         { text: 'Decision: Always use Codex for development.' },
       ])
       .mockResolvedValueOnce([]);
@@ -67,6 +69,7 @@ describe('memoryPromotionService', () => {
     recallScopeMemories
       .mockResolvedValueOnce([
         { text: 'Decision: Keep Tailwind as the default UI layer.' },
+        { text: 'Decision: Keep Tailwind as the default UI layer.' },
       ])
       .mockResolvedValueOnce([
         { text: 'Decision: Keep Tailwind as the default UI layer.' },
@@ -87,5 +90,13 @@ describe('memoryPromotionService', () => {
 
     expect(result).toBeNull();
     expect(rememberScopedMemory).not.toHaveBeenCalled();
+  });
+
+  test('computes a promotion score from duplicates and importance', () => {
+    expect(computePromotionScore({
+      type: 'decision',
+      importance: 0.8,
+      metadata: { promotion_score: 0.4 },
+    }, 2)).toBeGreaterThan(1.7);
   });
 });
