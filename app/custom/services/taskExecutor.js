@@ -18,6 +18,7 @@ const STALE_THRESHOLD_MIN = 1440; // skip tasks older than 24h
 const BATCH_SIZE = 5;
 
 let running = false;
+let wsConnections = null; // Set by index.js after WS server starts
 let consecutiveErrors = 0;
 
 // ── Agent cache ──────────────────────────────────────────────────────────────
@@ -78,7 +79,8 @@ async function executeTask(task) {
         workspace_id: agent.workspace_id || DEFAULT_WORKSPACE,
       },
       [{ role: 'user', content: userMessage }],
-      pool // pass db for OAuth token resolution (codex/chatgpt)
+      pool, // pass db for OAuth token resolution (codex/chatgpt)
+      { wsConnections } // pass WS connections for Nexus tool bridge
     );
 
     const latencyMs = Date.now() - start;
@@ -89,7 +91,7 @@ async function executeTask(task) {
       latency_ms: latencyMs,
       usage: response.usage || null,
       executed_by: agent.name,
-      execution_mode: 'llm_direct',
+      execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct',
     };
 
     await updateTask(task.id, 'completed', response.content, metadata);
@@ -185,4 +187,9 @@ function stop() {
   console.log('[TaskExecutor] Stopped');
 }
 
-module.exports = { start, stop, executeTask };
+function setWsConnections(connections) {
+  wsConnections = connections;
+  console.log('[TaskExecutor] WebSocket connections linked — Nexus tool bridge active');
+}
+
+module.exports = { start, stop, executeTask, setWsConnections };

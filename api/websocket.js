@@ -270,6 +270,14 @@ async function dispatch(connection, { type, data = {} }, app) {
       console.log(`[WS] Git pull result from "${connection.agentId}": ${data.success ? 'OK' : data.error}`);
       break;
 
+    // ── Nexus tool result (response to tool.call from llmRouter) ──────
+    case 'tool.result': {
+      const { request_id, success, data: toolData, error: toolError } = data;
+      console.log(`[WS] tool.result from "${connection.agentId}": ${request_id} ${success ? 'ok' : 'error'}`);
+      require('../services/nexusTools').handleToolResult(request_id, success, toolData, toolError);
+      break;
+    }
+
     default:
       console.log(`[WS] Unknown message type "${type}" from ${connection.agentId}`);
       send(connection.ws, 'error', { message: `Unknown type: ${type}` });

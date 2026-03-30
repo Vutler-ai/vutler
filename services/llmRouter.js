@@ -545,7 +545,7 @@ async function runOnce(attempt, messages, tools) {
   return normalizeResponse(attempt.provider, attempt.model, result, Date.now() - start);
 }
 
-async function chat(agent, messages, db) {
+async function chat(agent, messages, db, opts = {}) {
   const MODEL_MAP = {
     // Legacy OpenAI models → current
     'gpt-4o': 'gpt-5.4',
@@ -670,7 +670,20 @@ async function chat(agent, messages, db) {
       const MAX_TOOL_ITERATIONS = 3;
 
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-        const allTools = [...(memoryTools || []), ...socialMediaTools];
+        // Inject Nexus local tools when a node is online for this workspace
+        let nexusTools = [];
+        let nexusNodeId = null;
+        if (opts.wsConnections && workspaceId) {
+          try {
+            const { getNexusToolsForWorkspace, getOnlineNexusNode } = require('./nexusTools');
+            nexusTools = await getNexusToolsForWorkspace(workspaceId, db);
+            if (nexusTools.length > 0) {
+              const node = await getOnlineNexusNode(workspaceId, db);
+              nexusNodeId = node?.id || null;
+            }
+          } catch (_) { /* nexusTools not available — skip */ }
+        }
+        const allTools = [...(memoryTools || []), ...socialMediaTools, ...nexusTools];
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
 
         // No tool calls → we have the final answer
@@ -761,6 +774,32 @@ async function chat(agent, messages, db) {
               ];
             }
             continueLoop = true;
+
+          // ── Nexus tool execution (local node bridge) ──────────────────
+          } else if (nexusNodeId && opts.wsConnections) {
+            const { NEXUS_TOOL_NAMES, executeNexusTool } = require('./nexusTools');
+            if (NEXUS_TOOL_NAMES.has(toolCall.name)) {
+              const agentName = agent?.name || agent?.username || 'agent';
+              console.log(`[Nexus] Agent ${agentName} calling tool: ${toolCall.name}(${JSON.stringify(args).slice(0, 100)})`);
+              try {
+                const toolResult = await executeNexusTool(nexusNodeId, toolCall.name, args, opts.wsConnections);
+                const content = toolResult.success
+                  ? JSON.stringify(toolResult.data)
+                  : `Error: ${toolResult.error || 'Tool execution failed'}`;
+                currentMessages = [
+                  ...currentMessages,
+                  { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                  { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content },
+                ];
+              } catch (nexusErr) {
+                currentMessages = [
+                  ...currentMessages,
+                  { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                  { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: `Error: ${nexusErr.message}` },
+                ];
+              }
+              continueLoop = true;
+            }
           }
         }
 

@@ -685,6 +685,9 @@ async function start() {
 
     // Task executor — picks up pending tasks and executes them via agent LLM
     const taskExecutor = require('./app/custom/services/taskExecutor');
+    if (app.locals.wsConnections) {
+      taskExecutor.setWsConnections(app.locals.wsConnections);
+    }
     taskExecutor.start();
     app.locals.taskExecutor = taskExecutor;
 

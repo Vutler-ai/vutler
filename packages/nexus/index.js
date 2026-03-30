@@ -245,6 +245,34 @@ class NexusNode {
           });
           break;
 
+        // ── Nexus tool call from cloud (agent bridge) ────────────────────
+        case 'tool.call': {
+          const { request_id, tool_name, args } = msg.payload || {};
+          this.log(`[Nexus] tool.call: ${tool_name} (${request_id})`);
+          try {
+            const result = await this.orchestrator.execute({
+              taskId: request_id,
+              action: tool_name,
+              ...(args || {}),
+              agentId: 'nexus-bridge',
+              timestamp: Date.now(),
+            });
+            this.wsClient.send('tool.result', {
+              request_id,
+              success: true,
+              data: result?.data || result,
+            });
+          } catch (err) {
+            console.error(`[Nexus] tool.call failed: ${tool_name}`, err.message);
+            this.wsClient.send('tool.result', {
+              request_id,
+              success: false,
+              error: err.message,
+            });
+          }
+          break;
+        }
+
         default:
           this.log(`[Nexus] Unknown WS message type: ${msg.type}`);
       }
