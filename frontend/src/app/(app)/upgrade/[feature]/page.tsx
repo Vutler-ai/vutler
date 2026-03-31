@@ -10,66 +10,118 @@ const FEATURE_COPY: Record<string, {
   description: string;
   suggestedPlan: string;
   icon: typeof MessageSquare;
+  billingTab: 'office' | 'agents' | 'full';
+  planOptions: Array<{ id: string; label: string; summary: string }>;
 }> = {
   chat: {
     title: 'Chat workspace',
     description: 'Le chat Vutler orchestre les agents, les artefacts et les actions internes du workspace.',
     suggestedPlan: 'Office Starter',
     icon: MessageSquare,
+    billingTab: 'office',
+    planOptions: [
+      { id: 'office_starter', label: 'Office Starter', summary: 'Chat, Drive, Email, Tasks, Calendar et integrations.' },
+      { id: 'office_team', label: 'Office Team', summary: 'Meme surface office avec plus de stockage et de capacite.' },
+    ],
   },
   tasks: {
     title: 'Tasks',
     description: 'Les tâches synchronisent le travail asynchrone entre agents, équipe et automation runtime.',
     suggestedPlan: 'Office Starter',
     icon: BrainCircuit,
+    billingTab: 'office',
+    planOptions: [
+      { id: 'office_starter', label: 'Office Starter', summary: 'Debloque tasks, calendar et collaboration office.' },
+      { id: 'office_team', label: 'Office Team', summary: 'Version office etendue pour les equipes plus actives.' },
+    ],
   },
   email: {
     title: 'Email',
     description: 'Le module email donne accès aux boîtes, brouillons, routage agent et domaines internes.',
     suggestedPlan: 'Office Starter',
     icon: Mail,
+    billingTab: 'office',
+    planOptions: [
+      { id: 'office_starter', label: 'Office Starter', summary: 'Email, routage agent, domaines et groupes internes.' },
+      { id: 'office_team', label: 'Office Team', summary: 'Meme surface email avec plus de capacite workspace.' },
+    ],
   },
   drive: {
     title: 'Drive',
     description: 'Le Drive sert de couche de dépôt et de récupération de documents pour les agents et le chat.',
     suggestedPlan: 'Office Starter',
     icon: FolderOpen,
+    billingTab: 'office',
+    planOptions: [
+      { id: 'office_starter', label: 'Office Starter', summary: 'Drive partage et documents internes du workspace.' },
+      { id: 'office_team', label: 'Office Team', summary: 'Davantage de stockage pour les flux documentaires.' },
+    ],
   },
   calendar: {
     title: 'Calendar',
     description: 'Le calendrier gère les événements, disponibilités et liens directs depuis les réponses agent.',
     suggestedPlan: 'Office Starter',
     icon: CalendarDays,
+    billingTab: 'office',
+    planOptions: [
+      { id: 'office_starter', label: 'Office Starter', summary: 'Calendar, tasks et coordinations de planning.' },
+      { id: 'office_team', label: 'Office Team', summary: 'Capacite office renforcee pour plusieurs utilisateurs.' },
+    ],
   },
   agents: {
     title: 'Agents',
     description: 'La surface Agents permet de créer, configurer et piloter les agents du workspace.',
     suggestedPlan: 'Agents Starter',
     icon: Wrench,
+    billingTab: 'agents',
+    planOptions: [
+      { id: 'agents_starter', label: 'Agents Starter', summary: 'Jusqu’a 25 agents avec builder, tools et runtime.' },
+      { id: 'agents_pro', label: 'Agents Pro', summary: 'Jusqu’a 100 agents et plus de capacite Nexus.' },
+    ],
   },
   nexus: {
     title: 'Nexus',
     description: 'Nexus provisionne et pilote les nœuds runtime externes rattachés au workspace.',
     suggestedPlan: 'Agents Starter',
     icon: Server,
+    billingTab: 'agents',
+    planOptions: [
+      { id: 'agents_starter', label: 'Agents Starter', summary: 'Nexus local et surface d’orchestration agent.' },
+      { id: 'agents_pro', label: 'Agents Pro', summary: 'Plus de noeuds et de capacite enterprise Nexus.' },
+    ],
   },
   sandbox: {
     title: 'Sandbox',
     description: 'Le sandbox exécute du code et des runs contrôlés pour les agents et workflows.',
     suggestedPlan: 'Agents Starter',
     icon: FlaskConical,
+    billingTab: 'agents',
+    planOptions: [
+      { id: 'agents_starter', label: 'Agents Starter', summary: 'Sandbox, builder et runtime agent.' },
+      { id: 'agents_pro', label: 'Agents Pro', summary: 'Capacite et quotas plus confortables pour les runs.' },
+    ],
   },
   providers: {
     title: 'Providers',
     description: 'Les providers centralisent les credentials et endpoints LLM disponibles pour le workspace.',
     suggestedPlan: 'Agents Starter',
     icon: PlugZap,
+    billingTab: 'agents',
+    planOptions: [
+      { id: 'agents_starter', label: 'Agents Starter', summary: 'Providers, settings LLM et tools d’execution.' },
+      { id: 'agents_pro', label: 'Agents Pro', summary: 'Version etendue pour un parc agent plus large.' },
+    ],
   },
   integrations: {
     title: 'Integrations',
     description: 'Les intégrations connectent Vutler aux outils externes et exposent des capacités runtime aux agents.',
     suggestedPlan: 'Office Starter',
     icon: PlugZap,
+    billingTab: 'office',
+    planOptions: [
+      { id: 'office_starter', label: 'Office Starter', summary: 'Integrations workspace et outils office connectes.' },
+      { id: 'full', label: 'Full Platform', summary: 'Office + Agents sur une seule offre.' },
+    ],
   },
 };
 
@@ -90,6 +142,11 @@ export default function UpgradeFeaturePage() {
     description: 'Cette fonctionnalite n’est pas incluse dans le plan actuel du workspace.',
     suggestedPlan: 'a paid plan',
     icon: ShieldAlert,
+    billingTab: 'full' as const,
+    planOptions: [
+      { id: 'full', label: 'Full Platform', summary: 'Toutes les surfaces Office + Agents.' },
+      { id: 'enterprise', label: 'Enterprise', summary: 'Capacite et support sur mesure.' },
+    ],
   };
   const from = searchParams?.get('from') || null;
   const Icon = copy.icon;
@@ -134,16 +191,33 @@ export default function UpgradeFeaturePage() {
                 Requested from: <span className="font-mono text-slate-300">{breadcrumbs}</span>
               </p>
             )}
+            <div className="mt-5 grid gap-3">
+              {copy.planOptions.map((option) => (
+                <Link
+                  key={option.id}
+                  href={`/billing?tab=${copy.billingTab}&plan=${option.id}`}
+                  className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left transition-colors hover:border-white/20 hover:bg-white/10"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{option.label}</p>
+                      <p className="mt-1 text-sm text-slate-300">{option.summary}</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-blue-300" />
+                  </div>
+                </Link>
+              ))}
+            </div>
           </div>
 
           <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Next step</p>
             <div className="mt-4 space-y-3">
               <Link
-                href="/billing"
+                href={`/billing?tab=${copy.billingTab}&plan=${copy.planOptions[0]?.id || ''}`}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-500 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-400"
               >
-                Open billing
+                Choose {copy.planOptions[0]?.label || copy.suggestedPlan}
                 <ArrowRight className="h-4 w-4" />
               </Link>
               {from && (

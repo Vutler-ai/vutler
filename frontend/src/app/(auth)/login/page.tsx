@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { setAuthToken } from '@/lib/api/client';
+import { setAuthToken, syncAuthSessionCookie, syncWorkspaceFeaturesCookie } from '@/lib/api/client';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
@@ -38,44 +38,49 @@ export default function LoginPage() {
 
   // Handle OAuth callback: ?token=JWT or ?error=...
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const token = params.get('token');
-      const oauthError = params.get('error');
+    void (async () => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('token');
+        const oauthError = params.get('error');
 
-      if (token) {
-        // Store the JWT from OAuth redirect and hydrate user
-        setAuthToken(token);
-        window.history.replaceState({}, '', '/login');
-        refreshUser().then(() => {
+        if (token) {
+          // Store the JWT from OAuth redirect and hydrate user
+          setAuthToken(token);
+          await Promise.allSettled([
+            syncAuthSessionCookie(token),
+            syncWorkspaceFeaturesCookie(token),
+          ]);
+          window.history.replaceState({}, '', '/login');
+          await refreshUser();
           router.push(nextPath);
-        });
-        return;
-      }
+          return;
+        }
 
-      if (oauthError) {
-        const errorMessages: Record<string, string> = {
-          oauth_cancelled: 'OAuth login was cancelled.',
-          oauth_invalid: 'Invalid OAuth response.',
-          oauth_token_failed: 'Failed to exchange OAuth token.',
-          oauth_no_email: 'Could not retrieve email from OAuth provider.',
-          oauth_server_error: 'OAuth server error. Please try again.',
-        };
-        setError(errorMessages[oauthError] || 'OAuth login failed.');
-        window.history.replaceState({}, '', '/login');
-        return;
-      }
+        if (oauthError) {
+          const errorMessages: Record<string, string> = {
+            oauth_cancelled: 'OAuth login was cancelled.',
+            oauth_invalid: 'Invalid OAuth response.',
+            oauth_token_failed: 'Failed to exchange OAuth token.',
+            oauth_no_email: 'Could not retrieve email from OAuth provider.',
+            oauth_server_error: 'OAuth server error. Please try again.',
+          };
+          setError(errorMessages[oauthError] || 'OAuth login failed.');
+          window.history.replaceState({}, '', '/login');
+          return;
+        }
 
-      // Strip any other query params (e.g. pre-filled email from old flow)
-      if (Array.from(params.keys()).length > 0) {
-        const qpEmail = params.get('email');
-        if (qpEmail) setEmail(qpEmail);
-        // SECURITY: never pre-fill password from URL (audit 2026-03-29)
-        window.history.replaceState({}, '', '/login');
+        // Strip any other query params (e.g. pre-filled email from old flow)
+        if (Array.from(params.keys()).length > 0) {
+          const qpEmail = params.get('email');
+          if (qpEmail) setEmail(qpEmail);
+          // SECURITY: never pre-fill password from URL (audit 2026-03-29)
+          window.history.replaceState({}, '', '/login');
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
-    }
+    })();
   }, [nextPath, refreshUser, router]);
 
   // Redirect if already authenticated

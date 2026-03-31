@@ -1,9 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect } from 'react';
-import { getAuthToken } from '@/lib/api';
-import { serializeFeatureSnapshot } from '@/lib/auth/feature-snapshot';
-import { WORKSPACE_FEATURES_COOKIE } from '@/lib/auth/session';
+import { getAuthToken, syncWorkspaceFeaturesCookie } from '@/lib/api';
 
 // ========== Types ==========
 
@@ -53,20 +51,6 @@ export function useFeatures(): FeaturesContextType {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
-function writeFeatureSnapshot(plan: string, features: string[], snipara: string[]): void {
-  if (typeof document === 'undefined') return;
-
-  const snapshot = serializeFeatureSnapshot({
-    plan,
-    features,
-    snipara,
-    updatedAt: new Date().toISOString(),
-  });
-
-  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `${WORKSPACE_FEATURES_COOKIE}=${snapshot}; Path=/; Max-Age=${60 * 60 * 8}; SameSite=Lax${secure}`;
-}
-
 async function fetchWorkspaceFeatures(): Promise<FeaturesResponse> {
   const token = getAuthToken();
 
@@ -102,7 +86,7 @@ export function useFeaturesState(): FeaturesContextType {
         setPlan(data.plan);
         setFeatures(data.features);
         setSnipara(data.snipara);
-        writeFeatureSnapshot(data.plan, data.features, data.snipara);
+        void syncWorkspaceFeaturesCookie().catch(() => {});
       })
       .catch(() => {
         if (cancelled) return;
@@ -110,7 +94,6 @@ export function useFeaturesState(): FeaturesContextType {
         setPlan('free');
         setFeatures([]);
         setSnipara([]);
-        writeFeatureSnapshot('free', [], []);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

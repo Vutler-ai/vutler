@@ -4,11 +4,8 @@
  */
 
 import {
-  ADMIN_TOKEN_COOKIE,
   ADMIN_TOKEN_KEY,
-  AUTH_TOKEN_COOKIE,
   AUTH_TOKEN_KEY,
-  WORKSPACE_FEATURES_COOKIE,
 } from '@/lib/auth/session';
 
 export { ADMIN_TOKEN_KEY, AUTH_TOKEN_KEY };
@@ -17,45 +14,43 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // ─── Auth utilities ───────────────────────────────────────────────────────────
 
-function getCookie(name: string): string | null {
-  if (typeof document === 'undefined') return null;
+async function syncSessionCookie(path: string, method: 'POST' | 'DELETE', payload?: Record<string, unknown>): Promise<void> {
+  if (typeof window === 'undefined') return;
 
-  const value = document.cookie
-    .split('; ')
-    .find((entry) => entry.startsWith(`${name}=`))
-    ?.slice(name.length + 1);
+  const response = await fetch(path, {
+    method,
+    credentials: 'include',
+    headers: payload ? { 'Content-Type': 'application/json' } : undefined,
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
 
-  return value ? decodeURIComponent(value) : null;
+  if (!response.ok) {
+    throw new Error(`Failed to sync session cookie: ${response.status}`);
+  }
 }
 
-function setCookie(name: string, value: string, maxAgeSeconds = 60 * 60 * 24 * 7): void {
-  if (typeof document === 'undefined') return;
-  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${secure}`;
-}
+function clearServerSessionCookies(): void {
+  if (typeof window === 'undefined') return;
 
-function clearCookie(name: string): void {
-  if (typeof document === 'undefined') return;
-  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+  void fetch('/api/session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+  void fetch('/api/session/features', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+  void fetch('/api/admin-session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
 }
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY) || getCookie(AUTH_TOKEN_COOKIE);
+  return localStorage.getItem(AUTH_TOKEN_KEY);
 }
 
 export function setAuthToken(token: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(AUTH_TOKEN_KEY, token);
-  setCookie(AUTH_TOKEN_COOKIE, token);
 }
 
 export function clearAuthToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(AUTH_TOKEN_KEY);
-  clearCookie(AUTH_TOKEN_COOKIE);
-  clearCookie(WORKSPACE_FEATURES_COOKIE);
+  clearServerSessionCookies();
 }
 
 export function isAuthenticated(): boolean {
@@ -139,19 +134,34 @@ export async function apiFetch<T>(
 
 export function getAdminToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(ADMIN_TOKEN_KEY) || getCookie(ADMIN_TOKEN_COOKIE);
+  return localStorage.getItem(ADMIN_TOKEN_KEY);
 }
 
 export function setAdminToken(token: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(ADMIN_TOKEN_KEY, token);
-  setCookie(ADMIN_TOKEN_COOKIE, token);
 }
 
 export function clearAdminToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(ADMIN_TOKEN_KEY);
-  clearCookie(ADMIN_TOKEN_COOKIE);
+  void fetch('/api/admin-session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+}
+
+export async function syncAuthSessionCookie(token: string): Promise<void> {
+  await syncSessionCookie('/api/session', 'POST', { token });
+}
+
+export async function syncWorkspaceFeaturesCookie(token?: string): Promise<void> {
+  await syncSessionCookie('/api/session/features', 'POST', token ? { token } : undefined);
+}
+
+export async function clearWorkspaceFeaturesCookie(): Promise<void> {
+  await syncSessionCookie('/api/session/features', 'DELETE');
+}
+
+export async function syncAdminSessionCookie(token: string): Promise<void> {
+  await syncSessionCookie('/api/admin-session', 'POST', { token });
 }
 
 /**

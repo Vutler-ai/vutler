@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { useApi } from "@/hooks/use-api";
 import { getPlans, getSubscription, checkout, portal } from "@/lib/api/endpoints/billing";
@@ -304,18 +304,21 @@ function PlanCard({
   currentPlanId,
   onCheckout,
   loadingId,
+  recommendedPlanId,
 }: {
   plan: Plan;
   interval: "monthly" | "yearly";
   currentPlanId: string | null;
   onCheckout: (planId: string) => void;
   loadingId: string | null;
+  recommendedPlanId?: string | null;
 }) {
   const isCurrent = plan.id === currentPlanId;
   const isEnterprise = plan.id === "enterprise";
   const isFree = plan.id === "free";
   const price = interval === "yearly" ? plan.price.yearly : plan.price.monthly;
   const isLoading = loadingId === plan.id;
+  const isRecommended = recommendedPlanId === plan.id && !isCurrent;
   const storageLabel = resolveStorageLabel(plan);
   const nexusNodes = resolveNexusNodes(plan);
   const socialPosts = resolveSocialPosts(plan);
@@ -334,6 +337,8 @@ function PlanCard({
       className={`flex flex-col bg-[#14151f] border rounded-2xl p-4 sm:p-6 transition-all duration-200 ${
         isCurrent
           ? "border-[#3b82f6] shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
+          : isRecommended
+          ? "border-emerald-400/40 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
           : isEnterprise
           ? "border-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.2)]"
           : "border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.14)]"
@@ -362,6 +367,14 @@ function PlanCard({
             className="shrink-0 border-[#3b82f6]/40 text-[#3b82f6] bg-[#3b82f6]/10 text-xs"
           >
             Current Plan
+          </Badge>
+        )}
+        {isRecommended && (
+          <Badge
+            variant="outline"
+            className="shrink-0 border-emerald-400/40 text-emerald-300 bg-emerald-400/10 text-xs"
+          >
+            Recommended
           </Badge>
         )}
       </div>
@@ -680,6 +693,7 @@ export default function BillingPage() {
     useApi<Subscription | null>("/api/v1/billing/subscription", getSubscription);
 
   const [activeTab, setActiveTab] = useState<TabKey>("office");
+  const [recommendedPlanId, setRecommendedPlanId] = useState<string | null>(null);
   const [interval, setInterval] = useState<"monthly" | "yearly">("monthly");
   const [checkoutLoadingId, setCheckoutLoadingId] = useState<string | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
@@ -689,6 +703,19 @@ export default function BillingPage() {
   // Use API plans if available; fall back to static definitions from featureGate.js
   const resolvedPlans: PlansResponse = plans ?? FALLBACK_PLANS;
   const currentPlans: Plan[] = resolvedPlans[activeTab] ?? [];
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    const plan = params.get("plan");
+    if (tab === "office" || tab === "agents" || tab === "full") {
+      setActiveTab(tab);
+    }
+    if (plan) {
+      setRecommendedPlanId(plan);
+    }
+  }, []);
 
   const handleCheckout = useCallback(
     async (planId: string) => {
@@ -810,6 +837,7 @@ export default function BillingPage() {
               currentPlanId={subscription?.planId ?? null}
               onCheckout={handleCheckout}
               loadingId={checkoutLoadingId}
+              recommendedPlanId={recommendedPlanId}
             />
           ))}
         </div>

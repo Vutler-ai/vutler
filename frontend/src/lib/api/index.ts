@@ -5,9 +5,17 @@ export {
   getAuthToken,
   setAuthToken,
   clearAuthToken,
+  syncAuthSessionCookie,
+  syncWorkspaceFeaturesCookie,
+  clearWorkspaceFeaturesCookie,
+  getAdminToken,
+  setAdminToken,
+  clearAdminToken,
+  syncAdminSessionCookie,
   isAuthenticated,
   redirectToLogin,
   AUTH_TOKEN_KEY,
+  ADMIN_TOKEN_KEY,
 } from './client';
 
 // Types

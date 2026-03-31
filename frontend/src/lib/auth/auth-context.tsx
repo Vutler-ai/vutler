@@ -6,6 +6,8 @@ import {
   getAuthToken,
   setAuthToken,
   clearAuthToken,
+  syncAuthSessionCookie,
+  syncWorkspaceFeaturesCookie,
 } from '@/lib/api/client';
 import type { UserProfile, AuthResponse, LoginPayload } from '@/lib/api/types';
 
@@ -56,7 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    fetchMe().finally(() => setLoading(false));
+    Promise.allSettled([
+      syncAuthSessionCookie(token),
+      syncWorkspaceFeaturesCookie(token),
+    ]).finally(() => {
+      fetchMe().finally(() => setLoading(false));
+    });
   }, [fetchMe]);
 
   const login = useCallback(async (email: string, password: string): Promise<void> => {
@@ -66,6 +73,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify(payload),
     });
     setAuthToken(response.token);
+    await syncAuthSessionCookie(response.token);
+    await syncWorkspaceFeaturesCookie(response.token);
     // Hydrate user from response or fetch /me
     if (response.user) {
       setUser({
@@ -109,6 +118,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshUser = useCallback(async (): Promise<void> => {
     const token = getAuthToken();
     if (!token) return;
+    await Promise.allSettled([
+      syncAuthSessionCookie(token),
+      syncWorkspaceFeaturesCookie(token),
+    ]);
     await fetchMe();
   }, [fetchMe]);
 

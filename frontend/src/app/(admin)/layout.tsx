@@ -2,7 +2,7 @@
 
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import {
   BarChart3,
@@ -19,6 +19,7 @@ import {
   getAdminToken,
   setAdminToken,
   clearAdminToken,
+  syncAdminSessionCookie,
 } from "@/lib/api/client";
 
 const navigation = [
@@ -34,7 +35,6 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
@@ -48,6 +48,7 @@ export default function AdminLayout({
   useEffect(() => {
     const token = getAdminToken();
     if (token) {
+      void syncAdminSessionCookie(token).catch(() => {});
       // Verify token is still valid by calling stats
       adminFetch<{ success: boolean }>("/api/v1/admin/stats")
         .then(() => {
@@ -83,6 +84,7 @@ export default function AdminLayout({
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Login failed");
       setAdminToken(data.data.token);
+      await syncAdminSessionCookie(data.data.token);
       setAdminEmail(data.data.user.email);
       setIsAuthorized(true);
     } catch (err) {
