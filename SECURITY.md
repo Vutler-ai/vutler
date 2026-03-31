@@ -75,6 +75,18 @@ If you deploy Vutler yourself:
 - Restrict database access to application servers only
 - Use strong, unique passwords for all service accounts
 
+## Production Readiness Checklist
+
+Before a full production rollout, double-check the following items so the platform ships with the expected security posture:
+
+- **Secrets guardrails:** `JWT_SECRET`, `POSTAL_API_KEY`, `STRIPE_ACCOUNT_ID`, `VUTLER_API_KEY` and any other credentials must be supplied via environment variables and must not use placeholder strings. The bootstrap (`index.js`) already fails in production if `JWT_SECRET` is missing or weak, so keep that gate active.
+- **Provider credentials:** `tenant_vutler.llm_providers` stores raw API keys, and the `CryptoService`/Vault pipeline (see `api/providers.js`) still needs to be exercised by every runtime. Ensure workspace role segregation and never leak the unmasked key in logs or responses.
+- **Runtime telemetry:** `/api/v1/runtime/status` now aggregates workspace agent statuses, uptime (since the server started), and the last restart record stored under `workspace_settings.runtime_last_restart`; `/runtime/restart` records the requesting user and reason. Continue to guard these tables so the UI shows accurate health.
+- **Usage analytics:** `/api/v1/usage` is provided by `api/usage-pg.js` and normalizes `usage_logs`, `agent_executions`, and `credit_transactions`. Keep those tables trimmed and indexed so Usage dashboards stay performant.
+- **Skill execution logging:** `services/skills/SkillRegistry.js` still only logs to console. Persist execution metadata once `tenant_vutler.skill_executions` is available so you can audit agent activity end-to-end.
+- **Sandbox hardening:** `services/sandbox.js` currently executes code directly in the host process. In production, run it through a container (Docker or firejail) with strict network/file caps, keep the timeout guard, and monitor the streaming output to detect abuse.
+- **SSE observability & provider health:** Codex streaming is served via `services/llmRouter.js`. Prioritize the observability dashboard (see roadmap item “Observability dashboard: streaming SSE + provider health”) so you can trace fallback rates and streaming errors before enabling large workspaces.
+
 ## Contact
 
 - Security issues: **security@vutler.ai**

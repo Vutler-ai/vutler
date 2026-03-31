@@ -65,6 +65,7 @@ describe('llmRouter workspace drive action runs', () => {
       },
     });
 
+    const realHttps = jest.requireActual('https');
     jest.doMock('https', () => ({
       request: jest.fn((options, callback) => {
         const req = new EventEmitter();
@@ -96,6 +97,7 @@ describe('llmRouter workspace drive action runs', () => {
 
         return req;
       }),
+      Agent: realHttps.Agent,
     }));
 
     jest.doMock('../services/skills', () => ({

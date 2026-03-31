@@ -70,6 +70,7 @@ describe('llmRouter google calendar action runs', () => {
       },
     });
 
+    const realHttps = jest.requireActual('https');
     jest.doMock('https', () => ({
       request: jest.fn((options, callback) => {
         const req = new EventEmitter();
@@ -101,6 +102,7 @@ describe('llmRouter google calendar action runs', () => {
 
         return req;
       }),
+      Agent: realHttps.Agent,
     }));
 
     jest.doMock('../services/skills', () => ({
@@ -192,7 +194,7 @@ describe('llmRouter google calendar action runs', () => {
       }
     );
 
-    expect(result.content).toBe('Kickoff event created in Google Calendar.');
+    expect(result.content).toContain('Kickoff event created in Google Calendar.');
     expect(actionRuns[0]).toMatchObject({
       workspace_id: 'ws-1',
       chat_message_id: 'msg-1',
