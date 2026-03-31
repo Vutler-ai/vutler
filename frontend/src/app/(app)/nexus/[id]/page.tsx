@@ -57,6 +57,7 @@ interface NodeDetail {
   agentCount?: number;
   mode?: string;
   clientName?: string;
+  poolAgentIds?: string[];
   providerSources?: Record<string, NexusProviderSource>;
 }
 
@@ -1429,9 +1430,16 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
   // Load pool agents for enterprise nodes (for spawn dropdown)
   useEffect(() => {
     if (node?.mode === 'enterprise') {
-      getAgents().then(setPoolAgents).catch(() => {});
+      getAgents()
+        .then((agents) => {
+          const poolIds = new Set(node.poolAgentIds ?? []);
+          setPoolAgents(agents.filter((agent) => poolIds.has(agent.id)));
+        })
+        .catch(() => setPoolAgents([]));
+      return;
     }
-  }, [node?.mode]);
+    setPoolAgents([]);
+  }, [node?.mode, node?.poolAgentIds]);
 
   const handleStopAgent = async (agentId: string) => {
     setStoppingAgentId(agentId);

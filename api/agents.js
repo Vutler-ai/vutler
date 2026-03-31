@@ -16,6 +16,7 @@ const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutl
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
 const MAX_SKILLS = 8;
+const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
 
 /** Serialize type for DB: array → JSON string, string → as-is */
 function serializeType(type) {
@@ -82,13 +83,28 @@ async function generateAgentEmail(username, workspaceId) {
   }
 }
 
+function getWorkspaceId(req) {
+  return req.workspaceId || DEFAULT_WORKSPACE;
+}
+
+async function findAgentByRef(agentRef, workspaceId, columns = '*') {
+  return pool.query(
+    `SELECT ${columns}
+       FROM ${SCHEMA}.agents
+      WHERE (id::text = $1 OR username = $1)
+        AND workspace_id = $2
+      LIMIT 1`,
+    [agentRef, workspaceId]
+  );
+}
+
 
 // GET /api/v1/agents — list all agents
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE workspace_id = $1 ORDER BY name`,
-      [req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+      [getWorkspaceId(req)]
     );
     const agents = result.rows.map(a => {
       const capabilities = normalizeCapabilities(a.capabilities || []);
@@ -129,7 +145,7 @@ router.get("/:id", async (req, res) => {
     const { id } = req.params;
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) AND workspace_id = $2 LIMIT 1`,
-      [id, req.workspaceId || "00000000-0000-0000-0000-000000000001"]
+      [id, getWorkspaceId(req)]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Agent not found", id });
@@ -167,7 +183,7 @@ router.post("/", async (req, res) => {
     const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, template_id } = req.body;
     if (!name || !username) return res.status(400).json({ success: false, error: "name and username required" });
 
-    const ws = req.workspaceId||"00000000-0000-0000-0000-000000000001";
+    const ws = getWorkspaceId(req);
 
     const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
     const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
@@ -243,7 +259,8 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const fields = req.body;
-    const existing = await pool.query(`SELECT id,name,username,type,role,capabilities FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [id]);
+    const workspaceId = getWorkspaceId(req);
+    const existing = await findAgentByRef(id, workspaceId, 'id,name,username,type,role,capabilities');
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
     const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
@@ -271,8 +288,13 @@ router.put("/:id", async (req, res) => {
     if (sets.length === 0) return res.status(400).json({ success: false, error: "No fields to update" });
     sets.push(`updated_at = NOW()`);
     vals.push(id);
+    vals.push(workspaceId);
     const result = await pool.query(
-      `UPDATE ${SCHEMA}.agents SET ${sets.join(", ")} WHERE (id::text = $${idx} OR username = $${idx}) RETURNING *`,
+      `UPDATE ${SCHEMA}.agents
+          SET ${sets.join(", ")}
+        WHERE (id::text = $${idx} OR username = $${idx})
+          AND workspace_id = $${idx + 1}
+      RETURNING *`,
       vals
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
@@ -287,12 +309,11 @@ router.put("/:id", async (req, res) => {
 router.put("/:id/config", async (req, res) => {
   try {
     const { id } = req.params;
-    const existing = await pool.query(
-      `SELECT id, name, username, type, role, system_prompt, capabilities
-         FROM ${SCHEMA}.agents
-        WHERE (id::text = $1 OR username = $1)
-        LIMIT 1`,
-      [id]
+    const workspaceId = getWorkspaceId(req);
+    const existing = await findAgentByRef(
+      id,
+      workspaceId,
+      'id, name, username, type, role, system_prompt, capabilities'
     );
     if (existing.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Agent not found" });
@@ -333,11 +354,13 @@ router.put("/:id/config", async (req, res) => {
     }
     sets.push(`updated_at = NOW()`);
     vals.push(id);
+    vals.push(workspaceId);
 
     const result = await pool.query(
       `UPDATE ${SCHEMA}.agents
           SET ${sets.join(", ")}
         WHERE (id::text = $${idx} OR username = $${idx})
+          AND workspace_id = $${idx + 1}
         RETURNING *`,
       vals
     );
@@ -396,15 +419,19 @@ router.put("/:id/config", async (req, res) => {
 // DELETE /api/v1/agents/:id
 router.delete("/:id", async (req, res) => {
   try {
-    const existing = await pool.query(`SELECT id,name,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    const workspaceId = getWorkspaceId(req);
+    const existing = await findAgentByRef(req.params.id, workspaceId, 'id,name,username,type,role');
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
     const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
     if (isCoordinator) return res.status(403).json({ success: false, error: 'Cannot delete system coordinator' });
 
     const result = await pool.query(
-      `DELETE FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) RETURNING id, name`,
-      [req.params.id]
+      `DELETE FROM ${SCHEMA}.agents
+        WHERE (id::text = $1 OR username = $1)
+          AND workspace_id = $2
+      RETURNING id, name`,
+      [req.params.id, workspaceId]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     res.json({ success: true, deleted: result.rows[0] });
@@ -416,9 +443,10 @@ router.delete("/:id", async (req, res) => {
 // GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools)
 router.get("/:id/config", async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT model, provider, temperature, max_tokens, system_prompt, capabilities, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
-      [req.params.id]
+    const result = await findAgentByRef(
+      req.params.id,
+      getWorkspaceId(req),
+      'model, provider, temperature, max_tokens, system_prompt, capabilities, type, role'
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
@@ -447,8 +475,9 @@ router.get("/:id/config", async (req, res) => {
 // PUT /api/v1/agents/:id/config — updates agent config
 router.put("/:id/config", async (req, res) => {
   try {
+    const workspaceId = getWorkspaceId(req);
     const { model, provider, temperature, max_tokens, system_prompt, skills, tools, type } = req.body;
-    const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    const existing = await findAgentByRef(req.params.id, workspaceId, 'id,username,type,role');
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
     const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
@@ -475,8 +504,10 @@ router.put("/:id/config", async (req, res) => {
         capabilities=COALESCE($6::text[],capabilities),
         type=COALESCE($8,type),
         updated_at=NOW()
-       WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
-      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities || null, req.params.id, serializeType(type)]
+       WHERE (id::text = $7 OR username = $7)
+         AND workspace_id = $9
+       RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities || null, req.params.id, serializeType(type), workspaceId]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
@@ -491,7 +522,12 @@ router.put("/:id/config", async (req, res) => {
 // GET /api/v1/agents/:id/executions
 router.get("/:id/executions", async (req, res) => {
   try {
-    const agentId = req.params.id;
+    const workspaceId = getWorkspaceId(req);
+    const agent = await findAgentByRef(req.params.id, workspaceId, 'id');
+    if (agent.rows.length === 0) {
+      return res.status(404).json({ success: false, error: "Agent not found" });
+    }
+    const agentId = agent.rows[0].id;
     const result = await pool.query(
       `SELECT id, agent_id, input, output, model, provider, tokens_used, latency_ms, created_at
        FROM ${SCHEMA}.agent_executions
@@ -510,9 +546,10 @@ router.get("/:id/executions", async (req, res) => {
 // GET /api/v1/agents/:id/llm-config
 router.get("/:id/llm-config", async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT model, provider, temperature, max_tokens, system_prompt, type, role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`,
-      [req.params.id]
+    const result = await findAgentByRef(
+      req.params.id,
+      getWorkspaceId(req),
+      'model, provider, temperature, max_tokens, system_prompt, type, role'
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
@@ -533,8 +570,9 @@ router.get("/:id/llm-config", async (req, res) => {
 // PUT /api/v1/agents/:id/llm-config
 router.put("/:id/llm-config", async (req, res) => {
   try {
+    const workspaceId = getWorkspaceId(req);
     const { model, provider, temperature, max_tokens, system_prompt } = req.body;
-    const existing = await pool.query(`SELECT id,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [req.params.id]);
+    const existing = await findAgentByRef(req.params.id, workspaceId, 'id,username,type,role');
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
     const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
@@ -544,8 +582,10 @@ router.put("/:id/llm-config", async (req, res) => {
 
     const result = await pool.query(
       `UPDATE ${SCHEMA}.agents SET model=$1, provider=$2, temperature=$3, max_tokens=$4, system_prompt=COALESCE($5, system_prompt), updated_at=NOW()
-       WHERE (id::text = $6 OR username = $6) RETURNING model, provider, temperature, max_tokens, system_prompt`,
-      [model, provider, temperature||0.7, max_tokens||4096, isCoordinator ? null : (system_prompt||null), req.params.id]
+       WHERE (id::text = $6 OR username = $6)
+         AND workspace_id = $7
+       RETURNING model, provider, temperature, max_tokens, system_prompt`,
+      [model, provider, temperature||0.7, max_tokens||4096, isCoordinator ? null : (system_prompt||null), req.params.id, workspaceId]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     res.json({ success: true, config: result.rows[0] });

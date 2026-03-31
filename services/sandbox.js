@@ -63,10 +63,11 @@ function buildCommand(language, code) {
  * @param {object} [opts]
  * @param {string|null} [opts.batchId]
  * @param {number|null} [opts.batchIndex]
+ * @param {string|null} [opts.workspaceId]
  * @returns {Promise<SandboxResult>}
  */
 async function executeInSandbox(language, code, agentId = null, timeoutMs = DEFAULT_TIMEOUT_MS, opts = {}) {
-  const { batchId = null, batchIndex = null } = opts;
+  const { batchId = null, batchIndex = null, workspaceId = null } = opts;
   const startTime = Date.now();
 
   // Insert a "running" record immediately so we have an ID
@@ -74,10 +75,10 @@ async function executeInSandbox(language, code, agentId = null, timeoutMs = DEFA
   try {
     const insert = await pool.query(
       `INSERT INTO ${SCHEMA}.sandbox_executions
-         (agent_id, language, code, status, batch_id, batch_index)
-       VALUES ($1, $2, $3, 'running', $4, $5)
+         (workspace_id, agent_id, language, code, status, batch_id, batch_index)
+       VALUES ($1, $2, $3, $4, 'running', $5, $6)
        RETURNING id`,
-      [agentId, language, code, batchId, batchIndex]
+      [workspaceId, agentId, language, code, batchId, batchIndex]
     );
     executionId = insert.rows[0].id;
   } catch (dbErr) {
@@ -218,10 +219,10 @@ function runProcess(cmd, args, timeoutMs) {
  * If stopOnError is true, stops on the first non-zero exit code.
  *
  * @param {Array<{ language: string, code: string, timeout_ms?: number }>} scripts
- * @param {{ stopOnError?: boolean, agentId?: string|null }} opts
+ * @param {{ stopOnError?: boolean, agentId?: string|null, workspaceId?: string|null }} opts
  * @returns {Promise<SandboxResult[]>}
  */
-async function executeBatch(scripts, { stopOnError = true, agentId = null } = {}) {
+async function executeBatch(scripts, { stopOnError = true, agentId = null, workspaceId = null } = {}) {
   const batchId = randomUUID();
   const results = [];
 
@@ -235,6 +236,7 @@ async function executeBatch(scripts, { stopOnError = true, agentId = null } = {}
     const result = await executeInSandbox(language, code, agentId, timeoutMs, {
       batchId,
       batchIndex: i,
+      workspaceId,
     });
 
     results.push(result);

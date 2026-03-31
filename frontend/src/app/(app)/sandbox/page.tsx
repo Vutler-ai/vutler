@@ -7,7 +7,9 @@ import {
   getSandboxExecutions,
   getSandboxExecution,
 } from '@/lib/api/endpoints/sandbox';
+import { getAgents } from '@/lib/api/endpoints/agents';
 import type {
+  Agent,
   SandboxExecution,
   SandboxLanguage,
   SandboxStatus,
@@ -18,7 +20,6 @@ import type {
 const LANGUAGES: { value: SandboxLanguage; label: string; hint: string }[] = [
   { value: 'javascript', label: 'JavaScript', hint: 'console.log("hello")' },
   { value: 'python', label: 'Python', hint: 'print("hello")' },
-  { value: 'shell', label: 'Shell', hint: 'echo "hello"' },
 ];
 
 const TIMEOUTS = [
@@ -27,8 +28,6 @@ const TIMEOUTS = [
   { value: 30_000, label: '30s' },
   { value: 60_000, label: '60s' },
 ];
-
-const AGENT_CONTEXTS = ['None', 'mike', 'aria', 'zeus', 'nova', 'rex'];
 
 const REFRESH_INTERVAL_MS = 10_000;
 
@@ -320,7 +319,8 @@ export default function SandboxPage() {
   const [language, setLanguage] = useState<SandboxLanguage>('javascript');
   const [code, setCode] = useState('');
   const [timeoutMs, setTimeoutMs] = useState(30_000);
-  const [agentContext, setAgentContext] = useState('None');
+  const [agentContext, setAgentContext] = useState('');
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   // ── Execution state ──
   const [executing, setExecuting] = useState(false);
@@ -330,8 +330,8 @@ export default function SandboxPage() {
   // ── Batch mode ──
   const [batchMode, setBatchMode] = useState(false);
   const [batchScripts, setBatchScripts] = useState<BatchScript[]>([
-    { language: 'shell', code: '' },
     { language: 'javascript', code: '' },
+    { language: 'python', code: '' },
   ]);
   const [stopOnError, setStopOnError] = useState(true);
   const [batchResults, setBatchResults] = useState<SandboxExecution[]>([]);
@@ -370,6 +370,10 @@ export default function SandboxPage() {
     loadHistory();
   }, [loadHistory]);
 
+  useEffect(() => {
+    getAgents().then(setAgents).catch(() => setAgents([]));
+  }, []);
+
   // Auto-refresh history
   useEffect(() => {
     if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
@@ -392,7 +396,7 @@ export default function SandboxPage() {
         language,
         code: code.trim(),
         timeout_ms: timeoutMs,
-        agent_id: agentContext !== 'None' ? agentContext : undefined,
+        agent_id: agentContext || undefined,
       });
       setCurrentExecution(result);
       setActiveHistoryId(result.id);
@@ -417,7 +421,7 @@ export default function SandboxPage() {
       const results = await executeBatch({
         scripts: valid,
         stop_on_error: stopOnError,
-        agent_id: agentContext !== 'None' ? agentContext : undefined,
+        agent_id: agentContext || undefined,
       });
       setBatchResults(results);
       loadHistory();
@@ -532,8 +536,9 @@ export default function SandboxPage() {
                 onChange={(e) => setAgentContext(e.target.value)}
                 className="px-2 py-1.5 bg-[#0d0e1a] border border-[rgba(255,255,255,0.07)] rounded-lg text-sm text-white focus:outline-none focus:ring-1 focus:ring-[#3b82f6]"
               >
-                {AGENT_CONTEXTS.map((a) => (
-                  <option key={a} value={a}>{a === 'None' ? 'No agent' : a}</option>
+                <option value="">No agent</option>
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>{agent.name}</option>
                 ))}
               </select>
             </div>
@@ -704,8 +709,8 @@ export default function SandboxPage() {
               className="w-full px-2 py-1.5 bg-[#080810] border border-[rgba(255,255,255,0.07)] rounded-lg text-xs text-white focus:outline-none"
             >
               <option value="">All agents</option>
-              {AGENT_CONTEXTS.filter((a) => a !== 'None').map((a) => (
-                <option key={a} value={a}>{a}</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
               ))}
             </select>
           </div>

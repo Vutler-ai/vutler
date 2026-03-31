@@ -5,7 +5,7 @@ import type { NextRequest } from 'next/server';
 const LANDING_ROUTES = ['/', '/pricing', '/about', '/docs', '/privacy', '/terms', '/security', '/setup-llm'];
 
 // Routes that belong to the app (app.vutler.ai)
-const APP_ROUTE_PREFIXES = ['/dashboard', '/agents', '/settings', '/chat', '/mail', '/calendar', '/drive', '/tasks', '/automations', '/marketplace', '/admin', '/onboarding', '/integrations', '/vchat', '/clients', '/billing', '/notifications', '/goals'];
+const APP_ROUTE_PREFIXES = ['/dashboard', '/agents', '/settings', '/chat', '/mail', '/calendar', '/drive', '/tasks', '/automations', '/marketplace', '/admin', '/onboarding', '/integrations', '/vchat', '/clients', '/billing', '/notifications', '/goals', '/nexus', '/sandbox'];
 
 const AUTH_ROUTES = ['/login', '/register', '/forgot-password'];
 

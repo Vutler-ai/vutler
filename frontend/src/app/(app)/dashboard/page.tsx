@@ -562,7 +562,7 @@ export default function DashboardPage() {
   const auditLogs: AuditLog[] = auditData?.logs ?? [];
 
   const totalAgents = stats?.totalAgents ?? agents.length;
-  const activeAgents = stats?.activeAgents ?? agents.filter((a) => a.status === 'active').length;
+  const activeAgents = stats?.activeAgents ?? agents.filter((a) => a.status === 'active' || a.status === 'online').length;
   const messagesToday = stats?.messagesToday ?? 0;
   const totalTokens = stats?.totalTokens ?? 0;
 

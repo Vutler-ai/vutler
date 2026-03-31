@@ -154,7 +154,9 @@ async function execInWorkspace(id, language, code, timeoutMs) {
     }
 
     const fullCode = preamble + code;
-    return await executeInSandbox(language, fullCode, workspace.agent_id || null, timeoutMs);
+    return await executeInSandbox(language, fullCode, workspace.agent_id || null, timeoutMs, {
+      workspaceId: workspace.workspace_id || null,
+    });
   } catch (err) {
     console.error(`${LOG} execInWorkspace error:`, err.message);
     return { success: false, error: err.message, stdout: '', stderr: err.message };

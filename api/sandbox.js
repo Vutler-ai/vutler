@@ -89,7 +89,9 @@ router.post('/execute', async (req, res) => {
   );
 
   try {
-    const result = await executeInSandbox(language, code, agent_id || null, timeoutMs);
+    const result = await executeInSandbox(language, code, agent_id || null, timeoutMs, {
+      workspaceId: req.workspaceId || null,
+    });
     res.json({ success: true, data: result });
   } catch (err) {
     console.error('[Sandbox] Execute error:', err.message);
@@ -162,7 +164,7 @@ router.get('/executions/:id', async (req, res) => {
     const result = await pool.query(
       `SELECT id, agent_id, language, code, stdout, stderr, exit_code, status, duration_ms, batch_id, batch_index, created_at
        FROM ${SCHEMA}.sandbox_executions
-       WHERE id = $1 AND (workspace_id = $2 OR workspace_id IS NULL)`,
+       WHERE id = $1 AND workspace_id = $2`,
       [id, req.workspaceId]
     );
 
@@ -201,7 +203,11 @@ router.post('/batch', async (req, res) => {
   }
 
   try {
-    const results = await executeBatch(scripts, { stopOnError: stop_on_error, agentId: agent_id || null });
+    const results = await executeBatch(scripts, {
+      stopOnError: stop_on_error,
+      agentId: agent_id || null,
+      workspaceId: req.workspaceId || null,
+    });
     res.json({ success: true, data: results });
   } catch (err) {
     console.error('[Sandbox] Batch error:', err.message);

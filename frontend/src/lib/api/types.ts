@@ -33,7 +33,7 @@ export interface Agent {
   id: string;
   name: string;
   platform?: string;
-  status: 'active' | 'inactive' | 'error';
+  status: 'active' | 'inactive' | 'error' | 'online' | 'offline';
   lastActive?: string;
   model?: string;
   provider?: string;
@@ -105,6 +105,7 @@ export interface CreateTaskPayload {
   priority: Task['priority'];
   assignee: string;
   due_date: string;
+  assigned_agent?: string | null;
   parent_id?: string | null;
 }
 
@@ -246,6 +247,7 @@ export interface CalendarEvent {
   start: string;
   end: string;
   description?: string;
+  location?: string;
   color: string;
   source?: EventSource;
   sourceId?: string | null;
@@ -258,6 +260,7 @@ export interface CreateEventPayload {
   start: string;
   end: string;
   description?: string;
+  location?: string;
   color: string;
   source?: string;
   source_id?: string;
@@ -345,6 +348,7 @@ export interface NexusNode {
   agents?: NexusAgentStatus[];
   seats?: NexusSeatsInfo;
   providerSources?: Record<string, NexusProviderSource>;
+  poolAgentIds?: string[];
 }
 
 export interface NexusStats {

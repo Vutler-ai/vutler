@@ -1875,6 +1875,7 @@ router.get('/nodes/:id', async (req, res) => {
         agentCount: mapped.agentCount,
         mode: mapped.mode,
         clientName: mapped.clientName || undefined,
+        poolAgentIds: Array.isArray(mapped.config?.available_pool) ? mapped.config.available_pool : [],
         providerSources,
         recentActivity: commandsRes.rows.map((row) => ({
           id: row.id,
@@ -1944,12 +1945,20 @@ router.post('/nodes/:nodeId/agents/spawn', async (_req, res) => {
     const workspaceId = _req.workspaceId || DEFAULT_WORKSPACE;
     const node = await loadNodeForWorkspace(workspaceId, _req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+    const agentId = _req.body?.agentId || null;
+    const availablePool = Array.isArray(node.config?.available_pool) ? node.config.available_pool : [];
+    if (!agentId) {
+      return res.status(400).json({ success: false, error: 'agentId is required' });
+    }
+    if (!availablePool.includes(agentId)) {
+      return res.status(400).json({ success: false, error: 'Agent is not available in this node pool' });
+    }
 
     const command = await enqueueNodeCommand({
       workspaceId,
       nodeId: _req.params.nodeId,
       commandType: 'spawn_agent',
-      payload: { agentId: _req.body?.agentId || null },
+      payload: { agentId },
       userId: _req.userId || _req.user?.id || null,
       timing: _req.body || {},
     });

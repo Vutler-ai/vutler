@@ -34,7 +34,7 @@ import {
 // ─── Status Badge ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: Agent['status'] }) {
-  if (status === 'active') {
+  if (status === 'active' || status === 'online') {
     return (
       <Badge className="bg-green-500/15 text-green-400 border-green-500/20 gap-1.5">
         <span className="size-1.5 rounded-full bg-green-400 inline-block" />
