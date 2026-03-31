@@ -10,7 +10,6 @@
 
 const { pool } = require('../lib/postgres');
 const { chat } = require('./llmRouter');
-const sniparaClient = require('./sniparaClient');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -275,10 +274,22 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
     );
 
     // Store learning in memory
-    await sniparaClient.remember(
-      `agent-${task.assigned_agent}`,
-      `Task "${task.title}" escalated after ${this.maxRetries} failed verifications. Score: ${verdict.overall_score}/10. Issue: ${verdict.summary}`,
-      { type: 'fact', importance: 8 },
+    const { createSniparaGateway } = require('./snipara/gateway');
+    await createSniparaGateway({ workspaceId }).memory.rememberForAgent(
+      {
+        username: task.assigned_agent,
+        snipara_instance_id: task.assigned_agent,
+      },
+      {
+        text: `Task "${task.title}" escalated after ${this.maxRetries} failed verifications. Score: ${verdict.overall_score}/10. Issue: ${verdict.summary}`,
+        type: 'fact',
+        importance: 8,
+        workspaceId,
+        metadata: {
+          source: 'verification-engine',
+          created_at: new Date().toISOString(),
+        },
+      }
     );
   }
 }

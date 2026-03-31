@@ -9,7 +9,7 @@
  */
 
 const { pool } = require('../lib/postgres');
-const sniparaClient = require('./sniparaClient');
+const { createSniparaGateway } = require('./snipara/gateway');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -25,24 +25,43 @@ class ScoringLoop {
     const score = verdict.overall_score || 0;
     const passed = verdict.overall_pass !== false;
     const retryCount = task.retry_count || 0;
+    const workspaceId = task.workspace_id || webhookData.workspace_id || null;
+    const gateway = createSniparaGateway({ workspaceId });
 
     // 1. Store performance record in Snipara memory (global scope)
     try {
-      await sniparaClient.remember(
-        'agent-performance',
-        `Agent "${agentId}" completed task "${task.title}": score ${score}/10, ${passed ? 'PASSED' : 'FAILED'}, retries: ${retryCount}`,
-        { type: 'fact', importance: 7 },
-      );
+      await gateway.memory.remember({
+        text: `Agent "${agentId}" completed task "${task.title}": score ${score}/10, ${passed ? 'PASSED' : 'FAILED'}, retries: ${retryCount}`,
+        type: 'fact',
+        importance: 7,
+        scope: 'project',
+        category: 'agent-performance',
+        metadata: {
+          source: 'scoring-loop',
+          created_at: new Date().toISOString(),
+        },
+      });
     } catch (err) {
       console.warn(`[ScoringLoop] Failed to store performance record:`, err.message);
     }
 
     // 2. Store in agent-specific scope (for memory relevance scoring)
     try {
-      await sniparaClient.remember(
-        `agent-${agentId}`,
-        `Completed: "${task.title}" (score: ${score}/10, ${passed ? 'passed' : 'failed'})`,
-        { type: 'fact', importance: 6 },
+      await gateway.memory.rememberForAgent(
+        {
+          username: agentId,
+          snipara_instance_id: agentId,
+        },
+        {
+          text: `Completed: "${task.title}" (score: ${score}/10, ${passed ? 'passed' : 'failed'})`,
+          type: 'fact',
+          importance: 6,
+          workspaceId,
+          metadata: {
+            source: 'scoring-loop',
+            created_at: new Date().toISOString(),
+          },
+        }
       );
     } catch (err) {
       console.warn(`[ScoringLoop] Failed to store agent-specific record:`, err.message);
@@ -83,12 +102,25 @@ class ScoringLoop {
     const agentId = owner || task?.assigned_agent || 'unknown';
     const title = task?.title || `htask ${task_id}`;
     const hasEvidence = Array.isArray(evidence_provided) && evidence_provided.length > 0;
+    const workspaceId = task?.workspace_id || data.workspace_id || null;
+    const gateway = createSniparaGateway({ workspaceId });
 
     try {
-      await sniparaClient.remember(
-        `agent-${agentId}`,
-        `Completed htask (${level}): "${title}" ${hasEvidence ? 'with evidence' : 'without evidence'}`,
-        { type: 'fact', importance: 5 },
+      await gateway.memory.rememberForAgent(
+        {
+          username: agentId,
+          snipara_instance_id: agentId,
+        },
+        {
+          text: `Completed htask (${level}): "${title}" ${hasEvidence ? 'with evidence' : 'without evidence'}`,
+          type: 'fact',
+          importance: 5,
+          workspaceId,
+          metadata: {
+            source: 'scoring-loop',
+            created_at: new Date().toISOString(),
+          },
+        }
       );
     } catch (err) {
       console.warn(`[ScoringLoop] Failed to store htask record:`, err.message);

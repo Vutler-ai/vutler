@@ -115,6 +115,15 @@ describe('chatRuntime requested agent resolution', () => {
     }));
     jest.doMock('../../services/chatMessages', () => ({ insertChatMessage }));
     jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
+    jest.doMock('../../services/memory/runtime', () => ({
+      createMemoryRuntimeService: () => ({
+        preparePromptContext: jest.fn().mockResolvedValue({
+          prompt: '## Agent Memory\n- [fact] Team standards apply.',
+          stats: { runtime: 'chat', selected: { total: 1, instance: 1, template: 0, global: 0 } },
+        }),
+        recordConversation: jest.fn().mockResolvedValue([]),
+      }),
+    }));
 
     const chatRuntime = require('../../app/custom/services/chatRuntime');
 

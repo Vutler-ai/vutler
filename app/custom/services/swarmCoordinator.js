@@ -5,11 +5,8 @@ const { chat: llmChat } = require('../../../services/llmRouter');
 const { fetchWithTimeout } = require('../../../services/fetchWithTimeout');
 const { insertChatMessage } = require('../../../services/chatMessages');
 const { getSniparaTaskAdapter } = require('../../../services/sniparaTaskAdapter');
-const {
-  DEFAULT_SNIPARA_SWARM_ID,
-  callSniparaTool,
-  resolveSniparaConfig,
-} = require('../../../services/sniparaResolver');
+const { createSniparaGateway } = require('../../../services/snipara/gateway');
+const { DEFAULT_SNIPARA_SWARM_ID } = require('../../../services/sniparaResolver');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -176,19 +173,17 @@ class SwarmCoordinator {
   }
 
   async sniparaCall(toolName, args = {}, workspaceId = DEFAULT_WORKSPACE) {
-    const result = await callSniparaTool({
+    const result = await createSniparaGateway({
       db: pool,
       workspaceId,
-      toolName,
-      args,
       timeoutMs: SNIPARA_TIMEOUT_MS,
-    });
+    }).call(toolName, args);
     if (result == null) throw new Error('Snipara not configured for workspace');
     return result;
   }
 
   async getSniparaRuntimeConfig(workspaceId = DEFAULT_WORKSPACE) {
-    const config = await resolveSniparaConfig(pool, workspaceId);
+    const config = await createSniparaGateway({ db: pool, workspaceId }).resolveConfig();
     return {
       config,
       swarmId: config?.swarmId || this.swarmId || DEFAULT_SNIPARA_SWARM_ID || null,

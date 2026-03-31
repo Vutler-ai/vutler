@@ -8,9 +8,11 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const llmRouter = require('../services/llmRouter');
+const { createMemoryRuntimeService } = require('../services/memory/runtime');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const memoryRuntime = createMemoryRuntimeService();
 
 // ── Agent response helper (runs async, does not block user) ──
 async function _triggerAgentResponse(req, channelId, wsId) {
@@ -62,12 +64,22 @@ async function _triggerAgentResponse(req, channelId, wsId) {
       }
     } catch (crErr) {
       console.log('[Chat] ChatRuntime fallback to llmRouter:', crErr.message);
+      const memoryBundle = await memoryRuntime.preparePromptContext({
+        db: pool,
+        workspaceId: wsId,
+        agent,
+        query: messages.map((message) => message.content).join('\n').slice(0, 2000),
+        runtime: 'chat',
+        includeSummaries: true,
+      }).catch(() => ({ prompt: '' }));
       // Call LLM via router
       llmResult = await llmRouter.chat(
         {
           model: agent.model || 'claude-sonnet-4-20250514',
           provider: agent.provider || undefined,
-          system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
+          system_prompt: memoryBundle.prompt
+            ? `${agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`}\n\n${memoryBundle.prompt}`
+            : (agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`),
           temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
           max_tokens: agent.max_tokens || 4096,
         },

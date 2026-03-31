@@ -63,22 +63,22 @@ describe('taskExecutor Snipara sync', () => {
     });
     const claimTask = jest.fn().mockResolvedValue({ ok: true });
     const completeTask = jest.fn().mockResolvedValue({ ok: true });
-    const buildRuntimeMemoryBundle = jest.fn().mockResolvedValue({
+    const preparePromptContext = jest.fn().mockResolvedValue({
       prompt: '## Agent Memory\n- [fact] User prefers concise answers',
       stats: { runtime: 'task', selected: { total: 1, instance: 1, template: 0, global: 0 } },
     });
-    const extractTaskMemories = jest.fn().mockResolvedValue([{ type: 'task_episode' }]);
+    const recordTaskEpisode = jest.fn().mockResolvedValue([{ type: 'task_episode' }]);
 
     jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
     jest.doMock('../../services/llmRouter', () => ({ chat: llmChat }));
     jest.doMock('../../services/swarmCoordinator', () => ({
       getSwarmCoordinator: () => ({ claimTask, completeTask }),
     }));
-    jest.doMock('../../services/sniparaMemoryService', () => ({
-      buildRuntimeMemoryBundle,
-    }));
-    jest.doMock('../../services/memoryExtractionService', () => ({
-      extractTaskMemories,
+    jest.doMock('../../services/memory/runtime', () => ({
+      createMemoryRuntimeService: () => ({
+        preparePromptContext,
+        recordTaskEpisode,
+      }),
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
 
@@ -102,12 +102,12 @@ describe('taskExecutor Snipara sync', () => {
 
     expect(claimTask).toHaveBeenCalledWith('snip-1', 'mike', 'ws-1');
     expect(completeTask).toHaveBeenCalledWith('snip-1', 'mike', 'Task completed output.', 'ws-1');
-    expect(buildRuntimeMemoryBundle).toHaveBeenCalledWith(expect.objectContaining({
+    expect(preparePromptContext).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws-1',
       agent: expect.objectContaining({ username: 'mike' }),
       runtime: 'task',
     }));
-    expect(extractTaskMemories).toHaveBeenCalledWith(expect.objectContaining({
+    expect(recordTaskEpisode).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws-1',
       task: expect.objectContaining({ id: 'task-1' }),
       response: 'Task completed output.',

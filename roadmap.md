@@ -14,6 +14,9 @@ Items shipped in the last ~50 commits:
 - Documentation rewrite P0
 - Nexus enterprise runtime: live command queue, progress streaming, real e2e runtime validation
 - Nexus enterprise adapters: Google Workspace + Microsoft 365 provider routing and source visibility
+- Nexus billing visibility: plan quotas and remaining local/enterprise capacity surfaced in the Nexus UI
+- Nexus runtime observability: command health, retries, timings, and per-node command history
+- Nexus command channel hardening: leases, requeue on stale claim, command expiry, attempt tracking, e2e validation
 
 ## Active — Current Sprint
 Current focus, in active delivery flow:
@@ -22,6 +25,7 @@ Current focus, in active delivery flow:
 - `@vutler/local-daemon` (WebSocket git-sync client)
 - Provider stability monitoring
 - Microsoft 365 tenant validation for Nexus enterprise OAuth
+- Microsoft 365 live tenant e2e for Nexus enterprise connectors
 
 ## Planned — Next
 Queued after current sprint, unless priorities change:
@@ -30,6 +34,10 @@ Queued after current sprint, unless priorities change:
 - Observability dashboard: streaming SSE + provider health
 - Provider compatibility matrix
 - Public API documentation
+- Memory quality program for Snipara-backed agents
+  - Evaluation suite for recall precision, false recalls, and prompt pollution
+  - Better promotion and summary quality across instance/template/workspace scopes
+  - Runtime memory observability for mode, retrieval quality, token budget, and fallback rate
 
 ## Deferred — Not in Active Flow
 Explicitly not in the current execution lane:

@@ -12,7 +12,7 @@
 const express = require('express');
 const { authenticateAgent } = require('../lib/auth');
 const router = express.Router();
-const { callSniparaTool, resolveSniparaConfig } = require('../../../services/sniparaResolver');
+const { createSniparaGateway } = require('../../../services/snipara/gateway');
 
 function normalizeMemories(raw, fallbackScope) {
   if (!raw) return [];
@@ -40,20 +40,21 @@ router.get('/memory', authenticateAgent, async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const type = req.query.type;
     const agentId = req.agent?.id || req.query.agent_id;
+    const gateway = createSniparaGateway({ db: pg, workspaceId });
 
-    const config = await resolveSniparaConfig(pg, workspaceId);
+    const config = await gateway.resolveConfig();
     if (!config.configured) {
       return res.json({ success: true, data: [], meta: { total: 0, limit, snipara: false } });
     }
 
     const query = type ? `type:${type}` : `agent ${agentId || 'workspace'} memories`;
-    const recalled = await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_recall', args: {
+    const recalled = await gateway.memory.recall({
       query,
       agent_id: agentId,
       scope: 'agent',
       category: agentId,
       limit,
-    }});
+    });
 
     const memories = normalizeMemories(recalled, 'agent');
     return res.json({
@@ -81,12 +82,13 @@ router.post('/memory', authenticateAgent, async (req, res) => {
     const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const { content, type, tags, importance } = req.body;
     const agentId = req.agent?.id;
+    const gateway = createSniparaGateway({ db: pg, workspaceId });
 
     if (!content) {
       return res.status(400).json({ success: false, error: 'Missing required field: content' });
     }
 
-    const config = await resolveSniparaConfig(pg, workspaceId);
+    const config = await gateway.resolveConfig();
     if (!config.configured) {
       const memory = {
         id: `mem_${Date.now()}`,
@@ -99,7 +101,7 @@ router.post('/memory', authenticateAgent, async (req, res) => {
       return res.json({ success: true, data: memory });
     }
 
-    await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_remember', args: {
+    await gateway.memory.remember({
       text: content,
       type: type || 'fact',
       importance: Math.min(1, Math.max(0, Number(importance) || 0.5)),
@@ -111,7 +113,7 @@ router.post('/memory', authenticateAgent, async (req, res) => {
         source: 'vutler-agent',
         created_at: new Date().toISOString(),
       },
-    }});
+    });
 
     const memory = {
       id: `mem_${Date.now()}`,
@@ -143,23 +145,24 @@ router.get('/memory/search', authenticateAgent, async (req, res) => {
     const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const { q, limit: limitStr } = req.query;
     const agentId = req.agent?.id;
+    const gateway = createSniparaGateway({ db: pg, workspaceId });
 
     if (!q) {
       return res.status(400).json({ success: false, error: 'Missing required parameter: q (query)' });
     }
 
-    const config = await resolveSniparaConfig(pg, workspaceId);
+    const config = await gateway.resolveConfig();
     if (!config.configured) {
       return res.json({ success: true, data: [], query: q, meta: { snipara: false } });
     }
 
-    const recalled = await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_recall', args: {
+    const recalled = await gateway.memory.recall({
       query: q,
       agent_id: agentId,
       scope: 'agent',
       category: agentId,
       limit: parseInt(limitStr) || 10,
-    }});
+    });
 
     const memories = normalizeMemories(recalled, 'agent');
     return res.json({ success: true, data: memories, query: q });
@@ -183,17 +186,18 @@ router.delete('/memory/:id', authenticateAgent, async (req, res) => {
     const workspaceId = req.workspaceId || req.agent?.workspace_id;
     const { id } = req.params;
     const agentId = req.agent?.id;
+    const gateway = createSniparaGateway({ db: pg, workspaceId });
 
-    const config = await resolveSniparaConfig(pg, workspaceId);
+    const config = await gateway.resolveConfig();
     if (config.configured) {
-      await callSniparaTool({ db: pg, workspaceId, toolName: 'rlm_remember', args: {
+      await gateway.memory.remember({
         text: `[DELETED memory ${id}]`,
         type: 'fact',
         importance: 0,
         scope: 'agent',
         category: agentId,
         metadata: { deleted: true, memory_id: id, deleted_at: new Date().toISOString() },
-      }}).catch(() => {});
+      }).catch(() => {});
     }
 
     return res.json({ success: true, data: { id, deleted: true } });

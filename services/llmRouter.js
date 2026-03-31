@@ -1,10 +1,13 @@
 'use strict';
 
 const https = require('https');
-const sniparaClient = require('./sniparaClient');
-const { recordToolObservation } = require('./memoryExtractionService');
+const { buildAgentMemoryBindings } = require('./sniparaMemoryService');
+const { createSniparaGateway } = require('./snipara/gateway');
+const { createMemoryRuntimeService } = require('./memory/runtime');
+const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction } = require('./agentConfigPolicy');
+const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
   if (!result) return 'Tool completed with no result.';
@@ -249,7 +252,7 @@ async function finishToolActionRun(db, runId, agentId, result, err) {
 
 async function storeToolObservation(db, workspaceId, agent, toolName, args, result) {
   if (!db || !workspaceId || !agent || !toolName || !result || result.success === false) return;
-  await recordToolObservation({
+  await memoryRuntime.recordToolObservation({
     db,
     workspaceId,
     agent,
@@ -261,40 +264,61 @@ async function storeToolObservation(db, workspaceId, agent, toolName, args, resu
   });
 }
 
+function extractMemoryText(response) {
+  if (!response) return '';
+  const result = response.result || response;
+  if (typeof result === 'string') return result;
+  if (result.content) {
+    if (Array.isArray(result.content)) return result.content.map((c) => c.text || '').join('\n');
+    if (typeof result.content === 'string') return result.content;
+  }
+  if (Array.isArray(result.memories)) {
+    return result.memories.map((m) => m.text || m.content || '').join('\n');
+  }
+  if (Array.isArray(result)) {
+    return result.map((m) => m.text || m.content || '').join('\n');
+  }
+  if (result.text) return result.text;
+  try {
+    return JSON.stringify(result);
+  } catch (_) {
+    return '';
+  }
+}
+
 // ── Memory tool definitions injected when an agent has a Snipara scope ────────
 
-const MEMORY_TOOLS = [
-  {
-    type: 'function',
-    function: {
-      name: 'remember',
-      description: 'Store important information for future reference. Use when the user shares facts, preferences, decisions, or context you should remember.',
-      parameters: {
-        type: 'object',
-        properties: {
-          content: { type: 'string', description: 'The information to remember' },
-          importance: { type: 'integer', minimum: 1, maximum: 10, description: 'How important (1=trivial, 10=critical)' },
-          type: { type: 'string', enum: ['fact', 'preference', 'decision', 'context', 'action_log'], description: 'Type of memory' },
-        },
-        required: ['content'],
+const MEMORY_REMEMBER_TOOL = {
+  type: 'function',
+  function: {
+    name: 'remember',
+    description: 'Store important information for future reference. Use when the user shares facts, preferences, decisions, or context you should remember.',
+    parameters: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: 'The information to remember' },
+        importance: { type: 'integer', minimum: 1, maximum: 10, description: 'How important (1=trivial, 10=critical)' },
+        type: { type: 'string', enum: ['fact', 'preference', 'decision', 'context', 'action_log'], description: 'Type of memory' },
       },
+      required: ['content'],
     },
   },
-  {
-    type: 'function',
-    function: {
-      name: 'recall',
-      description: 'Search your memory for relevant information before responding. Use when you need context about the user, project, or previous interactions.',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'What to search for in memory' },
-        },
-        required: ['query'],
+};
+
+const MEMORY_RECALL_TOOL = {
+  type: 'function',
+  function: {
+    name: 'recall',
+    description: 'Search your memory for relevant information before responding. Use when you need context about the user, project, or previous interactions.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'What to search for in memory' },
       },
+      required: ['query'],
     },
   },
-];
+};
 
 // ── Social media tool definition ──────────────────────────────────────────────
 
@@ -844,8 +868,20 @@ async function chat(agent, messages, db, opts = {}) {
     || (agent?.name ? agent.name.toLowerCase().replace(/\s+/g, '-') : null)
     || null;
 
-  // Inject memory tools and augment system prompt when memory is configured
-  const memoryTools = memoryScope ? MEMORY_TOOLS : null;
+  const memoryMode = memoryScope
+    ? await resolveMemoryMode({ db, workspaceId, agent })
+    : { mode: 'disabled', read: false, write: false, inject: false, source: 'none' };
+  const memoryBindings = memoryScope
+    ? buildAgentMemoryBindings({
+      snipara_instance_id: memoryScope,
+      username: memoryScope,
+      role: agent?.role,
+    }, workspaceId)
+    : null;
+  const memoryGateway = memoryScope ? createSniparaGateway({ db, workspaceId }) : null;
+  const memoryTools = [];
+  if (memoryScope && memoryMode.write) memoryTools.push(MEMORY_REMEMBER_TOOL);
+  if (memoryScope && memoryMode.read) memoryTools.push(MEMORY_RECALL_TOOL);
 
   // Inject social media tool when agent has relevant skills
   const agentSkills = agent?.skills || agent?.tools || agent?.capabilities || [];
@@ -856,8 +892,10 @@ async function chat(agent, messages, db, opts = {}) {
   const internalPlacementInstruction = buildInternalPlacementInstruction();
 
   let effectiveSystemPrompt = agent?.system_prompt || '';
-  if (memoryScope) {
-    const memoryInstruction = '\n\nYou have access to persistent memory. Use remember() to store important information and recall() to search your memory before responding to questions about past context.';
+  if (memoryTools.length > 0) {
+    const memoryInstruction = memoryMode.read
+      ? '\n\nYou have access to persistent memory. Use remember() to store important information and recall() to search your memory before responding to questions about past context.'
+      : '\n\nYou can store durable memory with remember() when the user shares important facts, preferences, or decisions.';
     effectiveSystemPrompt = effectiveSystemPrompt + memoryInstruction;
   }
   effectiveSystemPrompt += `\n\n${internalPlacementInstruction}`;
@@ -960,7 +998,7 @@ async function chat(agent, messages, db, opts = {}) {
             skillTools = getSkillRegistry().getSkillTools(agentSkills);
           } catch (_) { /* skills not available — skip */ }
         }
-        const allTools = [...(memoryTools || []), ...socialMediaTools, ...nexusTools, ...skillTools];
+        const allTools = [...memoryTools, ...socialMediaTools, ...nexusTools, ...skillTools];
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
 
         // No tool calls → we have the final answer
@@ -972,15 +1010,24 @@ async function chat(agent, messages, db, opts = {}) {
           const agentName = agent?.name || agent?.username || 'agent';
           const args = toolCall.arguments || {};
 
-          if (toolCall.name === 'remember' && memoryScope) {
+          if (toolCall.name === 'remember' && memoryScope && memoryMode.write && memoryGateway && memoryBindings) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'remember', 'memory', args);
             const importance = args.importance || 5;
             console.log(`[Memory] Agent ${agentName} remembered: "${(args.content || '').slice(0, 100)}" (importance: ${importance})`);
             try {
-              await sniparaClient.remember(memoryScope, args.content || '', {
+              await memoryGateway.memory.remember({
+                text: args.content || '',
                 type: args.type || 'fact',
                 importance,
-              }, { db, workspaceId });
+                scope: memoryBindings.instance.scope,
+                category: memoryBindings.instance.category,
+                agentId: memoryBindings.agentId || memoryBindings.sniparaInstanceId || memoryBindings.agentRef,
+                metadata: {
+                  visibility: 'internal',
+                  source: 'llm-tool',
+                  created_at: new Date().toISOString(),
+                },
+              });
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, { success: true, data: { stored: true } }, null);
             } catch (rememberErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, rememberErr);
@@ -994,14 +1041,19 @@ async function chat(agent, messages, db, opts = {}) {
             ];
             continueLoop = true;
 
-          } else if (toolCall.name === 'recall' && memoryScope) {
+          } else if (toolCall.name === 'recall' && memoryScope && memoryMode.read && memoryGateway && memoryBindings) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'recall', 'memory', args);
             const query = args.query || '';
             console.log(`[Memory] Agent ${agentName} recalling: "${query.slice(0, 80)}"`);
             let recalledText = 'No relevant memories found.';
             try {
-              const recallResult = await sniparaClient.recall(memoryScope, query, {}, { db, workspaceId });
-              recalledText = sniparaClient.extractText(recallResult) || 'No relevant memories found.';
+              const recallResult = await memoryGateway.memory.recall({
+                query,
+                scope: memoryBindings.instance.scope,
+                category: memoryBindings.instance.category,
+                agentId: memoryBindings.agentId || memoryBindings.sniparaInstanceId || memoryBindings.agentRef,
+              });
+              recalledText = extractMemoryText(recallResult) || 'No relevant memories found.';
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, { success: true, data: { result: recalledText } }, null);
             } catch (recallErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, recallErr);

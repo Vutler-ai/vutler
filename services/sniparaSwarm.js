@@ -1,23 +1,9 @@
 "use strict";
-const {
-  buildSniparaProjectUrl,
-  DEFAULT_SNIPARA_PROJECT_SLUG,
-} = require('./sniparaResolver');
-const SNIPARA_URL = process.env.SNIPARA_PROJECT_MCP_URL
-  || process.env.SNIPARA_MCP_URL
-  || process.env.SNIPARA_API_URL
-  || buildSniparaProjectUrl(process.env.SNIPARA_PROJECT_SLUG || DEFAULT_SNIPARA_PROJECT_SLUG);
-const SNIPARA_KEY = process.env.SNIPARA_API_KEY || "REDACTED_SNIPARA_KEY_2";
+const { createSniparaGateway } = require('./snipara/gateway');
 const SWARM_ID = process.env.SNIPARA_SWARM_ID || "cmmdu24k500g01ihbw32d44x2";
 
 async function callSnipara(toolName, args) {
-  const resp = await fetch(SNIPARA_URL, {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${SNIPARA_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", method: "tools/call", params: { name: toolName, arguments: args }, id: Date.now() })
-  });
-  const data = await resp.json();
-  return data.result?.content?.[0]?.text ? JSON.parse(data.result.content[0].text) : data;
+  return createSniparaGateway().call(toolName, args);
 }
 
 async function broadcast(agentId, eventType, message) {

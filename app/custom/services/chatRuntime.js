@@ -7,9 +7,8 @@ const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
-const { extractConversationMemories } = require('../../../services/memoryExtractionService');
-const { buildRuntimeMemoryBundle } = require('../../../services/sniparaMemoryService');
-const { callSniparaTool, resolveSniparaConfig } = require('../../../services/sniparaResolver');
+const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
+const { createSniparaGateway } = require('../../../services/snipara/gateway');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
@@ -31,6 +30,7 @@ let processingColumnsAvailable = true;
 
 const soulCache = new Map();
 const agentCache = new Map();
+const memoryRuntime = createMemoryRuntimeService();
 
 function normalizeWorkspaceId(workspaceId) {
   return workspaceId || DEFAULT_WORKSPACE;
@@ -55,20 +55,15 @@ function buildFailureMessage(err) {
 }
 
 async function sniparaCall(toolName, args = {}, workspaceId = DEFAULT_WORKSPACE) {
-  const config = await resolveSniparaConfig(pool, workspaceId);
+  const gateway = createSniparaGateway({ db: pool, workspaceId });
+  const config = await gateway.resolveConfig();
   if (!config.configured) {
     console.warn('[ChatRuntime] No SNIPARA_API_KEY — skipping Snipara call');
     return null;
   }
 
   try {
-    return await callSniparaTool({
-      db: pool,
-      workspaceId,
-      toolName,
-      args,
-      timeoutMs: SNIPARA_TIMEOUT_MS,
-    });
+    return await gateway.call(toolName, args, { timeoutMs: SNIPARA_TIMEOUT_MS });
   } catch (err) {
     console.error(`[ChatRuntime] Snipara ${toolName} failed:`, err.message);
     return null;
@@ -153,6 +148,11 @@ function resolveRequestedAgent(message, channelAgents = []) {
   return { agent: sortAgentsDeterministically(channelAgents)[0], reason: 'deterministic_fallback' };
 }
 
+function shouldBypassSwarmRouting(resolution) {
+  const reason = String(resolution?.reason || '');
+  return reason === 'explicit' || reason === 'mention' || reason === 'single_channel_agent';
+}
+
 async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEFAULT_WORKSPACE, limit = 10) {
   const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
@@ -190,12 +190,13 @@ async function getAgentSoul(agent) {
   }
 
   const [memoryBundle, context] = await Promise.all([
-    buildRuntimeMemoryBundle({
+    memoryRuntime.preparePromptContext({
       db: pool,
       workspaceId,
       agent,
       query: `${agentName} personality soul role instructions behavior preferences`,
       runtime: 'chat',
+      includeSummaries: true,
     }).catch(() => ({ prompt: '', stats: null })),
     sniparaCall('rlm_context_query', {
       query: `${agentName} agent role responsibilities at Starbox Group`,
@@ -217,8 +218,11 @@ async function getAgentSoul(agent) {
     console.info('[ChatRuntime] memory bundle', {
       agent: agentName,
       workspaceId,
+      mode: memoryBundle.mode?.mode || null,
+      mode_source: memoryBundle.mode?.source || null,
       runtime: memoryBundle.stats.runtime,
       selected: memoryBundle.stats.selected,
+      tokens: memoryBundle.stats.tokens || 0,
     });
   }
 
@@ -228,7 +232,7 @@ async function getAgentSoul(agent) {
 
 function rememberInteraction(agent, workspaceId, userMessage, agentResponse, userName) {
   if (String(userMessage || '').length < 20 && String(agentResponse || '').length < 50) return;
-  extractConversationMemories({
+  memoryRuntime.recordConversation({
     db: pool,
     workspaceId,
     agent,
@@ -236,7 +240,7 @@ function rememberInteraction(agent, workspaceId, userMessage, agentResponse, use
     assistantMessage: agentResponse,
     userName,
   }).catch((err) => {
-    console.warn('[ChatRuntime] memory extraction failed:', err.message);
+    console.warn('[ChatRuntime] memory conversation persistence failed:', err.message);
   });
 }
 
@@ -411,39 +415,41 @@ async function handleMessage(message) {
     console.warn('[ChatRuntime] Runbook detection error (non-blocking):', err.message);
   }
 
-  const swarmCoordinator = getSwarmCoordinator();
-  try {
-    const routing = await swarmCoordinator.analyzeAndRoute(message, channelAgents, workspaceId);
-    if (routing?.routed) {
-      await insertChatMessage(pool, null, SCHEMA, {
-        channel_id: message.channel_id,
-        sender_id: 'jarvis',
-        sender_name: 'Jarvis',
-        content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
-        message_type: 'text',
-        workspace_id: workspaceId,
-        processed_at: new Date(),
-        processing_state: 'processed',
-        reply_to_message_id: message.id,
-        requested_agent_id: message.requested_agent_id || null,
-        display_agent_id: 'jarvis',
-        orchestrated_by: 'jarvis',
-        executed_by: 'jarvis',
-        metadata: {
-          orchestration_status: 'routed',
-          created_task_count: routing.created_count || 0,
-        }
-      });
-      return;
-    }
-  } catch (err) {
-    console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
-  }
-
   const resolution = resolveRequestedAgent(message, channelAgents);
   const targetAgent = resolution?.agent;
   if (!targetAgent) {
     throw new Error('Unable to resolve requested agent');
+  }
+
+  if (!shouldBypassSwarmRouting(resolution)) {
+    const swarmCoordinator = getSwarmCoordinator();
+    try {
+      const routing = await swarmCoordinator.analyzeAndRoute(message, channelAgents, workspaceId);
+      if (routing?.routed) {
+        await insertChatMessage(pool, null, SCHEMA, {
+          channel_id: message.channel_id,
+          sender_id: 'jarvis',
+          sender_name: 'Jarvis',
+          content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
+          message_type: 'text',
+          workspace_id: workspaceId,
+          processed_at: new Date(),
+          processing_state: 'processed',
+          reply_to_message_id: message.id,
+          requested_agent_id: message.requested_agent_id || null,
+          display_agent_id: 'jarvis',
+          orchestrated_by: 'jarvis',
+          executed_by: 'jarvis',
+          metadata: {
+            orchestration_status: 'routed',
+            created_task_count: routing.created_count || 0,
+          }
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
+    }
   }
 
   const soul = await getAgentSoul(targetAgent);

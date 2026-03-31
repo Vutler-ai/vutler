@@ -113,6 +113,15 @@ describe('chatRuntime retry flow', () => {
       getSwarmCoordinator: () => ({ analyzeAndRoute }),
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
+    jest.doMock('../../services/memory/runtime', () => ({
+      createMemoryRuntimeService: () => ({
+        preparePromptContext: jest.fn().mockResolvedValue({
+          prompt: '## Agent Memory\n- [fact] Deployment preferences remembered.',
+          stats: { runtime: 'chat', selected: { total: 1, instance: 1, template: 0, global: 0 } },
+        }),
+        recordConversation: jest.fn().mockResolvedValue([]),
+      }),
+    }));
 
     const chatRuntime = require('../../app/custom/services/chatRuntime');
 
@@ -125,6 +134,6 @@ describe('chatRuntime retry flow', () => {
     expect(state.message.processing_state).toBe('processed');
     expect(llmChat).toHaveBeenCalledTimes(2);
     expect(state.inserts).toHaveLength(1);
-    expect(analyzeAndRoute).toHaveBeenCalledTimes(2);
+    expect(analyzeAndRoute).not.toHaveBeenCalled();
   });
 });

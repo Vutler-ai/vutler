@@ -12,7 +12,7 @@
  */
 
 const { pool } = require('../lib/postgres');
-const sniparaClient = require('./sniparaClient');
+const { createSniparaGateway, extractSniparaText } = require('./snipara/gateway');
 const { AGENT_CAPABILITIES } = require('../app/custom/services/swarmCoordinator');
 
 const SCHEMA = 'tenant_vutler';
@@ -143,11 +143,17 @@ class SmartDispatcher {
    */
   async _memoryRelevanceScore(agentId, task) {
     try {
-      const result = await sniparaClient.recall(
-        `agent-${agentId}`,
-        (task.title || '').slice(0, 100),
+      const gateway = createSniparaGateway();
+      const result = await gateway.memory.recallForAgent(
+        {
+          username: agentId,
+          snipara_instance_id: agentId,
+        },
+        {
+          query: (task.title || '').slice(0, 100),
+        }
       );
-      const text = sniparaClient.extractText(result);
+      const text = extractSniparaText(result);
       // If we got meaningful memory back, the agent has relevant experience
       if (text && text.length > 20 && !text.includes('No relevant memories')) {
         return 0.8;

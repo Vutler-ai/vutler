@@ -12,8 +12,8 @@
  * Ref: https://snipara.com/docs/features/workflows
  */
 
-const sniparaClient = require('./sniparaClient');
 const { chat } = require('./llmRouter');
+const { createSniparaGateway, extractSniparaText } = require('./snipara/gateway');
 
 // ── Scoring Criteria ────────────────────────────────────────────────────────
 
@@ -75,18 +75,18 @@ function buildFullPromptInjection(shared, memories, deepContext, plan) {
   const sections = ['## Workflow Mode: FULL\nThis is a complex task requiring careful execution.\n'];
 
   if (shared) {
-    sections.push(`### Team Standards & Shared Context\n${typeof shared === 'string' ? shared : sniparaClient.extractText(shared) || '(none)'}\n`);
+    sections.push(`### Team Standards & Shared Context\n${typeof shared === 'string' ? shared : extractSniparaText(shared) || '(none)'}\n`);
   }
   if (memories) {
-    const memText = typeof memories === 'string' ? memories : sniparaClient.extractText(memories);
+    const memText = typeof memories === 'string' ? memories : extractSniparaText(memories);
     if (memText) sections.push(`### Relevant Memories\n${memText}\n`);
   }
   if (deepContext) {
-    const ctxText = typeof deepContext === 'string' ? deepContext : sniparaClient.extractText(deepContext);
+    const ctxText = typeof deepContext === 'string' ? deepContext : extractSniparaText(deepContext);
     if (ctxText) sections.push(`### Deep Context\n${ctxText}\n`);
   }
   if (plan) {
-    const planText = typeof plan === 'string' ? plan : sniparaClient.extractText(plan);
+    const planText = typeof plan === 'string' ? plan : extractSniparaText(plan);
     if (planText) sections.push(`### Plan\n${planText}\n`);
   }
 
@@ -152,6 +152,9 @@ class WorkflowModeSelector {
    */
   async gatherFullContext(agentId, task, coordinator) {
     const taskText = `${task.title || ''} ${task.description || ''}`;
+    const workspaceId = task.workspace_id || task.workspaceId || coordinator?.workspaceId || null;
+    const gateway = createSniparaGateway({ workspaceId });
+    const agentMemoryRef = String(agentId || '').trim();
 
     // Phase 1: Context Gathering (parallel)
     const [shared, memories, deepContext] = await Promise.all([
@@ -163,7 +166,13 @@ class WorkflowModeSelector {
       }).catch(() => null),
 
       // Agent-specific memories for this topic
-      sniparaClient.recall(`agent-${agentId}`, taskText).catch(() => null),
+      gateway.memory.recallForAgent({
+        username: agentMemoryRef,
+        snipara_instance_id: agentMemoryRef,
+      }, {
+        query: taskText,
+        workspaceId,
+      }).catch(() => null),
 
       // Deep context query with higher token budget
       coordinator.sniparaCall('rlm_context_query', {
@@ -191,12 +200,21 @@ class WorkflowModeSelector {
 
     // Store planning decision in memory
     if (plan) {
-      const planSummary = typeof plan === 'string' ? plan.slice(0, 200) : sniparaClient.extractText(plan)?.slice(0, 200) || '';
-      await sniparaClient.remember(
-        `agent-${agentId}`,
-        `Decision for "${task.title}": ${planSummary}`,
-        { type: 'decision', importance: 8 },
-      ).catch(() => {});
+      const planSummary = typeof plan === 'string' ? plan.slice(0, 200) : extractSniparaText(plan)?.slice(0, 200) || '';
+      await gateway.memory.rememberForAgent({
+        username: agentMemoryRef,
+        snipara_instance_id: agentMemoryRef,
+      }, {
+        text: `Decision for "${task.title}": ${planSummary}`,
+        type: 'decision',
+        importance: 8,
+        workspaceId,
+        metadata: {
+          visibility: 'internal',
+          source: 'workflow-mode',
+          created_at: new Date().toISOString(),
+        },
+      }).catch(() => {});
     }
 
     const enrichedPrompt = buildFullPromptInjection(shared, memories, deepContext, plan);
@@ -211,20 +229,41 @@ class WorkflowModeSelector {
    * @param {string} resultSummary
    */
   async persistFullModeResult(agentId, task, resultSummary) {
+    const workspaceId = task?.workspace_id || task?.workspaceId || null;
+    const gateway = createSniparaGateway({ workspaceId });
+    const agentMemoryRef = String(agentId || '').trim();
     await Promise.all([
       // Learning: what was accomplished
-      sniparaClient.remember(
-        `agent-${agentId}`,
-        `Completed (FULL): "${task.title}". ${resultSummary || 'Done.'}`,
-        { type: 'learning', importance: 7 },
-      ).catch(() => {}),
+      gateway.memory.rememberForAgent({
+        username: agentMemoryRef,
+        snipara_instance_id: agentMemoryRef,
+      }, {
+        text: `Completed (FULL): "${task.title}". ${resultSummary || 'Done.'}`,
+        type: 'learning',
+        importance: 7,
+        workspaceId,
+        metadata: {
+          visibility: 'internal',
+          source: 'workflow-mode',
+          created_at: new Date().toISOString(),
+        },
+      }).catch(() => {}),
 
       // Context: session continuity for future sessions
-      sniparaClient.remember(
-        `agent-${agentId}`,
-        `Context: "${task.title}" — status: completed. ${resultSummary || ''}`,
-        { type: 'context', importance: 6 },
-      ).catch(() => {}),
+      gateway.memory.rememberForAgent({
+        username: agentMemoryRef,
+        snipara_instance_id: agentMemoryRef,
+      }, {
+        text: `Context: "${task.title}" - status: completed. ${resultSummary || ''}`,
+        type: 'context',
+        importance: 6,
+        workspaceId,
+        metadata: {
+          visibility: 'internal',
+          source: 'workflow-mode',
+          created_at: new Date().toISOString(),
+        },
+      }).catch(() => {}),
     ]);
   }
 

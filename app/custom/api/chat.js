@@ -11,9 +11,11 @@ const express = require('express');
 const router = express.Router();
 
 const { insertChatMessage, normalizeChatMessage } = require('../../../services/chatMessages');
+const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const memoryRuntime = createMemoryRuntimeService();
 
 function getPool(req) {
   return req.app.locals.pg;
@@ -90,11 +92,21 @@ async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
     }));
 
     const llmRouter = require('../../../services/llmRouter');
+    const memoryBundle = await memoryRuntime.preparePromptContext({
+      db: pg,
+      workspaceId,
+      agent,
+      query: messages.map((message) => message.content).join('\n').slice(0, 2000),
+      runtime: 'chat',
+      includeSummaries: true,
+    }).catch(() => ({ prompt: '' }));
     const llmResult = await llmRouter.chat(
       {
         model: agent.model || 'claude-sonnet-4-20250514',
         provider: agent.provider || undefined,
-        system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`,
+        system_prompt: memoryBundle.prompt
+          ? `${agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`}\n\n${memoryBundle.prompt}`
+          : (agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`),
         temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
         max_tokens: agent.max_tokens || 4096,
         workspace_id: workspaceId,

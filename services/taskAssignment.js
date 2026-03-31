@@ -1,65 +1,13 @@
 'use strict';
 
-const https = require('https');
+const { createSniparaGateway } = require('./snipara/gateway');
 
 const CFG = {
-  apiKey: process.env.SNIPARA_API_KEY || '',
-  projectSlug: process.env.SNIPARA_PROJECT_SLUG || 'vutler',
   swarmId: process.env.SNIPARA_SWARM_ID || 'cmmdu24k500g01ihbw32d44x2',
-  timeoutMs: Number(process.env.SNIPARA_REQUEST_TIMEOUT_MS || 10000),
 };
 
 function telemetry(event, payload = {}) {
   console.log(`[task-assignment] ${event}`, JSON.stringify({ ts: new Date().toISOString(), ...payload }));
-}
-
-function _toolCall(name, argumentsObj) {
-  return new Promise((resolve, reject) => {
-    if (!CFG.apiKey) return reject(new Error('SNIPARA_API_KEY missing'));
-
-    const body = JSON.stringify({
-      jsonrpc: '2.0',
-      id: Date.now(),
-      method: 'tools/call',
-      params: {
-        name,
-        arguments: argumentsObj,
-      },
-    });
-
-    const req = https.request({
-      hostname: 'api.snipara.com',
-      port: 443,
-      path: `/mcp/${CFG.projectSlug}`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': CFG.apiKey,
-        'Content-Length': Buffer.byteLength(body),
-      },
-    }, (res) => {
-      let raw = '';
-      res.on('data', (c) => { raw += c; });
-      res.on('end', () => {
-        try {
-          const obj = raw ? JSON.parse(raw) : {};
-          if (res.statusCode >= 400) return reject(new Error(`Snipara HTTP ${res.statusCode}: ${raw}`));
-          if (obj.error) return reject(new Error(obj.error.message || JSON.stringify(obj.error)));
-          const text = obj?.result?.content?.[0]?.text || '{}';
-          const parsed = JSON.parse(text);
-          if (parsed?.success === false) return reject(new Error(parsed.error || 'Snipara tool failed'));
-          resolve(parsed);
-        } catch (e) {
-          reject(new Error(`Snipara parse error: ${e.message}`));
-        }
-      });
-    });
-
-    req.setTimeout(CFG.timeoutMs, () => req.destroy(new Error('Snipara timeout')));
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
 }
 
 function _assertWorker(worker) {
@@ -71,6 +19,7 @@ function _assertWorker(worker) {
 async function createTask({ title, description = '', priority = 10, assignee, metadata = {} }) {
   if (!title) throw new Error('title is required');
   _assertWorker({ agent_name: assignee?.agent_name, agent_internal_id: assignee?.agent_internal_id });
+  const gateway = createSniparaGateway();
 
   const payload = {
     swarm_id: CFG.swarmId,
@@ -87,14 +36,15 @@ async function createTask({ title, description = '', priority = 10, assignee, me
     },
   };
 
-  const out = await _toolCall('rlm_task_create', payload);
+  const out = await gateway.coordination.taskCreate(payload);
   telemetry('created', { task_id: out.task_id, assignee: assignee.agent_internal_id });
   return out;
 }
 
 async function claimTaskForWorker({ worker, task_id }) {
   _assertWorker(worker);
-  const out = await _toolCall('rlm_task_claim', {
+  const gateway = createSniparaGateway();
+  const out = await gateway.coordination.taskClaim({
     swarm_id: CFG.swarmId,
     agent_id: worker.agent_internal_id,
     task_id: task_id || undefined,
@@ -109,8 +59,9 @@ async function claimTaskForWorker({ worker, task_id }) {
 async function completeTask({ worker, task_id, result, success = true }) {
   _assertWorker(worker);
   if (!task_id) throw new Error('task_id is required');
+  const gateway = createSniparaGateway();
 
-  const out = await _toolCall('rlm_task_complete', {
+  const out = await gateway.coordination.taskComplete({
     swarm_id: CFG.swarmId,
     agent_id: worker.agent_internal_id,
     task_id,

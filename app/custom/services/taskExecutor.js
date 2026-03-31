@@ -8,8 +8,7 @@ const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
-const { buildRuntimeMemoryBundle } = require('../../../services/sniparaMemoryService');
-const { extractTaskMemories } = require('../../../services/memoryExtractionService');
+const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 10_000;
@@ -17,6 +16,7 @@ const STALE_THRESHOLD_MIN = 1440;
 const BATCH_SIZE = 5;
 const AGENT_CACHE_TTL = 60_000;
 const WORKER_ID = `${os.hostname()}:${process.pid}`;
+const memoryRuntime = createMemoryRuntimeService();
 
 let running = false;
 let wsConnections = null;
@@ -162,15 +162,17 @@ async function failTask(task, err, extraMetadata = {}) {
 
 async function buildExecutionPrompt(agent, task, workspaceId) {
   const baseSystemPrompt = agent.system_prompt || `You are ${agent.name}, a helpful assistant.`;
-  const memoryBundle = await buildRuntimeMemoryBundle({
+  const memoryBundle = await memoryRuntime.preparePromptContext({
     db: pool,
     workspaceId,
     agent,
     query: `${task.title} ${task.description || ''}`.trim(),
     runtime: 'task',
-  }).catch(() => ({ prompt: '', stats: null }));
+    includeSummaries: true,
+    }).catch(() => ({ prompt: '', stats: null }));
 
   return {
+    mode: memoryBundle.mode || null,
     prompt: memoryBundle.prompt
       ? `${baseSystemPrompt}\n\n${memoryBundle.prompt}`
       : baseSystemPrompt,
@@ -221,8 +223,11 @@ async function executeTask(task) {
         taskId: task.id,
         agent: agentRef,
         workspaceId,
+        mode: executionPrompt.mode?.mode || null,
+        mode_source: executionPrompt.mode?.source || null,
         runtime: executionPrompt.memoryStats.runtime,
         selected: executionPrompt.memoryStats.selected,
+        tokens: executionPrompt.memoryStats.tokens || 0,
       });
     }
     const successMeta = {
@@ -244,14 +249,14 @@ async function executeTask(task) {
       }
     }
 
-    await extractTaskMemories({
+    await memoryRuntime.recordTaskEpisode({
       db: pool,
       workspaceId,
       agent,
       task,
       response: response.content,
     }).catch((err) => {
-      console.warn('[TaskExecutor] memory extraction failed:', err.message);
+      console.warn('[TaskExecutor] memory task persistence failed:', err.message);
     });
 
     await updateTask(task.id, 'completed', response.content, successMeta);
