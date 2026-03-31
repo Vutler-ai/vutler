@@ -454,6 +454,23 @@ async function collectStoredScopeMemories({
   };
 }
 
+async function loadWorkspaceSoulDocument({ db, workspaceId }) {
+  const paths = ['SOUL.md', 'agents/SOUL.md'];
+  for (const path of paths) {
+    const doc = await callSniparaTool({
+      db,
+      workspaceId,
+      toolName: 'rlm_load_document',
+      args: { path },
+    }).catch(() => '');
+
+    const text = typeof doc === 'string' ? doc.trim() : JSON.stringify(doc || '').trim();
+    if (text) return text;
+  }
+
+  return '';
+}
+
 function selectRuntimeMemories({ instance = [], template = [], global = [], query = '', runtime = 'chat' }) {
   const budget = getRuntimeBudget(runtime);
   const rankedByScope = {
@@ -603,15 +620,10 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
 }
 
 async function loadWorkspaceKnowledge({ db, workspaceId }) {
-  const content = await callSniparaTool({
-    db,
-    workspaceId,
-    toolName: 'rlm_load_document',
-    args: { path: 'agents/SOUL.md' },
-  }).catch(() => '');
+  const content = await loadWorkspaceSoulDocument({ db, workspaceId });
 
   return {
-    content: typeof content === 'string' ? content : JSON.stringify(content || ''),
+    content,
     updatedAt: '',
     readOnly: true,
   };
@@ -625,7 +637,7 @@ async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, inc
     collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'instance', search: getMemorySearchTerms(agent, bindings, bindings.agentRef), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
     collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'template', search: getMemorySearchTerms(agent, bindings, bindings.role), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
     collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'global', search: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
-    callSniparaTool({ db, workspaceId, toolName: 'rlm_load_document', args: { path: 'agents/SOUL.md' } }).catch(() => ''),
+    loadWorkspaceSoulDocument({ db, workspaceId }),
   ]);
 
   const [instanceRaw, templateRaw, globalRaw] = await Promise.all([
