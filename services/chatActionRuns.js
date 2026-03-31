@@ -11,6 +11,11 @@ const OPTIONAL_COLUMNS = new Set([
   'completed_at',
 ]);
 
+function isMissingChatActionRunsSchemaError(err) {
+  const message = String(err?.message || '');
+  return /chat_action_runs|requested_agent_id|display_agent_id|orchestrated_by|executed_by|input_json|output_json|error_json|completed_at|started_at/i.test(message);
+}
+
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);
 }
@@ -50,6 +55,9 @@ async function insertChatActionRun(pg, schema, payload) {
       );
       return result.rows[0] || null;
     } catch (err) {
+      if (isMissingChatActionRunsSchemaError(err) && /relation .*chat_action_runs.* does not exist/i.test(String(err?.message || ''))) {
+        return null;
+      }
       const missingColumn = keys.find((key) => OPTIONAL_COLUMNS.has(key) && err.message && err.message.includes(key));
       if (!missingColumn) throw err;
       delete row[missingColumn];
@@ -85,8 +93,11 @@ async function updateChatActionRun(pg, schema, runId, patch = {}) {
      WHERE id = $${idx}
      RETURNING *`,
     params
-  );
-  return result.rows[0] || null;
+  ).catch((err) => {
+    if (isMissingChatActionRunsSchemaError(err)) return { rows: [] };
+    throw err;
+  });
+  return result.rows?.[0] || null;
 }
 
 module.exports = { insertChatActionRun, updateChatActionRun };

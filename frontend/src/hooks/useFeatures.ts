@@ -86,7 +86,10 @@ export function useFeaturesState(): FeaturesContextType {
         setPlan(data.plan);
         setFeatures(data.features);
         setSnipara(data.snipara);
-        void syncWorkspaceFeaturesCookie().catch(() => {});
+        const token = getAuthToken();
+        if (token) {
+          void syncWorkspaceFeaturesCookie(token).catch(() => {});
+        }
       })
       .catch(() => {
         if (cancelled) return;

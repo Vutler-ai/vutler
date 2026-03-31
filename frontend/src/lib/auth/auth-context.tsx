@@ -58,12 +58,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    Promise.allSettled([
-      syncAuthSessionCookie(token),
-      syncWorkspaceFeaturesCookie(token),
-    ]).finally(() => {
-      fetchMe().finally(() => setLoading(false));
-    });
+    fetchMe()
+      .then(() => Promise.allSettled([
+        syncAuthSessionCookie(token),
+        syncWorkspaceFeaturesCookie(token),
+      ]))
+      .finally(() => setLoading(false));
   }, [fetchMe]);
 
   const login = useCallback(async (email: string, password: string): Promise<void> => {

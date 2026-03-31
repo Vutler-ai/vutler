@@ -11,6 +11,9 @@ import {
 export { ADMIN_TOKEN_KEY, AUTH_TOKEN_KEY };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const SESSION_SYNC_PATH = '/internal/session';
+const SESSION_FEATURES_SYNC_PATH = '/internal/session/features';
+const ADMIN_SESSION_SYNC_PATH = '/internal/admin-session';
 
 // ─── Auth utilities ───────────────────────────────────────────────────────────
 
@@ -32,9 +35,9 @@ async function syncSessionCookie(path: string, method: 'POST' | 'DELETE', payloa
 function clearServerSessionCookies(): void {
   if (typeof window === 'undefined') return;
 
-  void fetch('/api/session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
-  void fetch('/api/session/features', { method: 'DELETE', credentials: 'include' }).catch(() => {});
-  void fetch('/api/admin-session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+  void fetch(SESSION_SYNC_PATH, { method: 'DELETE', credentials: 'include' }).catch(() => {});
+  void fetch(SESSION_FEATURES_SYNC_PATH, { method: 'DELETE', credentials: 'include' }).catch(() => {});
+  void fetch(ADMIN_SESSION_SYNC_PATH, { method: 'DELETE', credentials: 'include' }).catch(() => {});
 }
 
 export function getAuthToken(): string | null {
@@ -89,7 +92,7 @@ export async function apiFetch<T>(
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
-  } else {
+  } else if (!endpoint.startsWith('/api/v1/auth/login') && !endpoint.startsWith('/api/v1/auth/register')) {
     console.warn(`[apiFetch] No auth token found (key: "${AUTH_TOKEN_KEY}") for request: ${endpoint}`);
   }
 
@@ -145,23 +148,23 @@ export function setAdminToken(token: string): void {
 export function clearAdminToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(ADMIN_TOKEN_KEY);
-  void fetch('/api/admin-session', { method: 'DELETE', credentials: 'include' }).catch(() => {});
+  void fetch(ADMIN_SESSION_SYNC_PATH, { method: 'DELETE', credentials: 'include' }).catch(() => {});
 }
 
 export async function syncAuthSessionCookie(token: string): Promise<void> {
-  await syncSessionCookie('/api/session', 'POST', { token });
+  await syncSessionCookie(SESSION_SYNC_PATH, 'POST', { token });
 }
 
 export async function syncWorkspaceFeaturesCookie(token?: string): Promise<void> {
-  await syncSessionCookie('/api/session/features', 'POST', token ? { token } : undefined);
+  await syncSessionCookie(SESSION_FEATURES_SYNC_PATH, 'POST', token ? { token } : undefined);
 }
 
 export async function clearWorkspaceFeaturesCookie(): Promise<void> {
-  await syncSessionCookie('/api/session/features', 'DELETE');
+  await syncSessionCookie(SESSION_FEATURES_SYNC_PATH, 'DELETE');
 }
 
 export async function syncAdminSessionCookie(token: string): Promise<void> {
-  await syncSessionCookie('/api/admin-session', 'POST', { token });
+  await syncSessionCookie(ADMIN_SESSION_SYNC_PATH, 'POST', { token });
 }
 
 /**
