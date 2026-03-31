@@ -456,8 +456,7 @@ async function collectStoredScopeMemories({
   };
 }
 
-async function loadWorkspaceSoulDocument({ db, workspaceId }) {
-  const paths = ['SOUL.md', 'agents/SOUL.md'];
+async function loadDocumentFromCandidates({ db, workspaceId, paths = [] }) {
   for (const path of paths) {
     const doc = await callSniparaTool({
       db,
@@ -634,7 +633,11 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
 }
 
 async function loadWorkspaceKnowledge({ db, workspaceId }) {
-  const content = await loadWorkspaceSoulDocument({ db, workspaceId });
+  const content = await loadDocumentFromCandidates({
+    db,
+    workspaceId,
+    paths: ['SOUL.md', 'agents/SOUL.md'],
+  });
 
   return {
     content,
@@ -646,12 +649,18 @@ async function loadWorkspaceKnowledge({ db, workspaceId }) {
 async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, includeInternal = false, fallbackAgent = {} }) {
   const agent = await resolveAgentRecord(db, workspaceId, agentIdOrUsername, { ...fallbackAgent, role: role || fallbackAgent.role });
   const bindings = buildAgentMemoryBindings(agent, workspaceId);
+  const agentSoulPaths = [
+    `agents/${bindings.agentRef}/SOUL.md`,
+    `agents/${bindings.agentRef}/MEMORY.md`,
+    'agents/SOUL.md',
+    'SOUL.md',
+  ];
 
   const [storedInstance, storedTemplate, storedGlobal, soulDoc] = await Promise.all([
     collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'instance', search: getMemorySearchTerms(agent, bindings, bindings.agentRef), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
     collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'template', search: getMemorySearchTerms(agent, bindings, bindings.role), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
     collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'global', search: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
-    loadWorkspaceSoulDocument({ db, workspaceId }),
+    loadDocumentFromCandidates({ db, workspaceId, paths: agentSoulPaths }),
   ]);
 
   const [instanceRaw, templateRaw, globalRaw] = await Promise.all([
