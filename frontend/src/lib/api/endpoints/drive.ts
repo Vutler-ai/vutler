@@ -23,20 +23,40 @@ export async function getFiles(path: string = '/'): Promise<DriveFile[]> {
 export async function createFolder(
   payload: CreateFolderPayload
 ): Promise<DriveFile> {
-  return apiFetch<DriveFile>('/api/v1/drive/folders', {
+  const data = await apiFetch<{ folder?: DriveFile }>('/api/v1/drive/folders', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  return data.folder as DriveFile;
 }
 
 export async function deleteFile(
-  id: string,
   path: string
 ): Promise<SuccessResponse> {
-  return apiFetch<SuccessResponse>(
-    `/api/v1/drive/files/${id}?path=${encodeURIComponent(path)}`,
-    { method: 'DELETE' }
-  );
+  return apiFetch<SuccessResponse>('/api/v1/drive/delete', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  });
+}
+
+export async function moveFile(
+  fromPath: string,
+  toPath: string,
+  newName?: string
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>('/api/v1/drive/move', {
+    method: 'POST',
+    body: JSON.stringify({ fromPath, toPath, newName }),
+  });
+}
+
+export async function renameFile(
+  path: string,
+  newName: string
+): Promise<SuccessResponse> {
+  const segments = path.split("/").filter(Boolean);
+  const parentPath = segments.length > 1 ? `/${segments.slice(0, -1).join("/")}` : "/";
+  return moveFile(path, parentPath, newName);
 }
 
 /**
@@ -54,7 +74,8 @@ export async function uploadFile(
     body: formData,
   });
   if (!res.ok) throw new Error('Failed to upload file');
-  return res.json();
+  const data = await res.json();
+  return data.file as DriveFile;
 }
 
 /**

@@ -34,6 +34,10 @@ Queued after current sprint, unless priorities change:
 - Observability dashboard: streaming SSE + provider health
 - Provider compatibility matrix
 - Public API documentation
+- Drive pro phase 4
+  - Bulk selection and batch actions
+  - Server-side search and richer file metadata (`owner`, `added_by`)
+  - Bulk move/delete workflows and stronger file-management ergonomics
 - Memory quality program for Snipara-backed agents
   - Evaluation suite for recall precision, false recalls, and prompt pollution
   - Better promotion and summary quality across instance/template/workspace scopes

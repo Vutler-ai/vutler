@@ -8,6 +8,8 @@ import {
   uploadFile,
   downloadFile,
   deleteFile,
+  moveFile,
+  renameFile,
   createFolder,
   previewFile,
   type DrivePreviewResponse,
@@ -56,32 +58,106 @@ import {
   Download,
   Trash2,
   ChevronRight,
+  Pencil,
+  ArrowUpRight,
   LayoutGrid,
   List,
   Search,
   ArrowUpDown,
   House,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type SortField = "name" | "size" | "modified";
+type SortField = "name" | "size" | "created" | "modified";
 type SortDir = "asc" | "desc";
 type ViewMode = "grid" | "list";
 
+function getFileExtension(name: string): string {
+  const trimmed = name.trim();
+  const dotIndex = trimmed.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === trimmed.length - 1) return "";
+  return trimmed.slice(dotIndex + 1).toLowerCase();
+}
+
+function getParentPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 1) return "/";
+  return `/${parts.slice(0, -1).join("/")}`;
+}
+
+function isSameOrDescendantPath(path: string, basePath: string): boolean {
+  if (basePath === "/") return path === "/";
+  return path === basePath || path.startsWith(`${basePath}/`);
+}
+
+function getFileKind(file: DriveFile): string {
+  if (file.type === "folder") return "folder";
+
+  const ext = getFileExtension(file.name);
+  const mime = file.mime_type ?? "";
+
+  if (["doc", "docx", "odt", "rtf"].includes(ext)) return "document";
+  if (["md", "txt"].includes(ext)) return "markdown";
+  if (["xls", "xlsx", "csv"].includes(ext)) return "spreadsheet";
+  if (["ppt", "pptx", "key"].includes(ext)) return "presentation";
+  if (ext === "pdf") return "pdf";
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "archive";
+  if (["json", "js", "ts", "tsx", "jsx", "html", "css", "xml", "yml", "yaml", "sql"].includes(ext)) return "code";
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.includes("pdf")) return "pdf";
+  if (mime.includes("sheet") || mime.includes("excel") || mime.includes("csv")) return "spreadsheet";
+  if (mime.includes("presentation") || mime.includes("powerpoint")) return "presentation";
+  if (mime.includes("document") || mime.includes("word")) return "document";
+  if (mime.startsWith("text/") || mime.includes("json") || mime.includes("code")) return "code";
+  return "file";
+}
+
+function getFileBadge(file: DriveFile): string | null {
+  const ext = getFileExtension(file.name);
+  if (!ext) return null;
+  if (ext === "docx") return "DOC";
+  if (ext === "xlsx") return "XLS";
+  if (ext === "pptx") return "PPT";
+  return ext.slice(0, 3).toUpperCase();
+}
+
 function getFileColor(file: DriveFile): string {
-  if (file.type === "folder") return "text-blue-400";
-  const m = file.mime_type ?? "";
-  if (m.startsWith("image/")) return "text-emerald-400";
-  if (m.startsWith("video/")) return "text-purple-400";
-  if (m.startsWith("audio/")) return "text-pink-400";
-  if (m.includes("pdf") || m.includes("document") || m.includes("word"))
-    return "text-orange-400";
-  if (m.includes("zip") || m.includes("archive") || m.includes("tar"))
-    return "text-yellow-400";
-  if (m.startsWith("text/") || m.includes("code") || m.includes("json"))
-    return "text-cyan-400";
+  const kind = getFileKind(file);
+  if (kind === "folder") return "text-blue-400";
+  if (kind === "image") return "text-emerald-400";
+  if (kind === "video") return "text-fuchsia-400";
+  if (kind === "audio") return "text-pink-400";
+  if (kind === "pdf") return "text-red-400";
+  if (kind === "document") return "text-sky-400";
+  if (kind === "spreadsheet") return "text-emerald-500";
+  if (kind === "presentation") return "text-amber-400";
+  if (kind === "archive") return "text-yellow-400";
+  if (kind === "markdown" || kind === "code") return "text-cyan-400";
   return "text-slate-400";
+}
+
+function getFileTypeLabel(file: DriveFile): string {
+  if (file.type === "folder") return "Folder";
+
+  const kind = getFileKind(file);
+  if (kind === "document") return "Document";
+  if (kind === "markdown") return "Markdown";
+  if (kind === "spreadsheet") return "Spreadsheet";
+  if (kind === "presentation") return "Presentation";
+  if (kind === "pdf") return "PDF";
+  if (kind === "archive") return "Archive";
+  if (kind === "image") return "Image";
+  if (kind === "video") return "Video";
+  if (kind === "audio") return "Audio";
+  if (kind === "code") return "Code";
+
+  const ext = getFileExtension(file.name);
+  return ext ? ext.toUpperCase() : "File";
 }
 
 function FileIcon({
@@ -93,19 +169,31 @@ function FileIcon({
 }) {
   const cls = `${getFileColor(file)} shrink-0`;
   const props = { size, className: cls };
+  const kind = getFileKind(file);
+  const badge = getFileBadge(file);
 
   if (file.type === "folder") return <Folder {...props} />;
-  const m = file.mime_type ?? "";
-  if (m.startsWith("image/")) return <FileImage {...props} />;
-  if (m.startsWith("video/")) return <FileVideo {...props} />;
-  if (m.startsWith("audio/")) return <FileAudio {...props} />;
-  if (m.includes("zip") || m.includes("archive") || m.includes("tar"))
-    return <FileArchive {...props} />;
-  if (m.startsWith("text/") || m.includes("code") || m.includes("json"))
-    return <FileCode {...props} />;
-  if (m.includes("pdf") || m.includes("document") || m.includes("word"))
-    return <FileText {...props} />;
-  return <File {...props} />;
+  let icon = <File {...props} />;
+  if (kind === "image") icon = <FileImage {...props} />;
+  else if (kind === "video") icon = <FileVideo {...props} />;
+  else if (kind === "audio") icon = <FileAudio {...props} />;
+  else if (kind === "archive") icon = <FileArchive {...props} />;
+  else if (kind === "markdown" || kind === "code") icon = <FileCode {...props} />;
+  else if (kind === "pdf" || kind === "document" || kind === "spreadsheet" || kind === "presentation") icon = <FileText {...props} />;
+
+  if (!badge) return icon;
+
+  return (
+    <span className="relative inline-flex shrink-0 items-center justify-center">
+      {icon}
+      <span
+        className="absolute -bottom-1 rounded bg-[#08090f] px-1 py-0.5 font-semibold leading-none text-white ring-1 ring-white/10"
+        style={{ fontSize: Math.max(8, Math.round(size * 0.24)) }}
+      >
+        {badge}
+      </span>
+    </span>
+  );
 }
 
 function formatSize(bytes?: number): string {
@@ -116,7 +204,8 @@ function formatSize(bytes?: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 }
 
-function formatDate(iso: string): string {
+function formatDate(iso?: string): string {
+  if (!iso) return "—";
   return new Date(iso).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
@@ -153,8 +242,10 @@ function sortFiles(
     let cmp = 0;
     if (field === "name") cmp = a.name.localeCompare(b.name);
     else if (field === "size") cmp = (a.size ?? 0) - (b.size ?? 0);
+    else if (field === "created")
+      cmp = new Date(a.created ?? a.modified ?? 0).getTime() - new Date(b.created ?? b.modified ?? 0).getTime();
     else if (field === "modified")
-      cmp = new Date(a.modified).getTime() - new Date(b.modified).getTime();
+      cmp = new Date(a.modified ?? a.created ?? 0).getTime() - new Date(b.modified ?? b.created ?? 0).getTime();
 
     return dir === "asc" ? cmp : -cmp;
   });
@@ -175,22 +266,48 @@ function isPdfPreview(file: DriveFile) {
 function GridCard({
   file,
   onOpen,
+  onOpenInBrowser,
+  onRename,
   onDownload,
+  onMove,
   onDelete,
+  onDragStart,
+  onDragEnd,
+  onDragOverFolder,
+  onDragLeaveFolder,
+  onDropOnFolder,
+  isFolderDropTarget,
 }: {
   file: DriveFile;
   onOpen: (f: DriveFile) => void;
+  onOpenInBrowser: (f: DriveFile) => void;
+  onRename: (f: DriveFile) => void;
   onDownload: (f: DriveFile) => void;
+  onMove: (f: DriveFile) => void;
   onDelete: (f: DriveFile) => void;
+  onDragStart: (e: React.DragEvent<HTMLElement>, f: DriveFile) => void;
+  onDragEnd: () => void;
+  onDragOverFolder: (e: React.DragEvent<HTMLElement>, f: DriveFile) => void;
+  onDragLeaveFolder: (e: React.DragEvent<HTMLElement>, f: DriveFile) => void;
+  onDropOnFolder: (e: React.DragEvent<HTMLElement>, f: DriveFile) => void;
+  isFolderDropTarget: boolean;
 }) {
   return (
     <div
       onClick={() => onOpen(file)}
+      draggable
+      onDragStart={(e) => onDragStart(e, file)}
+      onDragEnd={onDragEnd}
+      onDragOver={file.type === "folder" ? (e) => onDragOverFolder(e, file) : undefined}
+      onDragLeave={file.type === "folder" ? (e) => onDragLeaveFolder(e, file) : undefined}
+      onDrop={file.type === "folder" ? (e) => onDropOnFolder(e, file) : undefined}
       className="
         group relative bg-[#14151f] border border-white/7 rounded-xl p-4
         cursor-pointer hover:border-blue-500/50 hover:bg-[#1a1b2e]
         transition-all duration-150 flex flex-col items-center gap-3
       "
+      data-folder-drop-target={isFolderDropTarget ? "true" : "false"}
+      style={isFolderDropTarget ? { boxShadow: "0 0 0 1px rgba(52,211,153,0.55) inset" } : undefined}
     >
       {/* actions overlay */}
       <div
@@ -202,6 +319,22 @@ function GridCard({
       >
         {file.type === "file" && (
           <button
+            onClick={() => onOpenInBrowser(file)}
+            className="p-1.5 rounded-md bg-[#08090f] hover:bg-white/10 text-slate-400 hover:text-white transition"
+            title="Open in browser"
+          >
+            <ArrowUpRight size={13} />
+          </button>
+        )}
+        <button
+          onClick={() => onRename(file)}
+          className="p-1.5 rounded-md bg-[#08090f] hover:bg-amber-500/20 text-slate-400 hover:text-amber-300 transition"
+          title="Rename"
+        >
+          <Pencil size={13} />
+        </button>
+        {file.type === "file" && (
+          <button
             onClick={() => onDownload(file)}
             className="p-1.5 rounded-md bg-[#08090f] hover:bg-blue-500/20 text-slate-400 hover:text-blue-400 transition"
             title="Download"
@@ -209,6 +342,13 @@ function GridCard({
             <Download size={13} />
           </button>
         )}
+        <button
+          onClick={() => onMove(file)}
+          className="p-1.5 rounded-md bg-[#08090f] hover:bg-emerald-500/20 text-slate-400 hover:text-emerald-400 transition"
+          title="Move"
+        >
+          <ChevronRight size={13} />
+        </button>
         <button
           onClick={() => onDelete(file)}
           className="p-1.5 rounded-md bg-[#08090f] hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition"
@@ -225,7 +365,9 @@ function GridCard({
           {file.name}
         </p>
         <p className="text-slate-500 text-xs mt-0.5">
-          {file.type === "file" ? formatSize(file.size) : formatDate(file.modified)}
+          {file.type === "file"
+            ? `${formatSize(file.size)} • ${getFileBadge(file) ?? getFileTypeLabel(file)}`
+            : `Added ${formatDate(file.created ?? file.modified)}`}
         </p>
       </div>
     </div>
@@ -283,6 +425,10 @@ export default function DrivePage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const autoOpenedFileIdRef = useRef<string | null>(null);
+  const dragDepthRef = useRef(0);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const [draggedItem, setDraggedItem] = useState<DriveFile | null>(null);
+  const [dragOverFolderPath, setDragOverFolderPath] = useState<string | null>(null);
 
   // new folder dialog
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
@@ -292,6 +438,13 @@ export default function DrivePage() {
   // delete confirm
   const [deleteTarget, setDeleteTarget] = useState<DriveFile | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [moveTarget, setMoveTarget] = useState<DriveFile | null>(null);
+  const [moveBrowserPath, setMoveBrowserPath] = useState("/");
+  const [moveDestinationPath, setMoveDestinationPath] = useState("/");
+  const [moving, setMoving] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<DriveFile | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renaming, setRenaming] = useState(false);
 
   // global action error
   const [actionError, setActionError] = useState<string | null>(null);
@@ -300,6 +453,7 @@ export default function DrivePage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
 
   // data via SWR
   const cacheKey = `/api/v1/drive/files?path=${encodeURIComponent(currentPath)}`;
@@ -309,6 +463,16 @@ export default function DrivePage() {
     error: fetchError,
     mutate,
   } = useApi<DriveFile[]>(cacheKey, () => getFiles(currentPath));
+  const moveCacheKey = moveTarget
+    ? `/api/v1/drive/files?path=${encodeURIComponent(moveBrowserPath)}`
+    : null;
+  const {
+    data: moveBrowserFiles,
+    isLoading: moveBrowserLoading,
+  } = useApi<DriveFile[]>(
+    moveCacheKey,
+    () => getFiles(moveBrowserPath)
+  );
 
   // derived
   const allFiles = rawFiles ?? [];
@@ -317,6 +481,17 @@ export default function DrivePage() {
   );
   const sorted = sortFiles(filtered, sortField, sortDir);
   const breadcrumbs = buildBreadcrumbs(currentPath);
+  const moveBreadcrumbs = buildBreadcrumbs(moveBrowserPath);
+  const moveFolders = (moveBrowserFiles ?? []).filter((file) => {
+    if (file.type !== "folder") return false;
+    if (!moveTarget || moveTarget.type !== "folder") return true;
+    return !isSameOrDescendantPath(file.path, moveTarget.path);
+  });
+  const moveOriginPath = moveTarget ? getParentPath(moveTarget.path) : "/";
+  const moveDestinationInvalid = !!(
+    moveTarget?.type === "folder" &&
+    isSameOrDescendantPath(moveDestinationPath, moveTarget.path)
+  );
 
   // navigation
   const navigate = useCallback((path: string) => {
@@ -324,10 +499,41 @@ export default function DrivePage() {
     setSearch("");
   }, []);
 
+  const closeMoveDialog = useCallback(() => {
+    setMoveTarget(null);
+    setMoveBrowserPath("/");
+    setMoveDestinationPath("/");
+  }, []);
+
+  const openMoveDialog = useCallback((file: DriveFile) => {
+    const originPath = getParentPath(file.path);
+    setMoveTarget(file);
+    setMoveBrowserPath(originPath);
+    setMoveDestinationPath(originPath);
+  }, []);
+
+  const closeRenameDialog = useCallback(() => {
+    setRenameTarget(null);
+    setRenameName("");
+  }, []);
+
+  const openRenameDialog = useCallback((file: DriveFile) => {
+    setRenameTarget(file);
+    setRenameName(file.name);
+  }, []);
+
+  const openInBrowser = useCallback((file: DriveFile) => {
+    if (typeof window === "undefined") return;
+    const parentPath = getParentPath(file.path);
+    const url = `/drive?path=${encodeURIComponent(parentPath)}&file=${encodeURIComponent(file.id)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
+
   const closePreview = useCallback(() => {
     setPreviewTarget(null);
     setPreviewData(null);
     setPreviewError(null);
+    setPreviewFullscreen(false);
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
       setPreviewUrl(null);
@@ -419,9 +625,7 @@ export default function DrivePage() {
     }
   };
 
-  // upload
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
+  const uploadFilesToCurrentPath = useCallback(async (files: File[]) => {
     if (!files.length) return;
     setUploading(true);
     setUploadError(null);
@@ -435,9 +639,15 @@ export default function DrivePage() {
     }
     await mutate();
     setUploading(false);
-    if (e.target) e.target.value = "";
     if (failed.length)
       setUploadError(`Failed to upload: ${failed.join(", ")}`);
+  }, [currentPath, mutate]);
+
+  // upload
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    await uploadFilesToCurrentPath(files);
+    if (e.target) e.target.value = "";
   };
 
   // create folder
@@ -464,7 +674,7 @@ export default function DrivePage() {
     setDeleting(true);
     setActionError(null);
     try {
-      await deleteFile(deleteTarget.id, deleteTarget.path);
+      await deleteFile(deleteTarget.path);
       await mutate();
       setDeleteTarget(null);
     } catch (err: unknown) {
@@ -472,6 +682,152 @@ export default function DrivePage() {
     } finally {
       setDeleting(false);
     }
+  };
+
+  const handleMove = async () => {
+    if (!moveTarget) return;
+    if (moveDestinationPath === moveOriginPath || moveDestinationInvalid) {
+      closeMoveDialog();
+      return;
+    }
+
+    setMoving(true);
+    setActionError(null);
+    try {
+      await moveFile(moveTarget.path, moveDestinationPath);
+      await mutate();
+      if (previewTarget?.id === moveTarget.id) {
+        closePreview();
+      }
+      closeMoveDialog();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Move failed");
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const handleRename = async () => {
+    if (!renameTarget) return;
+    const nextName = renameName.trim();
+    if (!nextName) return;
+    if (nextName === renameTarget.name) {
+      closeRenameDialog();
+      return;
+    }
+
+    setRenaming(true);
+    setActionError(null);
+    try {
+      await renameFile(renameTarget.path, nextName);
+      await mutate();
+      if (previewTarget?.id === renameTarget.id) {
+        closePreview();
+      }
+      closeRenameDialog();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Rename failed");
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const moveItemToFolder = useCallback(async (item: DriveFile, folder: DriveFile) => {
+    if (folder.type !== "folder") return;
+    const originPath = getParentPath(item.path);
+    if (folder.path === originPath) return;
+    if (item.type === "folder" && isSameOrDescendantPath(folder.path, item.path)) {
+      setActionError("Cannot move a folder inside itself");
+      return;
+    }
+
+    setActionError(null);
+    try {
+      await moveFile(item.path, folder.path);
+      await mutate();
+      if (previewTarget?.id === item.id) {
+        closePreview();
+      }
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : "Move failed");
+    }
+  }, [closePreview, mutate, previewTarget]);
+
+  const handleItemDragStart = (e: React.DragEvent<HTMLElement>, file: DriveFile) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", file.path);
+    setDraggedItem(file);
+  };
+
+  const handleItemDragEnd = () => {
+    setDraggedItem(null);
+    setDragOverFolderPath(null);
+  };
+
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedItem) return;
+    dragDepthRef.current += 1;
+    if (Array.from(e.dataTransfer.types).includes("Files")) {
+      setIsDragActive(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = draggedItem ? "move" : "copy";
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedItem) return;
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragActive(false);
+    }
+  };
+
+  const handleFolderDragOver = (e: React.DragEvent<HTMLElement>, folder: DriveFile) => {
+    if (!draggedItem || folder.type !== "folder") return;
+    if (draggedItem.id === folder.id) return;
+    if (draggedItem.type === "folder" && isSameOrDescendantPath(folder.path, draggedItem.path)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverFolderPath(folder.path);
+  };
+
+  const handleFolderDragLeave = (e: React.DragEvent<HTMLElement>, folder: DriveFile) => {
+    if (dragOverFolderPath !== folder.path) return;
+    e.stopPropagation();
+    setDragOverFolderPath((current) => (current === folder.path ? null : current));
+  };
+
+  const handleFolderDrop = async (e: React.DragEvent<HTMLElement>, folder: DriveFile) => {
+    if (!draggedItem || folder.type !== "folder") return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverFolderPath(null);
+    const item = draggedItem;
+    setDraggedItem(null);
+    await moveItemToFolder(item, folder);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedItem) {
+      setDraggedItem(null);
+      setDragOverFolderPath(null);
+      return;
+    }
+    dragDepthRef.current = 0;
+    setIsDragActive(false);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    await uploadFilesToCurrentPath(files);
   };
 
   const error = fetchError?.message ?? actionError ?? uploadError;
@@ -581,7 +937,31 @@ export default function DrivePage() {
       </nav>
 
       {/* Content */}
-      <div className="flex-1 bg-[#14151f] border border-white/7 rounded-xl p-4 overflow-y-auto">
+      <div
+        className={`relative flex-1 rounded-xl border p-4 overflow-y-auto transition ${
+          isDragActive
+            ? "border-blue-500/60 bg-blue-500/[0.06]"
+            : "border-white/7 bg-[#14151f]"
+        }`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-dashed border-white/10 bg-[#0f1018] px-3 py-2 text-xs text-slate-400">
+          <span>{draggedItem ? "Drop an item on a folder to move it." : "Drop files here to upload to this folder."}</span>
+          <span className="truncate">{currentPath}</span>
+        </div>
+
+        {isDragActive && !draggedItem && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[#08090f]/70">
+            <div className="rounded-xl border border-blue-500/40 bg-[#14151f] px-6 py-4 text-center">
+              <p className="text-sm font-medium text-white">Drop files to upload</p>
+              <p className="mt-1 text-xs text-slate-400">{currentPath}</p>
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           viewMode === "grid" ? <GridSkeleton /> : <ListSkeleton />
         ) : sorted.length === 0 ? (
@@ -599,8 +979,17 @@ export default function DrivePage() {
                 key={file.id}
                 file={file}
                 onOpen={openFile}
+                onOpenInBrowser={openInBrowser}
+                onRename={openRenameDialog}
                 onDownload={handleDownload}
+                onMove={openMoveDialog}
                 onDelete={setDeleteTarget}
+                onDragStart={handleItemDragStart}
+                onDragEnd={handleItemDragEnd}
+                onDragOverFolder={handleFolderDragOver}
+                onDragLeaveFolder={handleFolderDragLeave}
+                onDropOnFolder={handleFolderDrop}
+                isFolderDropTarget={dragOverFolderPath === file.path}
               />
             ))}
           </div>
@@ -629,6 +1018,15 @@ export default function DrivePage() {
                   </button>
                 </TableHead>
                 <TableHead className="hidden sm:table-cell">Type</TableHead>
+                <TableHead className="hidden lg:table-cell">
+                  <button
+                    onClick={() => toggleSort("created")}
+                    className="flex items-center gap-1 text-slate-400 hover:text-white transition"
+                  >
+                    Added
+                    <ArrowUpDown size={12} className={sortField === "created" ? "text-blue-400" : ""} />
+                  </button>
+                </TableHead>
                 <TableHead>
                   <button
                     onClick={() => toggleSort("modified")}
@@ -647,6 +1045,14 @@ export default function DrivePage() {
                   key={file.id}
                   onClick={() => openFile(file)}
                   className="border-white/7 hover:bg-white/4 cursor-pointer transition"
+                  draggable
+                  onDragStart={(e) => handleItemDragStart(e, file)}
+                  onDragEnd={handleItemDragEnd}
+                  onDragOver={file.type === "folder" ? (e) => handleFolderDragOver(e, file) : undefined}
+                  onDragLeave={file.type === "folder" ? (e) => handleFolderDragLeave(e, file) : undefined}
+                  onDrop={file.type === "folder" ? (e) => handleFolderDrop(e, file) : undefined}
+                  data-folder-drop-target={dragOverFolderPath === file.path ? "true" : "false"}
+                  style={dragOverFolderPath === file.path ? { boxShadow: "inset 0 0 0 1px rgba(52,211,153,0.55)" } : undefined}
                 >
                   <TableCell className="pr-0">
                     <FileIcon file={file} size={18} />
@@ -658,9 +1064,10 @@ export default function DrivePage() {
                     {formatSize(file.size)}
                   </TableCell>
                   <TableCell className="hidden sm:table-cell text-slate-500 text-xs uppercase tracking-wide">
-                    {file.type === "folder"
-                      ? "Folder"
-                      : (file.mime_type?.split("/")[1] ?? "file")}
+                    {getFileTypeLabel(file)}
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell text-slate-400 text-sm">
+                    {formatDate(file.created ?? file.modified)}
                   </TableCell>
                   <TableCell className="text-slate-400 text-sm">
                     {formatDate(file.modified)}
@@ -674,6 +1081,26 @@ export default function DrivePage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => openInBrowser(file)}
+                          className="h-7 w-7 text-slate-400 hover:text-white hover:bg-white/10"
+                          title="Open in browser"
+                        >
+                          <ArrowUpRight size={14} />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openRenameDialog(file)}
+                        className="h-7 w-7 text-slate-400 hover:text-amber-300 hover:bg-amber-500/10"
+                        title="Rename"
+                      >
+                        <Pencil size={14} />
+                      </Button>
+                      {file.type === "file" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => handleDownload(file)}
                           className="h-7 w-7 text-slate-400 hover:text-blue-400 hover:bg-blue-500/10"
                           title="Download"
@@ -681,6 +1108,15 @@ export default function DrivePage() {
                           <Download size={14} />
                         </Button>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openMoveDialog(file)}
+                        className="h-7 w-7 text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10"
+                        title="Move"
+                      >
+                        <ChevronRight size={14} />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -701,7 +1137,13 @@ export default function DrivePage() {
 
       {/* File Preview */}
       <Dialog open={!!previewTarget} onOpenChange={(open) => !open && closePreview()}>
-        <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-4xl">
+        <DialogContent
+          className={`flex flex-col bg-[#14151f] border-white/10 text-white ${
+            previewFullscreen
+              ? "h-[92vh] w-[96vw] max-w-[96vw]"
+              : "sm:max-w-4xl"
+          }`}
+        >
           <DialogHeader>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -713,30 +1155,50 @@ export default function DrivePage() {
                 )}
               </div>
               {previewTarget && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDownload(previewTarget)}
-                  className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10 gap-1.5"
-                >
-                  <Download size={14} />
-                  Download
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPreviewFullscreen((current) => !current)}
+                    className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10 gap-1.5"
+                  >
+                    {previewFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+                    {previewFullscreen ? "Exit full screen" : "Full screen"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openInBrowser(previewTarget)}
+                    className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10 gap-1.5"
+                  >
+                    <ArrowUpRight size={14} />
+                    Open in browser
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDownload(previewTarget)}
+                    className="h-8 border-white/10 bg-transparent text-white hover:bg-white/10 gap-1.5"
+                  >
+                    <Download size={14} />
+                    Download
+                  </Button>
+                </div>
               )}
             </div>
           </DialogHeader>
 
-          <div className="min-h-[24rem] rounded-xl border border-white/10 bg-[#08090f] p-3">
+          <div className={`flex-1 rounded-xl border border-white/10 bg-[#08090f] p-3 ${previewFullscreen ? "min-h-0" : "min-h-[24rem]"}`}>
             {previewLoading ? (
-              <div className="flex h-80 items-center justify-center text-sm text-slate-400">
+              <div className={`flex items-center justify-center text-sm text-slate-400 ${previewFullscreen ? "h-full min-h-[24rem]" : "h-80"}`}>
                 Loading preview…
               </div>
             ) : previewError ? (
-              <div className="flex h-80 items-center justify-center text-sm text-red-400">
+              <div className={`flex items-center justify-center text-sm text-red-400 ${previewFullscreen ? "h-full min-h-[24rem]" : "h-80"}`}>
                 {previewError}
               </div>
             ) : previewData?.type === "text" && previewData.content ? (
-              <pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-slate-200">
+              <pre className={`${previewFullscreen ? "h-full min-h-[24rem]" : "max-h-[70vh]"} overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-slate-200`}>
                 {previewData.content}
               </pre>
             ) : previewUrl && previewTarget && isImagePreview(previewTarget) ? (
@@ -744,16 +1206,16 @@ export default function DrivePage() {
               <img
                 src={previewUrl}
                 alt={previewTarget.name}
-                className="mx-auto max-h-[70vh] w-auto rounded-lg object-contain"
+                className={`mx-auto w-auto rounded-lg object-contain ${previewFullscreen ? "max-h-full h-full" : "max-h-[70vh]"}`}
               />
             ) : previewUrl && previewTarget && isPdfPreview(previewTarget) ? (
               <iframe
                 src={previewUrl}
                 title={previewTarget.name}
-                className="h-[70vh] w-full rounded-lg border border-white/10 bg-black"
+                className={`w-full rounded-lg border border-white/10 bg-black ${previewFullscreen ? "h-full min-h-[24rem]" : "h-[70vh]"}`}
               />
             ) : (
-              <div className="flex h-80 flex-col items-center justify-center gap-3 text-center text-sm text-slate-400">
+              <div className={`flex flex-col items-center justify-center gap-3 text-center text-sm text-slate-400 ${previewFullscreen ? "h-full min-h-[24rem]" : "h-80"}`}>
                 <p>Preview unavailable for this file type.</p>
                 {previewTarget && (
                   <Button
@@ -769,6 +1231,155 @@ export default function DrivePage() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Dialog */}
+      <Dialog open={!!renameTarget} onOpenChange={(open) => !open && closeRenameDialog()}>
+        <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rename {renameTarget?.type === "folder" ? "folder" : "file"}</DialogTitle>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              placeholder="File name"
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRename();
+              }}
+              autoFocus
+              className="bg-[#08090f] border-white/10 text-white placeholder:text-slate-500"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={closeRenameDialog}
+              className="border-white/10 bg-transparent text-white hover:bg-white/10"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRename}
+              disabled={!renameTarget || !renameName.trim() || renaming}
+              className="bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-60"
+            >
+              {renaming ? "Renaming…" : `Rename ${renameTarget?.type === "folder" ? "folder" : "file"}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Move Dialog */}
+      <Dialog open={!!moveTarget} onOpenChange={(open) => !open && closeMoveDialog()}>
+        <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Move {moveTarget?.type === "folder" ? "folder" : "file"}</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-white/10 bg-[#08090f] p-3 text-sm">
+              <p className="text-slate-400">File</p>
+              <p className="mt-1 truncate font-medium text-white">{moveTarget?.name}</p>
+              <p className="mt-2 text-slate-400">Destination</p>
+              <p className="mt-1 truncate text-white">{moveDestinationPath}</p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1 text-sm">
+              {moveBreadcrumbs.map((crumb, idx) => {
+                const isLast = idx === moveBreadcrumbs.length - 1;
+                return (
+                  <span key={crumb.path} className="flex items-center gap-1">
+                    <button
+                      onClick={() => setMoveBrowserPath(crumb.path)}
+                      className={
+                        isLast
+                          ? "text-white font-medium"
+                          : "text-slate-400 hover:text-blue-400 transition"
+                      }
+                    >
+                      {crumb.label}
+                    </button>
+                    {!isLast && (
+                      <ChevronRight size={13} className="text-slate-600 shrink-0" />
+                    )}
+                  </span>
+                );
+              })}
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-[#08090f] p-2">
+              <button
+                onClick={() => setMoveDestinationPath(moveBrowserPath)}
+                disabled={moveDestinationInvalid}
+                className={`mb-2 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition ${
+                  moveDestinationInvalid
+                    ? "cursor-not-allowed border-red-500/30 bg-red-500/10 text-red-300"
+                    : moveDestinationPath === moveBrowserPath
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-white/10 text-slate-300 hover:bg-white/5"
+                }`}
+              >
+                <span>{moveDestinationInvalid ? "Invalid destination" : "Select this folder"}</span>
+                <span className="text-xs">{moveBrowserPath}</span>
+              </button>
+
+              {moveBrowserPath !== "/" && (
+                <button
+                  onClick={() => setMoveBrowserPath(getParentPath(moveBrowserPath))}
+                  className="mb-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white transition"
+                >
+                  <Folder size={14} />
+                  ..
+                </button>
+              )}
+
+              {moveBrowserLoading ? (
+                <div className="p-3 text-sm text-slate-400">Loading folders…</div>
+              ) : moveFolders.length === 0 ? (
+                <div className="p-3 text-sm text-slate-400">No subfolders in this location.</div>
+              ) : (
+                <div className="space-y-1">
+                  {moveFolders.map((folder) => (
+                    <button
+                      key={folder.id}
+                      onClick={() => setMoveBrowserPath(folder.path)}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-white/5 hover:text-white transition"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Folder size={14} className="shrink-0 text-blue-400" />
+                        <span className="truncate">{folder.name}</span>
+                      </span>
+                      <ChevronRight size={14} className="shrink-0 text-slate-500" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {moveDestinationInvalid && (
+              <p className="text-sm text-red-300">
+                A folder cannot be moved into itself or one of its subfolders.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={closeMoveDialog}
+              className="border-white/10 bg-transparent text-white hover:bg-white/10"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleMove}
+              disabled={!moveTarget || moving || moveDestinationPath === moveOriginPath || moveDestinationInvalid}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-60"
+            >
+              {moving ? "Moving…" : `Move ${moveTarget?.type === "folder" ? "folder" : "file"}`}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

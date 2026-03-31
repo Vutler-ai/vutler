@@ -41,26 +41,84 @@ function hashId(key) {
   return crypto.createHash('sha1').update(key).digest('hex').slice(0, 24);
 }
 
+function getBaseName(key) {
+  return String(key || '')
+    .split('/')
+    .filter(Boolean)
+    .pop();
+}
+
+function getFileExtension(name) {
+  const baseName = String(name || '').trim();
+  const lastDot = baseName.lastIndexOf('.');
+  if (lastDot <= 0 || lastDot === baseName.length - 1) return '';
+  return baseName.slice(lastDot + 1).toLowerCase();
+}
+
+function guessMimeType(name) {
+  const ext = getFileExtension(name);
+  const mimeByExt = {
+    csv: 'text/csv',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    gif: 'image/gif',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    json: 'application/json',
+    md: 'text/markdown',
+    pdf: 'application/pdf',
+    png: 'image/png',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    svg: 'image/svg+xml',
+    txt: 'text/plain',
+    webp: 'image/webp',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    zip: 'application/zip',
+  };
+
+  return mimeByExt[ext] || 'application/octet-stream';
+}
+
+function parseCreatedAt(metadata = {}, fallback) {
+  const raw = metadata.created_at || metadata.createdat || metadata['created-at'];
+  if (!raw) return fallback;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
+}
+
+async function copyObject(workspaceId, fromKey, toKey) {
+  const { buffer, contentType } = await s3.downloadFile(workspaceId, fromKey);
+  const head = await s3.headFile(workspaceId, fromKey).catch(() => null);
+  await s3.uploadFile(workspaceId, toKey, buffer, contentType, head?.metadata || undefined);
+}
+
 // ── GET /files — list files ──────────────────────────────────────────────────
 
 router.get('/files', async (req, res) => {
   try {
     const prefix = sanitizeKey(req.query.path || '');
-    const objects = await s3.listFiles(req.workspaceId, prefix);
+    const entries = await s3.listEntries(req.workspaceId, prefix);
 
-    const files = objects.map(obj => {
-      const name = obj.key.split('/').pop();
-      const isFolder = obj.key.endsWith('/');
+    const files = await Promise.all(entries.map(async (entry) => {
+      const name = getBaseName(entry.key);
+      const fallbackModified = entry.lastModified ? new Date(entry.lastModified).toISOString() : undefined;
+      const head = await s3.headFile(req.workspaceId, entry.key).catch(() => null);
+      const modified = head?.lastModified ? new Date(head.lastModified).toISOString() : fallbackModified;
+      const created = parseCreatedAt(head?.metadata, modified);
+
       return {
-        id: hashId(obj.key),
+        id: hashId(entry.key),
         name,
-        type: isFolder ? 'folder' : 'file',
-        size: isFolder ? undefined : obj.size,
-        modified: obj.lastModified ? new Date(obj.lastModified).toISOString() : undefined,
-        mime_type: isFolder ? undefined : 'application/octet-stream',
-        path: `/${obj.key}`,
+        type: entry.isFolder ? 'folder' : 'file',
+        size: entry.isFolder ? undefined : entry.size,
+        created,
+        modified,
+        mime_type: entry.isFolder ? 'application/x-directory' : (head?.contentType || guessMimeType(name)),
+        path: `/${entry.key}`,
       };
-    });
+    }));
 
     files.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
@@ -99,15 +157,23 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const dirPrefix = sanitizeKey(req.body.path || '');
     const fileName = req.file.originalname || `upload-${Date.now()}`;
     const key = dirPrefix ? `${dirPrefix}/${fileName}` : fileName;
+    const createdAt = new Date().toISOString();
 
-    await s3.uploadFile(req.workspaceId, key, req.file.buffer, req.file.mimetype || 'application/octet-stream');
+    await s3.uploadFile(
+      req.workspaceId,
+      key,
+      req.file.buffer,
+      req.file.mimetype || 'application/octet-stream',
+      { created_at: createdAt }
+    );
 
     const file = {
       id: hashId(key),
       name: fileName,
       type: 'file',
       size: req.file.size,
-      modified: new Date().toISOString(),
+      created: createdAt,
+      modified: createdAt,
       mime_type: req.file.mimetype || 'application/octet-stream',
       path: `/${key}`,
     };
@@ -136,9 +202,16 @@ router.post('/folders', async (req, res) => {
 
     const parentPrefix = sanitizeKey(req.body?.path || '');
     const folderKey = parentPrefix ? `${parentPrefix}/${name}/` : `${name}/`;
+    const createdAt = new Date().toISOString();
 
     // Create a zero-byte object with trailing slash to represent the folder
-    await s3.uploadFile(req.workspaceId, folderKey, Buffer.alloc(0), 'application/x-directory');
+    await s3.uploadFile(
+      req.workspaceId,
+      folderKey,
+      Buffer.alloc(0),
+      'application/x-directory',
+      { created_at: createdAt }
+    );
 
     try {
       await driveIndex.onCreateFolder(req, `/${folderKey}`);
@@ -148,7 +221,15 @@ router.post('/folders', async (req, res) => {
 
     return res.json({
       success: true,
-      folder: { name, path: `/${folderKey}` },
+      folder: {
+        id: hashId(folderKey),
+        name,
+        type: 'folder',
+        created: createdAt,
+        modified: createdAt,
+        mime_type: 'application/x-directory',
+        path: `/${folderKey}`,
+      },
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: 'Failed to create folder' });
@@ -167,21 +248,59 @@ router.get('/storage', async (req, res) => {
   }
 });
 
-// ── POST /move — move/rename a file ───────────────────────────────────────────
+// ── POST /move — move/rename a file or folder ─────────────────────────────────
 
 router.post('/move', async (req, res) => {
   try {
     const fromKey = sanitizeKey(req.body?.fromPath || '');
     const toDir = sanitizeKey(req.body?.toPath || '');
+    const requestedName = String(req.body?.newName || '').trim();
     if (!fromKey) return res.status(400).json({ success: false, error: 'Invalid source path' });
 
-    const fileName = fromKey.split('/').pop();
-    const newKey = toDir ? `${toDir}/${fileName}` : fileName;
+    let newKey;
+    if (fromKey.endsWith('/')) {
+      const sourceFolderName = getBaseName(fromKey.slice(0, -1));
+      const folderName = requestedName || sourceFolderName;
+      if (!folderName || folderName.includes('/') || folderName.includes('\\') || folderName.includes('..')) {
+        return res.status(400).json({ success: false, error: 'Invalid destination name' });
+      }
 
-    // Download from old location, upload to new, delete old
-    const { buffer, contentType } = await s3.downloadFile(req.workspaceId, fromKey);
-    await s3.uploadFile(req.workspaceId, newKey, buffer, contentType);
-    await s3.deleteFile(req.workspaceId, fromKey);
+      newKey = toDir ? `${toDir}/${folderName}/` : `${folderName}/`;
+      if (newKey === fromKey) {
+        return res.json({ success: true, moved: { from: `/${fromKey}`, to: `/${newKey}` } });
+      }
+      if (newKey.startsWith(fromKey)) {
+        return res.status(400).json({ success: false, error: 'Cannot move a folder inside itself' });
+      }
+
+      const sourceEntries = await s3.listFiles(req.workspaceId, fromKey);
+      if (sourceEntries.length === 0) {
+        await s3.uploadFile(req.workspaceId, newKey, Buffer.alloc(0), 'application/x-directory');
+        await s3.deleteFile(req.workspaceId, fromKey).catch(() => {});
+      } else {
+        for (const entry of sourceEntries) {
+          const relativeKey = entry.key.slice(fromKey.length);
+          const destinationKey = `${newKey}${relativeKey}`;
+          await copyObject(req.workspaceId, entry.key, destinationKey);
+        }
+        for (const entry of sourceEntries) {
+          await s3.deleteFile(req.workspaceId, entry.key);
+        }
+        await s3.deleteFile(req.workspaceId, fromKey).catch(() => {});
+      }
+    } else {
+      const fileName = requestedName || fromKey.split('/').pop();
+      if (!fileName || fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) {
+        return res.status(400).json({ success: false, error: 'Invalid destination name' });
+      }
+      newKey = toDir ? `${toDir}/${fileName}` : fileName;
+      if (newKey === fromKey) {
+        return res.json({ success: true, moved: { from: `/${fromKey}`, to: `/${newKey}` } });
+      }
+
+      await copyObject(req.workspaceId, fromKey, newKey);
+      await s3.deleteFile(req.workspaceId, fromKey);
+    }
 
     try {
       await driveIndex.onMove(req, `/${fromKey}`, `/${newKey}`);
@@ -203,7 +322,13 @@ router.post('/delete', async (req, res) => {
     const key = sanitizeKey(req.body?.path || '');
     if (!key) return res.status(400).json({ success: false, error: 'Invalid target path' });
 
-    await s3.deleteFile(req.workspaceId, key);
+    if (key.endsWith('/')) {
+      const nested = await s3.listFiles(req.workspaceId, key);
+      await Promise.all(nested.map((entry) => s3.deleteFile(req.workspaceId, entry.key)));
+      await s3.deleteFile(req.workspaceId, key).catch(() => {});
+    } else {
+      await s3.deleteFile(req.workspaceId, key);
+    }
 
     try {
       await driveIndex.onDelete(req, `/${key}`);
