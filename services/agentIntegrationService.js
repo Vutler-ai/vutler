@@ -194,7 +194,7 @@ async function listConnectedWorkspaceIntegrationProviders(workspaceId, db = pool
 async function listConnectedSocialPlatforms(workspaceId, db = pool) {
   if (!workspaceId) return [];
 
-  let localPlatforms = [];
+  const connectedPlatforms = new Set();
   try {
     const socialRows = await db.query(
       `SELECT DISTINCT platform
@@ -202,13 +202,31 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
        WHERE workspace_id = $1`,
       [workspaceId]
     );
-    localPlatforms = normalizeAgentIntegrationProviders(socialRows.rows.map((row) => row.platform));
+    for (const platform of normalizeAgentIntegrationProviders(socialRows.rows.map((row) => row.platform))) {
+      connectedPlatforms.add(platform);
+    }
   } catch (err) {
     if (err?.code !== '42P01') throw err;
   }
 
-  if (localPlatforms.length > 0 || !POSTFORME_API_KEY) {
-    return localPlatforms;
+  try {
+    const integrationRows = await db.query(
+      `SELECT DISTINCT provider
+       FROM ${SCHEMA}.workspace_integrations
+       WHERE workspace_id = $1
+         AND connected = TRUE
+         AND provider = ANY($2::text[])`,
+      [workspaceId, Array.from(SOCIAL_PROVIDERS)]
+    );
+    for (const provider of normalizeAgentIntegrationProviders(integrationRows.rows.map((row) => row.provider))) {
+      connectedPlatforms.add(provider);
+    }
+  } catch (err) {
+    if (err?.code !== '42P01') throw err;
+  }
+
+  if (connectedPlatforms.size > 0 || !POSTFORME_API_KEY) {
+    return Array.from(connectedPlatforms);
   }
 
   try {
@@ -217,7 +235,7 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
       headers: { Authorization: `Bearer ${POSTFORME_API_KEY}` },
     });
     if (!response.ok) {
-      return localPlatforms;
+      return Array.from(connectedPlatforms);
     }
 
     const payload = await response.json();
@@ -229,13 +247,17 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
           ? payload
           : [];
 
-    return normalizeAgentIntegrationProviders(
+    for (const platform of normalizeAgentIntegrationProviders(
       accounts
         .map((account) => account?.platform || account?.type)
         .filter((platform) => SOCIAL_PROVIDERS.has(normalizeProvider(platform)))
-    );
+    )) {
+      connectedPlatforms.add(platform);
+    }
+
+    return Array.from(connectedPlatforms);
   } catch (_) {
-    return localPlatforms;
+    return Array.from(connectedPlatforms);
   }
 }
 
