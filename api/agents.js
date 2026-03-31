@@ -5,8 +5,10 @@
 const express = require("express");
 const pool = require("../lib/vaultbrix");
 const {
+  normalizeCapabilities,
   splitCapabilities,
   buildAgentConfigUpdate,
+  countCountedSkills,
 } = require("../services/agentConfigPolicy");
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
@@ -14,16 +16,6 @@ const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutl
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
 const MAX_SKILLS = 8;
-const TOOL_KEYS = new Set([
-  'file_access',
-  'network_access',
-  'code_execution',
-  'web_search',
-  'tool_use',
-  'workspace_drive',
-  'google_drive',
-  'google_calendar',
-]);
 
 /** Serialize type for DB: array → JSON string, string → as-is */
 function serializeType(type) {
@@ -98,7 +90,9 @@ router.get("/", async (req, res) => {
       `SELECT * FROM ${SCHEMA}.agents WHERE workspace_id = $1 ORDER BY name`,
       [req.workspaceId || "00000000-0000-0000-0000-000000000001"]
     );
-    const agents = result.rows.map(a => ({
+    const agents = result.rows.map(a => {
+      const capabilities = normalizeCapabilities(a.capabilities || []);
+      return ({
       id: a.id,
       name: a.name,
       username: a.username,
@@ -115,12 +109,13 @@ router.get("/", async (req, res) => {
       system_prompt: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? null : a.system_prompt),
       temperature: a.temperature,
       max_tokens: a.max_tokens,
-      capabilities: a.capabilities || [],
+      capabilities,
       badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
       systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
       createdAt: a.created_at,
       updatedAt: a.updated_at
-    }));
+    });
+    });
     res.json({ success: true, agents, count: agents.length, skip: 0, limit: 100 });
   } catch (err) {
     console.error("[AGENTS] List error:", err.message);
@@ -140,7 +135,7 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "Agent not found", id });
     }
     const a = result.rows[0];
-    const capabilities = a.capabilities || [];
+    const capabilities = normalizeCapabilities(a.capabilities || []);
     const { skills, tools } = splitCapabilities(capabilities);
     res.json({
       success: true,
@@ -197,8 +192,8 @@ router.post("/", async (req, res) => {
     }
 
     // Enforce skill limit
-    const capabilities = req.body.capabilities || [];
-    const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+    const capabilities = normalizeCapabilities(req.body.capabilities || []);
+    const skillCount = countCountedSkills(capabilities);
     if (skillCount > MAX_SKILLS) {
       return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
     }
@@ -218,7 +213,7 @@ router.post("/", async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, ws, capabilities.length > 0 ? capabilities : null]
+       `/sprites/agent-${username}.png`, ws, capabilities]
     );
 
     // Register email route for inbound routing
@@ -248,7 +243,7 @@ router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const fields = req.body;
-    const existing = await pool.query(`SELECT id,name,username,type,role FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [id]);
+    const existing = await pool.query(`SELECT id,name,username,type,role,capabilities FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) LIMIT 1`, [id]);
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const ex = existing.rows[0];
     const isCoordinator = ex.type === 'coordinator' || String(ex.role||'').toLowerCase() === 'coordinator' || String(ex.username||'').toLowerCase().startsWith(COORDINATOR_NAME);
@@ -258,6 +253,16 @@ router.put("/:id", async (req, res) => {
     if (isCoordinator && (fields.type || fields.role || fields.username || fields.status === 'inactive')) {
       return res.status(403).json({ success: false, error: 'System Coordinator is protected' });
     }
+
+    if (fields.capabilities !== undefined) {
+      const normalizedCapabilities = normalizeCapabilities(fields.capabilities);
+      const skillCount = countCountedSkills(normalizedCapabilities);
+      if (skillCount > MAX_SKILLS) {
+        return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+      }
+      fields.capabilities = normalizedCapabilities;
+    }
+
     const allowed = ["name","username","email","status","type","role","mbti","model","provider","description","system_prompt","temperature","max_tokens","avatar","capabilities"];
     const sets = []; const vals = []; let idx = 1;
     for (const k of allowed) {
@@ -305,6 +310,11 @@ router.put("/:id/config", async (req, res) => {
       return res.status(400).json({ success: false, error: "No fields to update" });
     }
 
+    const skillCount = countCountedSkills(normalized.capabilities);
+    if (skillCount > MAX_SKILLS) {
+      return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
+    }
+
     const sets = [];
     const vals = [];
     let idx = 1;
@@ -334,7 +344,7 @@ router.put("/:id/config", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
 
     const row = result.rows[0];
-    const capabilities = row.capabilities || normalized.capabilities || [];
+    const capabilities = normalizeCapabilities(row.capabilities || normalized.capabilities || []);
     const { skills, tools } = splitCapabilities(capabilities);
 
     return res.json({
@@ -413,7 +423,7 @@ router.get("/:id/config", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
     const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
-    const capabilities = row.capabilities || [];
+    const capabilities = normalizeCapabilities(row.capabilities || []);
     const { skills, tools } = splitCapabilities(capabilities);
     const cfg = {
       model: row.model,
@@ -445,10 +455,12 @@ router.put("/:id/config", async (req, res) => {
     if (isCoordinator && system_prompt !== undefined) {
       return res.status(403).json({ success: false, error: 'Cannot modify system coordinator prompt' });
     }
-    const capabilities = skills || tools || undefined;
+    const capabilities = (skills || tools)
+      ? normalizeCapabilities([...(skills || []), ...(tools || [])])
+      : undefined;
     // Enforce skill limit
     if (capabilities) {
-      const skillCount = capabilities.filter(c => !TOOL_KEYS.has(c)).length;
+      const skillCount = countCountedSkills(capabilities);
       if (skillCount > MAX_SKILLS) {
         return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
       }
@@ -464,11 +476,13 @@ router.put("/:id/config", async (req, res) => {
         type=COALESCE($8,type),
         updated_at=NOW()
        WHERE (id::text = $7 OR username = $7) RETURNING model, provider, temperature, max_tokens, system_prompt, capabilities, type`,
-      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities && capabilities.length > 0 ? capabilities : null, req.params.id, serializeType(type)]
+      [model||null, provider||null, temperature||null, max_tokens||null, isCoordinator ? null : (system_prompt||null), capabilities || null, req.params.id, serializeType(type)]
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
-    res.json({ success: true, config: { ...row, skills: row.capabilities || [], tools: row.capabilities || [], type: deserializeType(row.type) } });
+    const nextCapabilities = normalizeCapabilities(row.capabilities || []);
+    const split = splitCapabilities(nextCapabilities);
+    res.json({ success: true, config: { ...row, capabilities: nextCapabilities, skills: split.skills, tools: split.tools, type: deserializeType(row.type) } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

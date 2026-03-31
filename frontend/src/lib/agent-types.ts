@@ -10,6 +10,13 @@ export interface AgentTypeDefinition {
   recommendedSkills: string[];
 }
 
+export interface ToolCapabilityDefinition {
+  key: string;
+  label: string;
+  description: string;
+  alwaysOn?: boolean;
+}
+
 export const AGENT_TYPES: AgentTypeDefinition[] = [
   {
     key: 'sales',
@@ -158,6 +165,57 @@ export const SKILL_LIMITS = {
 /** Maximum number of agent types that can be combined */
 export const MAX_AGENT_TYPES = 3;
 
+export const ALWAYS_ON_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
+  {
+    key: 'workspace_drive_list',
+    label: 'Workspace Drive List',
+    description: 'List files and folders in the shared workspace drive.',
+    alwaysOn: true,
+  },
+  {
+    key: 'workspace_drive_search',
+    label: 'Workspace Drive Search',
+    description: 'Search internal workspace files by name or path.',
+    alwaysOn: true,
+  },
+  {
+    key: 'workspace_drive_read',
+    label: 'Workspace Drive Read',
+    description: 'Read text content from the internal workspace drive.',
+    alwaysOn: true,
+  },
+  {
+    key: 'workspace_drive_write',
+    label: 'Workspace Drive Write',
+    description: 'Create and update internal workspace documents.',
+    alwaysOn: true,
+  },
+];
+
+export const OPTIONAL_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
+  { key: 'workspace_drive', label: 'Workspace Drive (Legacy)', description: 'Legacy workspace drive tool flag kept for compatibility.' },
+  { key: 'google_drive', label: 'Google Drive (Legacy)', description: 'Legacy Google Drive tool flag kept for compatibility.' },
+  { key: 'google_calendar', label: 'Google Calendar (Legacy)', description: 'Legacy Google Calendar tool flag kept for compatibility.' },
+  { key: 'network_access', label: 'Network Access', description: 'Make HTTP requests to external services.' },
+  { key: 'code_execution', label: 'Code Execution', description: 'Execute code in the sandbox.' },
+  { key: 'web_search', label: 'Web Search', description: 'Search the internet.' },
+  { key: 'tool_use', label: 'Tool Use', description: 'Use external tools and APIs.' },
+  { key: 'calendar_management', label: 'Calendar Management', description: 'Coordinate calendars and meeting hygiene rules.' },
+  { key: 'google_drive_list', label: 'Google Drive List', description: 'List files from the connected Google Drive integration.' },
+  { key: 'google_drive_search', label: 'Google Drive Search', description: 'Search the connected Google Drive integration.' },
+  { key: 'google_drive_read', label: 'Google Drive Read', description: 'Read file content from the connected Google Drive integration.' },
+  { key: 'google_calendar_list', label: 'Google Calendar List', description: 'List upcoming events from the connected Google Calendar.' },
+  { key: 'google_calendar_create', label: 'Google Calendar Create', description: 'Create Google Calendar events.' },
+  { key: 'google_calendar_update', label: 'Google Calendar Update', description: 'Update Google Calendar events.' },
+  { key: 'google_calendar_delete', label: 'Google Calendar Delete', description: 'Delete Google Calendar events.' },
+  { key: 'google_calendar_check_availability', label: 'Google Calendar Availability', description: 'Check free/busy availability in Google Calendar.' },
+];
+
+export const NON_COUNTED_CAPABILITY_KEYS = new Set([
+  ...ALWAYS_ON_TOOL_CAPABILITIES.map((tool) => tool.key),
+  ...OPTIONAL_TOOL_CAPABILITIES.map((tool) => tool.key),
+]);
+
 export type SkillLimitStatus = 'good' | 'warning' | 'limit';
 
 export function getSkillLimitStatus(count: number): SkillLimitStatus {
@@ -194,4 +252,8 @@ export function getRecommendedSkills(typeKeys: string | string[]): string[] {
     }
   }
   return result;
+}
+
+export function isNonCountedCapabilityKey(key: string): boolean {
+  return NON_COUNTED_CAPABILITY_KEYS.has(key);
 }

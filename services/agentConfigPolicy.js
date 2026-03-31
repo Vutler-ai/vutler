@@ -11,6 +11,31 @@ const TOOL_KEYS = new Set([
   'tool_use',
 ]);
 
+const ALWAYS_ON_TOOL_SKILL_KEYS = [
+  'workspace_drive_list',
+  'workspace_drive_search',
+  'workspace_drive_read',
+  'workspace_drive_write',
+];
+
+const OPTIONAL_TOOL_SKILL_KEYS = [
+  'calendar_management',
+  'google_drive_list',
+  'google_drive_search',
+  'google_drive_read',
+  'google_calendar_list',
+  'google_calendar_create',
+  'google_calendar_update',
+  'google_calendar_delete',
+  'google_calendar_check_availability',
+];
+
+const NON_COUNTED_CAPABILITY_KEYS = new Set([
+  ...TOOL_KEYS,
+  ...ALWAYS_ON_TOOL_SKILL_KEYS,
+  ...OPTIONAL_TOOL_SKILL_KEYS,
+]);
+
 function toStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value
@@ -22,28 +47,43 @@ function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
+function isNonCountedCapability(value) {
+  return NON_COUNTED_CAPABILITY_KEYS.has(value);
+}
+
+function normalizeCapabilities(capabilities) {
+  return unique([
+    ...ALWAYS_ON_TOOL_SKILL_KEYS,
+    ...toStringArray(capabilities),
+  ]);
+}
+
 function splitCapabilities(capabilities) {
-  const list = toStringArray(capabilities);
-  const tools = list.filter((value) => TOOL_KEYS.has(value));
-  const skills = list.filter((value) => !TOOL_KEYS.has(value));
+  const list = normalizeCapabilities(capabilities);
+  const tools = list.filter((value) => isNonCountedCapability(value));
+  const skills = list.filter((value) => !isNonCountedCapability(value));
   return { skills, tools };
+}
+
+function countCountedSkills(capabilities) {
+  return splitCapabilities(capabilities).skills.length;
 }
 
 function mergeCapabilities(body = {}, existing = []) {
   if (body.capabilities !== undefined) {
-    return unique(toStringArray(body.capabilities));
+    return normalizeCapabilities(body.capabilities);
   }
 
   const hasSkills = body.skills !== undefined;
   const hasTools = body.tools !== undefined;
   if (hasSkills || hasTools) {
-    return unique([
+    return normalizeCapabilities([
       ...toStringArray(body.skills),
       ...toStringArray(body.tools),
     ]);
   }
 
-  return unique(toStringArray(existing));
+  return normalizeCapabilities(existing);
 }
 
 function buildAgentConfigUpdate({ body = {}, existing = {}, isCoordinator = false } = {}) {
@@ -93,8 +133,14 @@ function buildInternalPlacementInstruction() {
 
 module.exports = {
   TOOL_KEYS,
+  ALWAYS_ON_TOOL_SKILL_KEYS,
+  OPTIONAL_TOOL_SKILL_KEYS,
+  NON_COUNTED_CAPABILITY_KEYS,
   toStringArray,
+  isNonCountedCapability,
+  normalizeCapabilities,
   splitCapabilities,
+  countCountedSkills,
   mergeCapabilities,
   buildAgentConfigUpdate,
   buildInternalPlacementInstruction,

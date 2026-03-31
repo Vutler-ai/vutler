@@ -14,9 +14,12 @@ import {
   AGENT_TYPES,
   SKILL_LIMITS,
   MAX_AGENT_TYPES,
+  ALWAYS_ON_TOOL_CAPABILITIES,
+  OPTIONAL_TOOL_CAPABILITIES,
   getSkillLimitStatus,
   getSkillLimitMessage,
   getRecommendedSkills,
+  isNonCountedCapabilityKey,
 } from '@/lib/agent-types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -58,15 +61,7 @@ const FALLBACK_MODELS: LLMModel[] = [
   { provider: 'custom', model_name: 'custom' },
 ];
 
-const TOOLS = [
-  { key: 'workspace_drive', label: 'Workspace Drive', desc: 'Read and write files in the internal workspace drive' },
-  { key: 'google_drive', label: 'Google Drive', desc: 'Read files from the connected Google Drive integration' },
-  { key: 'google_calendar', label: 'Google Calendar', desc: 'Create and update events through the connected Google Calendar integration' },
-  { key: 'network_access', label: 'Network Access', desc: 'Make HTTP requests' },
-  { key: 'code_execution', label: 'Code Execution', desc: 'Execute code in sandbox' },
-  { key: 'web_search', label: 'Web Search', desc: 'Search the internet' },
-  { key: 'tool_use', label: 'Tool Use', desc: 'Use external tools and APIs' },
-];
+const TOOLS = [...ALWAYS_ON_TOOL_CAPABILITIES, ...OPTIONAL_TOOL_CAPABILITIES];
 
 const PROVIDER_NAMES: Record<string, string> = {
   openai: 'OpenAI',
@@ -212,8 +207,15 @@ function SkillsSection({
   useEffect(() => {
     getSkills()
       .then(res => {
-        setAllSkills(res.skills ?? []);
-        setGrouped(res.grouped ?? {});
+        const visibleSkills = (res.skills ?? []).filter((skill) => !isNonCountedCapabilityKey(skill.key));
+        const visibleGrouped = Object.fromEntries(
+          Object.entries(res.grouped ?? {}).map(([category, skills]) => [
+            category,
+            skills.filter((skill) => !isNonCountedCapabilityKey(skill.key)),
+          ]).filter(([, skills]) => skills.length > 0)
+        );
+        setAllSkills(visibleSkills);
+        setGrouped(visibleGrouped);
       })
       .catch(() => {/* skills unavailable — silent */})
       .finally(() => setLoading(false));
@@ -710,16 +712,41 @@ export default function AgentConfigPage() {
 
         {/* Tools */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Tools</h3>
+          <h3 className="text-base font-semibold text-white mb-2">Tools</h3>
+          <p className="text-xs text-[#6b7280] mb-4">
+            Internal workspace tools stay enabled for every agent and do not count toward the 8-skill limit.
+          </p>
+
+          <div className="space-y-2 mb-5">
+            {ALWAYS_ON_TOOL_CAPABILITIES.map((tool) => (
+              <div
+                key={tool.key}
+                className="flex items-center justify-between p-3 rounded-lg border border-blue-500/20 bg-blue-500/10"
+              >
+                <div>
+                  <div className="text-white text-sm font-medium">{tool.label}</div>
+                  <div className="text-xs text-[#9ca3af]">{tool.description}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked
+                  disabled
+                  readOnly
+                  className="size-5 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
+                />
+              </div>
+            ))}
+          </div>
+
           <div className="space-y-2">
-            {TOOLS.map((tool) => (
+            {OPTIONAL_TOOL_CAPABILITIES.map((tool) => (
               <label
                 key={tool.key}
                 className="flex items-center justify-between p-3 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors cursor-pointer"
               >
                 <div>
                   <div className="text-white text-sm font-medium">{tool.label}</div>
-                  <div className="text-xs text-[#6b7280]">{tool.desc}</div>
+                  <div className="text-xs text-[#6b7280]">{tool.description}</div>
                 </div>
                 <input
                   type="checkbox"

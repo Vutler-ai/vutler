@@ -14,9 +14,12 @@ import {
   AGENT_TYPES,
   SKILL_LIMITS,
   MAX_AGENT_TYPES,
+  ALWAYS_ON_TOOL_CAPABILITIES,
+  OPTIONAL_TOOL_CAPABILITIES,
   getSkillLimitStatus,
   getSkillLimitMessage,
   getRecommendedSkills,
+  isNonCountedCapabilityKey,
 } from '@/lib/agent-types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -33,16 +36,6 @@ const FALLBACK_MODELS = [
   { provider: 'codex', model_name: 'codex/gpt-5.3-codex' },
   { provider: 'codex', model_name: 'codex/gpt-5.3-codex-spark' },
   { provider: 'codex', model_name: 'codex/o3' },
-];
-
-const TOOLS = [
-  { key: 'workspace_drive', label: 'Workspace Drive' },
-  { key: 'google_drive', label: 'Google Drive' },
-  { key: 'google_calendar', label: 'Google Calendar' },
-  { key: 'network_access', label: 'Network Access' },
-  { key: 'code_execution', label: 'Code Execution' },
-  { key: 'web_search', label: 'Web Search' },
-  { key: 'tool_use', label: 'Tool Use' },
 ];
 
 const EMOJIS = ['🤖', '🧠', '⚡', '🔥', '🎯', '💡', '🛡️', '🚀', '🌟', '🎨', '📊', '🔧', '🤝', '👾', '🦾', '🧬'];
@@ -120,8 +113,15 @@ export default function NewAgentPage() {
   useEffect(() => {
     getSkills()
       .then(res => {
-        setAllSkills(res.skills ?? []);
-        setGroupedSkills(res.grouped ?? {});
+        const visibleSkills = (res.skills ?? []).filter((skill) => !isNonCountedCapabilityKey(skill.key));
+        const visibleGrouped = Object.fromEntries(
+          Object.entries(res.grouped ?? {}).map(([category, skills]) => [
+            category,
+            skills.filter((skill) => !isNonCountedCapabilityKey(skill.key)),
+          ]).filter(([, skills]) => skills.length > 0)
+        );
+        setAllSkills(visibleSkills);
+        setGroupedSkills(visibleGrouped);
       })
       .catch(() => {})
       .finally(() => setLoadingSkills(false));
@@ -569,12 +569,42 @@ export default function NewAgentPage() {
 
         {/* Tools */}
         <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-6">
-          <h2 className="text-base font-semibold text-white mb-5">Tools &amp; Permissions</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {TOOLS.map(tool => (
+          <h2 className="text-base font-semibold text-white mb-2">Tools &amp; Permissions</h2>
+          <p className="text-sm text-[#9ca3af] mb-5">
+            Internal workspace tools are enabled automatically and do not count toward the 8-skill limit.
+          </p>
+
+          <div className="mb-5">
+            <h3 className="text-sm font-medium text-white mb-3">Always Enabled</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {ALWAYS_ON_TOOL_CAPABILITIES.map((tool) => (
+                <div
+                  key={tool.key}
+                  className="flex items-start gap-3 p-3 rounded-lg border border-blue-500/20 bg-blue-500/10"
+                >
+                  <input
+                    type="checkbox"
+                    checked
+                    disabled
+                    readOnly
+                    className="mt-0.5 size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
+                  />
+                  <div>
+                    <div className="text-sm text-white">{tool.label}</div>
+                    <div className="text-xs text-[#9ca3af] mt-0.5">{tool.description}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium text-white mb-3">Optional Tools</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {OPTIONAL_TOOL_CAPABILITIES.map(tool => (
               <label
                 key={tool.key}
-                className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
+                className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-colors ${
                   form.tools.includes(tool.key)
                     ? 'border-blue-500 bg-blue-500/10'
                     : 'border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.15)]'
@@ -586,9 +616,13 @@ export default function NewAgentPage() {
                   onChange={() => toggleTool(tool.key)}
                   className="size-4 rounded border-gray-600 text-blue-600 bg-[#0e0f1a]"
                 />
-                <span className="text-sm text-white">{tool.label}</span>
+                <div>
+                  <div className="text-sm text-white">{tool.label}</div>
+                  <div className="text-xs text-[#9ca3af] mt-0.5">{tool.description}</div>
+                </div>
               </label>
             ))}
+            </div>
           </div>
         </section>
 
