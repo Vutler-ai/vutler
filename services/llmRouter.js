@@ -992,11 +992,18 @@ async function chat(agent, messages, db, opts = {}) {
     ...(Array.isArray(agent?.capabilities) ? agent.capabilities : []),
     ...(Array.isArray(integrationAccess?.derivedSkillKeys) ? integrationAccess.derivedSkillKeys : []),
   ]);
-  const hasSocialMediaAccess = Boolean(integrationAccess?.hasSocialMediaAccess);
+  const hasSocialSkill = agentSkillKeys.some((skillKey) =>
+    typeof skillKey === 'string' && (skillKey.includes('social') || skillKey.includes('posting') || skillKey.includes('content_scheduling') || skillKey.includes('multi_platform'))
+  );
+  const hasLegacySocialAccess = !integrationAccess?.hasSocialAccessOverrides
+    && hasSocialSkill
+    && Array.isArray(integrationAccess?.connectedSocialPlatforms)
+    && integrationAccess.connectedSocialPlatforms.length > 0;
+  const hasSocialMediaAccess = Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess;
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
-  const allowedSocialPlatforms = Array.isArray(integrationAccess?.allowedSocialPlatforms)
+  const allowedSocialPlatforms = Array.isArray(integrationAccess?.allowedSocialPlatforms) && integrationAccess.allowedSocialPlatforms.length > 0
     ? integrationAccess.allowedSocialPlatforms
-    : [];
+    : (hasLegacySocialAccess ? integrationAccess.connectedSocialPlatforms : []);
   const internalPlacementInstruction = buildInternalPlacementInstruction();
 
   let effectiveSystemPrompt = agent?.system_prompt || '';

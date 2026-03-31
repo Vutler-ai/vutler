@@ -114,6 +114,16 @@ async function hasAgentIntegrationAccess(workspaceId, agentId, provider, db = po
 
   try {
     await ensureAgentIntegrationTable(db);
+    const overrideRes = await db.query(
+      `SELECT 1
+       FROM ${SCHEMA}.workspace_integration_agents
+       WHERE workspace_id = $1
+         AND provider = ANY($2::text[])
+       LIMIT 1`,
+      [workspaceId, Array.from(providersToCheck)]
+    );
+    if (overrideRes.rows.length === 0) return true;
+
     const result = await db.query(
       `SELECT 1
        FROM ${SCHEMA}.workspace_integration_agents
@@ -123,6 +133,27 @@ async function hasAgentIntegrationAccess(workspaceId, agentId, provider, db = po
          AND provider = ANY($3::text[])
        LIMIT 1`,
       [workspaceId, agentId, Array.from(providersToCheck)]
+    );
+    return result.rows.length > 0;
+  } catch (err) {
+    if (err?.code === '42P01') return false;
+    throw err;
+  }
+}
+
+async function workspaceHasAgentAccessOverrides(workspaceId, providers, db = pool) {
+  const normalizedProviders = normalizeAgentIntegrationProviders(providers);
+  if (!workspaceId || normalizedProviders.length === 0) return false;
+
+  try {
+    await ensureAgentIntegrationTable(db);
+    const result = await db.query(
+      `SELECT 1
+       FROM ${SCHEMA}.workspace_integration_agents
+       WHERE workspace_id = $1
+         AND provider = ANY($2::text[])
+       LIMIT 1`,
+      [workspaceId, normalizedProviders]
     );
     return result.rows.length > 0;
   } catch (err) {
@@ -216,6 +247,11 @@ async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, integrati
   const connectedSocialPlatforms = await listConnectedSocialPlatforms(workspaceId, db).catch(() => []);
   const socialPlatformSet = new Set(connectedSocialPlatforms);
   const allowedSocialPlatforms = availableProviders.filter((provider) => socialPlatformSet.has(provider));
+  const hasSocialAccessOverrides = await workspaceHasAgentAccessOverrides(
+    workspaceId,
+    ['social_media', ...connectedSocialPlatforms],
+    db
+  ).catch(() => false);
 
   return {
     enabledProviders,
@@ -224,6 +260,7 @@ async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, integrati
     connectedSocialPlatforms,
     derivedSkillKeys: getSkillKeysForIntegrationProviders(availableProviders),
     hasSocialMediaAccess: availableProviders.includes('social_media') || allowedSocialPlatforms.length > 0,
+    hasSocialAccessOverrides,
     allowedSocialPlatforms,
   };
 }
@@ -234,6 +271,7 @@ module.exports = {
   listAgentIntegrationProviders,
   replaceAgentIntegrationProviders,
   hasAgentIntegrationAccess,
+  workspaceHasAgentAccessOverrides,
   getSkillKeysForIntegrationProviders,
   resolveAgentRuntimeIntegrations,
 };
