@@ -2,7 +2,8 @@
 
 const pool = require('../../../lib/vaultbrix');
 const { LLMPromptHandler } = require('./LLMPromptHandler');
-const { isGoogleConnected, agentHasGoogleAccess } = require('../../google/tokenManager');
+const { isGoogleConnected } = require('../../google/tokenManager');
+const { hasAgentIntegrationAccess } = require('../../agentIntegrationService');
 
 const SCHEMA = 'tenant_vutler';
 const LEGACY_PROVIDER_MAP = {
@@ -155,8 +156,7 @@ class IntegrationHandler {
     if (provider === 'google') {
       const connected = await isGoogleConnected(workspaceId);
       if (!connected) return false;
-      if (!agentId) return true;
-      return agentHasGoogleAccess(workspaceId, agentId).catch(() => false);
+      return hasAgentIntegrationAccess(workspaceId, agentId, provider).catch(() => false);
     }
 
     const result = await pool.query(
@@ -168,7 +168,8 @@ class IntegrationHandler {
        LIMIT 1`,
       [workspaceId, provider]
     );
-    return result.rows.length > 0;
+    if (result.rows.length === 0) return false;
+    return hasAgentIntegrationAccess(workspaceId, agentId, provider).catch(() => false);
   }
 
   /**

@@ -7,6 +7,7 @@ const { createMemoryRuntimeService } = require('./memory/runtime');
 const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
+const { resolveAgentRuntimeIntegrations } = require('./agentIntegrationService');
 const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
@@ -977,16 +978,25 @@ async function chat(agent, messages, db, opts = {}) {
   if (memoryScope && memoryMode.write) memoryTools.push(MEMORY_REMEMBER_TOOL);
   if (memoryScope && memoryMode.read) memoryTools.push(MEMORY_RECALL_TOOL);
 
-  // Inject social media tool when agent has relevant skills
+  const integrationAccess = await resolveAgentRuntimeIntegrations({
+    workspaceId,
+    agentId: agent?.id || null,
+    integrations: agent?.integrations,
+    db,
+  });
+
+  // Inject tools from explicit capabilities plus agent-enabled integrations
   const agentSkillKeys = normalizeCapabilities([
     ...(Array.isArray(agent?.skills) ? agent.skills : []),
     ...(Array.isArray(agent?.tools) ? agent.tools : []),
     ...(Array.isArray(agent?.capabilities) ? agent.capabilities : []),
+    ...(Array.isArray(integrationAccess?.derivedSkillKeys) ? integrationAccess.derivedSkillKeys : []),
   ]);
-  const hasSocialSkill = agentSkillKeys.some(s =>
-    typeof s === 'string' && (s.includes('social') || s.includes('posting') || s.includes('content_scheduling') || s.includes('multi_platform'))
-  );
-  const socialMediaTools = hasSocialSkill ? [SOCIAL_MEDIA_TOOL] : [];
+  const hasSocialMediaAccess = Boolean(integrationAccess?.hasSocialMediaAccess);
+  const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
+  const allowedSocialPlatforms = Array.isArray(integrationAccess?.allowedSocialPlatforms)
+    ? integrationAccess.allowedSocialPlatforms
+    : [];
   const internalPlacementInstruction = buildInternalPlacementInstruction();
 
   let effectiveSystemPrompt = agent?.system_prompt || '';
@@ -997,8 +1007,11 @@ async function chat(agent, messages, db, opts = {}) {
     effectiveSystemPrompt = effectiveSystemPrompt + memoryInstruction;
   }
   effectiveSystemPrompt += `\n\n${internalPlacementInstruction}`;
-  if (hasSocialSkill) {
-    effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
+  if (hasSocialMediaAccess) {
+    const platformHint = allowedSocialPlatforms.length > 0
+      ? ` Limit social posting to these enabled platforms unless the user asks otherwise and you have access: ${allowedSocialPlatforms.join(', ')}.`
+      : '';
+    effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}`;
   }
   if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += '\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is /projects/Vutler. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under /projects/Vutler instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.';
@@ -1165,7 +1178,7 @@ async function chat(agent, messages, db, opts = {}) {
               ];
             continueLoop = true;
 
-          } else if (toolCall.name === 'vutler_post_social_media' && hasSocialSkill) {
+          } else if (toolCall.name === 'vutler_post_social_media' && hasSocialMediaAccess) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_post_social_media', 'social', args);
             const caption = args.caption || '';
             console.log(`[Social] Agent ${agentName} posting: "${caption.slice(0, 100)}"`);
@@ -1179,11 +1192,30 @@ async function chat(agent, messages, db, opts = {}) {
               });
               const accountsData = await accountsRes.json();
               const allAccounts = accountsData.data || accountsData.accounts || accountsData || [];
-              let accounts = Array.isArray(allAccounts) ? allAccounts.map(a => a.id || a.social_account_id) : [];
-              // Filter by platform if specified
-              if (args.platforms && args.platforms.length > 0) {
-                const filtered = allAccounts.filter(a => args.platforms.includes(a.platform || a.type));
-                if (filtered.length > 0) accounts = filtered.map(a => a.id || a.social_account_id);
+              const requestedPlatforms = Array.isArray(args.platforms)
+                ? args.platforms.map((platform) => String(platform || '').trim().toLowerCase()).filter(Boolean)
+                : [];
+              const allowedPlatforms = allowedSocialPlatforms.length > 0
+                ? new Set(allowedSocialPlatforms.map((platform) => String(platform || '').trim().toLowerCase()))
+                : null;
+              const unauthorizedPlatforms = allowedPlatforms
+                ? requestedPlatforms.filter((platform) => !allowedPlatforms.has(platform))
+                : [];
+              if (unauthorizedPlatforms.length > 0) {
+                throw new Error(`Agent does not have access to: ${unauthorizedPlatforms.join(', ')}`);
+              }
+
+              const filteredAccounts = Array.isArray(allAccounts)
+                ? allAccounts.filter((account) => {
+                  const platform = String(account.platform || account.type || '').trim().toLowerCase();
+                  if (allowedPlatforms && !allowedPlatforms.has(platform)) return false;
+                  if (requestedPlatforms.length > 0 && !requestedPlatforms.includes(platform)) return false;
+                  return true;
+                })
+                : [];
+              let accounts = filteredAccounts.map((account) => account.id || account.social_account_id).filter(Boolean);
+              if (accounts.length === 0 && requestedPlatforms.length === 0 && Array.isArray(allAccounts) && allowedPlatforms === null) {
+                accounts = allAccounts.map((account) => account.id || account.social_account_id).filter(Boolean);
               }
               if (accounts.length === 0) throw new Error('No social accounts connected');
               const postBody = { caption, social_accounts: accounts };
