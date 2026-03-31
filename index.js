@@ -1004,6 +1004,7 @@ try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { con
 // Direct mounts — api/ modules with relative paths (/, /:id)
 try { app.use('/api/v1/tasks', require('./api/tasks')); } catch (_) {}
 try { app.use('/api/v1/schedules', require('./api/schedules')); } catch (_) {}
+try { app.use('/api/v1/snipara/admin', require('./api/sniparaAdmin')); } catch (_) {}
 try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
 try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}

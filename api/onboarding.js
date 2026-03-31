@@ -131,6 +131,31 @@ router.post('/setup', async (req, res) => {
       return res.status(400).json({ success: false, error: 'domains array is required (e.g. ["marketing", "support"])' });
     }
 
+    const workspace = await pool.query(
+      `SELECT name, slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
+      [workspaceId]
+    );
+    const workspaceName = workspace.rows[0]?.name || 'Workspace';
+    const workspaceSlug = workspace.rows[0]?.slug || workspaceId;
+
+    let sniparaProvisioning = { provisioned: false, skipped: true, reason: 'not_attempted' };
+    try {
+      const { provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
+      sniparaProvisioning = await provisionWorkspaceSnipara({
+        workspaceId,
+        workspaceName,
+        workspaceSlug,
+        ownerEmail: req.user?.email || null,
+      });
+    } catch (provisionErr) {
+      console.warn('[ONBOARDING] Snipara provisioning warning:', provisionErr.message);
+      sniparaProvisioning = {
+        provisioned: false,
+        skipped: false,
+        reason: provisionErr.message,
+      };
+    }
+
     // Resolve domain cards → agent template slugs
     const templateSlugs = getDomainAgents(domains);
 
@@ -184,6 +209,7 @@ router.post('/setup', async (req, res) => {
         domains,
         agents_created: createdAgents,
         onboarding_completed: true,
+        snipara_provisioning: sniparaProvisioning,
       },
     });
   } catch (err) {

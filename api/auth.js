@@ -549,6 +549,7 @@ async function registerHandler(req, res) {
     const { hash, salt } = await hashPassword(password);
     const client = await pool.connect();
     let user;
+    let workspaceMeta = null;
     try {
       await client.query('BEGIN');
       const workspaceName = `${(name || cleanEmail.split('@')[0])}'s Workspace`;
@@ -560,6 +561,7 @@ async function registerHandler(req, res) {
         [workspaceName, workspaceSlug]
       );
       const workspaceId = wsRes.rows[0].id;
+      workspaceMeta = { id: workspaceId, name: workspaceName, slug: workspaceSlug };
 
       const userRes = await client.query(
         `INSERT INTO ${SCHEMA}.users_auth (email, password_hash, salt, name, role, workspace_id, created_at)
@@ -638,9 +640,34 @@ async function registerHandler(req, res) {
       client.release();
     }
 
+    let sniparaProvisioning = { provisioned: false, skipped: true, reason: 'not_attempted' };
+    if (workspaceMeta) {
+      try {
+        const { provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
+        sniparaProvisioning = await provisionWorkspaceSnipara({
+          workspaceId: workspaceMeta.id,
+          workspaceName: workspaceMeta.name,
+          workspaceSlug: workspaceMeta.slug,
+          ownerEmail: cleanEmail,
+        });
+      } catch (provisionErr) {
+        console.warn('[AUTH] Snipara provisioning warning:', provisionErr.message);
+        sniparaProvisioning = {
+          provisioned: false,
+          skipped: false,
+          reason: provisionErr.message,
+        };
+      }
+    }
+
     const token = generateJWT(user);
     console.log(`[AUTH] Register OK: ${cleanEmail}`);
-    res.json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      snipara_provisioning: sniparaProvisioning,
+    });
   } catch (err) {
     console.error('[AUTH] Register error:', err.message);
     res.status(500).json({ success: false, error: 'Registration failed' });

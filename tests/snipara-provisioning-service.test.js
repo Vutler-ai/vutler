@@ -1,0 +1,126 @@
+'use strict';
+
+describe('sniparaProvisioningService', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    process.env.SNIPARA_INTEGRATION_KEY = 'integration-key';
+  });
+
+  afterEach(() => {
+    delete process.env.SNIPARA_INTEGRATION_KEY;
+  });
+
+  test('reuses existing project credentials and only creates the missing swarm', async () => {
+    const query = jest.fn(async (sql, params) => {
+      if (sql.includes('FROM tenant_vutler.workspace_settings')) {
+        return {
+          rows: [
+            { key: 'snipara_api_key', value: 'existing-key' },
+            { key: 'snipara_api_url', value: 'https://existing.snipara.test/mcp' },
+            { key: 'snipara_project_id', value: 'project-1' },
+            { key: 'snipara_project_slug', value: 'workspace-1' },
+            { key: 'snipara_client_id', value: 'client-1' },
+          ],
+        };
+      }
+
+      if (sql.includes('INSERT INTO tenant_vutler.workspace_settings')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('DELETE FROM tenant_vutler.workspace_settings')) {
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected SQL: ${sql} :: ${JSON.stringify(params)}`);
+    });
+
+    const createProject = jest.fn();
+    const createSwarm = jest.fn().mockResolvedValue({ swarm_id: 'swarm-1' });
+    const createClientSwarm = jest.fn().mockResolvedValue({ swarm_id: 'swarm-1' });
+    const clearSniparaConfigCache = jest.fn();
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../services/sniparaService', () => ({
+      createProject,
+      createClientSwarm,
+      createSwarm,
+    }));
+    jest.doMock('../services/sniparaResolver', () => ({
+      buildSniparaProjectUrl: jest.fn((slug) => `https://api.snipara.com/mcp/${slug}`),
+      clearSniparaConfigCache,
+      normalizeProjectSlug: jest.fn((value) => value),
+    }));
+
+    const { provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
+    const result = await provisionWorkspaceSnipara({
+      db: { query },
+      workspaceId: 'ws-1',
+      workspaceName: 'Workspace 1',
+      workspaceSlug: 'workspace-1',
+      ownerEmail: 'owner@example.com',
+    });
+
+    expect(createProject).not.toHaveBeenCalled();
+    expect(createClientSwarm).toHaveBeenCalledWith(expect.objectContaining({
+      clientId: 'client-1',
+      name: 'workspace-1-client-swarm',
+    }));
+    expect(createSwarm).not.toHaveBeenCalled();
+    expect(clearSniparaConfigCache).toHaveBeenCalledWith('ws-1');
+    expect(result).toMatchObject({
+      provisioned: true,
+      createdProject: false,
+      createdSwarm: true,
+      apiKey: 'existing-key',
+      apiUrl: 'https://existing.snipara.test/mcp',
+      clientId: 'client-1',
+      projectId: 'project-1',
+      projectSlug: 'workspace-1',
+      swarmId: 'swarm-1',
+      swarmCreationMode: 'integrator',
+    });
+  });
+
+  test('fails provisioning when swarm creation does not produce a swarm id', async () => {
+    const query = jest.fn(async (sql) => {
+      if (sql.includes('FROM tenant_vutler.workspace_settings')) {
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    const createProject = jest.fn().mockResolvedValue({
+      client_id: 'client-1',
+      project_id: 'project-1',
+      api_key: 'project-key',
+      project_slug: 'workspace-1',
+      api_url: 'https://api.snipara.com/mcp/workspace-1',
+    });
+    const createClientSwarm = jest.fn().mockResolvedValue({ swarm_id: null });
+    const createSwarm = jest.fn().mockResolvedValue({ swarm_id: null });
+    const clearSniparaConfigCache = jest.fn();
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../services/sniparaService', () => ({
+      createProject,
+      createClientSwarm,
+      createSwarm,
+    }));
+    jest.doMock('../services/sniparaResolver', () => ({
+      buildSniparaProjectUrl: jest.fn((slug) => `https://api.snipara.com/mcp/${slug}`),
+      clearSniparaConfigCache,
+      normalizeProjectSlug: jest.fn((value) => value),
+    }));
+
+    const { provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
+
+    await expect(provisionWorkspaceSnipara({
+      db: { query },
+      workspaceId: 'ws-1',
+      workspaceName: 'Workspace 1',
+      workspaceSlug: 'workspace-1',
+      ownerEmail: 'owner@example.com',
+    })).rejects.toThrow('Snipara provisioning did not return a swarm id');
+  });
+});

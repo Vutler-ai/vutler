@@ -2,8 +2,6 @@
 
 const path = require('path');
 const { pool } = require('../lib/postgres');
-const sniparaService = require('./sniparaService');
-const { executeTaskViaLLM } = require('./taskExecutor');
 
 const ROUTING_RULES = [
   { patterns: ['bug', 'fix', 'error', 'crash', 'broken', '500', 'fail'], agent: 'bug-hunter', priority: 'P1' },
@@ -100,35 +98,6 @@ function matchSkillToTask(taskTitle, taskDescription, agentSkills) {
   return bestSkill;
 }
 
-/**
- * Get workspace Snipara API key
- */
-async function getWorkspaceSniparaKey(workspaceId) {
-  try {
-    // Try workspace_settings KV table first
-    const kvResult = await pool.query(
-      `SELECT value FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'snipara_api_key'`,
-      [workspaceId]
-    );
-    if (kvResult.rows.length > 0) {
-      const v = kvResult.rows[0].value;
-      if (typeof v === 'string') return v;
-      if (typeof v === 'object' && v !== null && 'value' in v) return v.value;
-      if (typeof v === 'object' && v !== null) return JSON.stringify(v).replace(/"/g, '');
-      return v || null;
-    }
-    // Fallback: workspaces table (legacy)
-    const result = await pool.query(
-      `SELECT snipara_api_key FROM ${SCHEMA}.workspaces WHERE id = $1`,
-      [workspaceId]
-    );
-    return result.rows[0]?.snipara_api_key || null;
-  } catch (err) {
-    console.error('[TaskRouter] getWorkspaceSniparaKey error:', err.message);
-    return null;
-  }
-}
-
 async function createTask({ title, description, source, source_ref, priority, due_date, created_by, workspace_id, assigned_agent, metadata }) {
   try {
     if (!assigned_agent) {
@@ -159,58 +128,23 @@ async function createTask({ title, description, source, source_ref, priority, du
       }
     }
 
-    let reminder_at = null;
-    let escalation_at = null;
-    if (due_date) {
-      const d = new Date(due_date);
-      reminder_at = new Date(d.getTime() - 60 * 60 * 1000);
-      escalation_at = new Date(d.getTime() + 30 * 60 * 1000);
-    }
+    const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+    const coordinator = getSwarmCoordinator();
+    const task = await coordinator.createTask({
+      title,
+      description: description || null,
+      priority: priority || 'P2',
+      for_agent_id: assigned_agent,
+      metadata: {
+        ...(enrichedMetadata || {}),
+        source: source || null,
+        source_ref: source_ref || null,
+        due_date: due_date || null,
+        created_by: created_by || null,
+      },
+    }, workspace_id || '00000000-0000-0000-0000-000000000001');
 
-    const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.tasks (title, description, source, source_ref, priority, assignee, assigned_agent, created_by, due_date, reminder_at, escalation_at, workspace_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING *`,
-      [title, description || null, source || null, source_ref || null, priority, created_by || null, assigned_agent, created_by || null, due_date || null, reminder_at, escalation_at, workspace_id || '00000000-0000-0000-0000-000000000001', JSON.stringify(enrichedMetadata)]
-    );
-
-    const task = result.rows[0];
     console.log('[TaskRouter] Created task:', task.id, '→', assigned_agent);
-
-    // 🔵 SNIPARA SYNC: Create task in swarm (non-blocking)
-    if (workspace_id) {
-      const sniparaKey = await getWorkspaceSniparaKey(workspace_id);
-      if (sniparaKey) {
-        const swarmTaskId = await sniparaService.createTask(task, sniparaKey);
-        if (swarmTaskId) {
-          // Update task with swarm_task_id
-          try {
-            await pool.query(
-              `UPDATE ${SCHEMA}.tasks SET swarm_task_id = $1, snipara_task_id = $1 WHERE id = $2`,
-              [swarmTaskId, task.id]
-            );
-            task.snipara_task_id = swarmTaskId;
-          } catch (_) {
-            await pool.query(
-              `UPDATE ${SCHEMA}.tasks SET swarm_task_id = $1 WHERE id = $2`,
-              [swarmTaskId, task.id]
-            );
-          }
-          task.swarm_task_id = swarmTaskId;
-          console.log('[TaskRouter] Synced to Snipara swarm:', swarmTaskId);
-        }
-      }
-    }
-
-    // 🟡 FALLBACK: Execute via LLM if Snipara sync didn't happen
-    if (!task.swarm_task_id && assigned_agent) {
-      console.log(`[TaskRouter] No Snipara sync, falling back to LLM execution for ${assigned_agent}`);
-      // Fire-and-forget — don't block the API response
-      executeTaskViaLLM(task, assigned_agent, workspace_id).catch(err => {
-        console.error('[TaskRouter] LLM fallback error:', err.message);
-      });
-    }
-
     return task;
   } catch (err) {
     console.error('[TaskRouter] createTask error:', err.message);
@@ -294,12 +228,24 @@ async function updateTask(taskId, updates, workspaceId) {
     const task = result.rows[0];
 
     // 🔵 SNIPARA SYNC: Complete task in swarm when status is 'completed' or 'done'
-    if (task && (updates.status === 'done' || updates.status === 'completed') && task.swarm_task_id) {
-      const sniparaKey = await getWorkspaceSniparaKey(task.workspace_id);
-      if (sniparaKey) {
-        await sniparaService.completeTask(task.swarm_task_id, sniparaKey);
-        console.log('[TaskRouter] Completed task in Snipara swarm:', task.swarm_task_id);
-      }
+    if (task && (updates.status === 'in_progress' || updates.status === 'claimed') && (task.snipara_task_id || task.swarm_task_id)) {
+      const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+      await getSwarmCoordinator().claimTask(
+        task.snipara_task_id || task.swarm_task_id,
+        task.assigned_agent,
+        task.workspace_id || workspaceId
+      );
+    }
+
+    if (task && (updates.status === 'done' || updates.status === 'completed') && (task.snipara_task_id || task.swarm_task_id)) {
+      const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+      await getSwarmCoordinator().completeTask(
+        task.snipara_task_id || task.swarm_task_id,
+        task.assigned_agent,
+        updates.output,
+        task.workspace_id || workspaceId
+      );
+      console.log('[TaskRouter] Completed task in Snipara swarm:', task.snipara_task_id || task.swarm_task_id);
     }
 
     return task || null;

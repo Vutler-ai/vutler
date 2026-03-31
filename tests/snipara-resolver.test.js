@@ -18,6 +18,7 @@ describe('sniparaResolver', () => {
               { key: 'snipara_api_key', value: 'workspace-key' },
               { key: 'snipara_api_url', value: 'https://workspace.snipara.test/mcp' },
               { key: 'snipara_project_id', value: 'project-42' },
+              { key: 'snipara_swarm_id', value: 'swarm-42' },
             ],
           };
         }
@@ -38,6 +39,7 @@ describe('sniparaResolver', () => {
       apiKey: 'workspace-key',
       apiUrl: 'https://workspace.snipara.test/mcp',
       projectId: 'project-42',
+      swarmId: 'swarm-42',
       configured: true,
       source: 'workspace_settings',
     });
@@ -72,6 +74,7 @@ describe('sniparaResolver', () => {
       workspaceId: 'ws-2',
       apiKey: 'legacy-key',
       projectId: 'legacy-project',
+      swarmId: null,
       configured: true,
       source: 'workspaces',
     });

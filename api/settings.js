@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const { clearSniparaConfigCache } = require('../services/sniparaResolver');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch(e) {
@@ -90,8 +91,11 @@ async function readSettingsKV(wsId) {
     default_provider: get('default_provider', ''),
     llm_providers: (typeof map['llm_providers'] === 'object' && map['llm_providers'] !== null && !('value' in map['llm_providers'])) ? map['llm_providers'] : {},
     snipara_api_key: get('snipara_api_key', null) || null,
+    snipara_api_url: get('snipara_api_url', null) || null,
     snipara_project_id: get('snipara_project_id', null) || null,
     snipara_project_slug: get('snipara_project_slug', null) || null,
+    snipara_client_id: get('snipara_client_id', null) || null,
+    snipara_swarm_id: get('snipara_swarm_id', null) || null,
     updated_at: get('updated_at', null) || null,
   };
 }
@@ -162,8 +166,11 @@ router.get('/', async (req, res) => {
       logo_url: row.logo_url || null,
       llm_providers: masked,
       snipara_api_key: row.snipara_api_key ? maskKey(row.snipara_api_key) : null,
+      snipara_api_url: row.snipara_api_url || null,
       snipara_project_id: row.snipara_project_id || null,
       snipara_project_slug: row.snipara_project_slug || null,
+      snipara_client_id: row.snipara_client_id || null,
+      snipara_swarm_id: row.snipara_swarm_id || null,
       updated_at: row.updated_at || null,
       workspace_name: row.name || 'My Workspace',
       workspace_description: row.description || '',
@@ -197,13 +204,29 @@ router.put('/', async (req, res) => {
     const logo_url = body.logo_url || extract('logo_url');
     const default_provider = body.default_provider || extract('default_provider');
     const snipara_api_key = body.snipara_api_key || extract('snipara_api_key');
+    const snipara_api_url = body.snipara_api_url || extract('snipara_api_url');
     const snipara_project_id = body.snipara_project_id || extract('snipara_project_id');
     const snipara_project_slug = body.snipara_project_slug || extract('snipara_project_slug');
+    const snipara_client_id = body.snipara_client_id || extract('snipara_client_id');
+    const snipara_swarm_id = body.snipara_swarm_id || extract('snipara_swarm_id');
 
     const layout = await detectSettingsLayout();
 
     if (layout === 'kv') {
-      const updates = { name, description, timezone, language, logo_url, default_provider, snipara_api_key, snipara_project_id, snipara_project_slug };
+      const updates = {
+        name,
+        description,
+        timezone,
+        language,
+        logo_url,
+        default_provider,
+        snipara_api_key,
+        snipara_api_url,
+        snipara_project_id,
+        snipara_project_slug,
+        snipara_client_id,
+        snipara_swarm_id
+      };
       for (const [k, v] of Object.entries(updates)) {
         if (v !== undefined && v !== null) {
           await writeSettingKV(wsId, k, v).catch(() => {});
@@ -223,6 +246,7 @@ router.put('/', async (req, res) => {
         [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, wsId]
       );
     }
+    clearSniparaConfigCache(wsId);
     res.json({ success: true, message: 'Settings saved' });
   } catch (err) {
     console.error('[SETTINGS] PUT error:', err.message);

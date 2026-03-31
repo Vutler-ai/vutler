@@ -4,7 +4,12 @@ const pool = require('../../../lib/vaultbrix');
 const { chat: llmChat } = require('../../../services/llmRouter');
 const { fetchWithTimeout } = require('../../../services/fetchWithTimeout');
 const { insertChatMessage } = require('../../../services/chatMessages');
-const { callSniparaTool } = require('../../../services/sniparaResolver');
+const { getSniparaTaskAdapter } = require('../../../services/sniparaTaskAdapter');
+const {
+  DEFAULT_SNIPARA_SWARM_ID,
+  callSniparaTool,
+  resolveSniparaConfig,
+} = require('../../../services/sniparaResolver');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -35,6 +40,18 @@ function parsePriority(priority) {
   if (/(urgent|high|critique|critical|asap|haute priorite|haute priorité)/.test(value)) return 'high';
   if (/(low|faible priorite|faible priorité|quand possible)/.test(value)) return 'low';
   return 'medium';
+}
+
+function toSniparaPriority(priority) {
+  if (typeof priority === 'number' && Number.isFinite(priority)) {
+    return Math.max(0, Math.min(100, Math.round(priority)));
+  }
+
+  const value = String(priority || 'medium').toLowerCase();
+  if (/(p0|urgent|critical|critique|asap)/.test(value)) return 100;
+  if (/(p1|high|haute priorite|haute priorité)/.test(value)) return 80;
+  if (/(p3|low|faible priorite|faible priorité|quand possible)/.test(value)) return 20;
+  return 50;
 }
 
 function humanizeAgent(agentId) {
@@ -170,6 +187,19 @@ class SwarmCoordinator {
     return result;
   }
 
+  async getSniparaRuntimeConfig(workspaceId = DEFAULT_WORKSPACE) {
+    const config = await resolveSniparaConfig(pool, workspaceId);
+    return {
+      config,
+      swarmId: config?.swarmId || this.swarmId || DEFAULT_SNIPARA_SWARM_ID || null,
+    };
+  }
+
+  async hasSniparaConfig(workspaceId = DEFAULT_WORKSPACE) {
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(workspaceId);
+    return Boolean(swarmId && config?.configured && config?.apiKey && config?.apiUrl);
+  }
+
   pickBestAgent(taskInput) {
     const haystack = String(`${taskInput.title || ''} ${taskInput.description || ''} ${taskInput.text || ''}`).toLowerCase();
     let best = { agentId: 'mike', score: 0 };
@@ -290,7 +320,7 @@ class SwarmCoordinator {
     return [...available][0] || bySkills;
   }
 
-  async postTaskMessageToAgentChannel(workspaceId, agentId, title, priority) {
+  async postTaskMessageToAgentChannel(workspaceId, agentId, title, priority, contentOverride = null) {
     try {
       const result = await pool.query(
         `SELECT cm.channel_id
@@ -305,7 +335,8 @@ class SwarmCoordinator {
         [agentId, normalizeWorkspaceId(workspaceId)]
       );
       if (!result.rows.length) return;
-      await this.postSystemMessage(workspaceId, result.rows[0].channel_id, 'SwarmCoordinator', `Nouvelle tache assignee: ${title} (priority ${priority})`, 'swarm-coordinator');
+      const content = contentOverride || `Nouvelle tache assignee: ${title} (priority ${priority})`;
+      await this.postSystemMessage(workspaceId, result.rows[0].channel_id, 'SwarmCoordinator', content, 'swarm-coordinator');
     } catch (err) {
       console.error('[SwarmCoordinator] Failed to post task message in chat:', err.message);
     }
@@ -379,6 +410,8 @@ class SwarmCoordinator {
 
   async createTask(task = {}, workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
+    const sniparaReady = await this.hasSniparaConfig(ws);
+    const { swarmId } = await this.getSniparaRuntimeConfig(ws);
     let agentId = task.for_agent_id || task.assigned_agent || task.assignee;
     if (!agentId) {
       try {
@@ -409,11 +442,11 @@ class SwarmCoordinator {
     };
 
     const payload = {
-      swarm_id: this.swarmId,
+      swarm_id: swarmId,
       workspace_id: ws,
       title: task.title || 'Nouvelle tache',
       description: task.description || task.text || task.title || '',
-      priority: parsePriority(task.priority),
+      priority: toSniparaPriority(task.priority),
       agent_id: agentId,
       for_agent_id: agentId,
       metadata
@@ -422,9 +455,15 @@ class SwarmCoordinator {
     let created = null;
     let swarmTaskId = null;
 
-    if (this.swarmId && this.apiUrl && this.apiKey) {
+    if (sniparaReady) {
       try {
-        created = await this.sniparaCall('rlm_task_create', payload, ws);
+        created = await getSniparaTaskAdapter().createTask(ws, {
+          title: payload.title,
+          description: payload.description,
+          priority: payload.priority,
+          agentId,
+          metadata,
+        });
         if (created && typeof created === 'object' && created.error) {
           console.warn('[SwarmCoordinator] rlm_task_create returned error:', created.error);
           created = null;
@@ -440,7 +479,7 @@ class SwarmCoordinator {
       swarmTaskId,
       title: payload.title,
       description: payload.description,
-      priority: payload.priority,
+      priority: parsePriority(task.priority),
       status: 'pending',
       assignedTo: agentId,
       source: 'vutler-api',
@@ -449,7 +488,7 @@ class SwarmCoordinator {
       metadata
     });
 
-    if (this.swarmId && this.apiUrl && this.apiKey) {
+    if (sniparaReady) {
       await this.broadcast(
         `Nouvelle tache assignee a ${agentId}: ${payload.title}`,
         'task_assigned',
@@ -473,7 +512,7 @@ class SwarmCoordinator {
 
   async listTasks(workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
-    const data = await this.sniparaCall('rlm_tasks', { swarm_id: this.swarmId }, ws);
+    const data = await getSniparaTaskAdapter().listTasks(ws);
     const tasks = Array.isArray(data?.tasks) ? data.tasks : Array.isArray(data) ? data : [];
     for (const task of tasks) {
       const taskId = task.id || task.task_id;
@@ -495,7 +534,7 @@ class SwarmCoordinator {
 
   async claimTask(taskId, agentId, workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
-    const data = await this.sniparaCall('rlm_task_claim', { swarm_id: this.swarmId, task_id: taskId, agent_id: agentId }, ws);
+    const data = await getSniparaTaskAdapter().claimTask(ws, { taskId, agentId });
     await this.upsertPgTaskFromSwarm({
       swarmTaskId: taskId,
       assignedTo: agentId,
@@ -508,12 +547,7 @@ class SwarmCoordinator {
 
   async completeTask(taskId, agentId, output, workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
-    const data = await this.sniparaCall('rlm_task_complete', {
-      swarm_id: this.swarmId,
-      task_id: taskId,
-      agent_id: agentId,
-      output: output || 'Done'
-    }, ws);
+    const data = await getSniparaTaskAdapter().completeTask(ws, { taskId, agentId, output });
 
     const existing = await pool.query(
       `SELECT title, description FROM ${SCHEMA}.tasks
@@ -546,7 +580,9 @@ class SwarmCoordinator {
   }
 
   async listEvents(limit = 50, workspaceId = DEFAULT_WORKSPACE) {
-    return this.sniparaCall('rlm_swarm_events', { swarm_id: this.swarmId, limit }, workspaceId);
+    const ws = normalizeWorkspaceId(workspaceId);
+    const { swarmId } = await this.getSniparaRuntimeConfig(ws);
+    return this.sniparaCall('rlm_swarm_events', { swarm_id: swarmId, limit }, ws);
   }
 
   async events(limit = 50, workspaceId = DEFAULT_WORKSPACE) {
@@ -554,12 +590,38 @@ class SwarmCoordinator {
   }
 
   async broadcast(message, type = 'announcement', payload = {}, workspaceId = DEFAULT_WORKSPACE) {
+    const ws = normalizeWorkspaceId(workspaceId);
+    const { swarmId } = await this.getSniparaRuntimeConfig(ws);
     return this.sniparaCall('rlm_broadcast', {
-      swarm_id: this.swarmId,
+      swarm_id: swarmId,
       type,
       message,
       payload
-    }, workspaceId);
+    }, ws);
+  }
+
+  async createHtask(task = {}, workspaceId = DEFAULT_WORKSPACE) {
+    return getSniparaTaskAdapter().createHtask(workspaceId, task);
+  }
+
+  async blockHtask(taskId, blockerType, blockerReason, workspaceId = DEFAULT_WORKSPACE) {
+    return getSniparaTaskAdapter().blockHtask(workspaceId, { taskId, blockerType, blockerReason });
+  }
+
+  async unblockHtask(taskId, resolution, workspaceId = DEFAULT_WORKSPACE) {
+    return getSniparaTaskAdapter().unblockHtask(workspaceId, { taskId, resolution });
+  }
+
+  async completeHtask(taskId, result, evidence, workspaceId = DEFAULT_WORKSPACE) {
+    return getSniparaTaskAdapter().completeHtask(workspaceId, { taskId, result, evidence });
+  }
+
+  async verifyHtaskClosure(taskId, workspaceId = DEFAULT_WORKSPACE) {
+    return getSniparaTaskAdapter().verifyHtaskClosure(workspaceId, { taskId });
+  }
+
+  async closeHtask(taskId, workspaceId = DEFAULT_WORKSPACE) {
+    return getSniparaTaskAdapter().closeHtask(workspaceId, { taskId });
   }
 
   async createTaskFromChatMessage(content, workspaceId = DEFAULT_WORKSPACE) {
@@ -605,7 +667,8 @@ class SwarmCoordinator {
 
   async syncFromSnipara(workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
-    const data = await this.sniparaCall('rlm_tasks', { swarm_id: this.swarmId }, ws);
+    const { swarmId } = await this.getSniparaRuntimeConfig(ws);
+    const data = await this.sniparaCall('rlm_tasks', { swarm_id: swarmId }, ws);
     const tasks = Array.isArray(data?.tasks) ? data.tasks : (Array.isArray(data) ? data : []);
 
     let synced = 0;

@@ -17,6 +17,22 @@ function wsId(req) {
   return req.workspaceId || DEFAULT_WORKSPACE;
 }
 
+function parseTaskMetadata(task) {
+  if (!task?.metadata) return {};
+  if (typeof task.metadata === 'object') return task.metadata;
+  try {
+    return JSON.parse(task.metadata);
+  } catch (_) {
+    return {};
+  }
+}
+
+function normalizeHtaskLevel(level, fallback = 'N3_TASK') {
+  const value = String(level || fallback).toUpperCase();
+  if (value === 'N1_FEATURE' || value === 'N2_WORKSTREAM' || value === 'N3_TASK') return value;
+  return fallback;
+}
+
 async function ensureTaskColumns() {
   try {
     const { rows } = await pool.query(
@@ -67,6 +83,129 @@ async function resolveTask(id, workspaceId) {
     [id, workspaceId]
   );
   return result.rows[0] || null;
+}
+
+async function updateTaskMetadata(task, workspaceId, patch = {}) {
+  const metadata = {
+    ...parseTaskMetadata(task),
+    ...patch,
+  };
+
+  const result = await pool.query(
+    `UPDATE ${SCHEMA}.tasks
+     SET metadata = $1::jsonb,
+         updated_at = NOW()
+     WHERE id = $2 AND workspace_id = $3
+     RETURNING *`,
+    [JSON.stringify(metadata), task.id, workspaceId]
+  );
+
+  return result.rows[0] || task;
+}
+
+async function insertHierarchicalTask({
+  workspaceId,
+  parent,
+  title,
+  description,
+  assignee,
+  priority,
+  status,
+  metadata,
+  sniparaTaskId,
+  source,
+}) {
+  const inserted = await pool.query(
+    `INSERT INTO ${SCHEMA}.tasks
+     (title, description, status, priority, assignee, assigned_agent, workspace_id, parent_id, source, metadata, snipara_task_id, swarm_task_id, created_at, updated_at)
+     VALUES ($1, $2, COALESCE($3, 'pending'), COALESCE($4, 'medium'), $5, $5, $6, $7, $8, COALESCE($9::jsonb, '{}'::jsonb), $10, $10, NOW(), NOW())
+     RETURNING *`,
+    [
+      title,
+      description || '',
+      status,
+      priority,
+      assignee || null,
+      workspaceId,
+      parent.id,
+      source,
+      JSON.stringify(metadata || {}),
+      sniparaTaskId,
+    ]
+  );
+
+  return inserted.rows[0];
+}
+
+async function ensureHierarchyRoot(parent, workspaceId, swarmCoordinator) {
+  const meta = parseTaskMetadata(parent);
+  if (meta.snipara_hierarchy_root_id) {
+    return { parent, hierarchyRootId: meta.snipara_hierarchy_root_id };
+  }
+
+  const created = await swarmCoordinator.createHtask({
+    level: 'N1_FEATURE',
+    title: parent.title,
+    description: parent.description || '',
+    owner: parent.assigned_agent || parent.assignee || 'jarvis',
+  }, workspaceId);
+
+  const hierarchyRootId = created?.task_id || created?.id || created?.task?.id;
+  if (!hierarchyRootId) {
+    throw new Error('Snipara hierarchy root creation did not return a task id');
+  }
+
+  const updatedParent = await updateTaskMetadata(parent, workspaceId, {
+    snipara_hierarchy_root_id: hierarchyRootId,
+    snipara_hierarchy_level: 'N1_FEATURE',
+  });
+
+  return { parent: updatedParent, hierarchyRootId };
+}
+
+async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoordinator }) {
+  const parentMeta = parseTaskMetadata(parent);
+  const isParentHtask = parentMeta.snipara_task_kind === 'htask' && parent.snipara_task_id;
+  const { parent: resolvedParent, hierarchyRootId } = isParentHtask
+    ? { parent, hierarchyRootId: parent.snipara_task_id }
+    : await ensureHierarchyRoot(parent, workspaceId, swarmCoordinator);
+
+  const level = normalizeHtaskLevel(body.level, 'N3_TASK');
+  const remoteParentId = isParentHtask ? parent.snipara_task_id : hierarchyRootId;
+  const owner = body.owner || body.assignee || body.assigned_agent || parent.assigned_agent || parent.assignee || 'jarvis';
+  const created = await swarmCoordinator.createHtask({
+    level,
+    title: body.title,
+    description: body.description || '',
+    owner,
+    parentId: remoteParentId,
+    workstreamType: level === 'N2_WORKSTREAM' ? (body.workstream_type || 'GENERAL') : undefined,
+  }, workspaceId);
+
+  const sniparaTaskId = created?.task_id || created?.id || created?.task?.id;
+  if (!sniparaTaskId) {
+    throw new Error('Snipara htask creation did not return a task id');
+  }
+
+  return insertHierarchicalTask({
+    workspaceId,
+    parent: resolvedParent,
+    title: body.title,
+    description: body.description,
+    assignee: body.assignee || body.assigned_agent || parent.assigned_agent || parent.assignee || null,
+    priority: body.priority || 'medium',
+    status: body.status || 'pending',
+    metadata: {
+      snipara_task_kind: 'htask',
+      snipara_hierarchy_level: level,
+      snipara_hierarchy_root_id: isParentHtask
+        ? (parentMeta.snipara_hierarchy_root_id || parent.snipara_task_id)
+        : hierarchyRootId,
+      snipara_remote_parent_id: remoteParentId,
+    },
+    sniparaTaskId,
+    source: 'vutler-htask',
+  });
 }
 
 router.get('/tasks-v2', authenticateAgent, async (req, res) => {
@@ -157,7 +296,10 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
     const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
     const assignee = updates.assignee || updates.assigned_agent || task.assignee || task.assigned_agent || req.agent.id;
 
-    if ((updates.status === 'in_progress' || updates.status === 'claimed') && task.snipara_task_id) {
+    const meta = parseTaskMetadata(task);
+    const isHtask = meta.snipara_task_kind === 'htask';
+
+    if ((updates.status === 'in_progress' || updates.status === 'claimed') && task.snipara_task_id && !isHtask) {
       await swarmCoordinator.claimTask(task.snipara_task_id, assignee, workspaceId);
     }
 
@@ -174,7 +316,15 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
           subtasks_remaining: subtasks.rows.filter((subtask) => subtask.status !== 'completed' && subtask.status !== 'done').length
         });
       }
-      await swarmCoordinator.completeTask(task.snipara_task_id, assignee, updates.output, workspaceId);
+      if (isHtask) {
+        await swarmCoordinator.completeHtask(task.snipara_task_id, updates.output, updates.evidence, workspaceId);
+        const closure = await swarmCoordinator.verifyHtaskClosure(task.snipara_task_id, workspaceId).catch(() => null);
+        if (closure?.can_close || closure?.closure_ready || closure?.ready_to_close) {
+          await swarmCoordinator.closeHtask(task.snipara_task_id, workspaceId).catch(() => {});
+        }
+      } else {
+        await swarmCoordinator.completeTask(task.snipara_task_id, assignee, updates.output, workspaceId);
+      }
     }
 
     const merged = {
@@ -236,15 +386,35 @@ router.post('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
     const { title, description, assignee, priority, status } = req.body;
     if (!title) return res.status(400).json({ success: false, error: 'Missing required field: title' });
 
-    const inserted = await pool.query(
-      `INSERT INTO ${SCHEMA}.tasks
-       (title, description, status, priority, assignee, assigned_agent, workspace_id, parent_id, source, created_at, updated_at)
-       VALUES ($1, $2, COALESCE($3, 'pending'), COALESCE($4, 'medium'), $5, $5, $6, $7, 'vutler-subtask', NOW(), NOW())
-       RETURNING *`,
-      [title, description || '', status, priority, assignee || null, parent.workspace_id, parent.id]
-    );
+    const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
+    const parentMeta = parseTaskMetadata(parent);
+    const shouldUseHierarchy = req.body?.hierarchical === true
+      || parentMeta.snipara_task_kind === 'htask'
+      || parentMeta.workflow_mode === 'FULL'
+      || Boolean(parentMeta.snipara_hierarchy_root_id);
 
-    res.status(201).json({ success: true, data: inserted.rows[0] });
+    if (shouldUseHierarchy) {
+      const created = await createHierarchicalSubtask({
+        parent,
+        body: req.body,
+        workspaceId,
+        swarmCoordinator,
+      });
+      return res.status(201).json({ success: true, data: created });
+    }
+
+    const created = await swarmCoordinator.createTask({
+      title,
+      description: description || '',
+      priority: priority || 'medium',
+      for_agent_id: assignee || null,
+      parent_id: parent.id,
+      metadata: {
+        source: 'vutler-subtask',
+      },
+    }, workspaceId);
+
+    res.status(201).json({ success: true, data: created });
   } catch (error) {
     console.error('[Tasks API] Error creating subtask:', error);
     res.status(500).json({ success: false, error: 'Failed to create subtask', message: error.message });

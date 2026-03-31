@@ -9,6 +9,7 @@ const DEFAULT_SNIPARA_URL = process.env.SNIPARA_MCP_URL ||
 const DEFAULT_SNIPARA_KEY = process.env.SNIPARA_API_KEY ||
   process.env.RLM_TOKEN ||
   '';
+const DEFAULT_SNIPARA_SWARM_ID = process.env.SNIPARA_SWARM_ID || null;
 const CACHE_TTL_MS = 60_000;
 const cache = new Map();
 
@@ -48,6 +49,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
     apiKey: DEFAULT_SNIPARA_KEY,
     projectId: null,
     projectSlug: DEFAULT_SNIPARA_PROJECT_SLUG,
+    swarmId: DEFAULT_SNIPARA_SWARM_ID,
     configured: Boolean(DEFAULT_SNIPARA_KEY),
     source: DEFAULT_SNIPARA_KEY ? 'env' : 'none',
   };
@@ -58,7 +60,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
         `SELECT key, value
          FROM tenant_vutler.workspace_settings
          WHERE workspace_id = $1
-           AND key IN ('snipara_api_key', 'snipara_api_url', 'snipara_project_id', 'snipara_project_slug')`,
+           AND key IN ('snipara_api_key', 'snipara_api_url', 'snipara_project_id', 'snipara_project_slug', 'snipara_swarm_id')`,
         [ws]
       );
 
@@ -67,6 +69,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
       const projectSlug = normalizeProjectSlug(map.get('snipara_project_slug') || DEFAULT_SNIPARA_PROJECT_SLUG);
       const apiUrl = map.get('snipara_api_url') || buildSniparaProjectUrl(projectSlug, resolved.apiUrl);
       const projectId = map.get('snipara_project_id') || null;
+      const swarmId = map.get('snipara_swarm_id') || DEFAULT_SNIPARA_SWARM_ID;
 
       resolved = {
         workspaceId: ws,
@@ -74,6 +77,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
         apiKey,
         projectId,
         projectSlug,
+        swarmId,
         configured: Boolean(apiKey),
         source: map.get('snipara_api_key') ? 'workspace_settings' : resolved.source,
       };
@@ -95,6 +99,7 @@ async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
             apiKey: row.snipara_api_key,
             projectId: row.snipara_project_id || projectId,
             projectSlug: legacyProjectSlug,
+            swarmId,
             configured: true,
             source: 'workspaces',
           };
@@ -131,6 +136,7 @@ async function callSniparaTool({ db, workspaceId, toolName, args = {}, timeoutMs
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-API-Key': config.apiKey,
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
@@ -174,6 +180,7 @@ function clearSniparaConfigCache(workspaceId) {
 module.exports = {
   DEFAULT_WORKSPACE,
   DEFAULT_SNIPARA_PROJECT_SLUG,
+  DEFAULT_SNIPARA_SWARM_ID,
   resolveSniparaConfig,
   callSniparaTool,
   parseSniparaResult,

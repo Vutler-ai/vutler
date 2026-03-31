@@ -7,8 +7,8 @@ const taskRouter = require('../services/taskRouter');
 // GET / — list tasks (was Snipara, now uses taskRouter PG)
 router.get('/', async (req, res) => {
   try {
-    const { status, assigned_agent, workspace_id } = req.query;
-    const tasks = await taskRouter.listTasks({ status, assigned_agent, workspace_id });
+    const { status, assigned_agent } = req.query;
+    const tasks = await taskRouter.listTasks({ status, assigned_agent, workspace_id: req.workspaceId });
     res.json({ success: true, count: tasks.length, tasks, source: 'task-router' });
   } catch (err) {
     console.error('[TASKS] List error:', err.message);
@@ -51,7 +51,7 @@ router.post('/', async (req, res) => {
 // GET /:id
 router.get('/:id', async (req, res) => {
   try {
-    const task = await taskRouter.getTask(req.params.id);
+    const task = await taskRouter.getTask(req.params.id, req.workspaceId);
     if (!task) return res.status(404).json({ success: false, error: 'Not found' });
     res.json({ success: true, data: task });
   } catch (err) {
@@ -62,7 +62,7 @@ router.get('/:id', async (req, res) => {
 // PUT /:id
 router.put('/:id', async (req, res) => {
   try {
-    const task = await taskRouter.updateTask(req.params.id, req.body);
+    const task = await taskRouter.updateTask(req.params.id, req.body, req.workspaceId);
     res.json({ success: true, data: task });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

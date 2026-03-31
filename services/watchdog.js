@@ -10,6 +10,7 @@
 const { pool } = require('../lib/postgres');
 
 const SCHEMA = 'tenant_vutler';
+const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 const CHECK_INTERVAL = Number(process.env.WATCHDOG_INTERVAL_MS) || 60_000;
 const STALL_THRESHOLD = Number(process.env.WATCHDOG_STALL_THRESHOLD_MS) || 600_000; // 10 min
@@ -104,14 +105,22 @@ class AgentWatchdog {
     const { task_id, agent_id } = data;
     console.log(`[Watchdog] Task failed: ${task_id} by agent ${agent_id}`);
 
-    // Post to team coordination
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks WHERE snipara_task_id = $1 OR swarm_task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    const task = result.rows[0] || null;
+    const workspaceId = task?.workspace_id || DEFAULT_WORKSPACE;
+
     const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
     const coordinator = getSwarmCoordinator();
-    const channelId = await coordinator.getTeamChannelId();
+    const channelId = await coordinator.getTeamChannelId(workspaceId);
     await coordinator.postSystemMessage(
+      workspaceId,
       channelId,
       'Watchdog',
       `❌ Task ${task_id} failed (agent: ${agent_id}). Investigating...`,
+      'watchdog',
     );
   }
 
@@ -122,13 +131,22 @@ class AgentWatchdog {
     const { task_id, owner, blocker_type, blocker_reason } = data;
     console.log(`[Watchdog] Task blocked: ${task_id} (${blocker_type}: ${blocker_reason})`);
 
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks WHERE snipara_task_id = $1 OR swarm_task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    const task = result.rows[0] || null;
+    const workspaceId = task?.workspace_id || DEFAULT_WORKSPACE;
+
     const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
     const coordinator = getSwarmCoordinator();
-    const channelId = await coordinator.getTeamChannelId();
+    const channelId = await coordinator.getTeamChannelId(workspaceId);
     await coordinator.postSystemMessage(
+      workspaceId,
       channelId,
       'Watchdog',
       `🚧 Task blocked: "${blocker_reason}" (type: ${blocker_type}, owner: ${owner || 'unassigned'}). Needs attention.`,
+      'watchdog',
     );
   }
 
@@ -140,12 +158,15 @@ class AgentWatchdog {
 
     const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
     const coordinator = getSwarmCoordinator();
+    const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
 
     try {
       await coordinator.postTaskMessageToAgentChannel(
+        workspaceId,
         task.assigned_agent,
-        `⏰ Reminder: "${task.title}" has been in progress for a while. Status update? (nudge ${nudgeNumber}/${this.maxNudges})`,
+        task.title,
         task.priority || 'medium',
+        `⏰ Reminder: "${task.title}" has been in progress for a while. Status update? (nudge ${nudgeNumber}/${this.maxNudges})`,
       );
     } catch (err) {
       console.warn(`[Watchdog] Failed to nudge agent ${task.assigned_agent}:`, err.message);
@@ -187,14 +208,17 @@ class AgentWatchdog {
         description: `[Re-dispatched from stalled task — original agent: ${task.assigned_agent}]\n\n${task.description || ''}`,
         priority: task.priority || 'high',
         for_agent_id: agentId,
-      });
+      }, task.workspace_id || DEFAULT_WORKSPACE);
 
       // Notify team
-      const channelId = await coordinator.getTeamChannelId();
+      const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+      const channelId = await coordinator.getTeamChannelId(workspaceId);
       await coordinator.postSystemMessage(
+        workspaceId,
         channelId,
         'Watchdog',
         `🔄 Task "${task.title}" re-dispatched from @${task.assigned_agent} to @${agentId} (unresponsive).`,
+        'watchdog',
       );
     } catch (err) {
       console.error(`[Watchdog] Re-dispatch failed for task ${task.id}:`, err.message);

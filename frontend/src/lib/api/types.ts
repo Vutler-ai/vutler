@@ -351,9 +351,44 @@ export interface NexusStats {
   tasksCompleted: number;
 }
 
+export interface NexusBillingSnapshot {
+  planId: string;
+  limits: {
+    total: number;
+    local: number;
+    enterprise: number;
+  };
+  usage: {
+    total: number;
+    local: number;
+    enterprise: number;
+  };
+  remaining: {
+    total: number;
+    local: number;
+    enterprise: number;
+  };
+  canProvision: {
+    total: boolean;
+    local: boolean;
+    enterprise: boolean;
+  };
+}
+
+export interface NexusCommandStats {
+  queued: number;
+  inProgress: number;
+  completed24h: number;
+  failed24h: number;
+  expired24h: number;
+  avgDurationMs: number;
+}
+
 export interface NexusStatusResponse {
   nodes: NexusNode[];
   stats: NexusStats;
+  billing?: NexusBillingSnapshot | null;
+  commandStats?: NexusCommandStats | null;
 }
 
 export interface DeployLocalPayload {
@@ -414,9 +449,16 @@ export interface NexusCommandStatus<T = unknown> {
   progress?: NexusCommandProgress | null;
   result?: T;
   error?: string;
+  attempts?: number;
+  maxAttempts?: number;
+  timeoutMs?: number;
+  leaseMs?: number;
+  durationMs?: number;
   createdAt?: string;
   startedAt?: string;
   completedAt?: string;
+  leaseExpiresAt?: string;
+  expiresAt?: string;
   updatedAt?: string;
 }
 
@@ -612,6 +654,7 @@ export interface WorkspaceSettings {
   snipara_api_url?: SettingValue | string;
   snipara_project_id?: SettingValue | string;
   snipara_project_slug?: SettingValue | string;
+  snipara_client_id?: SettingValue | string;
   snipara_swarm_id?: SettingValue | string;
   beta_features?: Record<string, unknown>;
   [key: string]: unknown;

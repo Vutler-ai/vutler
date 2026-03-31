@@ -198,6 +198,8 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
   }
 
   async _requestRevision(task, webhookData, verdict, retryCount) {
+    const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+
     // Update retry count
     await pool.query(
       `UPDATE ${SCHEMA}.tasks
@@ -224,18 +226,22 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
       description: `Previous attempt failed verification (score: ${verdict.overall_score}/10).\n\nFailed criteria:\n${failedCriteria}\n\nPlease revise and resubmit.`,
       priority: task.priority || 'medium',
       for_agent_id: task.assigned_agent,
-    });
+    }, workspaceId);
 
     // Notify via team coordination
-    const channelId = await coordinator.getTeamChannelId();
+    const channelId = await coordinator.getTeamChannelId(workspaceId);
     await coordinator.postSystemMessage(
+      workspaceId,
       channelId,
       'Verifier',
       `⚠️ Task "${task.title}" failed verification (${verdict.overall_score}/10). Revision #${retryCount} assigned to @${task.assigned_agent}.`,
+      'verifier',
     );
   }
 
   async _escalate(task, webhookData, verdict) {
+    const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+
     // Mark task as needing escalation
     await pool.query(
       `UPDATE ${SCHEMA}.tasks
@@ -256,14 +262,16 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
       description: `This task failed verification ${this.maxRetries} times.\nLast score: ${verdict.overall_score}/10.\n\nSummary: ${verdict.summary}\n\nOriginal assignee: ${task.assigned_agent}`,
       priority: 'high',
       for_agent_id: 'mike',
-    });
+    }, workspaceId);
 
     // Post to team coordination
-    const channelId = await coordinator.getTeamChannelId();
+    const channelId = await coordinator.getTeamChannelId(workspaceId);
     await coordinator.postSystemMessage(
+      workspaceId,
       channelId,
       'Verifier',
       `🚨 Task "${task.title}" escalated to @Mike after ${this.maxRetries} failed verifications.`,
+      'verifier',
     );
 
     // Store learning in memory
