@@ -41,6 +41,7 @@ try { router.use('/nexus', require('../../api/nexus')); }
 catch (e) { console.warn('[AGENTS] Skip /nexus (api):', e.message); }
 try { router.use('/nexus', require('../../app/custom/api/nexus')); }
 catch (e) { console.warn('[AGENTS] Skip /nexus (custom):', e.message); }
+mount('/nexus-enterprise', 'nexus', '../../api/nexus-enterprise');
 mount('/nexus/routing',   'nexus',       '../../api/nexus-routing');
 
 // ── Marketplace ─────────────────────────────────────────────────────────────

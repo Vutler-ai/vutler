@@ -1,0 +1,22 @@
+{
+  "key": "bid_manager",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "bid_manager",
+    "name": "Bid Manager",
+    "category": "knowledge",
+    "agent_level": 1,
+    "description": "Builds bid drafts and coordinates proposal materials",
+    "deployment_modes": ["fixed", "elastic"],
+    "seat_class": "standard_agent",
+    "required_capabilities": ["document_generation", "workspace_knowledge_access", "email_dispatch"],
+    "optional_capabilities": ["reporting"],
+    "action_catalog_ref": "catalog.bid_manager",
+    "policy_bundle_ref": "policy.bid_manager.default",
+    "local_integrations_ref": "local_integrations.bid_manager",
+    "helper_rules_ref": "helper_rules.bid_manager",
+    "supported_event_sources": ["schedule", "operator_chat"]
+  }
+}

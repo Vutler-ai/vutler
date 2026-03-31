@@ -17,6 +17,11 @@ import type {
   NexusCapabilities,
   NexusCommandStatus,
   NexusCommandStats,
+  NexusEnterpriseCatalogDispatchPayload,
+  NexusEnterpriseHelperDispatchPayload,
+  NexusEnterpriseLocalIntegrationPayload,
+  NexusGovernanceApproval,
+  NexusGovernanceAuditEvent,
 } from '../types';
 
 export async function getNodes(): Promise<NexusStatusResponse> {
@@ -223,6 +228,122 @@ export async function dispatchReadClipboard(
   nodeId: string
 ): Promise<NexusDispatchResult<{ content: string }>> {
   return dispatchAction(nodeId, 'read_clipboard', {}) as Promise<NexusDispatchResult<{ content: string }>>;
+}
+
+export async function dispatchEnterpriseCatalogAction(
+  nodeId: string,
+  payload: NexusEnterpriseCatalogDispatchPayload
+): Promise<NexusDispatchResult> {
+  return dispatchAction(nodeId, 'enterprise_action', payload as unknown as Record<string, unknown>);
+}
+
+export async function dispatchEnterpriseLocalIntegration(
+  nodeId: string,
+  payload: NexusEnterpriseLocalIntegrationPayload
+): Promise<NexusDispatchResult> {
+  return dispatchAction(nodeId, 'enterprise_local_api', payload as unknown as Record<string, unknown>);
+}
+
+export async function dispatchEnterpriseHelper(
+  nodeId: string,
+  payload: NexusEnterpriseHelperDispatchPayload
+): Promise<NexusDispatchResult> {
+  return dispatchAction(nodeId, 'enterprise_helper', payload as unknown as Record<string, unknown>);
+}
+
+export async function getNodeGovernanceApprovals(
+  nodeId: string,
+  status?: string,
+  limit = 25
+): Promise<NexusGovernanceApproval[]> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch<{ success: boolean; approvals: NexusGovernanceApproval[] }>(
+    `/api/v1/nexus/nodes/${nodeId}/governance/approvals${suffix}`
+  );
+  return response.approvals ?? [];
+}
+
+export async function getNodeGovernanceScopes(
+  nodeId: string,
+  status?: string,
+  limit = 100
+): Promise<NexusGovernanceApproval[]> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  params.set('limit', String(limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch<{ success: boolean; scopes: NexusGovernanceApproval[] }>(
+    `/api/v1/nexus/nodes/${nodeId}/governance/scopes${suffix}`
+  );
+  return response.scopes ?? [];
+}
+
+export async function getNodeGovernanceAudit(
+  nodeId: string,
+  requestType?: string,
+  limit = 50
+): Promise<NexusGovernanceAuditEvent[]> {
+  const params = new URLSearchParams();
+  if (requestType) params.set('requestType', requestType);
+  params.set('limit', String(limit));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await apiFetch<{ success: boolean; audit: NexusGovernanceAuditEvent[] }>(
+    `/api/v1/nexus/nodes/${nodeId}/governance/audit${suffix}`
+  );
+  return response.audit ?? [];
+}
+
+export async function approveNodeGovernanceApproval(
+  nodeId: string,
+  approvalId: string,
+  options?: {
+    comment?: string;
+    scopeKey?: string;
+    scopeMode?: 'single' | 'process';
+    scopeExpiresAt?: string;
+  }
+): Promise<{ approval: NexusGovernanceApproval; executionCommandId?: string }> {
+  return apiFetch<{ approval: NexusGovernanceApproval; executionCommandId?: string; queueError?: string }>(
+    `/api/v1/nexus/nodes/${nodeId}/governance/approvals/${approvalId}/approve`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        comment: options?.comment,
+        scopeKey: options?.scopeKey,
+        scopeMode: options?.scopeMode,
+        scopeExpiresAt: options?.scopeExpiresAt,
+      }),
+    }
+  );
+}
+
+export async function rejectNodeGovernanceApproval(
+  nodeId: string,
+  approvalId: string,
+  comment?: string
+): Promise<{ approval: NexusGovernanceApproval }> {
+  return apiFetch<{ approval: NexusGovernanceApproval }>(
+    `/api/v1/nexus/nodes/${nodeId}/governance/approvals/${approvalId}/reject`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ comment }),
+    }
+  );
+}
+
+export async function revokeNodeGovernanceScope(
+  nodeId: string,
+  approvalId: string
+): Promise<{ approval: NexusGovernanceApproval }> {
+  return apiFetch<{ approval: NexusGovernanceApproval }>(
+    `/api/v1/nexus/nodes/${nodeId}/governance/approvals/${approvalId}/revoke-scope`,
+    {
+      method: 'POST',
+    }
+  );
 }
 
 export async function getNodeCapabilities(

@@ -1,0 +1,22 @@
+{
+  "key": "report_writer",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "report_writer",
+    "name": "Report Writer",
+    "category": "knowledge",
+    "agent_level": 1,
+    "description": "Drafts reports from structured and workspace inputs",
+    "deployment_modes": ["fixed", "elastic"],
+    "seat_class": "standard_agent",
+    "required_capabilities": ["document_generation", "workspace_knowledge_access"],
+    "optional_capabilities": ["email_dispatch", "reporting"],
+    "action_catalog_ref": "catalog.report_writer",
+    "policy_bundle_ref": "policy.report_writer.default",
+    "local_integrations_ref": "local_integrations.report_writer",
+    "helper_rules_ref": "helper_rules.report_writer",
+    "supported_event_sources": ["schedule", "operator_chat"]
+  }
+}

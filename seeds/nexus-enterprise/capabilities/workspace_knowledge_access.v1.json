@@ -1,0 +1,15 @@
+{
+  "key": "workspace_knowledge_access",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "workspace_knowledge_access",
+    "name": "Workspace Knowledge Access",
+    "risk_class": "knowledge",
+    "provides": ["search_workspace_knowledge", "read_workspace_documents"],
+    "default_tool_classes": ["workspace_tool"],
+    "requires": ["policy_engine"],
+    "optional_with": ["document_generation", "reporting"]
+  }
+}

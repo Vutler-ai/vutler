@@ -1,0 +1,22 @@
+{
+  "key": "av_manager",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "av_manager",
+    "name": "AV Manager",
+    "category": "operations",
+    "agent_level": 2,
+    "description": "Monitors AV rooms and executes bounded remediation",
+    "deployment_modes": ["fixed", "elastic"],
+    "seat_class": "standard_agent",
+    "required_capabilities": ["event_ingestion", "ticketing", "device_diagnostics", "local_api_bridge"],
+    "optional_capabilities": ["reporting", "helper_delegation"],
+    "action_catalog_ref": "catalog.av_manager",
+    "policy_bundle_ref": "policy.av_manager.default",
+    "local_integrations_ref": "local_integrations.av_manager",
+    "helper_rules_ref": "helper_rules.av_manager",
+    "supported_event_sources": ["webhook", "schedule", "operator_chat"]
+  }
+}

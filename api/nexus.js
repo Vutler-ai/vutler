@@ -18,6 +18,19 @@ const {
   getWorkspaceNexusBillingSummary,
   getWorkspaceNexusUsage,
 } = require('../services/nexusBilling');
+const {
+  ensureGovernanceTables,
+  createApprovalRequest,
+  listApprovalRequests,
+  getApprovalRequest,
+  resolveApprovalRequest,
+  markApprovalExecution,
+  findActiveApprovalScope,
+  revokeApprovalScope,
+  createAuditEvent,
+  listAuditEvents,
+} = require('../services/nexusEnterpriseGovernance');
+const { sendPostalMail } = require('../services/postalMailer');
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
@@ -43,6 +56,12 @@ function signDeployToken(payload) {
 
 function cleanObject(input = {}) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+}
+
+function normalizeStringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === 'string' && item.trim())
+    : [];
 }
 
 function slugify(value) {
@@ -100,6 +119,12 @@ function buildEnterpriseDeployToken({ req, body = {} }) {
   const allowCreatingNewAgents = body.allowCreatingNewAgents ?? body.allow_create ?? false;
   const autoSpawnRules = Array.isArray(body.autoSpawnRules) ? body.autoSpawnRules : (Array.isArray(body.auto_spawn_rules) ? body.auto_spawn_rules : []);
   const routingRules = Array.isArray(body.routingRules) ? body.routingRules : (Array.isArray(body.routing_rules) ? body.routing_rules : []);
+  const profileKey = body.profileKey || body.profile_key || null;
+  const profileVersion = body.profileVersion || body.profile_version || null;
+  const deploymentMode = body.deploymentMode || body.deployment_mode || 'fixed';
+  const selectedCapabilities = normalizeStringArray(Array.isArray(body.selectedCapabilities) ? body.selectedCapabilities : body.selected_capabilities);
+  const selectedLocalIntegrations = normalizeStringArray(Array.isArray(body.selectedLocalIntegrations) ? body.selectedLocalIntegrations : body.selected_local_integrations);
+  const selectedHelperProfiles = normalizeStringArray(Array.isArray(body.selectedHelperProfiles) ? body.selectedHelperProfiles : body.selected_helper_profiles);
   const seats = Number.isFinite(Number(body.seats)) ? Number(body.seats) : (Number.isFinite(Number(body.max_seats)) ? Number(body.max_seats) : 1);
   const filesystemRoot = body.filesystemRoot || body.filesystem_root || `/opt/${slugify(clientName)}`;
 
@@ -127,6 +152,14 @@ function buildEnterpriseDeployToken({ req, body = {} }) {
     allow_create: !!allowCreatingNewAgents,
     routing_rules: routingRules,
     auto_spawn_rules: autoSpawnRules,
+    enterprise_profile: profileKey ? {
+      profile_key: profileKey,
+      profile_version: profileVersion,
+      deployment_mode: deploymentMode,
+      selected_capabilities: selectedCapabilities,
+      selected_local_integrations: selectedLocalIntegrations,
+      selected_helper_profiles: selectedHelperProfiles,
+    } : null,
     filesystem_root: filesystemRoot,
     offline_config: {
       enabled: !!(body.offlineMode ?? body.offline_mode),
@@ -396,23 +429,51 @@ function mapNodeListItem(row) {
 }
 
 function mapRuntimeAgent(agent = {}) {
+  const enterpriseProfile = agent.enterprise_profile || agent.enterpriseProfile || null;
   return {
     id: agent.id,
     name: agent.name || agent.username || 'Agent',
     model: agent.model || 'gpt-5.4',
     status: agent.status || 'idle',
     tasksCompleted: Number(agent.tasksCompleted || agent.tasks_completed || 0),
+    profileKey: enterpriseProfile?.profile_key || enterpriseProfile?.profileKey || agent.profile_key || agent.profileKey || undefined,
+    profileVersion: enterpriseProfile?.profile_version || enterpriseProfile?.profileVersion || agent.profile_version || agent.profileVersion || undefined,
   };
 }
 
-function mapAgentConfig(agent, sniparaInstanceId) {
+function mapAgentConfig(agent, sniparaInstanceId, enterpriseProfile = null) {
   const capabilities = agent.capabilities || [];
   return {
     ...agent,
     skills: capabilities,
     tools: capabilities,
     snipara_instance_id: sniparaInstanceId,
+    enterprise_profile: enterpriseProfile || undefined,
+    profile_key: enterpriseProfile?.profile_key || enterpriseProfile?.profileKey || undefined,
+    profile_version: enterpriseProfile?.profile_version || enterpriseProfile?.profileVersion || undefined,
   };
+}
+
+function getNodeEnterpriseProfile(node, agentEntry = null) {
+  return agentEntry?.enterprise_profile
+    || agentEntry?.enterpriseProfile
+    || node?.config?.enterprise_profile
+    || node?.config?.enterpriseProfile
+    || null;
+}
+
+function resolveEnterpriseProfilePayload(body = {}, fallbackProfile = null) {
+  const profileKey = body.profileKey || body.profile_key || fallbackProfile?.profile_key || fallbackProfile?.profileKey || null;
+  if (!profileKey) return null;
+
+  return cleanObject({
+    profile_key: profileKey,
+    profile_version: body.profileVersion || body.profile_version || fallbackProfile?.profile_version || fallbackProfile?.profileVersion || null,
+    deployment_mode: body.deploymentMode || body.deployment_mode || fallbackProfile?.deployment_mode || fallbackProfile?.deploymentMode || null,
+    selected_capabilities: normalizeStringArray(body.selectedCapabilities || body.selected_capabilities || fallbackProfile?.selected_capabilities || fallbackProfile?.selectedCapabilities),
+    selected_local_integrations: normalizeStringArray(body.selectedLocalIntegrations || body.selected_local_integrations || fallbackProfile?.selected_local_integrations || fallbackProfile?.selectedLocalIntegrations),
+    selected_helper_profiles: normalizeStringArray(body.selectedHelperProfiles || body.selected_helper_profiles || fallbackProfile?.selected_helper_profiles || fallbackProfile?.selectedHelperProfiles),
+  });
 }
 
 async function loadNodeForWorkspace(workspaceId, nodeId) {
@@ -502,6 +563,7 @@ async function createEnterpriseAgentForNode({ workspaceId, nodeId, body = {} }) 
     tools = [],
     avatar = null,
   } = body;
+  const enterpriseProfile = resolveEnterpriseProfilePayload(body, getNodeEnterpriseProfile(node));
 
   if (!name) {
     const err = new Error('name is required');
@@ -540,6 +602,7 @@ async function createEnterpriseAgentForNode({ workspaceId, nodeId, body = {} }) 
     status: 'idle',
     tasksCompleted: 0,
     deployedAt: new Date().toISOString(),
+    enterprise_profile: enterpriseProfile || undefined,
   };
   agentsDeployed.push(entry);
 
@@ -553,7 +616,7 @@ async function createEnterpriseAgentForNode({ workspaceId, nodeId, body = {} }) 
   return {
     success: true,
     agent: {
-      ...mapAgentConfig(agent, sniparaInstanceId),
+      ...mapAgentConfig(agent, sniparaInstanceId, enterpriseProfile),
       status: 'idle',
       tasksCompleted: 0,
     },
@@ -651,6 +714,78 @@ function mapNodeCommand(row) {
 function describeNodeCommand(row) {
   const action = row.payload?.action ? `:${row.payload.action}` : '';
   return `${row.command_type}${action} ${row.status}`;
+}
+
+async function resolveWorkspaceApprovalRecipients(workspaceId) {
+  const settingsRes = await pool.query(
+    `SELECT key, value
+       FROM ${SCHEMA}.workspace_settings
+      WHERE workspace_id = $1
+        AND key IN ('nexus_approval_email', 'approval_email', 'nexus_approval_emails')`,
+    [workspaceId]
+  ).catch(() => ({ rows: [] }));
+
+  const recipients = [];
+  for (const row of settingsRes.rows) {
+    const raw = row.value && typeof row.value === 'object' && 'value' in row.value ? row.value.value : row.value;
+    if (typeof raw === 'string' && raw.trim()) {
+      recipients.push(...raw.split(',').map((entry) => entry.trim()).filter(Boolean));
+    } else if (Array.isArray(raw)) {
+      recipients.push(...raw.filter((entry) => typeof entry === 'string' && entry.trim()).map((entry) => entry.trim()));
+    }
+  }
+  if (recipients.length > 0) {
+    return Array.from(new Set(recipients));
+  }
+
+  const ownerRes = await pool.query(
+    `SELECT ua.email
+       FROM ${SCHEMA}.workspaces w
+       LEFT JOIN ${SCHEMA}.users_auth ua ON ua.id = w.owner_id
+      WHERE w.id = $1
+      LIMIT 1`,
+    [workspaceId]
+  ).catch(() => ({ rows: [] }));
+
+  const ownerEmail = ownerRes.rows[0]?.email || null;
+  return ownerEmail ? [ownerEmail] : [];
+}
+
+async function notifyApprovalByEmail({ workspaceId, node, approval }) {
+  const recipients = await resolveWorkspaceApprovalRecipients(workspaceId);
+  if (!recipients.length) return { skipped: true, reason: 'No approval recipients configured' };
+
+  const appUrl = process.env.APP_URL || 'https://app.vutler.ai';
+  const nodeUrl = `${appUrl}/nexus/${node.id}`;
+  const subject = `[Vutler] Approval required for ${approval.title}`;
+  const plain = [
+    `Approval required for workspace ${workspaceId}.`,
+    '',
+    `Node: ${node.name}`,
+    `Request: ${approval.title}`,
+    approval.summary ? `Summary: ${approval.summary}` : '',
+    approval.scopeKey ? `Process scope: ${approval.scopeKey}` : '',
+    '',
+    `Open node: ${nodeUrl}`,
+    `Approval ID: ${approval.id}`,
+  ].filter(Boolean).join('\n');
+  const html = `
+    <p>Approval required for workspace <strong>${workspaceId}</strong>.</p>
+    <p><strong>Node:</strong> ${node.name}</p>
+    <p><strong>Request:</strong> ${approval.title}</p>
+    ${approval.summary ? `<p><strong>Summary:</strong> ${approval.summary}</p>` : ''}
+    ${approval.scopeKey ? `<p><strong>Process scope:</strong> ${approval.scopeKey}</p>` : ''}
+    <p><a href="${nodeUrl}">Open node approvals in Vutler</a></p>
+    <p style="color:#6b7280;font-size:12px;">Approval ID: ${approval.id}</p>
+  `;
+
+  return sendPostalMail({
+    to: recipients,
+    from: 'noreply@vutler.ai',
+    subject,
+    plain_body: plain,
+    html_body: html,
+  });
 }
 
 async function getWorkspaceCommandStats(workspaceId, nodeId = null) {
@@ -1398,6 +1533,30 @@ router.post('/:id/connect', async (req, res) => {
     await ensureNexusNodesTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
     const { status, agents, memory, uptime, api_key } = req.body || {};
+    const currentNode = await loadNodeForWorkspace(workspaceId, req.params.id);
+    if (!currentNode) return res.status(404).json({ success: false, error: 'Node not found' });
+    const existingAgents = Array.isArray(currentNode.agents_deployed) ? currentNode.agents_deployed : [];
+    const existingAgentMap = new Map(
+      existingAgents
+        .filter((agent) => agent && typeof agent === 'object' && agent.id)
+        .map((agent) => [agent.id, agent])
+    );
+    const mergedAgents = (Array.isArray(agents) ? agents : []).map((agent) => {
+      const existing = existingAgentMap.get(agent?.id) || {};
+      const enterpriseProfile = agent?.enterprise_profile
+        || agent?.enterpriseProfile
+        || existing.enterprise_profile
+        || existing.enterpriseProfile
+        || undefined;
+
+      return {
+        ...existing,
+        ...agent,
+        enterprise_profile: enterpriseProfile,
+        profile_key: enterpriseProfile?.profile_key || enterpriseProfile?.profileKey || agent?.profile_key || agent?.profileKey || existing.profile_key || existing.profileKey || undefined,
+        profile_version: enterpriseProfile?.profile_version || enterpriseProfile?.profileVersion || agent?.profile_version || agent?.profileVersion || existing.profile_version || existing.profileVersion || undefined,
+      };
+    });
     const updated = await pool.query(
       `UPDATE ${SCHEMA}.nexus_nodes
        SET status = $3,
@@ -1412,7 +1571,7 @@ router.post('/:id/connect', async (req, res) => {
         req.params.id,
         workspaceId,
         status || 'online',
-        JSON.stringify(agents || []),
+        JSON.stringify(mergedAgents),
         JSON.stringify({ memory, uptime }),
         api_key || null,
       ]
@@ -1555,6 +1714,11 @@ router.get('/:nodeId/agent-configs', async (req, res) => {
     const node = nodeRes.rows[0];
     const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
     const agentIds = agentsDeployed.map(a => (typeof a === 'string' ? a : a.id)).filter(Boolean);
+    const agentEntryMap = new Map(
+      agentsDeployed
+        .filter((entry) => entry && typeof entry === 'object' && entry.id)
+        .map((entry) => [entry.id, entry])
+    );
 
     if (!agentIds.length) {
       return res.json({ agents: [] });
@@ -1571,10 +1735,11 @@ router.get('/:nodeId/agent-configs', async (req, res) => {
     const clientName = node.config?.client_name || node.config?.clientName || 'client';
 
     const agents = agentsRes.rows.map(agent => {
+      const enterpriseProfile = getNodeEnterpriseProfile(node, agentEntryMap.get(agent.id));
       const sniparaInstanceId = isEnterprise
         ? `nexus-${clientName}-${agent.id}`.toLowerCase().replace(/[^a-z0-9-]/g, '-')
         : agent.id;
-      return mapAgentConfig(agent, sniparaInstanceId);
+      return mapAgentConfig(agent, sniparaInstanceId, enterpriseProfile);
     });
 
     res.json({ agents });
@@ -1605,6 +1770,7 @@ router.get('/:nodeId/agent-configs/:agentId', async (req, res) => {
     const node = nodeRes.rows[0];
     const agentsDeployed = Array.isArray(node.agents_deployed) ? node.agents_deployed : [];
     const isDeployed = agentsDeployed.some(a => (typeof a === 'string' ? a : a.id) === agentId);
+    const agentEntry = agentsDeployed.find((entry) => (typeof entry === 'string' ? entry : entry.id) === agentId);
     if (!isDeployed) {
       return res.status(404).json({ success: false, error: 'Agent not deployed on this node' });
     }
@@ -1627,7 +1793,7 @@ router.get('/:nodeId/agent-configs/:agentId', async (req, res) => {
       ? `nexus-${clientName}-${agent.id}`.toLowerCase().replace(/[^a-z0-9-]/g, '-')
       : agent.id;
 
-    res.json({ agent: mapAgentConfig(agent, sniparaInstanceId) });
+    res.json({ agent: mapAgentConfig(agent, sniparaInstanceId, getNodeEnterpriseProfile(node, agentEntry)) });
   } catch (err) {
     console.error('[NEXUS] Get agent-config error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1793,6 +1959,124 @@ router.post('/:nodeId/commands/:commandId/progress', async (req, res) => {
   }
 });
 
+router.post('/:nodeId/governance/audit', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const audit = await createAuditEvent({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      commandId: req.body?.commandId || null,
+      approvalId: req.body?.approvalId || null,
+      agentId: req.body?.agentId || null,
+      profileKey: req.body?.profileKey || null,
+      requestType: req.body?.requestType || null,
+      eventType: req.body?.eventType || 'runtime_event',
+      decision: req.body?.decision || null,
+      outcomeStatus: req.body?.outcomeStatus || null,
+      message: req.body?.message || null,
+      payload: req.body?.payload || {},
+    });
+
+    res.status(201).json({ success: true, audit });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/:nodeId/governance/approvals', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approval = await createApprovalRequest({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      commandId: req.body?.commandId || null,
+      requestType: req.body?.requestType || 'unknown',
+      title: req.body?.title || 'Enterprise approval required',
+      summary: req.body?.summary || null,
+      profileKey: req.body?.profileKey || null,
+      agentId: req.body?.agentId || null,
+      governance: req.body?.governance || {},
+      requestPayload: req.body?.requestPayload || {},
+      scopeKey: req.body?.scopeKey || req.body?.scope_key || null,
+      scopeMode: req.body?.scopeMode || req.body?.scope_mode || null,
+      scopeExpiresAt: req.body?.scopeExpiresAt || req.body?.scope_expires_at || null,
+    });
+
+    const email = await notifyApprovalByEmail({ workspaceId, node, approval });
+
+    res.status(201).json({ success: true, approval, email });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/:nodeId/governance/scopes/resolve', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const scopeKey = typeof req.query.scopeKey === 'string' ? req.query.scopeKey : '';
+    if (!scopeKey) return res.status(400).json({ success: false, error: 'scopeKey is required' });
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approval = await findActiveApprovalScope(workspaceId, req.params.nodeId, scopeKey);
+    res.json({ success: true, scope: approval });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/:nodeId/governance/approvals/:approvalId', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approval = await getApprovalRequest(workspaceId, req.params.nodeId, req.params.approvalId);
+    if (!approval) return res.status(404).json({ success: false, error: 'Approval not found' });
+
+    res.json({ success: true, approval });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/:nodeId/governance/approvals/:approvalId/runtime-status', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approval = await markApprovalExecution({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      approvalId: req.params.approvalId,
+      status: req.body?.status || 'approved',
+      executionCommandId: req.body?.executionCommandId || req.body?.execution_command_id || null,
+    });
+    if (!approval) return res.status(404).json({ success: false, error: 'Approval not found' });
+
+    res.json({ success: true, approval });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.get('/nodes/:nodeId/commands', async (req, res) => {
   try {
     await ensureNexusNodesTable();
@@ -1822,6 +2106,230 @@ router.get('/nodes/:nodeId/commands', async (req, res) => {
       summary: await getWorkspaceCommandStats(workspaceId, nodeId),
       commands: result.rows.map(mapNodeCommand),
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/nodes/:nodeId/governance/approvals', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approvals = await listApprovalRequests(workspaceId, req.params.nodeId, {
+      status: typeof req.query.status === 'string' ? req.query.status : null,
+      limit: req.query.limit,
+    });
+
+    res.json({ success: true, approvals });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/nodes/:nodeId/governance/scopes', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approvals = await listApprovalRequests(workspaceId, req.params.nodeId, {
+      status: typeof req.query.status === 'string' ? req.query.status : null,
+      limit: req.query.limit || 100,
+    });
+    const scopes = approvals.filter((approval) => approval.scopeKey && approval.scopeMode === 'process');
+    res.json({ success: true, scopes });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/nodes/:nodeId/governance/audit', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const audit = await listAuditEvents(workspaceId, req.params.nodeId, {
+      requestType: typeof req.query.requestType === 'string' ? req.query.requestType : null,
+      limit: req.query.limit,
+    });
+
+    res.json({ success: true, audit });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/nodes/:nodeId/governance/approvals/:approvalId/approve', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const resolved = await resolveApprovalRequest({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      approvalId: req.params.approvalId,
+      status: 'approved',
+      resolutionComment: req.body?.comment || req.body?.resolutionComment || null,
+      resolvedByUserId: req.userId || req.user?.id || null,
+      resolvedByName: req.user?.name || req.user?.email || 'Unknown',
+      scopeKey: req.body?.scopeKey || req.body?.scope_key || null,
+      scopeMode: req.body?.scopeMode || req.body?.scope_mode || null,
+      scopeExpiresAt: req.body?.scopeExpiresAt || req.body?.scope_expires_at || null,
+    });
+    if (!resolved) {
+      return res.status(409).json({ success: false, error: 'Approval is not pending or does not exist' });
+    }
+
+    const governance = resolved.governance || {};
+    const requestPayload = resolved.requestPayload || {};
+    const action = governance.runtimeAction || requestPayload.action;
+    const args = {
+      ...(requestPayload.args || {}),
+      governanceApprovalId: resolved.id,
+    };
+
+    let executionCommand = null;
+    let queueError = null;
+    try {
+      executionCommand = await enqueueNodeCommand({
+        workspaceId,
+        nodeId: req.params.nodeId,
+        commandType: 'dispatch_action',
+        payload: { action, args },
+        userId: req.userId || req.user?.id || null,
+        timing: req.body || {},
+      });
+    } catch (error) {
+      queueError = error.message;
+    }
+
+    await markApprovalExecution({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      approvalId: resolved.id,
+      status: 'approved',
+      executionCommandId: executionCommand?.id || null,
+    });
+
+    await createAuditEvent({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      commandId: executionCommand?.id || resolved.commandId,
+      approvalId: resolved.id,
+      agentId: governance.agentId || args.agentId || args.agent_id || null,
+      profileKey: governance.profileKey || null,
+      requestType: governance.requestType || null,
+      eventType: 'approval_approved',
+      decision: 'approved',
+      outcomeStatus: executionCommand ? 'queued' : 'approved',
+      message: executionCommand
+        ? `Approval granted for ${governance.requestType || 'enterprise_request'}`
+        : `Approval granted for ${governance.requestType || 'enterprise_request'} (execution queue pending manual retry)`,
+      payload: {
+        approval: resolved,
+        executionCommandId: executionCommand?.id || null,
+        queueError,
+      },
+    });
+
+    res.json({
+      success: true,
+      approval: resolved,
+      executionCommandId: executionCommand?.id || undefined,
+      queueError: queueError || undefined,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/nodes/:nodeId/governance/approvals/:approvalId/reject', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const resolved = await resolveApprovalRequest({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      approvalId: req.params.approvalId,
+      status: 'rejected',
+      resolutionComment: req.body?.comment || req.body?.resolutionComment || null,
+      resolvedByUserId: req.userId || req.user?.id || null,
+      resolvedByName: req.user?.name || req.user?.email || 'Unknown',
+    });
+    if (!resolved) {
+      return res.status(409).json({ success: false, error: 'Approval is not pending or does not exist' });
+    }
+
+    await createAuditEvent({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      commandId: resolved.commandId,
+      approvalId: resolved.id,
+      agentId: resolved.agentId,
+      profileKey: resolved.profileKey,
+      requestType: resolved.requestType,
+      eventType: 'approval_rejected',
+      decision: 'rejected',
+      outcomeStatus: 'rejected',
+      message: `Approval rejected for ${resolved.requestType}`,
+      payload: {
+        approval: resolved,
+      },
+    });
+
+    res.json({ success: true, approval: resolved });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/nodes/:nodeId/governance/approvals/:approvalId/revoke-scope', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureGovernanceTables();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const approval = await revokeApprovalScope({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      approvalId: req.params.approvalId,
+    });
+    if (!approval) return res.status(404).json({ success: false, error: 'Approval not found' });
+
+    await createAuditEvent({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      commandId: approval.commandId,
+      approvalId: approval.id,
+      agentId: approval.agentId,
+      profileKey: approval.profileKey,
+      requestType: approval.requestType,
+      eventType: 'scope_revoked',
+      decision: 'revoked',
+      outcomeStatus: 'revoked',
+      message: `Process scope revoked for ${approval.scopeKey || approval.id}`,
+      payload: { approval },
+    });
+
+    res.json({ success: true, approval });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

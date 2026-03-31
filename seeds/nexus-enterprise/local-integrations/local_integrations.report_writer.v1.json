@@ -1,0 +1,10 @@
+{
+  "key": "local_integrations.report_writer",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "report_writer",
+    "integrations": []
+  }
+}

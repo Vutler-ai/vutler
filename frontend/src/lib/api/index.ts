@@ -30,6 +30,7 @@ export * as driveApi from './endpoints/drive';
 export * as calendarApi from './endpoints/calendar';
 export * as billingApi from './endpoints/billing';
 export * as nexusApi from './endpoints/nexus';
+export * as nexusEnterpriseApi from './endpoints/nexus-enterprise';
 export * as marketplaceApi from './endpoints/marketplace';
 export * as clientsApi from './endpoints/clients';
 export * as integrationsApi from './endpoints/integrations';

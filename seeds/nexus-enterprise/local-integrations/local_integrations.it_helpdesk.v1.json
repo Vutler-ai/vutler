@@ -1,0 +1,18 @@
+{
+  "key": "local_integrations.it_helpdesk",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "it_helpdesk",
+    "integrations": [
+      {
+        "integration_key": "endpoint_status_api",
+        "name": "Endpoint Status API",
+        "tool_class": "bounded_local_api",
+        "required_level": 2,
+        "operations": ["get_endpoint_context", "get_device_status"]
+      }
+    ]
+  }
+}

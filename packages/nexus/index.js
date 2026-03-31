@@ -5,6 +5,9 @@ const { createDashboardServer } = require('./dashboard/server');
 const AgentManager = require('./lib/agent-manager');
 const { TaskOrchestrator } = require('./lib/task-orchestrator');
 const { getPermissionEngine } = require('./lib/permission-engine');
+const { ProfileRegistry } = require('./lib/profile-registry');
+const { EnterprisePolicyEngine } = require('./lib/enterprise-policy-engine');
+const { LocalIntegrationBridge } = require('./lib/local-integration-bridge');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -64,6 +67,7 @@ class NexusNode {
       auto_spawn_rules: opts.auto_spawn_rules || [],
       available_pool: opts.available_pool || [],
       allow_create: opts.allow_create || false,
+      enterprise_profile: opts.enterprise_profile || null,
       server: opts.server || process.env.VUTLER_SERVER || 'https://app.vutler.ai',
       key: opts.key || process.env.VUTLER_KEY,
     }, this.providers, null); // sniparaClient set after connect()
@@ -74,6 +78,9 @@ class NexusNode {
     this.commandPollInFlight = false;
     this.taskOrchestrator = new TaskOrchestrator(this.providers, null);
     this.permissionEngine = getPermissionEngine();
+    this.profileRegistry = new ProfileRegistry({ server: this.server, apiKey: this.key });
+    this.enterprisePolicyEngine = new EnterprisePolicyEngine(this.profileRegistry);
+    this.localIntegrationBridge = new LocalIntegrationBridge(this.providers);
     this._syncPermissionSnapshot();
 
     // Offline monitor (enterprise only)
@@ -120,12 +127,13 @@ class NexusNode {
         max_seats: this.config.seats,
         primary_agent: this.config.primary_agent,
         available_pool: this.config.available_pool,
-        allow_create: this.config.allow_create,
-        routing_rules: this.config.routing_rules,
-        auto_spawn_rules: this.config.auto_spawn_rules,
-        offline_config: this.offlineConfig,
-      },
-    });
+          allow_create: this.config.allow_create,
+          routing_rules: this.config.routing_rules,
+          auto_spawn_rules: this.config.auto_spawn_rules,
+          enterprise_profile: this.config.enterprise_profile || null,
+          offline_config: this.offlineConfig,
+        },
+      });
 
     if (regResult.success && regResult.nodeId) {
       this.nodeId = regResult.nodeId;
@@ -355,6 +363,15 @@ class NexusNode {
   async _dispatchNodeAction(command) {
     const action = command.payload?.action;
     const args = command.payload?.args || {};
+    if (action === 'enterprise_action') {
+      return this._dispatchEnterpriseCatalogAction(command, args);
+    }
+    if (action === 'enterprise_local_api') {
+      return this._dispatchEnterpriseLocalIntegration(command, args);
+    }
+    if (action === 'enterprise_helper') {
+      return this._dispatchEnterpriseHelper(command, args);
+    }
     const result = await this.taskOrchestrator.execute({
       taskId: command.id,
       action,
@@ -376,6 +393,448 @@ class NexusNode {
     }
 
     return result;
+  }
+
+  _resolveWorkerProfile(agentId) {
+    if (!agentId) return null;
+    const worker = this.agentManager?.agents?.get(agentId);
+    return worker?.enterpriseProfile || null;
+  }
+
+  _resolveExecutionProfile(agentId) {
+    return this._resolveWorkerProfile(agentId)
+      || this.config.enterprise_profile
+      || null;
+  }
+
+  async _evaluateEnterpriseRequest(request, args) {
+    const enterpriseProfile = this._resolveExecutionProfile(args.agentId || args.agent_id);
+    const governance = await this.enterprisePolicyEngine.evaluate(request, enterpriseProfile);
+    return {
+      governance,
+      enterpriseProfile,
+    };
+  }
+
+  _buildGovernedOutcome(commandId, status, governance, data = null, extraMetadata = {}) {
+    return {
+      taskId: commandId,
+      status,
+      data,
+      metadata: {
+        action: governance.requestType,
+        governance,
+        ...extraMetadata,
+      },
+    };
+  }
+
+  _isApprovalBypassRequested(args = {}) {
+    return args.bypassApproval === true
+      || args.bypass_approval === true
+      || args.governanceMode === 'full_access'
+      || args.governance_mode === 'full_access'
+      || args.governanceOverride?.mode === 'full_access';
+  }
+
+  async _fetchGovernanceApproval(approvalId) {
+    const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/governance/approvals/${approvalId}`);
+    return response?.approval || null;
+  }
+
+  async _fetchGovernanceScope(scopeKey) {
+    if (!scopeKey) return null;
+    const encoded = encodeURIComponent(scopeKey);
+    const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/governance/scopes/resolve?scopeKey=${encoded}`);
+    return response?.scope || null;
+  }
+
+  async _createGovernanceApproval(request = {}) {
+    const response = await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/governance/approvals`, request);
+    return response?.approval || null;
+  }
+
+  async _createGovernanceAuditEvent(event = {}) {
+    await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/governance/audit`, event).catch(() => {});
+  }
+
+  async _markGovernanceApprovalRuntimeStatus(approvalId, status, executionCommandId = null) {
+    if (!approvalId) return null;
+    const response = await this._apiCall(
+      'POST',
+      `/api/v1/nexus/${this.nodeId}/governance/approvals/${approvalId}/runtime-status`,
+      {
+        status,
+        executionCommandId,
+      }
+    ).catch(() => null);
+    return response?.approval || null;
+  }
+
+  async _resolveGovernanceDecision(command, args, governance) {
+    const approvalScopeKey = args.approvalScopeKey || args.approval_scope_key || null;
+    if (approvalScopeKey) {
+      const scope = await this._fetchGovernanceScope(approvalScopeKey);
+      if (scope) {
+        return {
+          ...governance,
+          decision: 'allow',
+          originalDecision: governance.decision,
+          approvalScopeKey,
+          approvalScopeId: scope.id,
+          scopeGrantValidated: true,
+        };
+      }
+    }
+
+    const approvalId = args.governanceApprovalId || args.governance_approval_id || null;
+    if (approvalId) {
+      const approval = await this._fetchGovernanceApproval(approvalId);
+      if (!approval) {
+        throw new Error(`Governance approval not found: ${approvalId}`);
+      }
+      if (approval.status !== 'approved' && approval.status !== 'executed') {
+        throw new Error(`Governance approval is not approved: ${approvalId}`);
+      }
+      if (approval.requestType !== governance.requestType) {
+        throw new Error(`Governance approval request type mismatch: ${approvalId}`);
+      }
+      const storedArgs = approval.requestPayload?.args || {};
+      if (governance.requestType === 'catalog_action') {
+        const requestedActionKey = storedArgs.actionKey || storedArgs.action_key;
+        if (requestedActionKey && requestedActionKey !== governance.actionKey) {
+          throw new Error(`Governance approval does not match action ${governance.actionKey}`);
+        }
+      }
+      if (governance.requestType === 'local_integration') {
+        const requestedIntegrationKey = storedArgs.integrationKey || storedArgs.integration_key;
+        const requestedOperation = storedArgs.operation || null;
+        if (requestedIntegrationKey && requestedIntegrationKey !== governance.integrationKey) {
+          throw new Error(`Governance approval does not match local integration ${governance.integrationKey}`);
+        }
+        if (requestedOperation && requestedOperation !== governance.operation) {
+          throw new Error(`Governance approval does not match local integration operation ${governance.operation}`);
+        }
+      }
+      if (governance.requestType === 'helper_delegation') {
+        const requestedHelperProfileKey = storedArgs.helperProfileKey || storedArgs.helper_profile_key;
+        if (requestedHelperProfileKey && requestedHelperProfileKey !== governance.helperProfileKey) {
+          throw new Error(`Governance approval does not match helper profile ${governance.helperProfileKey}`);
+        }
+      }
+      return {
+        ...governance,
+        approvalId,
+        decision: 'allow',
+        originalDecision: governance.decision,
+        approvalValidated: true,
+      };
+    }
+
+    if (governance.decision === 'approval_required' && this._isApprovalBypassRequested(args)) {
+      return {
+        ...governance,
+        decision: 'allow',
+        originalDecision: 'approval_required',
+        approvalBypassed: true,
+      };
+    }
+
+    return governance;
+  }
+
+  _buildApprovalRequest(command, args, governance, title, summary) {
+    return {
+      commandId: command.id,
+      requestType: governance.requestType,
+      title,
+      summary,
+      profileKey: governance.profileKey,
+      agentId: args.agentId || args.agent_id || this.nodeId || 'nexus-node',
+      governance: {
+        requestType: governance.requestType,
+        profileKey: governance.profileKey,
+        runtimeAction: command.payload?.action,
+        decision: governance.decision,
+        originalDecision: governance.originalDecision || null,
+        toolClass: governance.toolClass || null,
+        actionKey: governance.actionKey || null,
+        integrationKey: governance.integrationKey || null,
+        helperProfileKey: governance.helperProfileKey || null,
+        agentId: args.agentId || args.agent_id || null,
+      },
+      requestPayload: {
+        action: command.payload?.action,
+        args,
+      },
+      scopeKey: args.approvalScopeKey || args.approval_scope_key || null,
+      scopeMode: args.approvalScopeMode || args.approval_scope_mode || null,
+      scopeExpiresAt: args.approvalScopeExpiresAt || args.approval_scope_expires_at || null,
+    };
+  }
+
+  async _auditGovernance(command, args, governance, eventType, outcomeStatus, message, extraPayload = {}) {
+    await this._createGovernanceAuditEvent({
+      commandId: command.id,
+      approvalId: governance.approvalId || null,
+      agentId: args.agentId || args.agent_id || null,
+      profileKey: governance.profileKey || null,
+      requestType: governance.requestType,
+      eventType,
+      decision: governance.decision,
+      outcomeStatus,
+      message,
+      payload: {
+        governance,
+        args,
+        ...extraPayload,
+      },
+    });
+  }
+
+  async _dispatchEnterpriseCatalogAction(command, args = {}) {
+    const request = {
+      requestType: 'catalog_action',
+      actionKey: args.actionKey || args.action_key,
+      requestSource: args.requestSource || args.request_source || 'chat',
+    };
+    const { governance: rawGovernance } = await this._evaluateEnterpriseRequest(request, args);
+    const governance = await this._resolveGovernanceDecision(command, args, rawGovernance);
+
+    if (governance.decision === 'deny') {
+      await this._auditGovernance(command, args, governance, 'policy_denied', 'denied', `Enterprise policy denied action ${governance.actionKey}`);
+      throw new Error(`Enterprise policy denied action ${governance.actionKey}`);
+    }
+    if (governance.decision === 'dry_run') {
+      await this._auditGovernance(command, args, governance, 'policy_dry_run', 'dry_run', `Enterprise policy resolved ${governance.actionKey} to dry_run`);
+      return this._buildGovernedOutcome(command.id, 'dry_run', governance, {
+        message: `Enterprise policy resolved ${governance.actionKey} to dry_run`,
+        execution: args.execution || null,
+      });
+    }
+    if (governance.decision === 'approval_required') {
+      const approval = await this._createGovernanceApproval(
+        this._buildApprovalRequest(
+          command,
+          args,
+          governance,
+          `Approval required: ${governance.actionKey}`,
+          `Action ${governance.actionKey} requires user approval before execution.`
+        )
+      );
+      const governedWithApproval = { ...governance, approvalId: approval?.id || null };
+      await this._auditGovernance(command, args, governedWithApproval, 'approval_requested', 'pending', `Approval requested for action ${governance.actionKey}`, { approval });
+      return this._buildGovernedOutcome(command.id, 'approval_required', governedWithApproval, {
+        message: `Enterprise policy requires approval before executing ${governance.actionKey}`,
+        approvalId: approval?.id || null,
+      });
+    }
+    if (governance.approvalBypassed) {
+      await this._auditGovernance(command, args, governance, 'approval_bypassed', 'allow', `Approval bypassed for action ${governance.actionKey}`);
+    } else if (governance.scopeGrantValidated) {
+      await this._auditGovernance(command, args, governance, 'scope_validated', 'allow', `Process scope validated for action ${governance.actionKey}`);
+    } else if (governance.approvalValidated) {
+      await this._auditGovernance(command, args, governance, 'approval_validated', 'allow', `Approved execution resumed for action ${governance.actionKey}`);
+    }
+
+    const execution = args.execution || {};
+    if (!execution.action) {
+      await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Enterprise action ${governance.actionKey} completed without bound runtime execution`);
+      if (governance.approvalId) {
+        await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
+      }
+      return this._buildGovernedOutcome(command.id, 'completed', governance, {
+        message: `Enterprise action ${governance.actionKey} approved with no bound runtime execution`,
+      });
+    }
+
+    const result = await this.taskOrchestrator.execute({
+      taskId: command.id,
+      action: execution.action,
+      params: execution.params || {},
+      agentId: args.agentId || args.agent_id || this.nodeId || 'nexus-node',
+      timestamp: new Date().toISOString(),
+    }, {
+      onProgress: (progress) => this._reportCommandProgress(command.id, progress),
+    });
+
+    result.metadata = {
+      ...(result.metadata || {}),
+      governance,
+    };
+    if (result.status === 'completed') {
+      await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Enterprise action ${governance.actionKey} executed successfully`, { result });
+      if (governance.approvalId) {
+        await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
+      }
+    } else {
+      await this._auditGovernance(command, args, governance, 'execution_failed', result.status, `Enterprise action ${governance.actionKey} execution failed`, { result });
+    }
+    return result;
+  }
+
+  async _dispatchEnterpriseLocalIntegration(command, args = {}) {
+    const request = {
+      requestType: 'local_integration',
+      integrationKey: args.integrationKey || args.integration_key,
+      operation: args.operation,
+      defaultDecision: args.defaultDecision || args.default_decision,
+    };
+    const { governance: rawGovernance } = await this._evaluateEnterpriseRequest(request, args);
+    const governance = await this._resolveGovernanceDecision(command, args, rawGovernance);
+
+    if (governance.decision === 'deny') {
+      await this._auditGovernance(command, args, governance, 'policy_denied', 'denied', `Enterprise policy denied local integration ${governance.integrationKey}`);
+      throw new Error(`Enterprise policy denied local integration ${governance.integrationKey}`);
+    }
+    if (governance.decision === 'dry_run') {
+      await this._auditGovernance(command, args, governance, 'policy_dry_run', 'dry_run', `Enterprise policy resolved local integration ${governance.integrationKey} to dry_run`);
+      return this._buildGovernedOutcome(command.id, 'dry_run', governance, {
+        message: `Enterprise policy resolved local integration ${governance.integrationKey} to dry_run`,
+        request: args.request || null,
+      });
+    }
+    if (governance.decision === 'approval_required') {
+      const approval = await this._createGovernanceApproval(
+        this._buildApprovalRequest(
+          command,
+          args,
+          governance,
+          `Approval required: ${governance.integrationKey}`,
+          `Local integration ${governance.integrationKey} requires user approval before invocation.`
+        )
+      );
+      const governedWithApproval = { ...governance, approvalId: approval?.id || null };
+      await this._auditGovernance(command, args, governedWithApproval, 'approval_requested', 'pending', `Approval requested for local integration ${governance.integrationKey}`, { approval });
+      return this._buildGovernedOutcome(command.id, 'approval_required', governedWithApproval, {
+        message: `Enterprise policy requires approval before invoking ${governance.integrationKey}`,
+        approvalId: approval?.id || null,
+      });
+    }
+    if (governance.approvalBypassed) {
+      await this._auditGovernance(command, args, governance, 'approval_bypassed', 'allow', `Approval bypassed for local integration ${governance.integrationKey}`);
+    } else if (governance.scopeGrantValidated) {
+      await this._auditGovernance(command, args, governance, 'scope_validated', 'allow', `Process scope validated for local integration ${governance.integrationKey}`);
+    } else if (governance.approvalValidated) {
+      await this._auditGovernance(command, args, governance, 'approval_validated', 'allow', `Approved execution resumed for local integration ${governance.integrationKey}`);
+    }
+
+    const response = await this.localIntegrationBridge.invoke(args.request || {});
+    await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Local integration ${governance.integrationKey} executed successfully`, { response });
+    if (governance.approvalId) {
+      await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
+    }
+    return this._buildGovernedOutcome(command.id, 'completed', governance, {
+      integrationKey: governance.integrationKey,
+      operation: governance.operation,
+      response,
+    });
+  }
+
+  _findHelperWorker(helperProfileKey, helperAgentId) {
+    if (helperAgentId) {
+      return this.agentManager?.agents?.get(helperAgentId) || null;
+    }
+
+    for (const worker of this.agentManager?.agents?.values?.() || []) {
+      if (worker.profileKey === helperProfileKey) {
+        return worker;
+      }
+    }
+
+    return null;
+  }
+
+  async _resolveHelperWorker(helperProfileKey, helperAgentId) {
+    let worker = this._findHelperWorker(helperProfileKey, helperAgentId);
+    if (worker) return worker;
+
+    if (helperAgentId) {
+      worker = await this.agentManager.spawnAgent(helperAgentId);
+      if (worker?.profileKey && worker.profileKey !== helperProfileKey) {
+        throw new Error(`Spawned helper agent profile mismatch: expected ${helperProfileKey}, got ${worker.profileKey}`);
+      }
+      return worker;
+    }
+
+    return null;
+  }
+
+  async _dispatchEnterpriseHelper(command, args = {}) {
+    const request = {
+      requestType: 'helper_delegation',
+      helperProfileKey: args.helperProfileKey || args.helper_profile_key,
+      reason: args.reason || null,
+    };
+    const { governance: rawGovernance } = await this._evaluateEnterpriseRequest(request, args);
+    const governance = await this._resolveGovernanceDecision(command, args, rawGovernance);
+
+    if (governance.decision === 'deny') {
+      await this._auditGovernance(command, args, governance, 'policy_denied', 'denied', `Enterprise policy denied helper delegation to ${governance.helperProfileKey}`);
+      throw new Error(`Enterprise policy denied helper delegation to ${governance.helperProfileKey}`);
+    }
+    if (governance.decision === 'dry_run') {
+      await this._auditGovernance(command, args, governance, 'policy_dry_run', 'dry_run', `Enterprise policy resolved helper delegation to ${governance.helperProfileKey} to dry_run`);
+      return this._buildGovernedOutcome(command.id, 'dry_run', governance, {
+        message: `Enterprise policy resolved helper delegation to ${governance.helperProfileKey} to dry_run`,
+      });
+    }
+    if (governance.decision === 'approval_required') {
+      const approval = await this._createGovernanceApproval(
+        this._buildApprovalRequest(
+          command,
+          args,
+          governance,
+          `Approval required: ${governance.helperProfileKey}`,
+          `Helper delegation to ${governance.helperProfileKey} requires user approval before execution.`
+        )
+      );
+      const governedWithApproval = { ...governance, approvalId: approval?.id || null };
+      await this._auditGovernance(command, args, governedWithApproval, 'approval_requested', 'pending', `Approval requested for helper delegation to ${governance.helperProfileKey}`, { approval });
+      return this._buildGovernedOutcome(command.id, 'approval_required', governedWithApproval, {
+        message: `Enterprise policy requires approval before delegating to ${governance.helperProfileKey}`,
+        approvalId: approval?.id || null,
+      });
+    }
+    if (governance.approvalBypassed) {
+      await this._auditGovernance(command, args, governance, 'approval_bypassed', 'allow', `Approval bypassed for helper delegation to ${governance.helperProfileKey}`);
+    } else if (governance.scopeGrantValidated) {
+      await this._auditGovernance(command, args, governance, 'scope_validated', 'allow', `Process scope validated for helper delegation to ${governance.helperProfileKey}`);
+    } else if (governance.approvalValidated) {
+      await this._auditGovernance(command, args, governance, 'approval_validated', 'allow', `Approved execution resumed for helper delegation to ${governance.helperProfileKey}`);
+    }
+
+    const helperWorker = await this._resolveHelperWorker(
+      governance.helperProfileKey,
+      args.helperAgentId || args.helper_agent_id
+    );
+    if (!helperWorker) {
+      throw new Error(`No active helper agent available for profile ${governance.helperProfileKey}`);
+    }
+
+    const helperTask = {
+      id: command.id,
+      title: args.task?.title || args.taskTitle || `Delegated task for ${governance.helperProfileKey}`,
+      description: args.task?.description || args.taskDescription || '',
+      metadata: args.task?.metadata || {},
+    };
+
+    const helperResult = await helperWorker.execute(helperTask);
+    if (!helperResult.success) {
+      await this._auditGovernance(command, args, governance, 'execution_failed', 'failed', `Helper delegation to ${governance.helperProfileKey} failed`, { helperResult });
+      throw new Error(helperResult.error || `Helper ${helperWorker.name} failed`);
+    }
+    await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Helper delegation to ${governance.helperProfileKey} executed successfully`, { helperResult });
+    if (governance.approvalId) {
+      await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
+    }
+
+    return this._buildGovernedOutcome(command.id, 'completed', governance, {
+      helperAgentId: helperWorker.id,
+      helperProfileKey: governance.helperProfileKey,
+      output: helperResult.output,
+      duration_ms: helperResult.duration_ms,
+    });
   }
 
   _syncPermissionSnapshot() {
@@ -434,7 +893,7 @@ class NexusNode {
       const opts = {
         hostname: url.hostname,
         port: url.port || (isHttps ? 443 : 80),
-        path: url.pathname,
+        path: url.pathname + url.search,
         method,
         headers: {
           'Authorization': 'Bearer ' + this.key,

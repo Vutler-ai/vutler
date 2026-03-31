@@ -3,7 +3,7 @@
 > **Status:** Draft — 2026-03-31
 > **Type:** Architecture Decision Record + Technical Spec
 > **Owner:** Codex
-> **Scope:** Nexus Enterprise, AV Manager, event-driven enterprise workflows
+> **Scope:** Nexus Enterprise, deployable agent profiles, event-driven enterprise workflows
 
 ---
 
@@ -27,6 +27,8 @@ Sans ingestion d'evenements:
 - la valeur enterprise est limitee
 
 L'objectif de cette spec est de definir une V1 de l'ingestion d'evenements enterprise pour Vutler + Nexus.
+
+Le `AV Manager` reste le premier profil de reference, mais le modele d'ingestion doit etre reutilisable pour tout `Deployable Agent Profile` qui depend d'evenements.
 
 ---
 

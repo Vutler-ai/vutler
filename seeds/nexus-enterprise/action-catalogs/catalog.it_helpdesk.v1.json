@@ -1,0 +1,51 @@
+{
+  "key": "catalog.it_helpdesk",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "it_helpdesk",
+    "actions": [
+      {
+        "action_key": "triage_incident",
+        "category": "diagnostics",
+        "tool_class": "ticketing_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["event", "chat", "schedule"]
+      },
+      {
+        "action_key": "create_helpdesk_ticket",
+        "category": "coordination",
+        "tool_class": "ticketing_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["event", "chat"]
+      },
+      {
+        "action_key": "update_helpdesk_ticket",
+        "category": "coordination",
+        "tool_class": "ticketing_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["event", "chat"]
+      },
+      {
+        "action_key": "collect_endpoint_context",
+        "category": "diagnostics",
+        "tool_class": "bounded_local_api",
+        "risk_level": "medium",
+        "default_mode": "dry_run",
+        "allowed_request_sources": ["event", "chat"]
+      },
+      {
+        "action_key": "send_incident_summary",
+        "category": "reporting",
+        "tool_class": "document_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["schedule", "chat"]
+      }
+    ]
+  }
+}

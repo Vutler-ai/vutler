@@ -1,0 +1,15 @@
+{
+  "key": "document_generation",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "document_generation",
+    "name": "Document Generation",
+    "risk_class": "knowledge",
+    "provides": ["draft_document", "compile_sections", "rewrite_content"],
+    "default_tool_classes": ["document_tool"],
+    "requires": ["policy_engine"],
+    "optional_with": ["workspace_knowledge_access", "email_dispatch"]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "key": "local_integrations.av_manager",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "av_manager",
+    "integrations": [
+      {
+        "integration_key": "teams_rooms_local_api",
+        "name": "Teams Rooms Local API",
+        "tool_class": "bounded_local_api",
+        "required_level": 2,
+        "operations": ["get_room_status", "get_room_diagnostics", "restart_room_system"]
+      },
+      {
+        "integration_key": "zoom_rooms_local_api",
+        "name": "Zoom Rooms Local API",
+        "tool_class": "bounded_local_api",
+        "required_level": 2,
+        "operations": ["get_room_status", "get_room_diagnostics"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "key": "local_api_bridge",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "local_api_bridge",
+    "name": "Local API Bridge",
+    "risk_class": "bounded_operations",
+    "provides": ["call_local_api", "read_local_status"],
+    "default_tool_classes": ["bounded_local_api"],
+    "requires": ["policy_engine"],
+    "optional_with": ["device_diagnostics", "ticketing"]
+  }
+}

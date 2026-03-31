@@ -1,0 +1,14 @@
+{
+  "key": "policy.it_helpdesk.default",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "it_helpdesk",
+    "default_rules": [
+      { "match": { "tool_class": "ticketing_tool" }, "decision": "allow" },
+      { "match": { "tool_class": "bounded_local_api" }, "decision": "dry_run" },
+      { "match": { "tool_class": "document_tool" }, "decision": "allow" }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "key": "ticketing",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "ticketing",
+    "name": "Ticketing",
+    "risk_class": "coordination",
+    "provides": ["create_ticket", "update_ticket", "link_incident"],
+    "default_tool_classes": ["ticketing_tool"],
+    "requires": ["policy_engine"],
+    "optional_with": ["event_ingestion", "reporting"]
+  }
+}

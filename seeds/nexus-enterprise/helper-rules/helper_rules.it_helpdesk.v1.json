@@ -1,0 +1,17 @@
+{
+  "key": "helper_rules.it_helpdesk",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "it_helpdesk",
+    "allowed_helpers": [
+      {
+        "profile_key": "report_writer",
+        "mode": "restricted",
+        "seat_mode": "consumes_seat",
+        "allowed_reasons": ["incident_summary", "report_delivery"]
+      }
+    ]
+  }
+}
