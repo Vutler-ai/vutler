@@ -465,8 +465,26 @@ async function loadDocumentFromCandidates({ db, workspaceId, paths = [] }) {
       args: { path },
     }).catch(() => '');
 
-    const text = typeof doc === 'string' ? doc.trim() : JSON.stringify(doc || '').trim();
-    if (text) return text;
+    if (!doc) continue;
+
+    if (typeof doc === 'object' && doc !== null && !Array.isArray(doc)) {
+      if (doc.error || doc.message?.includes?.('Document not found')) {
+        continue;
+      }
+
+      const text = typeof doc.content === 'string'
+        ? doc.content.trim()
+        : typeof doc.text === 'string'
+          ? doc.text.trim()
+          : JSON.stringify(doc).trim();
+      if (text) return text;
+      continue;
+    }
+
+    const text = String(doc).trim();
+    if (!text) continue;
+    if (text.startsWith('{"error":') || text.includes('"Document not found"')) continue;
+    return text;
   }
 
   const localSoulPaths = [
