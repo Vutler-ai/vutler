@@ -120,7 +120,7 @@ async function findById(workspaceId, fileId) {
 class WorkspaceDriveAdapter {
   async execute(context) {
     const { workspaceId, params = {} } = context;
-    const action = params.action || 'list';
+    const action = params.action || this._inferActionFromSkillKey(context.skillKey);
 
     switch (action) {
       case 'list':
@@ -145,6 +145,15 @@ class WorkspaceDriveAdapter {
       default:
         return { success: false, error: `Unknown workspace drive action: "${action}"` };
     }
+  }
+
+  _inferActionFromSkillKey(skillKey = '') {
+    const key = String(skillKey || '').toLowerCase();
+    if (key.endsWith('_write')) return 'write_text';
+    if (key.endsWith('_read')) return 'read';
+    if (key.endsWith('_search')) return 'search';
+    if (key.endsWith('_list')) return 'list';
+    return 'list';
   }
 
   async _list(workspaceId, params) {
