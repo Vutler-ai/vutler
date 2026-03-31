@@ -87,7 +87,7 @@ async function resolveAgentRecord(db, workspaceId, agentIdOrUsername, fallback =
   const ws = normalizeWorkspaceId(workspaceId);
   if (db && agentIdOrUsername) {
     const result = await db.query(
-      `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, workspace_id, snipara_instance_id
+      `SELECT *
        FROM tenant_vutler.agents
        WHERE workspace_id = $2 AND (id::text = $1 OR username = $1)
        LIMIT 1`,
