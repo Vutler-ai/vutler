@@ -179,12 +179,35 @@ export interface Channel {
   description?: string;
   type: 'channel' | 'direct';
   members: string[];
+  raw_name?: string;
+  contact_id?: string | null;
+  contact_type?: 'user' | 'agent' | null;
+  avatar?: string | null;
+  username?: string | null;
+  contact_role?: string | null;
+  contact_provider?: string | null;
+  contact_model?: string | null;
+  pinned?: boolean;
+  muted?: boolean;
+  archived?: boolean;
 }
 
 export interface ChannelMember {
   id: string;
   type: 'user' | 'agent';
   name: string;
+}
+
+export interface ChatContact {
+  id: string;
+  name: string;
+  type: 'user' | 'agent';
+  subtitle?: string;
+  avatar?: string | null;
+  username?: string | null;
+  role?: string | null;
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface CreateChannelPayload {

@@ -156,4 +156,4 @@ async function auditLog(agentId, action, details, workspaceId) {
   }
 }
 
-module.exports = { transactionWithWorkspace, queryWithWorkspace, checkWorkspaceLimits, auditLog };
+module.exports = { transactionWithWorkspace, queryWithWorkspace, checkWorkspaceLimits, auditLog, getPool };

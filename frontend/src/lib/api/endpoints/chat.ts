@@ -3,6 +3,7 @@ import type {
   Agent,
   Channel,
   ChannelMember,
+  ChatContact,
   Message,
   ChatActionRun,
   CreateChannelPayload,
@@ -120,6 +121,16 @@ export async function getChatAgents(): Promise<Agent[]> {
   return Array.isArray(data) ? data : (data.agents ?? []);
 }
 
+export async function getChatContacts(query = ''): Promise<ChatContact[]> {
+  const params = new URLSearchParams();
+  if (query.trim()) params.set('query', query.trim());
+  const suffix = params.toString();
+  const data = await apiFetch<{ contacts?: ChatContact[] } | ChatContact[]>(
+    `/api/v1/chat/contacts${suffix ? `?${suffix}` : ''}`
+  );
+  return Array.isArray(data) ? data : (data.contacts ?? []);
+}
+
 /**
  * Create a direct-message channel with an agent.
  */
@@ -134,6 +145,32 @@ export async function createAgentDmChannel(agentId: string, agentName: string): 
       agentId,
     }),
   });
+}
+
+export async function createDirectConversation(contactId: string, contactType: 'user' | 'agent'): Promise<Channel> {
+  const data = await apiFetch<{ channel?: Channel } | Channel>('/api/v1/chat/dm', {
+    method: 'POST',
+    body: JSON.stringify({ contactId, contactType }),
+  });
+  return Array.isArray(data) ? data[0] : ('channel' in data ? (data.channel as Channel) : (data as Channel));
+}
+
+export async function updateChannelPreferences(
+  channelId: string,
+  preferences: {
+    pinned?: boolean;
+    muted?: boolean;
+    archived?: boolean;
+  }
+): Promise<Channel> {
+  const data = await apiFetch<{ channel?: Channel } | Channel>(
+    `/api/v1/chat/channels/${channelId}/preferences`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(preferences),
+    }
+  );
+  return Array.isArray(data) ? data[0] : ('channel' in data ? (data.channel as Channel) : (data as Channel));
 }
 
 /**

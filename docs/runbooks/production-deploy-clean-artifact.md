@@ -167,5 +167,6 @@ Fix applied:
 
 - keep `/home/ubuntu/vutler` only for reference and scripts
 - add a proper release directory convention under `/home/ubuntu/releases/vutler/<commit>/`
+- install [`vps-retention.sh`](/Users/alopez/Devs/Vutler/scripts/vps-retention.sh) on the VPS and run it daily to prune stale deploy artifacts and historical Docker images
 - optionally keep the last successful API image tag and last successful frontend image tag in a rollback note
 - eventually move this process into a single deploy script that accepts a commit tarball

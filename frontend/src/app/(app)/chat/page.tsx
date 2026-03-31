@@ -22,6 +22,10 @@ import {
   EnvelopeIcon,
   FolderOpenIcon,
   ClipboardDocumentListIcon,
+  BookmarkIcon,
+  BellSlashIcon,
+  EllipsisHorizontalIcon,
+  ArchiveBoxIcon,
 } from "@heroicons/react/24/outline";
 
 import { getAuthToken } from "@/lib/api/client";
@@ -36,14 +40,15 @@ import {
   addChannelMember as apiAddChannelMember,
   removeChannelMember as apiRemoveChannelMember,
   uploadAttachment,
-  getChatAgents,
-  createAgentDmChannel,
+  getChatContacts,
+  createDirectConversation,
+  updateChannelPreferences,
 } from "@/lib/api/endpoints/chat";
 import { ChatWebSocket } from "@/lib/websocket";
 import { useApi } from "@/hooks/use-api";
-import type { Agent, Channel, Message, ChannelMember, ChatActionRun } from "@/lib/api/types";
+import type { Channel, Message, ChannelMember, ChatActionRun, ChatContact } from "@/lib/api/types";
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,7 +61,14 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ChatResourceArtifact } from "@/lib/api/types";
+import { getAvatarImageUrl } from "@/lib/avatar";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -472,25 +484,118 @@ interface ChannelItemProps {
   channel: Channel;
   isActive: boolean;
   onClick: () => void;
+  onTogglePin?: (channel: Channel) => void;
+  onToggleMute?: (channel: Channel) => void;
+  onToggleArchive?: (channel: Channel) => void;
 }
 
-function ChannelItem({ channel, isActive, onClick }: ChannelItemProps) {
+function ChannelItem({
+  channel,
+  isActive,
+  onClick,
+  onTogglePin,
+  onToggleMute,
+  onToggleArchive,
+}: ChannelItemProps) {
+  const avatarImageUrl = channel.type === "direct"
+    ? getAvatarImageUrl(channel.avatar || undefined, channel.name)
+    : null;
+
   return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors group ${
+    <div
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors group ${
         isActive
           ? "bg-[#14151f] text-white"
           : "hover:bg-white/5 text-gray-400 hover:text-gray-200"
       }`}
     >
-      {channel.type === "channel" ? (
-        <HashtagIcon className="w-4 h-4 shrink-0" />
-      ) : (
-        <ChatBubbleLeftRightIcon className="w-4 h-4 shrink-0" />
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        {channel.type === "channel" ? (
+          <HashtagIcon className="w-4 h-4 shrink-0" />
+        ) : (
+          <Avatar className="size-8 shrink-0">
+            {avatarImageUrl && (
+              <AvatarImage src={avatarImageUrl} alt={channel.name} />
+            )}
+            <AvatarFallback className="bg-white/10 text-[11px] text-gray-200">
+              {getInitials(channel.name)}
+            </AvatarFallback>
+          </Avatar>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-current">{channel.name}</p>
+          {channel.description && (
+            <p className="truncate text-[11px] text-gray-500 group-hover:text-gray-400">
+              {channel.description}
+            </p>
+          )}
+        </div>
+      </button>
+      {channel.type === "direct" && (
+        <div className="ml-auto flex items-center gap-1">
+          {channel.pinned && (
+            <BookmarkIcon className="w-3.5 h-3.5 text-amber-300" />
+          )}
+          {channel.muted && (
+            <BellSlashIcon className="w-3.5 h-3.5 text-gray-500" />
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
+                }}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
+              >
+                <EllipsisHorizontalIcon className="w-4 h-4" />
+              </span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="border-white/10 bg-[#14151f] text-white"
+            >
+              <DropdownMenuItem
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onTogglePin?.(channel);
+                }}
+              >
+                <BookmarkIcon className="w-4 h-4" />
+                {channel.pinned ? "Unpin" : "Pin"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleMute?.(channel);
+                }}
+              >
+                <BellSlashIcon className="w-4 h-4" />
+                {channel.muted ? "Unmute" : "Mute"}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleArchive?.(channel);
+                }}
+              >
+                <ArchiveBoxIcon className="w-4 h-4" />
+                {channel.archived ? "Unarchive" : "Archive"}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       )}
-      <span className="truncate text-sm">{channel.name}</span>
-    </button>
+    </div>
   );
 }
 
@@ -507,6 +612,9 @@ export default function ChatPage() {
   const channels = channelsData ?? EMPTY_CHANNELS;
   const channelChannels = channels.filter((c) => c.type === "channel");
   const directChannels = channels.filter((c) => c.type === "direct");
+  const pinnedDirectChannels = directChannels.filter((c) => c.pinned && !c.archived);
+  const regularDirectChannels = directChannels.filter((c) => !c.pinned && !c.archived);
+  const archivedDirectChannels = directChannels.filter((c) => c.archived);
 
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
@@ -799,11 +907,18 @@ export default function ChatPage() {
 
   // ── channel search ──
   const [searchTerm, setSearchTerm] = useState("");
+  const [showArchivedDirects, setShowArchivedDirects] = useState(false);
   const filteredChannelChannels = channelChannels.filter((c) =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+    [c.name, c.description || ""].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
   );
-  const filteredDirectChannels = directChannels.filter((c) =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredPinnedDirectChannels = pinnedDirectChannels.filter((c) =>
+    [c.name, c.description || ""].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const filteredRegularDirectChannels = regularDirectChannels.filter((c) =>
+    [c.name, c.description || ""].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const filteredArchivedDirectChannels = archivedDirectChannels.filter((c) =>
+    [c.name, c.description || ""].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // ── new channel dialog ──
@@ -814,43 +929,45 @@ export default function ChatPage() {
 
   // ── new DM with agent dialog ──
   const [showNewDm, setShowNewDm] = useState(false);
-  const [dmAgents, setDmAgents] = useState<Agent[]>([]);
-  const [dmAgentsLoading, setDmAgentsLoading] = useState(false);
-  const [selectedDmAgent, setSelectedDmAgent] = useState<Agent | null>(null);
+  const [dmContacts, setDmContacts] = useState<ChatContact[]>([]);
+  const [dmContactsLoading, setDmContactsLoading] = useState(false);
+  const [dmSearchTerm, setDmSearchTerm] = useState("");
+  const [selectedDmContact, setSelectedDmContact] = useState<ChatContact | null>(null);
   const [isCreatingDm, setIsCreatingDm] = useState(false);
 
   const openNewDm = useCallback(async () => {
     setShowNewDm(true);
-    setSelectedDmAgent(null);
-    setDmAgentsLoading(true);
+    setSelectedDmContact(null);
+    setDmSearchTerm("");
+    setDmContactsLoading(true);
     try {
-      const agents = await getChatAgents();
-      setDmAgents(agents);
+      const contacts = await getChatContacts();
+      setDmContacts(contacts);
     } catch {
-      setDmAgents([]);
+      setDmContacts([]);
     } finally {
-      setDmAgentsLoading(false);
+      setDmContactsLoading(false);
     }
   }, []);
 
   const handleCreateDm = useCallback(async () => {
-    if (!selectedDmAgent || isCreatingDm) return;
+    if (!selectedDmContact || isCreatingDm) return;
     setIsCreatingDm(true);
     try {
-      const ch = await createAgentDmChannel(
-        String(selectedDmAgent.id),
-        selectedDmAgent.name
+      const ch = await createDirectConversation(
+        String(selectedDmContact.id),
+        selectedDmContact.type
       );
       await mutateChannels();
       setSelectedChannel(ch);
       setShowNewDm(false);
-      setSelectedDmAgent(null);
+      setSelectedDmContact(null);
     } catch {
       // silently ignore — user can retry
     } finally {
       setIsCreatingDm(false);
     }
-  }, [selectedDmAgent, isCreatingDm, mutateChannels]);
+  }, [selectedDmContact, isCreatingDm, mutateChannels]);
 
   const handleCreateChannel = async () => {
     if (!newChannelName.trim() || isCreating) return;
@@ -875,8 +992,9 @@ export default function ChatPage() {
 
   // ── delete channel ──
   const handleDeleteChannel = async () => {
-    if (!selectedChannel || selectedChannel.type !== "channel") return;
-    if (!confirm(`Delete channel "${selectedChannel.name}"?`)) return;
+    if (!selectedChannel) return;
+    const label = selectedChannel.type === "direct" ? "direct message" : "channel";
+    if (!confirm(`Delete ${label} "${selectedChannel.name}"?`)) return;
     try {
       await deleteChannel(selectedChannel.id);
       const remaining = channels.filter((c) => c.id !== selectedChannel.id);
@@ -886,6 +1004,42 @@ export default function ChatPage() {
       // ignore
     }
   };
+
+  const applyChannelUpdate = useCallback((updatedChannel: Channel) => {
+    void mutateChannels((current) => {
+      const existing = current ?? EMPTY_CHANNELS;
+      return existing.map((channel) =>
+        channel.id === updatedChannel.id ? { ...channel, ...updatedChannel } : channel
+      );
+    }, { revalidate: false });
+    setSelectedChannel((current) => (
+      current && current.id === updatedChannel.id
+        ? { ...current, ...updatedChannel }
+        : current
+    ));
+  }, [mutateChannels]);
+
+  const handleUpdateDirectPreference = useCallback(async (
+    channel: Channel,
+    patch: Partial<Pick<Channel, "pinned" | "muted" | "archived">>
+  ) => {
+    const nextPrefs = {
+      pinned: patch.pinned ?? Boolean(channel.pinned),
+      muted: patch.muted ?? Boolean(channel.muted),
+      archived: patch.archived ?? Boolean(channel.archived),
+    };
+    const updated = await updateChannelPreferences(channel.id, nextPrefs);
+    applyChannelUpdate(updated);
+  }, [applyChannelUpdate]);
+
+  const filteredDmContacts = dmContacts.filter((contact) => {
+    const haystack = [
+      contact.name,
+      contact.subtitle || "",
+      contact.username || "",
+    ].join(" ").toLowerCase();
+    return haystack.includes(dmSearchTerm.toLowerCase());
+  });
 
   // ── members dialog ──
   const [showMembers, setShowMembers] = useState(false);
@@ -979,10 +1133,10 @@ export default function ChatPage() {
               variant="ghost"
               className="h-7 px-2 gap-1 text-xs text-gray-400 hover:text-white"
               onClick={openNewDm}
-              title="New DM with Agent"
+              title="New chat"
             >
               <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Agent DM</span>
+              <span className="hidden sm:inline">New Chat</span>
             </Button>
             <Button
               size="sm"
@@ -1037,23 +1191,114 @@ export default function ChatPage() {
               )}
 
               {/* Direct messages */}
-              {filteredDirectChannels.length > 0 && (
+              {filteredPinnedDirectChannels.length > 0 && (
                 <section>
+                  <div className="px-4 py-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+                      Pinned
+                    </span>
+                  </div>
+                  <div className="px-2 space-y-0.5">
+                    {filteredPinnedDirectChannels.map((ch) => (
+                      <ChannelItem
+                        key={ch.id}
+                        channel={ch}
+                        isActive={selectedChannel?.id === ch.id}
+                        onClick={() => selectChannel(ch)}
+                        onTogglePin={(channel) => {
+                          void handleUpdateDirectPreference(channel, {
+                            pinned: !channel.pinned,
+                          });
+                        }}
+                        onToggleMute={(channel) => {
+                          void handleUpdateDirectPreference(channel, {
+                            muted: !channel.muted,
+                          });
+                        }}
+                        onToggleArchive={(channel) => {
+                          void handleUpdateDirectPreference(channel, {
+                            archived: !channel.archived,
+                          });
+                        }}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {filteredRegularDirectChannels.length > 0 && (
+                <section className={filteredPinnedDirectChannels.length > 0 ? "mt-4" : ""}>
                   <div className="px-4 py-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
                       Direct Messages
                     </span>
                   </div>
                   <div className="px-2 space-y-0.5">
-                    {filteredDirectChannels.map((ch) => (
+                    {filteredRegularDirectChannels.map((ch) => (
                       <ChannelItem
                         key={ch.id}
                         channel={ch}
                         isActive={selectedChannel?.id === ch.id}
                         onClick={() => selectChannel(ch)}
+                        onTogglePin={(channel) => {
+                          void handleUpdateDirectPreference(channel, {
+                            pinned: !channel.pinned,
+                          });
+                        }}
+                        onToggleMute={(channel) => {
+                          void handleUpdateDirectPreference(channel, {
+                            muted: !channel.muted,
+                          });
+                        }}
+                        onToggleArchive={(channel) => {
+                          void handleUpdateDirectPreference(channel, {
+                            archived: !channel.archived,
+                          });
+                        }}
                       />
                     ))}
                   </div>
+                </section>
+              )}
+
+              {filteredArchivedDirectChannels.length > 0 && (
+                <section className="mt-4">
+                  <button
+                    className="flex w-full items-center justify-between px-4 py-1.5 text-left"
+                    onClick={() => setShowArchivedDirects((current) => !current)}
+                  >
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-gray-500">
+                      Archived
+                    </span>
+                    <ChevronDownIcon className={`w-4 h-4 text-gray-500 transition-transform ${showArchivedDirects ? "rotate-180" : ""}`} />
+                  </button>
+                  {showArchivedDirects && (
+                    <div className="px-2 space-y-0.5">
+                      {filteredArchivedDirectChannels.map((ch) => (
+                        <ChannelItem
+                          key={ch.id}
+                          channel={ch}
+                          isActive={selectedChannel?.id === ch.id}
+                          onClick={() => selectChannel(ch)}
+                          onTogglePin={(channel) => {
+                            void handleUpdateDirectPreference(channel, {
+                              pinned: !channel.pinned,
+                            });
+                          }}
+                          onToggleMute={(channel) => {
+                            void handleUpdateDirectPreference(channel, {
+                              muted: !channel.muted,
+                            });
+                          }}
+                          onToggleArchive={(channel) => {
+                            void handleUpdateDirectPreference(channel, {
+                              archived: !channel.archived,
+                            });
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </section>
               )}
 
@@ -1105,9 +1350,14 @@ export default function ChatPage() {
                   {selectedChannel.name}
                 </h1>
                 {selectedChannel.description && (
-                  <p className="text-xs text-gray-500 truncate">
-                    {selectedChannel.description}
-                  </p>
+                  <div className="flex items-center gap-2 text-xs text-gray-500 truncate">
+                    <span className="truncate">{selectedChannel.description}</span>
+                    {selectedChannel.contact_provider && selectedChannel.contact_model && (
+                      <span className="hidden md:inline-flex rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-gray-400">
+                        {selectedChannel.contact_provider} · {selectedChannel.contact_model}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1134,6 +1384,76 @@ export default function ChatPage() {
                     >
                       <TrashIcon className="w-4 h-4" />
                     </Button>
+                  </>
+                )}
+                {selectedChannel.type === "direct" && (
+                  <>
+                    {selectedChannel.muted && (
+                      <Badge className="hidden md:inline-flex border-white/10 bg-white/5 text-gray-300">
+                        <BellSlashIcon className="mr-1 h-3 w-3" />
+                        Muted
+                      </Badge>
+                    )}
+                    {selectedChannel.pinned && (
+                      <Badge className="hidden md:inline-flex border-white/10 bg-amber-500/10 text-amber-200">
+                        <BookmarkIcon className="mr-1 h-3 w-3" />
+                        Pinned
+                      </Badge>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 w-8 p-0 text-gray-400 hover:text-white"
+                          title="Direct message options"
+                        >
+                          <EllipsisHorizontalIcon className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="border-white/10 bg-[#14151f] text-white"
+                      >
+                        <DropdownMenuItem
+                          onClick={() => {
+                            void handleUpdateDirectPreference(selectedChannel, {
+                              pinned: !selectedChannel.pinned,
+                            });
+                          }}
+                        >
+                          <BookmarkIcon className="w-4 h-4" />
+                          {selectedChannel.pinned ? "Unpin" : "Pin"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            void handleUpdateDirectPreference(selectedChannel, {
+                              muted: !selectedChannel.muted,
+                            });
+                          }}
+                        >
+                          <BellSlashIcon className="w-4 h-4" />
+                          {selectedChannel.muted ? "Unmute" : "Mute"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            void handleUpdateDirectPreference(selectedChannel, {
+                              archived: !selectedChannel.archived,
+                            });
+                          }}
+                        >
+                          <ArchiveBoxIcon className="w-4 h-4" />
+                          {selectedChannel.archived ? "Unarchive" : "Archive"}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={handleDeleteChannel}
+                        >
+                          <TrashIcon className="w-4 h-4" />
+                          Delete direct message
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </>
                 )}
               </div>
@@ -1578,47 +1898,81 @@ export default function ChatPage() {
       <Dialog open={showNewDm} onOpenChange={setShowNewDm}>
         <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>New Chat with Agent</DialogTitle>
+            <DialogTitle>New Chat</DialogTitle>
             <DialogDescription className="text-gray-400">
-              Pick an agent to open a direct conversation in this workspace.
+              Search for an agent or a workspace member to start a direct conversation.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
-            {dmAgentsLoading ? (
+            <div className="relative">
+              <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+              <Input
+                value={dmSearchTerm}
+                onChange={(e) => setDmSearchTerm(e.target.value)}
+                placeholder="Search agents or people..."
+                className="pl-9 bg-white/5 border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500"
+              />
+            </div>
+
+            {dmContactsLoading ? (
               <div className="space-y-2">
                 {[1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-12 w-full bg-white/5 rounded-lg" />
                 ))}
               </div>
-            ) : dmAgents.length === 0 ? (
+            ) : dmContacts.length === 0 ? (
               <p className="py-6 text-center text-sm text-gray-500">
-                No agents available. Create an agent first.
+                No contacts available in this workspace yet.
+              </p>
+            ) : filteredDmContacts.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-500">
+                No contact matches this search.
               </p>
             ) : (
               <div className="max-h-72 overflow-y-auto space-y-1.5">
-                {dmAgents.map((agent) => (
+                {filteredDmContacts.map((contact) => (
                   <button
-                    key={agent.id}
-                    onClick={() => setSelectedDmAgent(agent)}
+                    key={`${contact.type}-${contact.id}`}
+                    onClick={() => setSelectedDmContact(contact)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                      selectedDmAgent?.id === agent.id
+                      selectedDmContact?.id === contact.id && selectedDmContact?.type === contact.type
                         ? "bg-blue-600/20 border border-blue-500/30 text-white"
                         : "hover:bg-white/5 text-gray-300 border border-transparent"
                     }`}
                   >
                     <Avatar className="size-8 shrink-0">
+                      {getAvatarImageUrl(contact.avatar || undefined, contact.name) && (
+                        <AvatarImage
+                          src={getAvatarImageUrl(contact.avatar || undefined, contact.name) || undefined}
+                          alt={contact.name}
+                        />
+                      )}
                       <AvatarFallback className="bg-white/10 text-gray-300 text-xs">
-                        {getInitials(agent.name)}
+                        {getInitials(contact.name)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{agent.name}</p>
-                      {agent.model && (
-                        <p className="truncate text-xs text-gray-500">{agent.model}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium">{contact.name}</p>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
+                          contact.type === "agent"
+                            ? "bg-cyan-500/10 text-cyan-300"
+                            : "bg-emerald-500/10 text-emerald-300"
+                        }`}>
+                          {contact.type}
+                        </span>
+                      </div>
+                      {contact.subtitle && (
+                        <p className="truncate text-xs text-gray-500">{contact.subtitle}</p>
+                      )}
+                      {contact.type === "agent" && contact.provider && contact.model && (
+                        <p className="truncate text-[11px] text-gray-600">
+                          {contact.provider} · {contact.model}
+                        </p>
                       )}
                     </div>
-                    {selectedDmAgent?.id === agent.id && (
+                    {selectedDmContact?.id === contact.id && selectedDmContact?.type === contact.type && (
                       <div className="ml-auto shrink-0 w-2 h-2 rounded-full bg-blue-400" />
                     )}
                   </button>
@@ -1637,7 +1991,7 @@ export default function ChatPage() {
             </Button>
             <Button
               onClick={handleCreateDm}
-              disabled={!selectedDmAgent || isCreatingDm}
+              disabled={!selectedDmContact || isCreatingDm}
               className="bg-blue-600 hover:bg-blue-500"
             >
               {isCreatingDm ? "Starting…" : "Start Chat"}
