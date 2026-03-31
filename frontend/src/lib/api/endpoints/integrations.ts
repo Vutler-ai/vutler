@@ -1,6 +1,8 @@
 import { apiFetch } from '../client';
 import type { Integration, AvailableProvider, SuccessResponse } from '../types';
 
+const OAUTH_PROVIDERS = new Set(['google', 'github', 'microsoft365']);
+
 export async function getIntegrations(): Promise<Integration[]> {
   const data = await apiFetch<{ integrations?: Integration[] } | Integration[]>(
     '/api/v1/integrations'
@@ -16,10 +18,18 @@ export async function getAvailableProviders(): Promise<AvailableProvider[]> {
 }
 
 export async function connect(provider: string): Promise<{ url?: string }> {
-  return apiFetch<{ url?: string }>(
+  if (OAUTH_PROVIDERS.has(provider)) {
+    const response = await apiFetch<{ authUrl?: string; url?: string }>(
+      `/api/v1/integrations/${provider}/connect`
+    );
+    return { url: response.url || response.authUrl };
+  }
+
+  const response = await apiFetch<{ authUrl?: string; url?: string }>(
     `/api/v1/integrations/${provider}/connect`,
     { method: 'POST' }
   );
+  return { url: response.url || response.authUrl };
 }
 
 export async function disconnect(provider: string): Promise<SuccessResponse> {

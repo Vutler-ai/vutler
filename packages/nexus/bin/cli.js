@@ -35,6 +35,31 @@ function decodeDeployToken(token) {
   return JSON.parse(json);
 }
 
+function parseJsonEnv(name, fallback = undefined) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function parseBoolEnv(name, fallback = undefined) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  if (/^(1|true|yes|on)$/i.test(raw)) return true;
+  if (/^(0|false|no|off)$/i.test(raw)) return false;
+  return fallback;
+}
+
+function parseNumEnv(name, fallback = undefined) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 // ─── init <token> ────────────────────────────────────────────────────────────
 
 program.command('init <token>')
@@ -65,8 +90,10 @@ program.command('init <token>')
 
     const config = {
       deploy_token: token,
+      api_key: payload.api_key || null,
       mode: payload.mode || 'standard',
       node_id: payload.node_id || null,
+      node_name: payload.node_name || payload.name || null,
       snipara_instance_id: payload.snipara_instance_id || null,
       permissions: payload.permissions || {},
       server: payload.server || 'https://app.vutler.ai',
@@ -77,6 +104,14 @@ program.command('init <token>')
     if (payload.mode === 'enterprise') {
       config.client_name = payload.client_name || null;
       config.filesystem_root = payload.filesystem_root || null;
+      config.seats = payload.seats || null;
+      config.max_seats = payload.max_seats || null;
+      config.primary_agent = payload.primary_agent || null;
+      config.available_pool = payload.available_pool || [];
+      config.allow_create = payload.allow_create ?? false;
+      config.routing_rules = payload.routing_rules || [];
+      config.auto_spawn_rules = payload.auto_spawn_rules || [];
+      config.offline_config = payload.offline_config || {};
     }
 
     fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
@@ -85,12 +120,14 @@ program.command('init <token>')
     console.log('');
     console.log('  mode:                ', config.mode);
     console.log('  node_id:             ', config.node_id || '(assigned on first connect)');
+    console.log('  node_name:           ', config.node_name || '(default hostname)');
     console.log('  snipara_instance_id: ', config.snipara_instance_id || '(none)');
     console.log('  permissions:         ', JSON.stringify(config.permissions));
 
     if (payload.mode === 'enterprise') {
       console.log('  client_name:         ', config.client_name || '(none)');
       console.log('  filesystem_root:     ', config.filesystem_root || '(none)');
+      console.log('  seats:               ', config.seats || '(none)');
     }
   });
 
@@ -110,26 +147,60 @@ program.command('start')
 
     // Global config from ~/.vutler/nexus.json (preferred)
     const globalConfig = readConfig() || {};
+    const envConfig = {
+      mode: process.env.NEXUS_MODE || undefined,
+      type: process.env.NEXUS_TYPE || undefined,
+      node_name: process.env.NEXUS_NODE_NAME || undefined,
+      port: parseNumEnv('NEXUS_PORT'),
+      seats: parseNumEnv('NEXUS_SEATS'),
+      primary_agent: process.env.NEXUS_PRIMARY_AGENT || undefined,
+      agents: parseJsonEnv('NEXUS_AGENTS'),
+      routing_rules: parseJsonEnv('NEXUS_ROUTING_RULES'),
+      auto_spawn_rules: parseJsonEnv('NEXUS_AUTO_SPAWN_RULES'),
+      available_pool: parseJsonEnv('NEXUS_AVAILABLE_POOL'),
+      allow_create: parseBoolEnv('NEXUS_ALLOW_CREATE'),
+      offline_config: parseJsonEnv('NEXUS_OFFLINE_CONFIG'),
+      permissions: parseJsonEnv('NEXUS_PERMISSIONS'),
+      llm: parseJsonEnv('NEXUS_LLM'),
+      client_name: process.env.NEXUS_CLIENT_NAME || undefined,
+      filesystem_root: process.env.NEXUS_FILESYSTEM_ROOT || undefined,
+      role: process.env.NEXUS_ROLE || undefined,
+      snipara_instance_id: process.env.NEXUS_SNIPARA_INSTANCE_ID || undefined,
+      api_key: process.env.NEXUS_API_KEY || undefined,
+      deploy_token: process.env.NEXUS_DEPLOY_TOKEN || process.env.NEXUS_TOKEN || undefined,
+      server: process.env.NEXUS_SERVER || undefined,
+    };
 
-    const key = opts.key || localConfig.key || globalConfig.deploy_token;
-    if (!key) {
+    const key = opts.key || localConfig.key || globalConfig.deploy_token || envConfig.deploy_token;
+    const apiKey = opts.key || localConfig.key || globalConfig.api_key || envConfig.api_key || null;
+    const runtimeKey = apiKey || key;
+    if (!runtimeKey) {
       console.error('Error: No API key or deploy token found. Run `vutler-nexus init <token>` or pass --key.');
       process.exit(1);
     }
 
     const node = new NexusNode({
-      key,
-      name: opts.name || localConfig.name || globalConfig.node_id,
-      port: parseInt(opts.port),
-      type: opts.type,
-      server: opts.url || opts.server || localConfig.server || globalConfig.server || 'https://app.vutler.ai',
-      mode: globalConfig.mode,
-      snipara_instance_id: globalConfig.snipara_instance_id,
-      client_name: globalConfig.client_name,
-      filesystem_root: globalConfig.filesystem_root,
-      role: globalConfig.role,
-      deploy_token: globalConfig.deploy_token,
-      permissions: globalConfig.permissions,
+      key: runtimeKey,
+      name: opts.name || localConfig.name || globalConfig.node_name || globalConfig.name || globalConfig.node_id || envConfig.node_name,
+      port: parseInt(opts.port || envConfig.port || 3100, 10),
+      type: opts.type || envConfig.type || 'local',
+      server: opts.url || opts.server || localConfig.server || globalConfig.server || envConfig.server || 'https://app.vutler.ai',
+      mode: envConfig.mode || globalConfig.mode,
+      snipara_instance_id: envConfig.snipara_instance_id || globalConfig.snipara_instance_id,
+      client_name: envConfig.client_name || globalConfig.client_name,
+      filesystem_root: envConfig.filesystem_root || globalConfig.filesystem_root,
+      role: envConfig.role || globalConfig.role,
+      deploy_token: globalConfig.deploy_token || envConfig.deploy_token,
+      permissions: envConfig.permissions || globalConfig.permissions,
+      seats: envConfig.seats || globalConfig.seats,
+      primary_agent: envConfig.primary_agent || globalConfig.primary_agent,
+      agents: envConfig.agents || globalConfig.agents,
+      routing_rules: envConfig.routing_rules || globalConfig.routing_rules,
+      auto_spawn_rules: envConfig.auto_spawn_rules || globalConfig.auto_spawn_rules,
+      available_pool: envConfig.available_pool || globalConfig.available_pool,
+      allow_create: envConfig.allow_create ?? globalConfig.allow_create,
+      offline_config: envConfig.offline_config || globalConfig.offline_config,
+      llm: envConfig.llm || globalConfig.llm,
     });
 
     await node.connect();
@@ -302,7 +373,7 @@ program.command('test')
 
     const config = readConfig() || {};
     const server = config.server || 'https://app.vutler.ai';
-    const key = config.deploy_token;
+    const key = config.api_key || config.deploy_token;
 
     function apiGet(url, authKey) {
       return new Promise((resolve) => {
@@ -609,14 +680,14 @@ program.command('create-agent')
 
     const role = (await ask('Role: ')).trim() || 'general';
     const description = (await ask('Description: ')).trim();
-    const modelInput = (await ask('Model [gpt-4o]: ')).trim();
-    const model = modelInput || 'gpt-4o';
+    const modelInput = (await ask('Model [gpt-5.4]: ')).trim();
+    const model = modelInput || 'gpt-5.4';
     const system_prompt = (await ask('System prompt: ')).trim();
     rl.close();
 
-    const nodeId = payload.node_id;
+    const nodeId = config.node_id || payload.node_id;
     const server = opts.server || config.server || 'https://app.vutler.ai';
-    const apiKey = config.deploy_token;
+    const apiKey = config.api_key || config.deploy_token;
 
     console.log('[Nexus] Creating agent "' + name + '"...');
 

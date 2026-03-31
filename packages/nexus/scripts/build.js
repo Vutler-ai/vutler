@@ -6,7 +6,7 @@
  *
  * Usage: node scripts/build.js [--target mac|win|all]
  *
- * Output: dist/nexus-macos, dist/nexus-win.exe
+ * Output: dist/vutler-nexus-macos, dist/vutler-nexus-windows.exe
  */
 const { execSync } = require('child_process');
 const fs = require('fs');
@@ -56,7 +56,7 @@ if (!fs.existsSync(path.join(ROOT, 'node_modules'))) {
 
 // Build each target
 for (const [name, target] of selectedTargets) {
-  const outName = name === 'win' ? 'nexus-win.exe' : 'nexus-macos';
+  const outName = name === 'win' ? 'vutler-nexus-windows.exe' : 'vutler-nexus-macos';
   const outPath = path.join(DIST, outName);
   console.log(`[Build] Packaging for ${name} (${target})...`);
   try {

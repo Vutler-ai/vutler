@@ -3,6 +3,7 @@
 import { authFetch } from "@/lib/authFetch";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 interface Integration {
   provider: string;
@@ -10,6 +11,7 @@ interface Integration {
   icon: string;
   description: string;
   status: "connected" | "disconnected" | "coming_soon";
+  connected?: boolean;
   connected_at?: string;
 }
 
@@ -26,13 +28,14 @@ const INTEGRATIONS_META: Record<string, { icon: string; name: string; descriptio
   social_media: { icon: "📱", name: "Social Media", description: "Post to LinkedIn, X, Instagram, TikTok, and 5+ more platforms" },
 };
 
-const COMING_SOON = ["microsoft365"];
+const OAUTH_PROVIDERS = new Set(["google", "github", "microsoft365"]);
 
 export default function IntegrationsPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     authFetch("/api/v1/integrations")
@@ -47,7 +50,7 @@ export default function IntegrationsPage() {
           name: meta.name,
           icon: meta.icon,
           description: meta.description,
-          status: COMING_SOON.includes(key) ? "coming_soon" as const : connected[key] ? "connected" as const : "disconnected" as const,
+          status: connected[key]?.connected ? "connected" as const : "disconnected" as const,
           connected_at: connected[key]?.connected_at,
         }));
         setIntegrations(all);
@@ -59,12 +62,39 @@ export default function IntegrationsPage() {
           name: meta.name,
           icon: meta.icon,
           description: meta.description,
-          status: COMING_SOON.includes(key) ? "coming_soon" as const : "disconnected" as const,
+          status: "disconnected" as const,
         }));
         setIntegrations(all);
         setLoading(false);
       });
   }, []);
+
+  useEffect(() => {
+    const connected = searchParams.get("connected");
+    const provider = searchParams.get("provider");
+    const queryError = searchParams.get("error");
+
+    if (connected) {
+      setError("");
+      setIntegrations((prev) => prev.map((integration) => (
+        integration.provider === connected
+          ? { ...integration, status: "connected" as const, connected_at: new Date().toISOString() }
+          : integration
+      )));
+      return;
+    }
+
+    if (queryError) {
+      const scopedProvider = provider ? `${INTEGRATIONS_META[provider]?.name || provider}: ` : "";
+      const messageMap: Record<string, string> = {
+        oauth_cancelled: "OAuth flow was cancelled.",
+        oauth_invalid: "OAuth callback validation failed.",
+        oauth_token_failed: "Token exchange failed.",
+        oauth_server_error: "OAuth server error.",
+      };
+      setError(`${scopedProvider}${messageMap[queryError] || "Integration connection failed."}`);
+    }
+  }, [searchParams]);
 
   const filtered = integrations.filter(
     (i) => i.name.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase())
@@ -72,6 +102,17 @@ export default function IntegrationsPage() {
 
   const handleConnect = async (provider: string) => {
     try {
+      setError("");
+      if (OAUTH_PROVIDERS.has(provider)) {
+        const r = await authFetch(`/api/v1/integrations/${provider}/connect`);
+        const data = await r.json();
+        if (!r.ok || !data?.authUrl) {
+          throw new Error(data?.error || "OAuth init failed");
+        }
+        window.location.href = data.authUrl;
+        return;
+      }
+
       const r = await authFetch(`/api/v1/integrations/${provider}/connect`, { method: "POST" });
       if (!r.ok) throw new Error("Connect failed");
       setIntegrations((prev) => prev.map((i) => i.provider === provider ? { ...i, status: "connected" as const, connected_at: new Date().toISOString() } : i));
@@ -133,9 +174,7 @@ export default function IntegrationsPage() {
             <div
               key={integration.provider}
               className={`relative rounded-xl border p-6 transition-all ${
-                integration.status === "coming_soon"
-                  ? "bg-[#14151f]/50 border-[rgba(255,255,255,0.05)] opacity-60"
-                  : "bg-[#14151f] border-[rgba(255,255,255,0.07)] hover:border-[#3b82f6]/40"
+                "bg-[#14151f] border-[rgba(255,255,255,0.07)] hover:border-[#3b82f6]/40"
               }`}
             >
               <div className="flex items-start justify-between mb-4">
@@ -144,12 +183,10 @@ export default function IntegrationsPage() {
                   className={`text-xs px-2 py-1 rounded-full font-medium ${
                     integration.status === "connected"
                       ? "bg-green-500/10 text-green-400"
-                      : integration.status === "coming_soon"
-                      ? "bg-yellow-500/10 text-yellow-400"
                       : "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"
                   }`}
                 >
-                  {integration.status === "connected" ? "✅ Connected" : integration.status === "coming_soon" ? "🔜 Coming Soon" : "⚪ Disconnected"}
+                  {integration.status === "connected" ? "✅ Connected" : "⚪ Disconnected"}
                 </span>
               </div>
               <h3 className="text-white font-semibold mb-1">{integration.name}</h3>

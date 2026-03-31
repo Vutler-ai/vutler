@@ -38,8 +38,9 @@ class TaskOrchestrator {
    * @param {object} task  — { taskId, action, params, agentId, timestamp }
    * @returns {Promise<{taskId, status, data, error?, metadata}>}
    */
-  async execute(task) {
+  async execute(task, options = {}) {
     const start = Date.now();
+    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
 
     // 1. Schema validation
     const validationError = this._validate(task);
@@ -53,16 +54,20 @@ class TaskOrchestrator {
     // 2. Start progress ticker for long-running actions
     let progressTimer = null;
     if (LONG_RUNNING_ACTIONS.has(action)) {
-      progressTimer = this._startProgressTicker(taskId, action);
+      progressTimer = this._startProgressTicker(taskId, action, onProgress);
     }
 
     try {
       // Permission check — validate path before any provider call
-      const targetPath = params.path || params.command || null;
+      const targetPath = params.path || null;
       if (targetPath) {
         getPermissionEngine().validate(targetPath, action);
       }
-      const data = await this._route(action, params, taskId);
+      this._emitProgress(taskId, action, {
+        stage: 'accepted',
+        message: `Action ${action} accepted by Nexus runtime`,
+      }, onProgress);
+      const data = await this._route(action, params, taskId, onProgress);
       const durationMs = Date.now() - start;
       return this._successResult(taskId, data, durationMs, action);
     } catch (rawErr) {
@@ -76,7 +81,7 @@ class TaskOrchestrator {
 
   // ── Routing ─────────────────────────────────────────────────────────────────
 
-  async _route(action, params, taskId) {
+  async _route(action, params, taskId, onProgress) {
     const fs    = this.providers.fs;
     const shell = this.providers.shell;
 
@@ -93,9 +98,10 @@ class TaskOrchestrator {
         // Batch mode: process all supported docs in a folder
         if (params.batch && require('fs').statSync(params.path).isDirectory()) {
           return docs.batchRead(params.path, (p) => {
-            if (this.wsClient?.isConnected) {
-              this.wsClient.send('task.progress', { taskId, message: `Processing ${p.file} (${p.index + 1}/${p.total})` });
-            }
+            this._emitProgress(taskId, action, {
+              stage: 'reading',
+              message: `Processing ${p.file} (${p.index + 1}/${p.total})`,
+            }, onProgress);
           });
         }
         return docs.readDocument(params.path);
@@ -123,14 +129,13 @@ class TaskOrchestrator {
         return { output: shell.exec(params.command) };
 
       case 'read_clipboard': {
-        const { ClipboardProvider } = require('./providers/clipboard');
-        return { content: new ClipboardProvider().read() };
+        const provider = this.providers.clipboard || new (require('./providers/clipboard').ClipboardProvider)();
+        return { content: provider.read() };
       }
 
       case 'list_emails':
       case 'search_emails': {
-        const { getMailProvider } = require('./providers/mail');
-        const mail = getMailProvider();
+        const mail = this.providers.mail || require('./providers/mail').getMailProvider();
         if (action === 'search_emails') {
           this._require(params.query, 'params.query');
           return { emails: await mail.searchEmails(params.query, params) };
@@ -139,14 +144,13 @@ class TaskOrchestrator {
       }
 
       case 'read_calendar': {
-        const { CalendarProvider } = require('./providers/calendar');
-        return { events: await new CalendarProvider().readCalendar(params) };
+        const calendar = this.providers.calendar || new (require('./providers/calendar').CalendarProvider)();
+        return { events: await calendar.readCalendar(params) };
       }
 
       case 'read_contacts':
       case 'search_contacts': {
-        const { ContactsProvider } = require('./providers/contacts');
-        const cp = new ContactsProvider();
+        const cp = this.providers.contacts || new (require('./providers/contacts').ContactsProvider)();
         if (action === 'search_contacts') {
           this._require(params.query, 'params.query');
           return { contacts: await cp.searchContacts(params.query, params) };
@@ -195,18 +199,37 @@ class TaskOrchestrator {
   }
 
   /** Send periodic progress events to the cloud during long operations. */
-  _startProgressTicker(taskId, action) {
+  _startProgressTicker(taskId, action, onProgress) {
     let tick = 0;
     return setInterval(() => {
       tick++;
-      if (this.wsClient?.isConnected) {
-        this.wsClient.send('task.progress', {
-          taskId,
-          action,
-          message: `Processing… (${tick * PROGRESS_INTERVAL_MS / 1000}s elapsed)`,
-        });
-      }
+      this._emitProgress(taskId, action, {
+        stage: 'running',
+        message: `Processing... (${tick * PROGRESS_INTERVAL_MS / 1000}s elapsed)`,
+        elapsedMs: tick * PROGRESS_INTERVAL_MS,
+      }, onProgress);
     }, PROGRESS_INTERVAL_MS);
+  }
+
+  _emitProgress(taskId, action, progress, onProgress) {
+    const payload = {
+      taskId,
+      action,
+      ...progress,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (this.wsClient?.isConnected) {
+      this.wsClient.send('task.progress', payload);
+    }
+
+    if (onProgress) {
+      try {
+        onProgress(payload);
+      } catch (_) {
+        // Progress callbacks are best-effort only.
+      }
+    }
   }
 
   _successResult(taskId, rawData, durationMs, action) {

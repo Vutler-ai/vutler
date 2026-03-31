@@ -43,7 +43,18 @@ function generateRoutingRules(agents) {
  *   Full agent objects for multi-agent mode. When omitted the token
  *   contains only the single agentId (backward compatible).
  */
-function generateLocalToken({ agentId, agentName, workspaceId, sniparaInstanceId, permissions = {}, llmConfig = {}, agents }) {
+function generateLocalToken({
+  agentId,
+  agentName,
+  workspaceId,
+  sniparaInstanceId,
+  permissions = {},
+  llmConfig = {},
+  agents,
+  server,
+  nodeName,
+  apiKey,
+}) {
   const nodeId = crypto.randomUUID();
 
   // Multi-agent support: if agents[] provided, use those; otherwise fall back
@@ -56,7 +67,11 @@ function generateLocalToken({ agentId, agentName, workspaceId, sniparaInstanceId
     v: 1,
     mode: 'local',
     node_id: nodeId,
+    node_name: nodeName || agentName || 'Vutler Nexus',
+    name: nodeName || agentName || 'Vutler Nexus',
     workspace_id: workspaceId,
+    server: server || 'https://app.vutler.ai',
+    api_key: apiKey || null,
     snipara_instance_id: sniparaInstanceId || agentId,
     permissions: { shell: true, filesystem: true, env: false, network: false, llm: true, av_control: false, ...permissions },
     clone_source: { agent_id: agentId, agent_name: agentName },
@@ -98,23 +113,32 @@ function generateLocalToken({ agentId, agentName, workspaceId, sniparaInstanceId
 function generateEnterpriseToken({
   name, clientName, workspaceId, role = 'general', sniparaInstanceId,
   filesystemRoot, allowedDirs = [], permissions = {}, shellConfig = {}, offlineConfig = {},
-  seatsCount, primaryAgentId, poolAgentIds, autoSpawnRules, allowCreate,
+  seatsCount, primaryAgentId, poolAgentIds, autoSpawnRules, routingRules, allowCreate,
+  server, apiKey,
 }) {
   const nodeId = crypto.randomUUID();
   const instanceId = sniparaInstanceId || `nexus-${clientName}-${name}`.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
-  // Build routing_rules from pool agents when primaryAgentId is known
   const poolIds = Array.isArray(poolAgentIds) ? poolAgentIds : [];
-  const routingRules = Array.isArray(autoSpawnRules) ? autoSpawnRules : [];
+  const normalizedRoutingRules = Array.isArray(routingRules) ? routingRules : [];
+  const normalizedAutoSpawnRules = Array.isArray(autoSpawnRules) ? autoSpawnRules : [];
 
   const payload = {
     v: 1,
     mode: 'enterprise',
     node_id: nodeId,
+    node_name: name,
+    name,
     workspace_id: workspaceId,
+    server: server || 'https://app.vutler.ai',
+    api_key: apiKey || null,
     snipara_instance_id: instanceId,
     role,
     permissions: { shell: true, filesystem: true, env: false, network: true, llm: true, av_control: true, ...permissions },
+    client_name: clientName,
+    filesystem_root: filesystemRoot || '/opt/' + clientName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+    allowed_dirs: allowedDirs,
+    offline_config: { enabled: false, cron_tasks: [], ...offlineConfig },
     enterprise: {
       client_name: clientName,
       filesystem_root: filesystemRoot || '/opt/' + clientName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
@@ -123,10 +147,11 @@ function generateEnterpriseToken({
       offline_config: { enabled: false, cron_tasks: [], ...offlineConfig },
     },
     // Multi-agent enterprise fields (present only when supplied)
-    ...(seatsCount !== undefined ? { seats: seatsCount } : {}),
+    ...(seatsCount !== undefined ? { seats: seatsCount, max_seats: seatsCount } : {}),
     ...(primaryAgentId ? { agents: [primaryAgentId], primary_agent: primaryAgentId } : {}),
     ...(poolIds.length ? { available_pool: poolIds } : {}),
-    ...(routingRules.length ? { routing_rules: routingRules, auto_spawn_rules: routingRules } : {}),
+    ...(normalizedRoutingRules.length ? { routing_rules: normalizedRoutingRules } : {}),
+    ...(normalizedAutoSpawnRules.length ? { auto_spawn_rules: normalizedAutoSpawnRules } : {}),
     ...(allowCreate !== undefined ? { allow_create: !!allowCreate } : {}),
     iat: Date.now(),
     exp: Date.now() + TOKEN_EXPIRY_MS,

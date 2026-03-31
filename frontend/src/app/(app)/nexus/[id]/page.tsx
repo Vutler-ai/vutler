@@ -4,20 +4,12 @@ import { use, useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   getNode,
-  dispatch,
   spawnAgent,
   createNodeAgent,
   stopNodeAgent,
-  dispatchSearch,
-  dispatchReadDocument,
-  dispatchListDir,
-  dispatchListEmails,
-  dispatchSearchEmails,
-  dispatchReadCalendar,
-  dispatchReadContacts,
-  dispatchShellExec,
-  dispatchReadClipboard,
   getNodeCapabilities,
+  getNodeCommand,
+  queueDispatchAction,
   type CreateNodeAgentDefinition,
 } from '@/lib/api/endpoints/nexus';
 import { getAgents } from '@/lib/api/endpoints/agents';
@@ -33,6 +25,8 @@ import type {
   NexusContact,
   NexusShellResult,
   NexusDocumentResult,
+  NexusCommandStatus,
+  NexusProviderSource,
 } from '@/lib/api/types';
 
 // ─── Local types ──────────────────────────────────────────────────────────────
@@ -56,6 +50,7 @@ interface NodeDetail {
   agentCount?: number;
   mode?: string;
   clientName?: string;
+  providerSources?: Record<string, NexusProviderSource>;
 }
 
 type ActionType =
@@ -116,6 +111,12 @@ function formatBytes(bytes?: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatProviderLabel(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 // ─── Status styles ─────────────────────────────────────────────────────────────
@@ -728,10 +729,18 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
 
 // ─── Action Dispatch Panel ────────────────────────────────────────────────────
 
-function ActionDispatchPanel({ nodeId }: { nodeId: string }) {
+function ActionDispatchPanel({
+  nodeId,
+  onCommandSettled,
+}: {
+  nodeId: string;
+  onCommandSettled?: () => void;
+}) {
   const [activeAction, setActiveAction] = useState<ActionType>('search');
   const [dispatching, setDispatching] = useState(false);
   const [result, setResult] = useState<NexusDispatchResult | null>(null);
+  const [command, setCommand] = useState<NexusCommandStatus<NexusDispatchResult> | null>(null);
+  const [commandError, setCommandError] = useState('');
 
   // Per-action form state
   const [searchQuery, setSearchQuery] = useState('');
@@ -747,79 +756,150 @@ function ActionDispatchPanel({ nodeId }: { nodeId: string }) {
   const [contactQuery, setContactQuery] = useState('');
   const [contactLimit, setContactLimit] = useState(50);
   const [shellCmd, setShellCmd] = useState('');
+  const ACTION_KEYS = Object.keys(ACTION_CONFIGS) as ActionType[];
+
+  const canDispatch = (): boolean => {
+    if (dispatching) return false;
+    switch (activeAction) {
+      case 'search': return searchQuery.trim().length > 0;
+      case 'read_document': return docPath.trim().length > 0;
+      case 'list_dir': return dirPath.trim().length > 0;
+      case 'read_clipboard': return true;
+      case 'list_emails': return true;
+      case 'search_emails': return searchEmailQuery.trim().length > 0;
+      case 'read_calendar': return true;
+      case 'read_contacts': return true;
+      case 'shell_exec': return shellCmd.trim().length > 0;
+      default: return false;
+    }
+  };
 
   const handleDispatch = async () => {
     setDispatching(true);
     setResult(null);
+    setCommand(null);
+    setCommandError('');
     try {
-      let res: NexusDispatchResult;
+      let queued: NexusCommandStatus<NexusDispatchResult>;
       switch (activeAction) {
         case 'search':
-          res = await dispatchSearch(nodeId, searchQuery, searchScope || undefined);
+          queued = await queueDispatchAction(nodeId, 'search', { query: searchQuery, scope: searchScope || undefined });
           break;
         case 'read_document':
-          res = await dispatchReadDocument(nodeId, docPath);
+          queued = await queueDispatchAction(nodeId, 'read_document', { path: docPath });
           break;
         case 'list_dir':
-          res = await dispatchListDir(nodeId, dirPath, dirRecursive, dirPattern || undefined);
+          queued = await queueDispatchAction(nodeId, 'list_dir', { path: dirPath, recursive: dirRecursive, pattern: dirPattern || undefined });
           break;
         case 'read_clipboard':
-          res = await dispatchReadClipboard(nodeId);
+          queued = await queueDispatchAction(nodeId, 'read_clipboard', {});
           break;
         case 'list_emails':
-          res = await dispatchListEmails(nodeId, emailLimit);
+          queued = await queueDispatchAction(nodeId, 'list_emails', { limit: emailLimit });
           break;
         case 'search_emails':
-          res = await dispatchSearchEmails(nodeId, searchEmailQuery, searchEmailLimit);
+          queued = await queueDispatchAction(nodeId, 'search_emails', { query: searchEmailQuery, limit: searchEmailLimit });
           break;
         case 'read_calendar':
-          res = await dispatchReadCalendar(nodeId, calDays);
+          queued = await queueDispatchAction(nodeId, 'read_calendar', { days: calDays });
           break;
         case 'read_contacts':
-          res = await dispatchReadContacts(nodeId, contactQuery || undefined, contactLimit);
+          queued = await queueDispatchAction(nodeId, contactQuery ? 'search_contacts' : 'read_contacts', { query: contactQuery || undefined, limit: contactLimit });
           break;
         case 'shell_exec':
-          res = await dispatchShellExec(nodeId, shellCmd);
+          queued = await queueDispatchAction(nodeId, 'shell_exec', { command: shellCmd });
           break;
         default:
-          res = { taskId: '', status: 'error', error: 'Unknown action' };
+          throw new Error('Unknown action');
       }
-      setResult(res);
+      setCommand(queued);
     } catch (err) {
       setResult({
         taskId: '',
         status: 'error',
         error: err instanceof Error ? err.message : 'Dispatch failed',
       });
-    } finally {
       setDispatching(false);
     }
   };
 
-  const canDispatch = (): boolean => {
-    if (dispatching) return false;
-    switch (activeAction) {
-      case 'search':        return searchQuery.trim().length > 0;
-      case 'read_document': return docPath.trim().length > 0;
-      case 'list_dir':      return dirPath.trim().length > 0;
-      case 'read_clipboard':return true;
-      case 'list_emails':   return true;
-      case 'search_emails': return searchEmailQuery.trim().length > 0;
-      case 'read_calendar': return true;
-      case 'read_contacts': return true;
-      case 'shell_exec':    return shellCmd.trim().length > 0;
-      default: return false;
-    }
+  useEffect(() => {
+    if (!command?.id) return undefined;
+    if (!['queued', 'in_progress'].includes(command.status)) return undefined;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const next = await getNodeCommand<NexusDispatchResult>(nodeId, command.id);
+        if (cancelled) return;
+        setCommand(next);
+
+        if (next.status === 'completed') {
+          setResult(next.result || { taskId: next.id, status: 'completed', data: null });
+          setDispatching(false);
+          onCommandSettled?.();
+        } else if (next.status === 'failed' || next.status === 'expired') {
+          setResult(next.result || {
+            taskId: next.id,
+            status: 'error',
+            error: next.error || 'Dispatch failed',
+          });
+          setDispatching(false);
+          onCommandSettled?.();
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setCommandError(err instanceof Error ? err.message : 'Failed to read command status');
+      }
+    };
+
+    poll();
+    const timer = window.setInterval(poll, 1200);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [nodeId, command?.id, command?.status, onCommandSettled]);
+
+  const progressMessage = (() => {
+    if (!command) return '';
+    if (command.progress?.message) return command.progress.message;
+    if (command.status === 'queued') return 'Queued in Nexus command channel';
+    if (command.status === 'in_progress') return 'Command is running on the node';
+    return '';
+  })();
+
+  const progressStage = command?.progress?.stage || (
+    command?.status === 'queued'
+      ? 'queued'
+      : command?.status === 'in_progress'
+        ? 'running'
+        : ''
+  );
+
+  const currentActionLabel = ACTION_CONFIGS[activeAction].label;
+
+  const clearResults = () => {
+    setResult(null);
+    setCommand(null);
+    setCommandError('');
   };
 
-  const ACTION_KEYS = Object.keys(ACTION_CONFIGS) as ActionType[];
+  const selectAction = (key: ActionType) => {
+    setActiveAction(key);
+    clearResults();
+  };
+
+  const activeCommandId = command?.id || result?.taskId || '';
 
   return (
     <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
       {/* Header */}
       <div className="px-5 py-4 border-b border-[rgba(255,255,255,0.07)]">
         <h2 className="text-sm font-semibold text-white">Dispatch Action</h2>
-        <p className="text-xs text-[#6b7280] mt-0.5">Send a typed command to this node</p>
+        <p className="text-xs text-[#6b7280] mt-0.5">Send a typed command to this node and follow its runtime progress</p>
       </div>
 
       <div className="p-5 space-y-5">
@@ -832,7 +912,7 @@ function ActionDispatchPanel({ nodeId }: { nodeId: string }) {
               <button
                 key={key}
                 type="button"
-                onClick={() => { setActiveAction(key); setResult(null); }}
+                onClick={() => selectAction(key)}
                 className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${
                   active
                     ? 'bg-blue-900/20 text-blue-400 border-blue-500/30'
@@ -1035,8 +1115,38 @@ function ActionDispatchPanel({ nodeId }: { nodeId: string }) {
           {dispatching && (
             <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           )}
-          {dispatching ? 'Dispatching…' : `Run: ${ACTION_CONFIGS[activeAction].label}`}
+          {dispatching ? `Running: ${currentActionLabel}` : `Run: ${currentActionLabel}`}
         </button>
+
+        {command && (
+          <div className="rounded-xl border border-[rgba(59,130,246,0.28)] bg-[rgba(59,130,246,0.08)] p-4 space-y-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="text-xs text-[#93c5fd] uppercase tracking-wide font-medium">Live Command</p>
+                <p className="text-sm text-white font-medium">{command.type}</p>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-xs border border-blue-500/30 bg-blue-900/20 text-blue-300">
+                {command.status.replace('_', ' ')}
+              </span>
+            </div>
+            {progressMessage && (
+              <div className="space-y-1">
+                <p className="text-sm text-[#dbeafe]">{progressMessage}</p>
+                <div className="flex items-center gap-2 text-xs text-[#93c5fd]">
+                  <span className="font-mono">{progressStage || 'running'}</span>
+                  {command.progress?.elapsedMs !== undefined && (
+                    <span>{Math.round(command.progress.elapsedMs / 1000)}s</span>
+                  )}
+                  <span className="font-mono break-all">{activeCommandId}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {commandError && (
+          <p className="text-xs text-amber-400">{commandError}</p>
+        )}
 
         {/* Result viewer */}
         {result && <ResultViewer action={activeAction} result={result} />}
@@ -1098,6 +1208,40 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
                   >
                     {p}
                   </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {caps.providerSources && Object.keys(caps.providerSources).length > 0 && (
+            <div>
+              <p className="text-xs text-[#6b7280] mb-2">Active sources</p>
+              <div className="space-y-2">
+                {Object.entries(caps.providerSources).map(([provider, source]) => (
+                  <div
+                    key={provider}
+                    className="flex items-center justify-between gap-3 p-2.5 rounded-lg bg-[#0a0b14] border border-[rgba(255,255,255,0.07)]"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-white">{formatProviderLabel(provider)}</p>
+                      <p className="text-xs text-[#6b7280]">
+                        Active: {formatProviderLabel(source.active)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-1.5">
+                      <span className="px-2 py-0.5 rounded-full text-xs border bg-blue-900/20 text-blue-300 border-blue-500/30">
+                        {formatProviderLabel(source.active)}
+                      </span>
+                      {source.fallbacks.map((fallback) => (
+                        <span
+                          key={`${provider}-${fallback}`}
+                          className="px-2 py-0.5 rounded-full text-xs border bg-[#111827] text-[#9ca3af] border-[rgba(255,255,255,0.08)]"
+                        >
+                          {formatProviderLabel(fallback)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
@@ -1330,7 +1474,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
       </section>
 
       {/* Action dispatch panel (replaces old "Send Task") */}
-      <ActionDispatchPanel nodeId={id} />
+      <ActionDispatchPanel nodeId={id} onCommandSettled={fetchNode} />
 
       {/* Recent activity */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">

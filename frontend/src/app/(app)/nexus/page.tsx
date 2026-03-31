@@ -25,6 +25,11 @@ function relativeTime(iso?: string): string {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+function formatProviderLabel(value?: string): string {
+  if (!value) return 'Unknown';
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 const STATUS_DOT: Record<NexusNode['status'], string> = {
   online: 'bg-emerald-400',
   warning: 'bg-amber-400',
@@ -798,6 +803,9 @@ function DeleteConfirmModal({
 
 function NodeCard({ node }: { node: NexusNode }) {
   const m = node.mode ?? 'standard';
+  const workspaceProviders = ['mail', 'calendar', 'contacts']
+    .map((key) => node.providerSources?.[key]?.active)
+    .filter((value, index, list): value is string => !!value && list.indexOf(value) === index);
   return (
     <Link
       href={`/nexus/${node.id}`}
@@ -818,6 +826,18 @@ function NodeCard({ node }: { node: NexusNode }) {
         <p>{node.agentCount === 0 ? 'No agents' : `${node.agentCount} agent${node.agentCount !== 1 ? 's' : ''}`}</p>
         {node.seats && (
           <p className="text-[#3b82f6]">{node.seats.used}/{node.seats.max} seats used</p>
+        )}
+        {workspaceProviders.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            {workspaceProviders.map((provider) => (
+              <span
+                key={`${node.id}-${provider}`}
+                className="px-1.5 py-0.5 rounded-full bg-[#0a0b14] border border-[rgba(255,255,255,0.08)] text-[10px] text-[#9ca3af]"
+              >
+                {formatProviderLabel(provider)}
+              </span>
+            ))}
+          </div>
         )}
         <p>Last: {relativeTime(node.lastHeartbeat)}</p>
       </div>

@@ -3,9 +3,12 @@ const https = require('https');
 const http = require('http');
 const { createDashboardServer } = require('./dashboard/server');
 const AgentManager = require('./lib/agent-manager');
+const { TaskOrchestrator } = require('./lib/task-orchestrator');
+const { getPermissionEngine } = require('./lib/permission-engine');
 
 class NexusNode {
   constructor(opts = {}) {
+    this.config = opts;
     this.key = opts.key || process.env.VUTLER_KEY;
     this.server = opts.server || process.env.VUTLER_SERVER || 'https://app.vutler.ai';
     this.name = opts.name || process.env.NODE_NAME || require('os').hostname();
@@ -19,6 +22,8 @@ class NexusNode {
     this.deployToken = opts.deploy_token || null;
     this.nodeId = null;
     this.ws = null;
+    this.agents = [];
+    this.permissions = opts.permissions || {};
 
     // Load providers
     this.providers = {};
@@ -29,14 +34,27 @@ class NexusNode {
       const { NetworkProvider } = require('./lib/providers/network');
       const { LLMProvider } = require('./lib/providers/llm');
       const { AVControlProvider } = require('./lib/providers/av-control');
+      const { ClipboardProvider } = require('./lib/providers/clipboard');
 
-      const perms = opts.permissions || {};
+      const perms = this.permissions;
       this.providers.fs = new FilesystemProvider(perms.filesystem || {});
       this.providers.shell = new ShellProvider(perms.shell || {});
       this.providers.env = new EnvProvider(perms.env || {});
       this.providers.network = new NetworkProvider(perms.network || {});
       this.providers.llm = new LLMProvider(opts.llm || {});
       this.providers.av = new AVControlProvider(perms.av || { subnets: perms.network?.subnets });
+      this.providers.clipboard = new ClipboardProvider();
+
+      const workspaceBacked = this.mode === 'enterprise' || this.type === 'docker';
+      if (workspaceBacked) {
+        const sharedConfig = { server: this.server, apiKey: this.key };
+        const { WorkspaceMailProvider } = require('./lib/providers/workspace-mail');
+        const { WorkspaceCalendarProvider } = require('./lib/providers/workspace-calendar');
+        const { WorkspaceContactsProvider } = require('./lib/providers/workspace-contacts');
+        this.providers.mail = new WorkspaceMailProvider(sharedConfig);
+        this.providers.calendar = new WorkspaceCalendarProvider(sharedConfig);
+        this.providers.contacts = new WorkspaceContactsProvider(sharedConfig);
+      }
     }
 
     this.agentManager = new AgentManager({
@@ -53,6 +71,9 @@ class NexusNode {
     this.reconnectInterval = 5000;
     this.recentTasks = [];
     this.logBuffer = [];
+    this.taskOrchestrator = new TaskOrchestrator(this.providers, null);
+    this.permissionEngine = getPermissionEngine();
+    this._syncPermissionSnapshot();
 
     // Offline monitor (enterprise only)
     this.offlineConfig = opts.offline_config || {};
@@ -74,7 +95,35 @@ class NexusNode {
       deploy_token: this.deployToken,
       snipara_instance_id: this.sniparaInstanceId,
       client_name: this.clientName,
+      filesystem_root: this.filesystemRoot,
       role: this.role,
+      permissions: this.permissions,
+      seats: this.config.seats,
+      max_seats: this.config.seats,
+      primary_agent: this.config.primary_agent,
+      available_pool: this.config.available_pool,
+      allow_create: this.config.allow_create,
+      routing_rules: this.config.routing_rules,
+      auto_spawn_rules: this.config.auto_spawn_rules,
+      offline_config: this.offlineConfig,
+      llm: this.config.llm,
+      config: {
+        mode: this.mode,
+        node_name: this.name,
+        client_name: this.clientName,
+        filesystem_root: this.filesystemRoot,
+        role: this.role,
+        snipara_instance_id: this.sniparaInstanceId,
+        permissions: this.permissions,
+        seats: this.config.seats,
+        max_seats: this.config.seats,
+        primary_agent: this.config.primary_agent,
+        available_pool: this.config.available_pool,
+        allow_create: this.config.allow_create,
+        routing_rules: this.config.routing_rules,
+        auto_spawn_rules: this.config.auto_spawn_rules,
+        offline_config: this.offlineConfig,
+      },
     });
 
     if (regResult.success && regResult.nodeId) {
@@ -92,6 +141,7 @@ class NexusNode {
         const configRes = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/agent-configs`);
         if (configRes?.agents) {
           await this.agentManager.loadAgents(configRes.agents);
+          this.agents = this.agentManager.getStatus();
         }
       } catch (e) {
         console.log('[Nexus] Could not load agent configs from cloud, using local config');
@@ -108,8 +158,11 @@ class NexusNode {
     
     // 3. Start polling for tasks
     this._startTaskPoll();
-    
-    // 4. Start local dashboard server
+
+    // 4. Start polling for live node commands
+    this._startCommandPoll();
+
+    // 5. Start local dashboard server
     this._startDashboardServer();
     
     console.log(`[Nexus] Node "${this.name}" online. Listening on port ${this.port}`);
@@ -119,6 +172,7 @@ class NexusNode {
   async disconnect() {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.commandTimer) clearInterval(this.commandTimer);
     if (this.healthServer) this.healthServer.close();
     if (this.offlineMonitor) this.offlineMonitor.stop();
     if (this.nodeId) {
@@ -130,12 +184,16 @@ class NexusNode {
   _startHeartbeat() {
     this.heartbeatTimer = setInterval(async () => {
       try {
+        this.agents = this.agentManager.getStatus();
         await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/connect`, {
           status: 'online',
-          agents: this.agentManager.getStatus(),
+          agents: this.agents,
           seats: this.agentManager.seatsInfo,
           memory: process.memoryUsage(),
-          uptime: process.uptime()
+          uptime: process.uptime(),
+          mode: this.mode,
+          client_name: this.clientName,
+          filesystem_root: this.filesystemRoot,
         });
         if (this.offlineMonitor) this.offlineMonitor.onCloudContact();
       } catch (e) {
@@ -156,6 +214,20 @@ class NexusNode {
         // silent — will retry next poll
       }
     }, this.config?.taskPollInterval || 10000);
+  }
+
+  _startCommandPoll() {
+    this.commandTimer = setInterval(async () => {
+      try {
+        const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/commands?claim=1&limit=5`);
+        const commands = response?.commands || [];
+        for (const command of commands) {
+          await this._executeCommand(command);
+        }
+      } catch (e) {
+        // silent — will retry on next cycle
+      }
+    }, this.config?.commandPollInterval || 2000);
   }
 
   async _executeTask(task) {
@@ -216,6 +288,103 @@ class NexusNode {
       tracked.completedAt = new Date().toISOString();
       await this._updateTaskStatus(task.id, 'failed', { error: error.message });
       this.log(`[NEXUS] Task failed: ${task.title} — ${error.message}`);
+    }
+  }
+
+  async _executeCommand(command) {
+    const label = `${command.type} (${command.id})`;
+    this.log(`[NEXUS] Executing command: ${label}`);
+
+    try {
+      let result;
+      if (command.type === 'spawn_agent') {
+        const agentId = command.payload?.agentId;
+        if (!agentId) throw new Error('agentId is required');
+        const worker = await this.agentManager.spawnAgent(agentId);
+        this.agents = this.agentManager.getStatus();
+        result = {
+          agent: {
+            id: worker.id,
+            name: worker.name,
+            model: worker.model,
+            status: worker.status,
+            tasksCompleted: worker.tasksCompleted,
+          },
+          seats: this.agentManager.seatsInfo,
+        };
+      } else if (command.type === 'stop_agent') {
+        const agentId = command.payload?.agentId;
+        if (!agentId) throw new Error('agentId is required');
+        this.agentManager.stopAgent(agentId);
+        this.agents = this.agentManager.getStatus();
+        result = {
+          agentId,
+          seats: this.agentManager.seatsInfo,
+        };
+      } else if (command.type === 'dispatch_action') {
+        result = await this._dispatchNodeAction(command);
+      } else {
+        throw new Error(`Unsupported command type: ${command.type}`);
+      }
+
+      await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/commands/${command.id}/result`, {
+        status: 'completed',
+        result,
+      });
+      this.log(`[NEXUS] Command completed: ${label}`);
+    } catch (error) {
+      await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/commands/${command.id}/result`, {
+        status: 'failed',
+        error: error.message,
+        result: error.result || null,
+      }).catch(() => {});
+      this.log(`[NEXUS] Command failed: ${label} — ${error.message}`);
+    }
+  }
+
+  async _dispatchNodeAction(command) {
+    const action = command.payload?.action;
+    const args = command.payload?.args || {};
+    const result = await this.taskOrchestrator.execute({
+      taskId: command.id,
+      action,
+      params: args,
+      agentId: this.nodeId || 'nexus-node',
+      timestamp: new Date().toISOString(),
+    }, {
+      onProgress: (progress) => this._reportCommandProgress(command.id, progress),
+    });
+
+    if (result.status === 'error') {
+      const error = new Error(
+        typeof result.error === 'string'
+          ? result.error
+          : result.error?.message || 'Dispatch action failed'
+      );
+      error.result = result;
+      throw error;
+    }
+
+    return result;
+  }
+
+  _syncPermissionSnapshot() {
+    const perms = this.permissions || {};
+    if (Array.isArray(perms.allowedFolders) || Array.isArray(perms.allowedActions)) {
+      this.permissionEngine.replace({
+        allowedFolders: perms.allowedFolders || [],
+        allowedActions: perms.allowedActions || [],
+      });
+    }
+  }
+
+  async _reportCommandProgress(commandId, progress) {
+    try {
+      await this._apiCall('POST', `/api/v1/nexus/${this.nodeId}/commands/${commandId}/progress`, {
+        progress,
+      });
+    } catch (_) {
+      // Non-fatal; the final command result remains authoritative.
     }
   }
 

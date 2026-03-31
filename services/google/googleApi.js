@@ -280,6 +280,29 @@ async function listGmailLabels(workspaceId) {
   return resp.labels || [];
 }
 
+// ─── People API ───────────────────────────────────────────────────────────────
+
+async function listPeopleConnections(workspaceId, { pageSize = 50, pageToken, personFields } = {}) {
+  const query = {
+    pageSize: String(pageSize),
+    personFields: personFields || 'names,emailAddresses,phoneNumbers,organizations',
+  };
+  if (pageToken) query.pageToken = pageToken;
+
+  const resp = await googleRequest(workspaceId, {
+    hostname: 'people.googleapis.com',
+    path: '/v1/people/me/connections',
+    query,
+  });
+
+  return {
+    connections: resp.connections || [],
+    nextPageToken: resp.nextPageToken || null,
+    totalPeople: resp.totalPeople || 0,
+    totalItems: resp.totalItems || 0,
+  };
+}
+
 module.exports = {
   // Calendar
   listCalendarEvents,
@@ -297,4 +320,6 @@ module.exports = {
   getGmailMessage,
   sendGmailMessage,
   listGmailLabels,
+  // People
+  listPeopleConnections,
 };

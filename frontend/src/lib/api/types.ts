@@ -341,6 +341,7 @@ export interface NexusNode {
   clientId?: string;
   agents?: NexusAgentStatus[];
   seats?: NexusSeatsInfo;
+  providerSources?: Record<string, NexusProviderSource>;
 }
 
 export interface NexusStats {
@@ -398,6 +399,32 @@ export interface NexusDispatchResult<T = unknown> {
   metadata?: { durationMs: number; action: string; truncated?: boolean };
 }
 
+export interface NexusCommandProgress {
+  stage?: string;
+  message?: string;
+  elapsedMs?: number;
+  updatedAt?: string;
+}
+
+export interface NexusCommandStatus<T = unknown> {
+  id: string;
+  type: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'expired';
+  payload?: Record<string, unknown>;
+  progress?: NexusCommandProgress | null;
+  result?: T;
+  error?: string;
+  createdAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt?: string;
+}
+
+export interface NexusProviderSource {
+  active: string;
+  fallbacks: string[];
+}
+
 export interface NexusSearchResult {
   path: string;
   name: string;
@@ -440,6 +467,7 @@ export interface NexusShellResult {
 export interface NexusCapabilities {
   platform: string;
   providers: string[];
+  providerSources?: Record<string, NexusProviderSource>;
   permissions?: { allowedFolders: string[] };
 }
 
@@ -581,8 +609,10 @@ export interface WorkspaceSettings {
   timezone?: SettingValue | string;
   default_provider?: SettingValue | string;
   snipara_api_key?: SettingValue | string;
+  snipara_api_url?: SettingValue | string;
   snipara_project_id?: SettingValue | string;
   snipara_project_slug?: SettingValue | string;
+  snipara_swarm_id?: SettingValue | string;
   beta_features?: Record<string, unknown>;
   [key: string]: unknown;
 }

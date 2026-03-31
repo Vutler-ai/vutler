@@ -60,7 +60,8 @@ class AgentManager {
       headers: { 'X-API-Key': this.apiKey }
     });
     if (!response.ok) throw new Error(`Failed to fetch agent config: ${response.status}`);
-    const config = await response.json();
+    const payload = await response.json();
+    const config = payload?.agent || payload;
     const worker = new AgentWorker(config, this.providers, this.sniparaClient);
     this.agents.set(agentId, worker);
     console.log(`[AgentManager] Spawned agent: ${config.name} (${agentId})`);
@@ -77,7 +78,8 @@ class AgentManager {
       body: JSON.stringify(definition)
     });
     if (!response.ok) throw new Error(`Failed to create agent: ${response.status}`);
-    const agent = await response.json();
+    const payload = await response.json();
+    const agent = payload?.agent || payload;
     const worker = new AgentWorker(agent, this.providers, this.sniparaClient);
     this.agents.set(agent.id, worker);
     console.log(`[AgentManager] Created new agent: ${agent.name} (${agent.id})`);

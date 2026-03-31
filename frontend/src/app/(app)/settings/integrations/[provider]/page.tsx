@@ -40,7 +40,8 @@ export default function IntegrationDetailPage() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
-  const meta = META[provider] || { icon: "🔌", name: provider };
+const meta = META[provider] || { icon: "🔌", name: provider };
+  const isOauthProvider = ["google", "github", "microsoft365"].includes(provider);
 
   useEffect(() => {
     Promise.all([
@@ -64,9 +65,16 @@ export default function IntegrationDetailPage() {
 
   const handleReconnect = async () => {
     try {
-      const r = await authFetch(`/api/v1/integrations/${provider}/connect`, { method: "POST" });
+      const r = await authFetch(
+        `/api/v1/integrations/${provider}/connect`,
+        isOauthProvider ? undefined : { method: "POST" }
+      );
       if (!r.ok) throw new Error("Reconnect failed");
       const data = await r.json();
+      if (isOauthProvider && data?.authUrl) {
+        window.location.href = data.authUrl;
+        return;
+      }
       setDetail((prev) => prev ? { ...prev, status: data?.integration?.status || "connected", connected_at: data?.integration?.connected_at || new Date().toISOString() } : prev);
     } catch {
       setError("Failed to reconnect");

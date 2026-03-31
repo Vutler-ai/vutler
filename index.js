@@ -137,6 +137,9 @@ app.use(require('./api/middleware/auth'));
 // Workspace plan — loaded inline by gateFeature, NOT global middleware
 // (global async middleware was silently hanging on DB pool exhaustion)
 
+const { createApiKey } = require('./services/apiKeys');
+const { assertNexusProvisionAllowed } = require('./services/nexusBilling');
+
 // ---------------------------------------------------------------------------
 // 6. CORE ROUTES (shared across all plans)
 // ---------------------------------------------------------------------------
@@ -149,6 +152,81 @@ function mount(prefix, mod) {
   }
 }
 
+function cleanObject(input = {}) {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== '')
+  );
+}
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'nexus';
+}
+
+function getApiBaseUrl(req) {
+  return `${req.protocol}://${req.get('host')}`;
+}
+
+function buildNodeConfig(input = {}) {
+  const baseConfig = input.config && typeof input.config === 'object' ? input.config : {};
+  return {
+    ...baseConfig,
+    ...cleanObject({
+      mode: input.mode || baseConfig.mode,
+      node_name: input.node_name || input.name || baseConfig.node_name,
+      client_name: input.client_name || input.clientName || baseConfig.client_name,
+      role: input.role || baseConfig.role,
+      filesystem_root: input.filesystem_root || input.filesystemRoot || baseConfig.filesystem_root,
+      snipara_instance_id: input.snipara_instance_id || baseConfig.snipara_instance_id,
+      permissions: input.permissions || baseConfig.permissions,
+      llm: input.llm || baseConfig.llm,
+      seats: input.seats ?? baseConfig.seats,
+      max_seats: input.max_seats ?? input.seats ?? baseConfig.max_seats,
+      primary_agent: input.primary_agent || input.primaryAgentId || baseConfig.primary_agent,
+      available_pool: input.available_pool || input.poolAgentIds || baseConfig.available_pool,
+      allow_create: input.allow_create ?? input.allowCreatingNewAgents ?? baseConfig.allow_create,
+      routing_rules: input.routing_rules || input.routingRules || baseConfig.routing_rules,
+      auto_spawn_rules: input.auto_spawn_rules || input.autoSpawnRules || baseConfig.auto_spawn_rules,
+      offline_config: input.offline_config || input.offlineConfig || baseConfig.offline_config,
+    }),
+  };
+}
+
+async function normalizeEnterpriseAutoSpawnRules(pg, workspaceId, rawRules = [], poolAgentIds = []) {
+  if (!Array.isArray(rawRules) || rawRules.length === 0) return [];
+
+  const names = rawRules
+    .map((rule) => rule?.agentName || rule?.agent_name || rule?.spawn)
+    .filter(Boolean);
+
+  const result = await pg.query(
+    `SELECT id::text AS id, name
+       FROM tenant_vutler.agents
+      WHERE workspace_id = $1
+        AND (
+          id::text = ANY($2::text[])
+          OR name = ANY($3::text[])
+        )`,
+    [workspaceId, poolAgentIds.map(String), names]
+  ).catch(() => ({ rows: [] }));
+
+  const byId = new Map(result.rows.map((row) => [String(row.id), String(row.id)]));
+  const byName = new Map(result.rows.map((row) => [String(row.name).toLowerCase(), String(row.id)]));
+
+  return rawRules.flatMap((rule) => {
+    const trigger = rule?.trigger || rule?.triggerPattern || rule?.pattern;
+    const requestedAgent = rule?.spawn || rule?.agentId || rule?.agent_id || rule?.agentName || rule?.agent_name;
+    const spawn = byId.get(String(requestedAgent || '')) || byName.get(String(requestedAgent || '').toLowerCase());
+
+    if (!trigger || !spawn) return [];
+    return [{ trigger, spawn }];
+  });
+}
+
 // ── Nexus Register (mounted early, before auth middleware) ──────────────────
 app.post('/api/v1/nexus/register', async (req, res) => {
   try {
@@ -156,6 +234,29 @@ app.post('/api/v1/nexus/register', async (req, res) => {
     const pg = app.locals.pg;
     const DEFAULT_WS = '00000000-0000-0000-0000-000000000001';
     let workspaceId = DEFAULT_WS, nodeId = crypto.randomUUID(), authMethod = 'dev_mode';
+
+    const {
+      name: requestName,
+      type: requestType = 'local',
+      host = null,
+      port = null,
+      config = {},
+      mode: requestMode,
+      client_name,
+      filesystem_root,
+      role,
+      snipara_instance_id,
+      permissions,
+      llm,
+      seats,
+      max_seats,
+      primary_agent,
+      available_pool,
+      allow_create,
+      routing_rules,
+      auto_spawn_rules,
+      offline_config,
+    } = req.body || {};
 
     // ── Deploy token auth (Nexus-Local / Nexus-Enterprise) ──────────────────
     const deployToken = req.body?.deploy_token;
@@ -167,18 +268,90 @@ app.post('/api/v1/nexus/register', async (req, res) => {
       workspaceId = payload.workspace_id || DEFAULT_WS;
       nodeId = payload.node_id || nodeId;
       authMethod = `deploy_token_${payload.mode || 'unknown'}`;
+      const nodeName = requestName || payload.node_name || payload.name || 'Vutler Nexus';
+      const nodeType = requestType || (payload.mode === 'enterprise' ? 'docker' : 'local');
+      const nodeConfig = buildNodeConfig({
+        ...payload,
+        ...req.body,
+        mode: requestMode || payload.mode,
+        client_name: client_name || payload.client_name || payload.enterprise?.client_name,
+        filesystem_root: filesystem_root || payload.filesystem_root || payload.enterprise?.filesystem_root,
+        role: role || payload.role,
+        snipara_instance_id: snipara_instance_id || payload.snipara_instance_id,
+        permissions: permissions || payload.permissions,
+        llm,
+        seats: seats ?? payload.seats,
+        max_seats: max_seats ?? payload.max_seats,
+        primary_agent: primary_agent || payload.primary_agent,
+        available_pool: available_pool || payload.available_pool,
+        allow_create: allow_create ?? payload.allow_create,
+        routing_rules: routing_rules || payload.routing_rules,
+        auto_spawn_rules: auto_spawn_rules || payload.auto_spawn_rules,
+        offline_config: offline_config || payload.offline_config || payload.enterprise?.offline_config,
+        config,
+        name: nodeName,
+      });
 
       if (pg) {
         try {
           const tokenHash = crypto.createHash('sha256').update(deployToken).digest('hex');
-          await pg.query(
-            `UPDATE tenant_vutler.nexus_nodes SET status = 'online', last_heartbeat = NOW() WHERE id = $1 AND deploy_token_hash = $2`,
-            [nodeId, tokenHash]
+          const update = await pg.query(
+            `UPDATE tenant_vutler.nexus_nodes
+                SET name = COALESCE($3, name),
+                    type = COALESCE($4, type),
+                    host = COALESCE($5, host),
+                    port = COALESCE($6, port),
+                    api_key = COALESCE($7, api_key),
+                    config = COALESCE(config, '{}'::jsonb) || $8::jsonb,
+                    status = 'online',
+                    last_heartbeat = NOW(),
+                    updated_at = NOW()
+              WHERE id = $1
+                AND workspace_id = $2
+                AND deploy_token_hash = $9
+              RETURNING id`,
+            [
+              nodeId,
+              workspaceId,
+              nodeName,
+              nodeType,
+              host,
+              port,
+              payload.api_key || null,
+              JSON.stringify(nodeConfig),
+              tokenHash,
+            ]
           );
-        } catch (_) {}
+          if (!update.rows[0]) {
+            await assertNexusProvisionAllowed({
+              pg,
+              workspaceId,
+              mode: payload.mode === 'enterprise' ? 'enterprise' : 'local',
+            });
+            const insert = await pg.query(
+              `INSERT INTO tenant_vutler.nexus_nodes (
+                  id, workspace_id, name, type, status, host, port, api_key, config, agents_deployed
+                ) VALUES ($1, $2, $3, $4, 'online', $5, $6, $7, $8::jsonb, '[]'::jsonb)
+                RETURNING id`,
+              [
+                nodeId,
+                workspaceId,
+                nodeName,
+                nodeType,
+                host,
+                port,
+                payload.api_key || null,
+                JSON.stringify(nodeConfig),
+              ]
+            );
+            nodeId = insert.rows[0].id;
+          }
+        } catch (error) {
+          if (error?.statusCode) throw error;
+        }
       }
 
-      console.log(`[NEXUS] Node registered via deploy token: ${req.body?.name || payload.node_id} (${nodeId}) [${authMethod}]`);
+      console.log(`[NEXUS] Node registered via deploy token: ${nodeName} (${nodeId}) [${authMethod}]`);
       return res.json({ success: true, message: 'Registered', nodeId, workspaceId, auth: authMethod, mode: payload.mode });
     }
 
@@ -204,10 +377,32 @@ app.post('/api/v1/nexus/register', async (req, res) => {
         }
         // Try to insert nexus node
         try {
-          const { name = require('os').hostname(), type = 'local' } = req.body || {};
+          const nodeName = requestName || require('os').hostname();
+          const nodeConfig = buildNodeConfig({
+            ...req.body,
+            mode: requestMode || config?.mode,
+            client_name,
+            filesystem_root,
+            role,
+            snipara_instance_id,
+            permissions,
+            llm,
+            seats,
+            max_seats,
+            primary_agent,
+            available_pool,
+            allow_create,
+            routing_rules,
+            auto_spawn_rules,
+            offline_config,
+            config,
+            name: nodeName,
+          });
           const ins = await pg.query(
-            `INSERT INTO tenant_vutler.nexus_nodes (workspace_id, name, type, status, agents_deployed) VALUES ($1, $2, $3, 'online', '[]'::jsonb) RETURNING id`,
-            [workspaceId, name, type]
+            `INSERT INTO tenant_vutler.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+             VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+             RETURNING id`,
+            [workspaceId, nodeName, requestType, host, port, JSON.stringify(nodeConfig)]
           );
           nodeId = ins.rows[0].id;
         } catch (_) {}
@@ -231,43 +426,89 @@ app.post('/api/v1/nexus/tokens/local', async (req, res) => {
   if (!req.user || req.authType !== 'jwt') {
     return res.status(401).json({ success: false, error: 'Authentication required to generate deploy tokens' });
   }
-  const { agentId, agentIds, permissions, llmConfig, routingRules } = req.body;
-  // Support both singular agentId and plural agentIds (frontend sends agentIds array)
-  const primaryAgentId = agentId || (Array.isArray(agentIds) ? agentIds[0] : null);
-  const allAgentIds = Array.isArray(agentIds) ? agentIds : (agentId ? [agentId] : []);
-  if (!primaryAgentId) return res.status(400).json({ success: false, error: 'agentId or agentIds required' });
+  try {
+    const { agentId, agentIds, permissions, llmConfig, routingRules, nodeName } = req.body;
+    // Support both singular agentId and plural agentIds (frontend sends agentIds array)
+    const primaryAgentId = agentId || (Array.isArray(agentIds) ? agentIds[0] : null);
+    const allAgentIds = Array.isArray(agentIds) ? agentIds : (agentId ? [agentId] : []);
 
-  const pg = app.locals.pg;
-  const workspaceId = req.workspaceId;
+    const pg = app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+    const workspaceId = req.workspaceId;
 
-  // Look up primary agent to get name and snipara instance ID
-  let agentName = 'Unknown Agent';
-  let sniparaInstanceId = primaryAgentId;
-  if (pg) {
-    try {
-      const agent = await pg.query('SELECT name, id FROM tenant_vutler.agents WHERE id = $1', [primaryAgentId]);
-      if (agent.rows[0]) agentName = agent.rows[0].name;
-    } catch (_) {}
-  }
+    await assertNexusProvisionAllowed({ pg, workspaceId, mode: 'local' });
+    const runtimeKey = await createApiKey({
+      workspaceId,
+      userId: req.user?.id || req.userId || null,
+      name: `Nexus Local Runtime ${nodeName || primaryAgentId || Date.now()}`,
+    });
 
-  const { generateLocalToken } = require('./services/tokenService');
-  const result = generateLocalToken({ agentId: primaryAgentId, agentName, workspaceId, sniparaInstanceId, permissions, llmConfig });
+    const selectedAgents = allAgentIds.length
+      ? await pg.query(
+          `SELECT id::text AS id, name, role
+             FROM tenant_vutler.agents
+            WHERE workspace_id = $1
+              AND id::text = ANY($2::text[])`,
+          [workspaceId, allAgentIds.map(String)]
+        ).catch(() => ({ rows: [] }))
+      : { rows: [] };
 
-  // Pre-create node in DB
-  if (pg) {
+    let agentName = nodeName || 'Local Nexus';
+    let sniparaInstanceId = primaryAgentId || `nexus-local-${slugify(nodeName || workspaceId)}`;
+    if (selectedAgents.rows[0]) {
+      agentName = selectedAgents.rows[0].name;
+      sniparaInstanceId = selectedAgents.rows[0].id;
+    }
+
+    const { generateLocalToken } = require('./services/tokenService');
+    const result = generateLocalToken({
+      agentId: primaryAgentId,
+      agentName,
+      workspaceId,
+      sniparaInstanceId,
+      permissions,
+      llmConfig,
+      agents: selectedAgents.rows,
+      server: getApiBaseUrl(req),
+      nodeName: nodeName || agentName,
+      apiKey: runtimeKey.secret,
+    });
+
     try {
       const metadata = { agentIds: allAgentIds, routingRules: routingRules || [] };
+      const configPayload = buildNodeConfig({
+        mode: 'local',
+        name: nodeName || agentName,
+        node_name: nodeName || agentName,
+        permissions,
+        llm: llmConfig,
+        routing_rules: routingRules || [],
+        config: {},
+      });
       await pg.query(
-        `INSERT INTO tenant_vutler.nexus_nodes (id, workspace_id, name, mode, clone_source_agent_id, snipara_instance_id, status, deploy_token_hash, metadata)
-         VALUES ($1, $2, $3, 'local', $4, $5, 'pending_activation', $6, $7::jsonb)`,
-        [result.nodeId, workspaceId, agentName + ' (Local)', primaryAgentId, sniparaInstanceId,
-         require('crypto').createHash('sha256').update(result.token).digest('hex'),
-         JSON.stringify(metadata)]
+        `INSERT INTO tenant_vutler.nexus_nodes (
+            id, workspace_id, name, type, mode, clone_source_agent_id, snipara_instance_id,
+            status, deploy_token_hash, api_key, config, metadata, agents_deployed
+          )
+         VALUES ($1, $2, $3, 'local', 'local', $4, $5, 'pending_activation', $6, $7, $8::jsonb, $9::jsonb, '[]'::jsonb)`,
+        [
+          result.nodeId,
+          workspaceId,
+          nodeName || `${agentName} (Local)`,
+          primaryAgentId,
+          sniparaInstanceId,
+          require('crypto').createHash('sha256').update(result.token).digest('hex'),
+          runtimeKey.secret,
+          JSON.stringify(configPayload),
+          JSON.stringify(metadata),
+        ]
       );
     } catch (_) {}
-  }
 
-  res.json({ success: true, ...result, mode: 'local' });
+    res.json({ success: true, ...result, mode: 'local' });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ success: false, error: err.message, code: err.code, details: err.details });
+  }
 });
 
 app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
@@ -275,30 +516,108 @@ app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
   if (!req.user || req.authType !== 'jwt') {
     return res.status(401).json({ success: false, error: 'Authentication required to generate deploy tokens' });
   }
-  const { name, clientName, role, filesystemRoot, allowedDirs, permissions, shellConfig, offlineConfig } = req.body;
-  if (!name || !clientName) return res.status(400).json({ success: false, error: 'name and clientName required' });
+  try {
+    const {
+      name,
+      clientName,
+      role,
+      filesystemRoot,
+      allowedDirs,
+      permissions,
+      shellConfig,
+      offlineConfig,
+      seats,
+      primaryAgentId,
+      poolAgentIds = [],
+      allowCreatingNewAgents,
+      autoSpawnRules = [],
+      offlineMode,
+    } = req.body;
+    if (!name || !clientName) return res.status(400).json({ success: false, error: 'name and clientName required' });
 
-  const workspaceId = req.workspaceId;
+    const workspaceId = req.workspaceId;
+    const pg = app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
-  const { generateEnterpriseToken } = require('./services/tokenService');
-  const result = generateEnterpriseToken({ name, clientName, workspaceId, role, filesystemRoot, allowedDirs, permissions, shellConfig, offlineConfig });
+    await assertNexusProvisionAllowed({ pg, workspaceId, mode: 'enterprise' });
+    const normalizedAutoSpawnRules = await normalizeEnterpriseAutoSpawnRules(pg, workspaceId, autoSpawnRules, poolAgentIds);
+    const runtimeKey = await createApiKey({
+      workspaceId,
+      userId: req.user?.id || req.userId || null,
+      name: `Nexus Enterprise Runtime ${name}`,
+    });
 
-  const pg = app.locals.pg;
-  if (pg) {
+    const { generateEnterpriseToken } = require('./services/tokenService');
+    const result = generateEnterpriseToken({
+      name,
+      clientName,
+      workspaceId,
+      role,
+      filesystemRoot,
+      allowedDirs,
+      permissions,
+      shellConfig,
+      offlineConfig: offlineConfig || { enabled: !!offlineMode },
+      seatsCount: Number.isFinite(Number(seats)) ? Number(seats) : 1,
+      primaryAgentId,
+      poolAgentIds,
+      autoSpawnRules: normalizedAutoSpawnRules,
+      allowCreate: !!allowCreatingNewAgents,
+      routingRules: [],
+      server: getApiBaseUrl(req),
+      apiKey: runtimeKey.secret,
+    });
+
     try {
       const tokenPayload = JSON.parse(Buffer.from(result.token.split('.')[1], 'base64url').toString());
+      const configPayload = buildNodeConfig({
+        ...tokenPayload,
+        mode: 'enterprise',
+        name,
+        node_name: name,
+        client_name: clientName,
+        filesystem_root: filesystemRoot || tokenPayload.filesystem_root,
+        permissions,
+        seats: tokenPayload.seats,
+        max_seats: tokenPayload.max_seats,
+        primary_agent: primaryAgentId,
+        available_pool: poolAgentIds,
+        allow_create: !!allowCreatingNewAgents,
+        routing_rules: [],
+        auto_spawn_rules: normalizedAutoSpawnRules,
+        offline_config: offlineConfig || { enabled: !!offlineMode },
+        config: {},
+      });
       await pg.query(
-        `INSERT INTO tenant_vutler.nexus_nodes (id, workspace_id, name, mode, client_name, role, snipara_instance_id, filesystem_root, allowed_dirs, offline_config, status, deploy_token_hash)
-         VALUES ($1, $2, $3, 'enterprise', $4, $5, $6, $7, $8::jsonb, $9::jsonb, 'pending_activation', $10)`,
-        [result.nodeId, workspaceId, name, clientName, role || 'general', tokenPayload.snipara_instance_id,
-         filesystemRoot || '/opt/' + clientName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
-         JSON.stringify(allowedDirs || []), JSON.stringify(offlineConfig || {}),
-         require('crypto').createHash('sha256').update(result.token).digest('hex')]
+        `INSERT INTO tenant_vutler.nexus_nodes (
+            id, workspace_id, name, type, mode, client_name, role, snipara_instance_id,
+            filesystem_root, allowed_dirs, offline_config, status, deploy_token_hash,
+            api_key, config, agents_deployed
+          )
+         VALUES ($1, $2, $3, 'docker', 'enterprise', $4, $5, $6, $7, $8::jsonb, $9::jsonb, 'pending_activation', $10, $11, $12::jsonb, '[]'::jsonb)`,
+        [
+          result.nodeId,
+          workspaceId,
+          name,
+          clientName,
+          role || 'general',
+          tokenPayload.snipara_instance_id,
+          filesystemRoot || '/opt/' + clientName.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          JSON.stringify(allowedDirs || []),
+          JSON.stringify(offlineConfig || { enabled: !!offlineMode }),
+          require('crypto').createHash('sha256').update(result.token).digest('hex'),
+          runtimeKey.secret,
+          JSON.stringify(configPayload),
+        ]
       );
-    } catch (e) { console.warn('[NEXUS] Pre-create enterprise node failed:', e.message); }
-  }
+    } catch (e) {
+      console.warn('[NEXUS] Pre-create enterprise node failed:', e.message);
+    }
 
-  res.json({ success: true, ...result, mode: 'enterprise', clientName });
+    res.json({ success: true, ...result, mode: 'enterprise', clientName });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ success: false, error: err.message, code: err.code, details: err.details });
+  }
 });
 
 // ── Nexus node auth middleware (deploy token or API key required) ─────────────
@@ -403,9 +722,37 @@ app.post('/api/v1/nexus/:nodeId/connect', requireNexusAuth, async (req, res) => 
   try {
     const pg = app.locals.pg;
     if (pg) {
+      const {
+        status = 'online',
+        agents = [],
+        seats = null,
+        memory = null,
+        uptime = null,
+        mode,
+        client_name,
+        filesystem_root,
+      } = req.body || {};
       await pg.query(
-        `UPDATE tenant_vutler.nexus_nodes SET status = 'online', last_heartbeat = NOW() WHERE id = $1`,
-        [req.params.nodeId]
+        `UPDATE tenant_vutler.nexus_nodes
+            SET status = $2,
+                last_heartbeat = NOW(),
+                agents_deployed = $3::jsonb,
+                config = COALESCE(config, '{}'::jsonb) || $4::jsonb,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [
+          req.params.nodeId,
+          status,
+          JSON.stringify(Array.isArray(agents) ? agents : []),
+          JSON.stringify(cleanObject({
+            memory,
+            uptime,
+            seats,
+            mode,
+            client_name,
+            filesystem_root,
+          })),
+        ]
       ).catch(() => {});
     }
     res.json({ success: true });
@@ -656,6 +1003,7 @@ try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { con
 
 // Direct mounts — api/ modules with relative paths (/, /:id)
 try { app.use('/api/v1/tasks', require('./api/tasks')); } catch (_) {}
+try { app.use('/api/v1/schedules', require('./api/schedules')); } catch (_) {}
 try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
 try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
 try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}
@@ -765,12 +1113,14 @@ async function start() {
       console.log('IMAP poller started');
     }
 
-    // Schedule triggers
+    // Scheduler
     try {
-      const { initSchedules } = require('./runtime/schedule-trigger');
-      initSchedules(app.locals.pg);
-      console.log('Schedule triggers initialized');
-    } catch (_) {}
+      const { initScheduler } = require('./services/scheduler');
+      await initScheduler();
+      console.log('Scheduler initialized');
+    } catch (e) {
+      console.warn('[BOOT] Scheduler skipped:', e.message);
+    }
 
     // BMAD auto-sync — only start if the docs directory exists
     try {

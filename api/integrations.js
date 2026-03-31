@@ -2,7 +2,7 @@
 
 /**
  * Integrations API
- * Supports internal catalog mode + real OAuth for Google (Calendar/Drive) and GitHub (repos).
+ * Supports internal catalog mode + real OAuth for Google, GitHub, and Microsoft 365.
  */
 
 const express = require('express');
@@ -20,12 +20,17 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID;
+const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET;
+const MICROSOFT_TENANT_ID = process.env.MICROSOFT_TENANT_ID || 'common';
 
 // Callback base — the backend's public URL, e.g. https://app.vutler.ai
 const APP_BASE = process.env.APP_BASE_URL || process.env.GOOGLE_REDIRECT_URI?.replace('/api/v1/auth/google/callback', '') || 'https://app.vutler.ai';
 
 const GOOGLE_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/google/callback`;
 const GITHUB_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/github/callback`;
+const MICROSOFT_INTEGRATION_REDIRECT = `${APP_BASE}/api/v1/integrations/microsoft365/callback`;
+const SETTINGS_INTEGRATIONS_PATH = '/settings/integrations';
 
 // ChatGPT / Codex OAuth — Device Auth Flow (no redirect URI needed)
 const CHATGPT_CLIENT_ID = process.env.CHATGPT_CLIENT_ID || '';
@@ -47,9 +52,20 @@ const GOOGLE_INTEGRATION_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/contacts.readonly',
 ].join(' ');
 
 const GITHUB_INTEGRATION_SCOPES = 'repo read:user';
+const MICROSOFT_INTEGRATION_SCOPES = [
+  'openid',
+  'email',
+  'profile',
+  'offline_access',
+  'User.Read',
+  'Mail.Read',
+  'Calendars.Read',
+  'Contacts.Read',
+].join(' ');
 
 // Simple HTTPS request helper (mirrors auth.js pattern)
 function httpsPost(options, body) {
@@ -607,11 +623,11 @@ router.get('/google/callback', async (req, res) => {
 
   if (error) {
     console.error('[INTEGRATIONS] Google OAuth error:', error);
-    return res.redirect('/integrations?error=oauth_cancelled&provider=google');
+    return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_cancelled&provider=google`);
   }
 
   if (!code || !state || !oauthStateStore.has(state)) {
-    return res.redirect('/integrations?error=oauth_invalid&provider=google');
+    return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_invalid&provider=google`);
   }
 
   const stateData = oauthStateStore.get(state);
@@ -636,7 +652,7 @@ router.get('/google/callback', async (req, res) => {
 
     if (!tokenResp.access_token) {
       console.error('[INTEGRATIONS] Google token exchange failed:', tokenResp);
-      return res.redirect('/integrations?error=oauth_token_failed&provider=google');
+      return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_token_failed&provider=google`);
     }
 
     const expiresAt = tokenResp.expires_in
@@ -674,10 +690,10 @@ router.get('/google/callback', async (req, res) => {
 
     await addLog({ workspaceId, provider: 'google', action: 'oauth_connect' });
     console.log(`[INTEGRATIONS] Google connected for workspace ${workspaceId}`);
-    res.redirect('/integrations?connected=google');
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=google`);
   } catch (err) {
     console.error('[INTEGRATIONS] Google callback error:', err.message);
-    res.redirect('/integrations?error=oauth_server_error&provider=google');
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_server_error&provider=google`);
   }
 });
 
@@ -708,11 +724,11 @@ router.get('/github/callback', async (req, res) => {
 
   if (error) {
     console.error('[INTEGRATIONS] GitHub OAuth error:', error);
-    return res.redirect('/integrations?error=oauth_cancelled&provider=github');
+    return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_cancelled&provider=github`);
   }
 
   if (!code || !state || !oauthStateStore.has(state)) {
-    return res.redirect('/integrations?error=oauth_invalid&provider=github');
+    return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_invalid&provider=github`);
   }
 
   const stateData = oauthStateStore.get(state);
@@ -740,7 +756,7 @@ router.get('/github/callback', async (req, res) => {
 
     if (!tokenResp.access_token) {
       console.error('[INTEGRATIONS] GitHub token exchange failed:', tokenResp);
-      return res.redirect('/integrations?error=oauth_token_failed&provider=github');
+      return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_token_failed&provider=github`);
     }
 
     await ensureReady();
@@ -770,10 +786,120 @@ router.get('/github/callback', async (req, res) => {
 
     await addLog({ workspaceId, provider: 'github', action: 'oauth_connect' });
     console.log(`[INTEGRATIONS] GitHub connected for workspace ${workspaceId}`);
-    res.redirect('/integrations?connected=github');
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=github`);
   } catch (err) {
     console.error('[INTEGRATIONS] GitHub callback error:', err.message);
-    res.redirect('/integrations?error=oauth_server_error&provider=github');
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_server_error&provider=github`);
+  }
+});
+
+// GET /api/v1/integrations/microsoft365/connect — initiate Microsoft OAuth
+router.get('/microsoft365/connect', (req, res) => {
+  if (!MICROSOFT_CLIENT_ID) {
+    return res.status(500).json({ success: false, error: 'Microsoft OAuth not configured (MICROSOFT_CLIENT_ID missing)' });
+  }
+
+  const state = crypto.randomBytes(32).toString('hex');
+  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+  oauthStateStore.set(state, { workspaceId, provider: 'microsoft365', createdAt: Date.now() });
+
+  const params = new URLSearchParams({
+    client_id: MICROSOFT_CLIENT_ID,
+    redirect_uri: MICROSOFT_INTEGRATION_REDIRECT,
+    response_type: 'code',
+    response_mode: 'query',
+    scope: MICROSOFT_INTEGRATION_SCOPES,
+    state,
+    prompt: 'select_account',
+  });
+
+  const authUrl = `https://login.microsoftonline.com/${encodeURIComponent(MICROSOFT_TENANT_ID)}/oauth2/v2.0/authorize?${params.toString()}`;
+  res.json({ success: true, authUrl, provider: 'microsoft365' });
+});
+
+// GET /api/v1/integrations/microsoft365/callback — exchange code, store tokens
+router.get('/microsoft365/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+
+  if (error) {
+    console.error('[INTEGRATIONS] Microsoft OAuth error:', error);
+    return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_cancelled&provider=microsoft365`);
+  }
+
+  if (!code || !state || !oauthStateStore.has(state)) {
+    return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_invalid&provider=microsoft365`);
+  }
+
+  const stateData = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+  const workspaceId = stateData.workspaceId;
+
+  try {
+    const postBody = new URLSearchParams({
+      code,
+      client_id: MICROSOFT_CLIENT_ID,
+      client_secret: MICROSOFT_CLIENT_SECRET || '',
+      redirect_uri: MICROSOFT_INTEGRATION_REDIRECT,
+      grant_type: 'authorization_code',
+      scope: MICROSOFT_INTEGRATION_SCOPES,
+    }).toString();
+
+    const tokenResp = await httpsPost({
+      hostname: 'login.microsoftonline.com',
+      path: `/${encodeURIComponent(MICROSOFT_TENANT_ID)}/oauth2/v2.0/token`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+    }, postBody);
+
+    if (!tokenResp.access_token) {
+      console.error('[INTEGRATIONS] Microsoft token exchange failed:', tokenResp);
+      return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_token_failed&provider=microsoft365`);
+    }
+
+    const expiresAt = tokenResp.expires_in
+      ? new Date(Date.now() + tokenResp.expires_in * 1000).toISOString()
+      : null;
+
+    await ensureReady();
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, source, connected, status, access_token, refresh_token, token_expires_at,
+         scopes, credentials, connected_at, disconnected_at, connected_by, updated_at)
+       VALUES ($1, 'microsoft365', 'oauth', TRUE, 'connected', $2, $3, $4,
+         $5::jsonb, $6::jsonb, NOW(), NULL, $7, NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         source = 'oauth',
+         connected = TRUE,
+         status = 'connected',
+         access_token = EXCLUDED.access_token,
+         refresh_token = COALESCE(EXCLUDED.refresh_token, ${SCHEMA}.workspace_integrations.refresh_token),
+         token_expires_at = EXCLUDED.token_expires_at,
+         scopes = EXCLUDED.scopes,
+         credentials = COALESCE(${SCHEMA}.workspace_integrations.credentials, '{}'::jsonb) || EXCLUDED.credentials,
+         connected_at = NOW(),
+         disconnected_at = NULL,
+         connected_by = EXCLUDED.connected_by,
+         updated_at = NOW()`,
+      [
+        workspaceId,
+        tokenResp.access_token,
+        tokenResp.refresh_token || null,
+        expiresAt,
+        JSON.stringify(MICROSOFT_INTEGRATION_SCOPES.split(' ')),
+        JSON.stringify({
+          tenant_id: MICROSOFT_TENANT_ID,
+          client_id: MICROSOFT_CLIENT_ID,
+        }),
+        req.user?.email || 'oauth',
+      ]
+    );
+
+    await addLog({ workspaceId, provider: 'microsoft365', action: 'oauth_connect' });
+    console.log(`[INTEGRATIONS] Microsoft 365 connected for workspace ${workspaceId}`);
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=microsoft365`);
+  } catch (err) {
+    console.error('[INTEGRATIONS] Microsoft callback error:', err.message);
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_server_error&provider=microsoft365`);
   }
 });
 
@@ -1662,6 +1788,7 @@ router.post('/submissions', async (_req, res) => {
 // ─── Google Data Proxy Endpoints ────────────────────────────────────────────
 
 const googleApi = require('../services/google/googleApi');
+const microsoftGraphApi = require('../services/microsoft/graphApi');
 
 // GET /api/v1/integrations/google/calendar/events
 router.get('/google/calendar/events', async (req, res) => {
@@ -1717,6 +1844,68 @@ router.get('/google/gmail/messages/:messageId', async (req, res) => {
     const workspaceId = getWorkspaceId(req);
     const msg = await googleApi.getGmailMessage(workspaceId, { messageId: req.params.messageId });
     res.json({ success: true, message: msg });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/google/people/connections
+router.get('/google/people/connections', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { pageSize, pageToken, personFields } = req.query;
+    const result = await googleApi.listPeopleConnections(workspaceId, {
+      pageSize: pageSize ? parseInt(pageSize, 10) : 50,
+      pageToken,
+      personFields,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/microsoft365/outlook/messages
+router.get('/microsoft365/outlook/messages', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { search, top } = req.query;
+    const result = await microsoftGraphApi.listMailMessages(workspaceId, {
+      search,
+      top: top ? parseInt(top, 10) : 20,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/microsoft365/calendar/events
+router.get('/microsoft365/calendar/events', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { startDateTime, endDateTime, top } = req.query;
+    const result = await microsoftGraphApi.listCalendarEvents(workspaceId, {
+      startDateTime,
+      endDateTime,
+      top: top ? parseInt(top, 10) : 50,
+    });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/microsoft365/contacts
+router.get('/microsoft365/contacts', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { search, top } = req.query;
+    const result = await microsoftGraphApi.listContacts(workspaceId, {
+      search,
+      top: top ? parseInt(top, 10) : 50,
+    });
+    res.json({ success: true, ...result });
   } catch (err) {
     res.status(err.message.includes('not connected') ? 400 : 500).json({ success: false, error: err.message });
   }

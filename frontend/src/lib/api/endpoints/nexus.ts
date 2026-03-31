@@ -15,6 +15,7 @@ import type {
   NexusContact,
   NexusShellResult,
   NexusCapabilities,
+  NexusCommandStatus,
 } from '../types';
 
 export async function getNodes(): Promise<NexusStatusResponse> {
@@ -112,6 +113,37 @@ export async function dispatchAction(
     method: 'POST',
     body: JSON.stringify({ command: action, args }),
   });
+}
+
+export async function queueDispatchAction(
+  nodeId: string,
+  action: string,
+  args?: Record<string, unknown>
+): Promise<NexusCommandStatus<NexusDispatchResult>> {
+  const response = await apiFetch<{ commandId?: string; command?: NexusCommandStatus<NexusDispatchResult> }>(
+    `/api/v1/nexus/nodes/${nodeId}/dispatch?wait=0`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ command: action, args, wait: false }),
+    }
+  );
+
+  if (response.command) return response.command;
+  return {
+    id: response.commandId || '',
+    type: action,
+    status: 'queued',
+  };
+}
+
+export async function getNodeCommand<T = NexusDispatchResult>(
+  nodeId: string,
+  commandId: string
+): Promise<NexusCommandStatus<T>> {
+  const response = await apiFetch<{ command: NexusCommandStatus<T> }>(
+    `/api/v1/nexus/nodes/${nodeId}/commands/${commandId}`
+  );
+  return response.command;
 }
 
 export async function dispatchSearch(

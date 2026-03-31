@@ -1,5 +1,5 @@
 # Roadmap — Vutler Platform
-Last update: 2026-03-28
+Last update: 2026-03-31
 
 ## Recently Delivered
 Items shipped in the last ~50 commits:
@@ -12,6 +12,8 @@ Items shipped in the last ~50 commits:
 - Agent type wizard + skill limits
 - GPT-5.4 model lineup
 - Documentation rewrite P0
+- Nexus enterprise runtime: live command queue, progress streaming, real e2e runtime validation
+- Nexus enterprise adapters: Google Workspace + Microsoft 365 provider routing and source visibility
 
 ## Active — Current Sprint
 Current focus, in active delivery flow:
@@ -19,6 +21,7 @@ Current focus, in active delivery flow:
 - Documentation P1/P2 completion
 - `@vutler/local-daemon` (WebSocket git-sync client)
 - Provider stability monitoring
+- Microsoft 365 tenant validation for Nexus enterprise OAuth
 
 ## Planned — Next
 Queued after current sprint, unless priorities change:

@@ -17,6 +17,7 @@ services:
       - NEXUS_TOKEN=${NEXUS_TOKEN}
       - NEXUS_SERVER=${NEXUS_SERVER:-https://app.vutler.ai}
       - NODE_NAME=${NODE_NAME:-nexus-enterprise}
+      - NEXUS_TYPE=${NEXUS_TYPE:-docker}
       - NEXUS_PORT=3100
     ports:
       - "3100:3100"
@@ -24,7 +25,7 @@ services:
       # Mount client data directory
       - ${CLIENT_DATA_DIR:-./data}:/data
       # Persistent config
-      - nexus-config:/root/.vutler
+      - nexus-config:/home/nexus/.vutler
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3100/health"]
       interval: 30s

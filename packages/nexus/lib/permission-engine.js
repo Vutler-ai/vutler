@@ -102,6 +102,25 @@ class PermissionEngine {
     return this._load();
   }
 
+  /**
+   * Replace the local ACL snapshot with the permissions received from setup.
+   * Unknown fields are ignored so token/runtime config can contain other flags.
+   *
+   * @param {{ allowedFolders?: string[], allowedActions?: string[] }} permissions
+   */
+  replace(permissions = {}) {
+    const next = {
+      allowedFolders: Array.isArray(permissions.allowedFolders)
+        ? permissions.allowedFolders.map((folder) => path.resolve(folder))
+        : [],
+      allowedActions: Array.isArray(permissions.allowedActions)
+        ? permissions.allowedActions.filter(Boolean).map(String)
+        : [],
+    };
+    this._save(next);
+    logger.info('[PermissionEngine] Permissions replaced from runtime config');
+  }
+
   // ── Internals ───────────────────────────────────────────────────────────────
 
   _load() {
