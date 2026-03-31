@@ -7,7 +7,7 @@ import { getAgent } from '@/lib/api/endpoints/agents';
 import { authFetch } from '@/lib/api/client';
 import type { Agent } from '@/lib/api/types';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getAvatarImageUrl } from '@/lib/avatar';
+import { getAvatarImageUrl, isEmojiAvatar } from '@/lib/avatar';
 
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 
@@ -73,7 +73,7 @@ function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
     );
   }
 
-  if (agent.avatar && !imageUrl) {
+  if (isEmojiAvatar(agent.avatar)) {
     return (
       <div className="size-10 rounded-xl bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-xl shrink-0">
         {agent.avatar}

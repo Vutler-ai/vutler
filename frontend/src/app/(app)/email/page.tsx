@@ -72,6 +72,7 @@ import {
   MailOpen,
   ArchiveIcon,
 } from "lucide-react";
+import { getAvatarImageUrl } from "@/lib/avatar";
 
 // ─── Extended Email type (agent fields from pending approvals) ─────────────
 
@@ -146,6 +147,28 @@ const EMAIL_FOLDER_SET = new Set<EmailFolder | "pending" | "archive" | "drafts">
   "drafts",
   "pending",
 ]);
+
+function AgentMenuAvatar({ agent }: { agent: Pick<AgentEntry, "avatar" | "name"> }) {
+  const [imgError, setImgError] = useState(false);
+  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
+
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={agent.name}
+        className="w-5 h-5 rounded-full object-cover flex-shrink-0"
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  return (
+    <div className="w-5 h-5 rounded-full bg-zinc-700 flex items-center justify-center flex-shrink-0">
+      <Bot className="w-3 h-3 text-zinc-400" />
+    </div>
+  );
+}
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
@@ -263,17 +286,7 @@ function Sidebar({
                       : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
                   }`}
                 >
-                  {agent.avatar ? (
-                    <img
-                      src={agent.avatar}
-                      alt={agent.name}
-                      className="w-5 h-5 rounded-full object-cover flex-shrink-0"
-                    />
-                  ) : (
-                    <div className="w-5 h-5 rounded-full bg-zinc-700 flex items-center justify-center flex-shrink-0">
-                      <Bot className="w-3 h-3 text-zinc-400" />
-                    </div>
-                  )}
+                  <AgentMenuAvatar agent={agent} />
                   <div className="min-w-0 text-left">
                     <p className="text-xs truncate">{agent.name}</p>
                     {agent.email && (

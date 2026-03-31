@@ -1,6 +1,6 @@
 'use strict';
 
-const { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadBucketCommand } = require('@aws-sdk/client-s3');
+const { S3Client, CreateBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadBucketCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const S3_ENDPOINT = process.env.S3_ENDPOINT || 'http://REDACTED_DB_HOST:9000';
@@ -49,13 +49,20 @@ async function createBucket(workspaceId) {
  * Upload file to S3.
  * @returns {string} The S3 key used.
  */
-async function uploadFile(workspaceId, key, buffer, contentType) {
+async function uploadFile(workspaceId, key, buffer, contentType, metadata) {
   const bucket = await createBucket(workspaceId);
   await s3.send(new PutObjectCommand({
     Bucket: bucket,
     Key: key,
     Body: buffer,
     ContentType: contentType || 'application/octet-stream',
+    Metadata: metadata
+      ? Object.fromEntries(
+        Object.entries(metadata)
+          .filter(([, value]) => value != null)
+          .map(([metaKey, value]) => [metaKey, String(value)])
+      )
+      : undefined,
   }));
   return key;
 }
@@ -83,6 +90,17 @@ async function deleteFile(workspaceId, key) {
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
+async function headFile(workspaceId, key) {
+  const bucket = _bucketName(workspaceId);
+  const resp = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+  return {
+    contentType: resp.ContentType,
+    lastModified: resp.LastModified,
+    metadata: resp.Metadata || {},
+    contentLength: resp.ContentLength,
+  };
+}
+
 /**
  * List files in bucket under prefix.
  */
@@ -99,10 +117,39 @@ async function listFiles(workspaceId, prefix) {
   }));
 }
 
+async function listEntries(workspaceId, prefix) {
+  const bucket = _bucketName(workspaceId);
+  const cleanPrefix = String(prefix || '').replace(/^\/+/, '');
+  const normalizedPrefix = cleanPrefix ? (cleanPrefix.endsWith('/') ? cleanPrefix : `${cleanPrefix}/`) : '';
+  const resp = await s3.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: normalizedPrefix,
+    Delimiter: '/',
+  }));
+
+  const folders = (resp.CommonPrefixes || []).map((entry) => ({
+    key: entry.Prefix,
+    isFolder: true,
+    size: undefined,
+    lastModified: undefined,
+  }));
+
+  const files = (resp.Contents || [])
+    .filter((entry) => entry.Key && entry.Key !== normalizedPrefix)
+    .map((entry) => ({
+      key: entry.Key,
+      isFolder: false,
+      size: entry.Size,
+      lastModified: entry.LastModified,
+    }));
+
+  return [...folders, ...files];
+}
+
 /**
  * Get presigned download URL.
  */
-async function getPresignedUrl(workspaceId, key, expiresIn) {
+function getPresignedUrl(workspaceId, key, expiresIn) {
   const bucket = _bucketName(workspaceId);
   const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
   return getSignedUrl(s3, cmd, { expiresIn: expiresIn || 3600 });
@@ -113,7 +160,9 @@ module.exports = {
   uploadFile,
   downloadFile,
   deleteFile,
+  headFile,
   listFiles,
+  listEntries,
   getPresignedUrl,
   _bucketName,
   s3,

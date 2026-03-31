@@ -198,7 +198,7 @@ Ces flows ne sont plus dans l'onboarding mais restent accessibles via **Paramèt
 | Paramètre | Valeur |
 |-----------|--------|
 | Tokens alloués | 50 000 |
-| Modèle | gpt-4o-mini uniquement |
+| Modèle | gpt-5.4-mini uniquement |
 | Expiration | 7 jours après signup |
 | Rate limit | 5 requêtes/minute par workspace |
 | Provider interne | `vutler-trial` (clé API partagée) |
@@ -233,7 +233,7 @@ Ces flows ne sont plus dans l'onboarding mais restent accessibles via **Paramèt
 ## Diagramme de flux
 
 ```
-[Signup] ──→ Trial tokens provisionnés silencieusement (50k, gpt-4o-mini, 7j)
+[Signup] ──→ Trial tokens provisionnés silencieusement (50k, gpt-5.4-mini, 7j)
    │
    ▼
 Step 1: "Nom de votre workspace ?"

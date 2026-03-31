@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
+import { getAvatarImageUrl, isEmojiAvatar } from '@/lib/avatar';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,15 +40,6 @@ function getAgentInitials(name: string): string {
     .join('')
     .toUpperCase()
     .slice(0, 2) || '?';
-}
-
-function getAvatarImageUrl(avatar: string | undefined): string | null {
-  if (!avatar) return null;
-  if (avatar.startsWith('/static/') || avatar.startsWith('/sprites/')) return avatar;
-  if (avatar.startsWith('http')) return avatar;
-  if (/\.(png|svg|jpg|jpeg|webp)$/i.test(avatar)) return avatar;
-  if (/^[a-z0-9-]+$/.test(avatar)) return `/static/avatars/${avatar}.png`;
-  return null;
 }
 
 // ─── Section Header ───────────────────────────────────────────────────────────
@@ -168,7 +160,7 @@ interface AgentMemoryCardProps {
 
 function AgentAvatarDisplay({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
   const [imgError, setImgError] = useState(false);
-  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar) : null;
+  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
 
   if (imageUrl) {
     return (
@@ -182,7 +174,7 @@ function AgentAvatarDisplay({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }
   }
 
   // Emoji avatar
-  if (agent.avatar && !imageUrl) {
+  if (isEmojiAvatar(agent.avatar)) {
     return (
       <div className="w-9 h-9 rounded-full bg-[rgba(255,255,255,0.05)] flex items-center justify-center text-lg shrink-0">
         {agent.avatar}

@@ -4,19 +4,13 @@ Last update: 2026-03-31
 ## Recently Delivered
 Items shipped in the last ~50 commits:
 
-- Codex provider: ChatGPT OAuth, Responses API, SSE streaming
-- MCP Nexus Bridge + Claude Code integration
-- Post for Me social media + Stripe addon packs
-- Security hardening: audit P0/P1/P2 + sandbox auth
-- Domain split: `vutler.ai` / `app.vutler.ai`
-- Agent type wizard + skill limits
-- GPT-5.4 model lineup
-- Documentation rewrite P0
-- Nexus enterprise runtime: live command queue, progress streaming, real e2e runtime validation
-- Nexus enterprise adapters: Google Workspace + Microsoft 365 provider routing and source visibility
-- Nexus billing visibility: plan quotas and remaining local/enterprise capacity surfaced in the Nexus UI
-- Nexus runtime observability: command health, retries, timings, and per-node command history
-- Nexus command channel hardening: leases, requeue on stale claim, command expiry, attempt tracking, e2e validation
+- Drive Pro overhaul: richer metadata, rename/move flows, backend folder semantics, previews/fullscreen, and shared drive indexing tuned for workspaces
+- Workspace gating & sessions: server-set auth/features cookies, route guards, upgrade flows, and plan-aware snapshotting keep features aligned with the UI
+- Billing & providers: normalized limits, new workspace `llm_providers` table, trial/credit packs, social post quotas, and recommended plan flows from upgrade/billing pages
+- Snipara & workspace context: provisioning automation, workspace drive defaults, task links, memory view clarifications, resilient knowledge fallbacks, and `soul` doc fixes
+- Agent runtime hygiene: capability-aware runtime payloads, internal tool quota exemptions, and avatar path normalization/migrations for templates and workspaces
+- Nexus enterprise runtime, adapters, billing observability, command health, and hardened leases/expiry tracking remain in place with Claude/Nexus integration
+- Documentation extend: chat resource links roadmap + new product briefs (see docs index)
 
 ## Active — Current Sprint
 Current focus, in active delivery flow:
@@ -34,6 +28,10 @@ Queued after current sprint, unless priorities change:
 - Observability dashboard: streaming SSE + provider health
 - Provider compatibility matrix
 - Public API documentation
+- Drive pro phase 4
+  - Bulk selection and batch actions
+  - Server-side search and richer file metadata (`owner`, `added_by`)
+  - Bulk move/delete workflows and stronger file-management ergonomics
 - Memory quality program for Snipara-backed agents
   - Evaluation suite for recall precision, false recalls, and prompt pollution
   - Better promotion and summary quality across instance/template/workspace scopes

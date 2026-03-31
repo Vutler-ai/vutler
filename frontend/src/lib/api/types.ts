@@ -227,7 +227,8 @@ export interface DriveFile {
   name: string;
   type: 'folder' | 'file';
   size?: number;
-  modified: string;
+  created?: string;
+  modified?: string;
   mime_type?: string;
   path: string;
 }

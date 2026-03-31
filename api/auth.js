@@ -14,6 +14,7 @@ const router = express.Router();
 const coordinatorPrompt = require('../services/coordinatorPrompt');
 const { CryptoService } = require('../services/crypto');
 const { syncWorkspacePlan } = require('../services/workspacePlanService');
+const { buildSpriteAvatar } = require('../lib/avatarPath');
 const cryptoSvc = new CryptoService();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
@@ -585,9 +586,9 @@ async function registerHandler(req, res) {
 
       await client.query(
         `INSERT INTO tenant_vutler.agents (id, name, username, workspace_id, agent_type, system_prompt, model, status, avatar)
-         VALUES (gen_random_uuid(), 'Jarvis', 'jarvis', $1, 'coordinator', $2, 'claude-sonnet-4-20250514', 'active', '/static/avatars/jarvis.png')
+         VALUES (gen_random_uuid(), 'Jarvis', 'jarvis', $1, 'coordinator', $2, 'claude-sonnet-4-20250514', 'active', $3)
          ON CONFLICT DO NOTHING`,
-        [workspaceId, coordinatorPrompt.FULL_PROMPT]
+        [workspaceId, coordinatorPrompt.FULL_PROMPT, buildSpriteAvatar('jarvis')]
       );
 
       await client.query(
