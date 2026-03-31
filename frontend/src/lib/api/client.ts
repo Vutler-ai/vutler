@@ -3,25 +3,59 @@
  * Typed fetch wrapper with JWT auth, 401 redirect, and error handling.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
+import {
+  ADMIN_TOKEN_COOKIE,
+  ADMIN_TOKEN_KEY,
+  AUTH_TOKEN_COOKIE,
+  AUTH_TOKEN_KEY,
+  WORKSPACE_FEATURES_COOKIE,
+} from '@/lib/auth/session';
 
-export const AUTH_TOKEN_KEY = 'vutler_auth_token';
+export { ADMIN_TOKEN_KEY, AUTH_TOKEN_KEY };
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 
 // ─── Auth utilities ───────────────────────────────────────────────────────────
 
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+
+  const value = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
+
+  return value ? decodeURIComponent(value) : null;
+}
+
+function setCookie(name: string, value: string, maxAgeSeconds = 60 * 60 * 24 * 7): void {
+  if (typeof document === 'undefined') return;
+  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${secure}`;
+}
+
+function clearCookie(name: string): void {
+  if (typeof document === 'undefined') return;
+  const secure = typeof window !== 'undefined' && window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
+}
+
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  return localStorage.getItem(AUTH_TOKEN_KEY) || getCookie(AUTH_TOKEN_COOKIE);
 }
 
 export function setAuthToken(token: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(AUTH_TOKEN_KEY, token);
+  setCookie(AUTH_TOKEN_COOKIE, token);
 }
 
 export function clearAuthToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearCookie(AUTH_TOKEN_COOKIE);
+  clearCookie(WORKSPACE_FEATURES_COOKIE);
 }
 
 export function isAuthenticated(): boolean {
@@ -103,21 +137,21 @@ export async function apiFetch<T>(
  */
 // ─── Admin API helpers ───────────────────────────────────────────────────────
 
-export const ADMIN_TOKEN_KEY = 'vutler_admin_token';
-
 export function getAdminToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(ADMIN_TOKEN_KEY);
+  return localStorage.getItem(ADMIN_TOKEN_KEY) || getCookie(ADMIN_TOKEN_COOKIE);
 }
 
 export function setAdminToken(token: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(ADMIN_TOKEN_KEY, token);
+  setCookie(ADMIN_TOKEN_COOKIE, token);
 }
 
 export function clearAdminToken(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(ADMIN_TOKEN_KEY);
+  clearCookie(ADMIN_TOKEN_COOKIE);
 }
 
 /**

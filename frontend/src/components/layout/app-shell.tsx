@@ -10,8 +10,7 @@ import PWAInstallPrompt from '../pwa-install-prompt';
 import PushPermission from '../push-permission';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useFeatures } from '@/hooks/useFeatures';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { findGuardedFeature } from '@/lib/auth/route-access';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -22,22 +21,6 @@ interface AppShellProps {
     initials?: string;
   };
 }
-
-const FEATURE_ROUTE_GUARDS: Array<{ prefix: string; feature: string }> = [
-  { prefix: '/chat', feature: 'chat' },
-  { prefix: '/tasks', feature: 'tasks' },
-  { prefix: '/email', feature: 'email' },
-  { prefix: '/drive', feature: 'drive' },
-  { prefix: '/calendar', feature: 'calendar' },
-  { prefix: '/agents', feature: 'agents' },
-  { prefix: '/memory', feature: 'agents' },
-  { prefix: '/nexus', feature: 'nexus' },
-  { prefix: '/sandbox', feature: 'sandbox' },
-  { prefix: '/providers', feature: 'providers' },
-  { prefix: '/integrations', feature: 'integrations' },
-  { prefix: '/settings/integrations', feature: 'integrations' },
-  { prefix: '/settings/email', feature: 'email' },
-];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -92,11 +75,10 @@ export default function AppShell({
   useEffect(() => {
     if (featuresLoading || !pathname) return;
 
-    const guard = FEATURE_ROUTE_GUARDS.find(({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-    if (!guard) return;
-    if (hasFeature(guard.feature)) return;
+    const guardedFeature = findGuardedFeature(pathname);
+    if (!guardedFeature || hasFeature(guardedFeature)) return;
 
-    router.replace(`/billing?upgrade=${encodeURIComponent(guard.feature)}`);
+    router.replace(`/upgrade/${guardedFeature}?from=${encodeURIComponent(pathname)}`);
   }, [featuresLoading, hasFeature, pathname, router]);
 
   return (

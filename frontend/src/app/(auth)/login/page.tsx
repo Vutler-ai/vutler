@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -29,6 +29,13 @@ export default function LoginPage() {
   const { login, isAuthenticated, refreshUser } = useAuth();
   const router = useRouter();
 
+  const nextPath = useMemo(() => {
+    if (typeof window === 'undefined') return '/dashboard';
+    const next = new URLSearchParams(window.location.search).get('next');
+    if (!next || !next.startsWith('/')) return '/dashboard';
+    return next;
+  }, []);
+
   // Handle OAuth callback: ?token=JWT or ?error=...
   useEffect(() => {
     try {
@@ -41,7 +48,7 @@ export default function LoginPage() {
         setAuthToken(token);
         window.history.replaceState({}, '', '/login');
         refreshUser().then(() => {
-          router.push('/dashboard');
+          router.push(nextPath);
         });
         return;
       }
@@ -69,14 +76,14 @@ export default function LoginPage() {
     } catch {
       // ignore
     }
-  }, [refreshUser, router]);
+  }, [nextPath, refreshUser, router]);
 
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/dashboard');
+      router.push(nextPath);
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, nextPath, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +92,7 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.push('/dashboard');
+      router.push(nextPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed. Please check your credentials.');
     } finally {
