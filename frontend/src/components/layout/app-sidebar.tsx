@@ -277,7 +277,7 @@ export default function AppSidebar({
 
   // Filter items based on feature flags
   const getVisibleItems = (items: NavItem[]) =>
-    items.filter((item) => loading || !item.feature || hasFeature(item.feature));
+    items.filter((item) => !item.feature || (!loading && hasFeature(item.feature)));
 
   const sidebarContent = (
     <aside

@@ -70,13 +70,20 @@ async function ensureWorkspaceBucketRecord(workspace) {
 }
 
 async function ensureDriveRootSetting(workspaceId, driveRoot = DEFAULT_DRIVE_ROOT) {
+  const updated = await pool.query(
+    `UPDATE ${SCHEMA}.workspace_settings
+     SET value = $3::jsonb,
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND key = $2`,
+    [workspaceId, DRIVE_ROOT_SETTING_KEY, JSON.stringify(driveRoot)]
+  );
+
+  if (updated.rowCount > 0) return;
+
   await pool.query(
     `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
-     VALUES (gen_random_uuid(), $1, $2, $3::jsonb, NOW(), NOW())
-     ON CONFLICT (workspace_id, key)
-     DO UPDATE SET
-       value = EXCLUDED.value,
-       updated_at = NOW()`,
+     VALUES (gen_random_uuid(), $1, $2, $3::jsonb, NOW(), NOW())`,
     [workspaceId, DRIVE_ROOT_SETTING_KEY, JSON.stringify(driveRoot)]
   );
 }
@@ -84,14 +91,30 @@ async function ensureDriveRootSetting(workspaceId, driveRoot = DEFAULT_DRIVE_ROO
 async function ensureDriveFolderScaffold(workspaceId, folders = DRIVE_FOLDER_SCAFFOLD) {
   for (const folder of folders) {
     const normalized = normalizeFolderPath(folder);
+    const existing = await pool.query(
+      `SELECT id
+         FROM ${SCHEMA}.drive_files
+        WHERE workspace_id = $1
+          AND path = $2
+        LIMIT 1`,
+      [workspaceId, normalized]
+    );
+
+    if (existing.rows[0]?.id) {
+      await pool.query(
+        `UPDATE ${SCHEMA}.drive_files
+         SET is_deleted = false,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [existing.rows[0].id]
+      );
+      continue;
+    }
+
     await pool.query(
       `INSERT INTO ${SCHEMA}.drive_files
        (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted, type)
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, 'inode/directory', 0, NULL, NULL, false, 'folder')
-       ON CONFLICT (workspace_id, path)
-       DO UPDATE SET
-         is_deleted = false,
-         updated_at = NOW()`,
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, 'inode/directory', 0, NULL, NULL, false, 'folder')`,
       [workspaceId, path.posix.basename(normalized), normalized, parentPathFor(normalized)]
     );
   }

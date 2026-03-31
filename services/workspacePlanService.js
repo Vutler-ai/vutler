@@ -69,15 +69,22 @@ async function syncWorkspacePlan({
     [normalizedPlanId, workspaceId]
   );
 
-  await pool.query(
-    `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
-     VALUES (gen_random_uuid(), $1, 'billing_plan', $2::jsonb, NOW(), NOW())
-     ON CONFLICT (workspace_id, key)
-     DO UPDATE SET
-       value = EXCLUDED.value,
-       updated_at = NOW()`,
+  const updated = await pool.query(
+    `UPDATE ${SCHEMA}.workspace_settings
+     SET value = $2::jsonb,
+         updated_at = NOW()
+     WHERE workspace_id = $1
+       AND key = 'billing_plan'`,
     [workspaceId, JSON.stringify(snapshot)]
   );
+
+  if (updated.rowCount === 0) {
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
+       VALUES (gen_random_uuid(), $1, 'billing_plan', $2::jsonb, NOW(), NOW())`,
+      [workspaceId, JSON.stringify(snapshot)]
+    );
+  }
 
   return snapshot;
 }

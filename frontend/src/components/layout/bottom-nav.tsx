@@ -10,20 +10,30 @@ import {
   ClipboardList,
   MoreHorizontal,
 } from 'lucide-react';
+import { useFeatures } from '@/hooks/useFeatures';
 
 interface BottomNavProps {
   onMoreClick: () => void;
 }
 
-const NAV_ITEMS = [
+interface BottomNavItem {
+  href: string;
+  icon: typeof Home;
+  label: string;
+  feature?: string;
+}
+
+const NAV_ITEMS: BottomNavItem[] = [
   { href: '/dashboard', icon: Home, label: 'Home' },
-  { href: '/chat', icon: MessageSquare, label: 'Chat' },
-  { href: '/agents', icon: Wrench, label: 'Agents' },
-  { href: '/tasks', icon: ClipboardList, label: 'Tasks' },
-] as const;
+  { href: '/chat', icon: MessageSquare, label: 'Chat', feature: 'chat' },
+  { href: '/agents', icon: Wrench, label: 'Agents', feature: 'agents' },
+  { href: '/tasks', icon: ClipboardList, label: 'Tasks', feature: 'tasks' },
+];
 
 export default function BottomNav({ onMoreClick }: BottomNavProps) {
   const pathname = usePathname();
+  const { hasFeature, loading } = useFeatures();
+  const visibleItems = NAV_ITEMS.filter((item) => !item.feature || (!loading && hasFeature(item.feature)));
 
   return (
     <nav
@@ -33,7 +43,7 @@ export default function BottomNav({ onMoreClick }: BottomNavProps) {
       aria-label="Mobile navigation"
     >
       <div className="flex items-center justify-around h-14">
-        {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+        {visibleItems.map(({ href, icon: Icon, label }) => {
           const isActive =
             pathname === href || pathname?.startsWith(href);
           return (

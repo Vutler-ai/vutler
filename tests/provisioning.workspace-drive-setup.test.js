@@ -17,6 +17,12 @@ describe('workspace drive provisioning', () => {
           }],
         };
       }
+      if (sql.includes('UPDATE tenant_vutler.workspace_settings')) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('SELECT id') && sql.includes('FROM tenant_vutler.drive_files')) {
+        return { rows: [] };
+      }
       return { rows: [] };
     });
     const ensureBucket = jest.fn().mockResolvedValue(undefined);

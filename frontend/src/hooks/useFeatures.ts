@@ -1,18 +1,18 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { getAuthToken } from '@/lib/api';
 
 // ========== Types ==========
 
 interface FeaturesResponse {
-  plan: 'office' | 'agents' | 'full';
+  plan: string;
   features: string[];
   snipara: string[];
 }
 
 interface FeaturesContextType {
-  plan: 'office' | 'agents' | 'full';
+  plan: string;
   features: string[];
   snipara: string[];
   loading: boolean;
@@ -24,12 +24,12 @@ interface FeaturesContextType {
 // ========== Defaults ==========
 
 const DEFAULT_FEATURES: FeaturesContextType = {
-  plan: 'office',
+  plan: 'free',
   features: [],
   snipara: [],
   loading: true,
   hasFeature: () => false,
-  hasOffice: true,
+  hasOffice: false,
   hasAgents: false,
 };
 
@@ -72,7 +72,7 @@ async function fetchWorkspaceFeatures(): Promise<FeaturesResponse> {
 // ========== Provider state hook ==========
 
 export function useFeaturesState(): FeaturesContextType {
-  const [plan, setPlan] = useState<'office' | 'agents' | 'full'>('office');
+  const [plan, setPlan] = useState<string>('free');
   const [features, setFeatures] = useState<string[]>([]);
   const [snipara, setSnipara] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,7 +90,7 @@ export function useFeaturesState(): FeaturesContextType {
       .catch(() => {
         if (cancelled) return;
         // SECURITY: default to most restrictive plan on API failure (audit 2026-03-29)
-        setPlan('office');
+        setPlan('free');
         setFeatures([]);
         setSnipara([]);
       })
@@ -104,12 +104,11 @@ export function useFeaturesState(): FeaturesContextType {
   }, []);
 
   const hasFeature = (feature: string): boolean => {
-    if (plan === 'full') return true;
-    return features.includes(feature);
+    return features.includes('*') || features.includes(feature);
   };
 
-  const hasOffice = plan === 'office' || plan === 'full';
-  const hasAgents = plan === 'agents' || plan === 'full';
+  const hasOffice = ['chat', 'drive', 'email', 'tasks', 'calendar'].some(hasFeature);
+  const hasAgents = ['agents', 'nexus', 'sandbox', 'builder', 'swarm'].some(hasFeature);
 
   return { plan, features, snipara, loading, hasFeature, hasOffice, hasAgents };
 }

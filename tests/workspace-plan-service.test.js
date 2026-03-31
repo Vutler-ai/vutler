@@ -6,7 +6,12 @@ describe('workspacePlanService', () => {
   });
 
   test('syncs workspace plan to both workspaces and workspace_settings', async () => {
-    const query = jest.fn().mockResolvedValue({ rows: [] });
+    const query = jest.fn(async (sql) => {
+      if (sql.includes('UPDATE tenant_vutler.workspace_settings')) {
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [] };
+    });
 
     jest.doMock('../lib/vaultbrix', () => ({ query }));
 
@@ -34,9 +39,10 @@ describe('workspacePlanService', () => {
       expect.stringContaining(`UPDATE tenant_vutler.workspaces`),
       ['agents_pro', 'ws-1']
     );
-    expect(query.mock.calls[1][0]).toContain('INSERT INTO tenant_vutler.workspace_settings');
-    expect(query.mock.calls[1][1][0]).toBe('ws-1');
-    expect(JSON.parse(query.mock.calls[1][1][1])).toMatchObject({
+    expect(query.mock.calls[1][0]).toContain('UPDATE tenant_vutler.workspace_settings');
+    expect(query.mock.calls[2][0]).toContain('INSERT INTO tenant_vutler.workspace_settings');
+    expect(query.mock.calls[2][1][0]).toBe('ws-1');
+    expect(JSON.parse(query.mock.calls[2][1][1])).toMatchObject({
       plan: 'agents_pro',
       source: 'billing.change_plan',
       status: 'active',
