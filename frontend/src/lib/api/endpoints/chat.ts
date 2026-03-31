@@ -155,6 +155,24 @@ export async function createDirectConversation(contactId: string, contactType: '
   return Array.isArray(data) ? data[0] : ('channel' in data ? (data.channel as Channel) : (data as Channel));
 }
 
+export async function updateChannelPreferences(
+  channelId: string,
+  preferences: {
+    pinned?: boolean;
+    muted?: boolean;
+    archived?: boolean;
+  }
+): Promise<Channel> {
+  const data = await apiFetch<{ channel?: Channel } | Channel>(
+    `/api/v1/chat/channels/${channelId}/preferences`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(preferences),
+    }
+  );
+  return Array.isArray(data) ? data[0] : ('channel' in data ? (data.channel as Channel) : (data as Channel));
+}
+
 /**
  * Upload attachments — uses authFetch (raw) because body is FormData.
  */

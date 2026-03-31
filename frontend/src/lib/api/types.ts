@@ -184,6 +184,12 @@ export interface Channel {
   contact_type?: 'user' | 'agent' | null;
   avatar?: string | null;
   username?: string | null;
+  contact_role?: string | null;
+  contact_provider?: string | null;
+  contact_model?: string | null;
+  pinned?: boolean;
+  muted?: boolean;
+  archived?: boolean;
 }
 
 export interface ChannelMember {
@@ -199,6 +205,9 @@ export interface ChatContact {
   subtitle?: string;
   avatar?: string | null;
   username?: string | null;
+  role?: string | null;
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface CreateChannelPayload {
