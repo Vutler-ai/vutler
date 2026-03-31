@@ -110,7 +110,17 @@ describe('chatRuntime retry flow', () => {
     jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
     jest.doMock('../../services/llmRouter', () => ({ chat: llmChat }));
     jest.doMock('../../services/swarmCoordinator', () => ({
-      getSwarmCoordinator: () => ({ analyzeAndRoute }),
+      getSwarmCoordinator: () => ({
+        analyzeAndRoute,
+        resolveAgentExecutionContext: jest.fn(async (agent, workspaceId) => ({
+          ...agent,
+          workspace_id: workspaceId,
+          capabilities: agent.capabilities || [],
+          workspaceToolPolicy: {
+            placementInstruction: 'The canonical Drive root is /projects/Vutler.',
+          },
+        })),
+      }),
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
     jest.doMock('../../services/memory/runtime', () => ({

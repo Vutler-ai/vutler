@@ -7,6 +7,13 @@ const { insertChatMessage } = require('../../../services/chatMessages');
 const { getSniparaTaskAdapter } = require('../../../services/sniparaTaskAdapter');
 const { createSniparaGateway } = require('../../../services/snipara/gateway');
 const { DEFAULT_SNIPARA_SWARM_ID } = require('../../../services/sniparaResolver');
+const {
+  ALWAYS_ON_TOOL_SKILL_KEYS,
+  buildInternalPlacementInstruction,
+  normalizeCapabilities,
+  splitCapabilities,
+} = require('../../../services/agentConfigPolicy');
+const { resolveWorkspaceDriveRoot } = require('../../../services/drivePlacementPolicy');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -63,6 +70,11 @@ function safeJsonParse(raw) {
   } catch (_) {
     return null;
   }
+}
+
+function buildWorkspacePlacementInstruction(driveRoot) {
+  const normalizedRoot = String(driveRoot || '/projects/Vutler').trim() || '/projects/Vutler';
+  return buildInternalPlacementInstruction().replaceAll('/projects/Vutler', normalizedRoot);
 }
 
 async function loadAgentDirectory(workspaceId) {
@@ -193,6 +205,31 @@ class SwarmCoordinator {
   async hasSniparaConfig(workspaceId = DEFAULT_WORKSPACE) {
     const { config, swarmId } = await this.getSniparaRuntimeConfig(workspaceId);
     return Boolean(swarmId && config?.configured && config?.apiKey && config?.apiUrl);
+  }
+
+  async getWorkspaceToolPolicy(workspaceId = DEFAULT_WORKSPACE) {
+    const ws = normalizeWorkspaceId(workspaceId);
+    const driveRoot = await resolveWorkspaceDriveRoot(ws).catch(() => '/projects/Vutler');
+    return {
+      workspaceId: ws,
+      driveRoot,
+      placementInstruction: buildWorkspacePlacementInstruction(driveRoot),
+      defaultCapabilities: [...ALWAYS_ON_TOOL_SKILL_KEYS],
+    };
+  }
+
+  async resolveAgentExecutionContext(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
+    const policy = await this.getWorkspaceToolPolicy(workspaceId || agent.workspace_id);
+    const capabilities = normalizeCapabilities(agent.capabilities || policy.defaultCapabilities);
+    return {
+      ...agent,
+      workspace_id: policy.workspaceId,
+      capabilities,
+      workspaceToolPolicy: {
+        ...policy,
+        ...splitCapabilities(capabilities),
+      },
+    };
   }
 
   pickBestAgent(taskInput) {

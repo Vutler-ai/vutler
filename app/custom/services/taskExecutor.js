@@ -27,6 +27,13 @@ function normalizeWorkspaceId(workspaceId) {
   return workspaceId || '00000000-0000-0000-0000-000000000001';
 }
 
+function appendPlacementInstruction(prompt, instruction) {
+  const basePrompt = String(prompt || '');
+  const extraInstruction = String(instruction || '').trim();
+  if (!extraInstruction || basePrompt.includes(extraInstruction)) return basePrompt;
+  return `${basePrompt}\n\n${extraInstruction}`;
+}
+
 async function loadAgents(workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
   const cached = agentCache.get(ws);
@@ -34,7 +41,7 @@ async function loadAgents(workspaceId) {
   if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
 
   const result = await pool.query(
-    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role, workspace_id
+    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role, workspace_id, capabilities
      FROM ${SCHEMA}.agents
      WHERE workspace_id = $1`,
     [ws]
@@ -173,9 +180,12 @@ async function buildExecutionPrompt(agent, task, workspaceId) {
 
   return {
     mode: memoryBundle.mode || null,
-    prompt: memoryBundle.prompt
+    prompt: appendPlacementInstruction(
+      memoryBundle.prompt
       ? `${baseSystemPrompt}\n\n${memoryBundle.prompt}`
       : baseSystemPrompt,
+      agent.workspaceToolPolicy?.placementInstruction
+    ),
     memoryStats: memoryBundle.stats || null,
   };
 }
@@ -191,7 +201,10 @@ async function executeTask(task) {
   }
 
   const swarmCoordinator = getSwarmCoordinator();
-  const agentRef = agent.username || String(agent.id);
+  const executionAgent = typeof swarmCoordinator.resolveAgentExecutionContext === 'function'
+    ? await swarmCoordinator.resolveAgentExecutionContext(agent, workspaceId)
+    : agent;
+  const agentRef = executionAgent.username || String(executionAgent.id);
   const startedAt = Date.now();
 
   try {
@@ -199,18 +212,19 @@ async function executeTask(task) {
       await swarmCoordinator.claimTask(task.snipara_task_id, agentRef, workspaceId);
     }
 
-    const executionPrompt = await buildExecutionPrompt(agent, task, workspaceId);
+    const executionPrompt = await buildExecutionPrompt(executionAgent, task, workspaceId);
     const response = await llmChat(
       {
-        id: agent.id,
-        username: agent.username,
-        role: agent.role,
-        model: agent.model,
-        provider: agent.provider,
+        id: executionAgent.id,
+        username: executionAgent.username,
+        role: executionAgent.role,
+        model: executionAgent.model,
+        provider: executionAgent.provider,
         system_prompt: executionPrompt.prompt,
-        temperature: parseFloat(agent.temperature) || 0.7,
-        max_tokens: agent.max_tokens || 4096,
-        workspace_id: workspaceId
+        temperature: parseFloat(executionAgent.temperature) || 0.7,
+        max_tokens: executionAgent.max_tokens || 4096,
+        workspace_id: workspaceId,
+        capabilities: executionAgent.capabilities || [],
       },
       [{ role: 'user', content: buildTaskPrompt(task) }],
       pool,
@@ -232,11 +246,11 @@ async function executeTask(task) {
     }
     const successMeta = {
       result: response.content,
-      model: response.model || agent.model,
-      provider: response.provider || agent.provider,
+      model: response.model || executionAgent.model,
+      provider: response.provider || executionAgent.provider,
       latency_ms: latencyMs,
       usage: response.usage || null,
-      executed_by: agent.name,
+      executed_by: executionAgent.name,
       execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct'
     };
 
@@ -252,7 +266,7 @@ async function executeTask(task) {
     await memoryRuntime.recordTaskEpisode({
       db: pool,
       workspaceId,
-      agent,
+      agent: executionAgent,
       task,
       response: response.content,
     }).catch((err) => {
@@ -260,17 +274,17 @@ async function executeTask(task) {
     });
 
     await updateTask(task.id, 'completed', response.content, successMeta);
-    await postTaskChatResult(task, response.content, String(agent.id), agent.name).catch((chatErr) => {
+    await postTaskChatResult(task, response.content, String(executionAgent.id), executionAgent.name).catch((chatErr) => {
       console.error('[TaskExecutor] Failed to post completion in chat:', chatErr.message);
     });
 
-    console.log(`[TaskExecutor] Completed "${task.title}" by ${agent.name} (${latencyMs}ms)`);
+    console.log(`[TaskExecutor] Completed "${task.title}" by ${executionAgent.name} (${latencyMs}ms)`);
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
     console.error(`[TaskExecutor] Failed "${task.title}":`, err.message);
     await failTask(task, err, {
       latency_ms: latencyMs,
-      executed_by: agent.name,
+      executed_by: executionAgent.name,
       execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct'
     });
   }

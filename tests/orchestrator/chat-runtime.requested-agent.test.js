@@ -111,7 +111,17 @@ describe('chatRuntime requested agent resolution', () => {
     jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
     jest.doMock('../../services/llmRouter', () => ({ chat: llmChat }));
     jest.doMock('../../services/swarmCoordinator', () => ({
-      getSwarmCoordinator: () => ({ analyzeAndRoute: jest.fn().mockResolvedValue({ routed: false }) }),
+      getSwarmCoordinator: () => ({
+        analyzeAndRoute: jest.fn().mockResolvedValue({ routed: false }),
+        resolveAgentExecutionContext: jest.fn(async (agent, workspaceId) => ({
+          ...agent,
+          workspace_id: workspaceId,
+          capabilities: agent.capabilities || [],
+          workspaceToolPolicy: {
+            placementInstruction: 'The canonical Drive root is /projects/Starbox.',
+          },
+        })),
+      }),
     }));
     jest.doMock('../../services/chatMessages', () => ({ insertChatMessage }));
     jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
@@ -143,6 +153,7 @@ describe('chatRuntime requested agent resolution', () => {
         provider: 'anthropic',
         capabilities: ['workspace_drive_write', 'workspace_drive_search'],
         workspace_id: 'ws-1',
+        system_prompt: expect.stringContaining('/projects/Starbox'),
       }),
       expect.any(Array),
       expect.anything(),

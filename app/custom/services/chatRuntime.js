@@ -153,6 +153,13 @@ function shouldBypassSwarmRouting(resolution) {
   return reason === 'explicit' || reason === 'mention' || reason === 'single_channel_agent';
 }
 
+function appendPlacementInstruction(prompt, instruction) {
+  const basePrompt = String(prompt || '');
+  const extraInstruction = String(instruction || '').trim();
+  if (!extraInstruction || basePrompt.includes(extraInstruction)) return basePrompt;
+  return `${basePrompt}\n\n## Workspace Tools\n${extraInstruction}\n`;
+}
+
 async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEFAULT_WORKSPACE, limit = 10) {
   const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
@@ -421,8 +428,9 @@ async function handleMessage(message) {
     throw new Error('Unable to resolve requested agent');
   }
 
+  const swarmCoordinator = getSwarmCoordinator();
+
   if (!shouldBypassSwarmRouting(resolution)) {
-    const swarmCoordinator = getSwarmCoordinator();
     try {
       const routing = await swarmCoordinator.analyzeAndRoute(message, channelAgents, workspaceId);
       if (routing?.routed) {
@@ -452,19 +460,25 @@ async function handleMessage(message) {
     }
   }
 
-  const soul = await getAgentSoul(targetAgent);
+  const executionAgent = typeof swarmCoordinator.resolveAgentExecutionContext === 'function'
+    ? await swarmCoordinator.resolveAgentExecutionContext(targetAgent, workspaceId)
+    : targetAgent;
+  const soul = appendPlacementInstruction(
+    await getAgentSoul(executionAgent),
+    executionAgent.workspaceToolPolicy?.placementInstruction
+  );
   const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
 
   const response = await llmChat(
     {
-      id: targetAgent.id,
-      model: targetAgent.model,
-      provider: targetAgent.provider,
-      capabilities: Array.isArray(targetAgent.capabilities) ? targetAgent.capabilities : [],
+      id: executionAgent.id,
+      model: executionAgent.model,
+      provider: executionAgent.provider,
+      capabilities: Array.isArray(executionAgent.capabilities) ? executionAgent.capabilities : [],
       system_prompt: soul,
-      temperature: parseFloat(targetAgent.temperature) || 0.7,
-      max_tokens: targetAgent.max_tokens || 4096,
-      workspace_id: workspaceId || targetAgent.workspace_id
+      temperature: parseFloat(executionAgent.temperature) || 0.7,
+      max_tokens: executionAgent.max_tokens || 4096,
+      workspace_id: workspaceId || executionAgent.workspace_id
     },
     history,
     pool,
@@ -482,21 +496,21 @@ async function handleMessage(message) {
 
   await insertChatMessage(pool, null, SCHEMA, {
     channel_id: message.channel_id,
-    sender_id: String(targetAgent.id),
-    sender_name: targetAgent.name,
+    sender_id: String(executionAgent.id),
+    sender_name: executionAgent.name,
     content: response.content,
     message_type: 'text',
     workspace_id: workspaceId,
     processed_at: new Date(),
     processing_state: 'processed',
     reply_to_message_id: message.id,
-    requested_agent_id: String(targetAgent.id),
-    display_agent_id: String(targetAgent.id),
+    requested_agent_id: String(executionAgent.id),
+    display_agent_id: String(executionAgent.id),
     orchestrated_by: 'jarvis',
-    executed_by: String(targetAgent.id),
+    executed_by: String(executionAgent.id),
     metadata: {
       orchestration_status: 'completed',
-      requested_agent_username: targetAgent.username || null,
+      requested_agent_username: executionAgent.username || null,
       requested_agent_reason: resolution?.reason || 'unknown',
       llm_provider: response.provider || null,
       llm_model: response.model || null,
@@ -506,7 +520,7 @@ async function handleMessage(message) {
     }
   });
 
-  rememberInteraction(targetAgent, workspaceId, message.content, response.content, message.sender_name || null);
+  rememberInteraction(executionAgent, workspaceId, message.content, response.content, message.sender_name || null);
 }
 
 async function processMessageById(messageId, workspaceId = DEFAULT_WORKSPACE) {
