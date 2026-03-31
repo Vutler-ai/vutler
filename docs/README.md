@@ -17,3 +17,5 @@
 - `docs/nexus/` covers Nexus install, deployment, and security.
 - `docs/specs/` contains feature-specific implementation specs.
 - `docs/planning-artifacts/` contains product and architecture planning inputs.
+- [Nexus Enterprise Virtual Employee](product-briefs/nexus-enterprise-virtual-employee.md) is the product and execution plan for client-site virtual employees, with AV Manager as the reference use case.
+- [Nexus Enterprise Event Ingestion V1](specs/nexus-enterprise-event-ingestion-v1.md) defines the event-driven webhook ingestion model for enterprise nodes and virtual employees.
