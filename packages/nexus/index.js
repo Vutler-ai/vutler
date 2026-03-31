@@ -71,6 +71,7 @@ class NexusNode {
     this.reconnectInterval = 5000;
     this.recentTasks = [];
     this.logBuffer = [];
+    this.commandPollInFlight = false;
     this.taskOrchestrator = new TaskOrchestrator(this.providers, null);
     this.permissionEngine = getPermissionEngine();
     this._syncPermissionSnapshot();
@@ -218,6 +219,8 @@ class NexusNode {
 
   _startCommandPoll() {
     this.commandTimer = setInterval(async () => {
+      if (this.commandPollInFlight) return;
+      this.commandPollInFlight = true;
       try {
         const response = await this._apiCall('GET', `/api/v1/nexus/${this.nodeId}/commands?claim=1&limit=5`);
         const commands = response?.commands || [];
@@ -226,6 +229,8 @@ class NexusNode {
         }
       } catch (e) {
         // silent — will retry on next cycle
+      } finally {
+        this.commandPollInFlight = false;
       }
     }, this.config?.commandPollInterval || 2000);
   }
@@ -296,6 +301,11 @@ class NexusNode {
     this.log(`[NEXUS] Executing command: ${label}`);
 
     try {
+      await this._reportCommandProgress(command.id, {
+        stage: 'claimed',
+        message: `Executing ${command.type}`,
+        elapsedMs: 0,
+      });
       let result;
       if (command.type === 'spawn_agent') {
         const agentId = command.payload?.agentId;

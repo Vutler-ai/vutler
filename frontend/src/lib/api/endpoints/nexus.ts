@@ -16,6 +16,7 @@ import type {
   NexusShellResult,
   NexusCapabilities,
   NexusCommandStatus,
+  NexusCommandStats,
 } from '../types';
 
 export async function getNodes(): Promise<NexusStatusResponse> {
@@ -144,6 +145,15 @@ export async function getNodeCommand<T = NexusDispatchResult>(
     `/api/v1/nexus/nodes/${nodeId}/commands/${commandId}`
   );
   return response.command;
+}
+
+export async function getNodeCommands(
+  nodeId: string,
+  limit = 25
+): Promise<{ commands: NexusCommandStatus[]; summary: NexusCommandStats | null }> {
+  return apiFetch<{ commands: NexusCommandStatus[]; summary: NexusCommandStats | null }>(
+    `/api/v1/nexus/nodes/${nodeId}/commands?limit=${limit}`
+  );
 }
 
 export async function dispatchSearch(

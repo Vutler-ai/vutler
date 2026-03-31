@@ -97,10 +97,35 @@ async function assertNexusProvisionAllowed({ pg, workspaceId, mode }) {
   return { planId, limits, usage };
 }
 
+async function getWorkspaceNexusBillingSummary(pg, workspaceId = DEFAULT_WORKSPACE) {
+  const planId = await getWorkspacePlanId(pg, workspaceId);
+  const limits = getNexusLimits(planId);
+  const usage = await getWorkspaceNexusUsage(pg, workspaceId);
+
+  const remaining = {
+    total: limits.total === -1 ? -1 : Math.max(0, limits.total - usage.total),
+    local: limits.local === -1 ? -1 : Math.max(0, limits.local - usage.local),
+    enterprise: limits.enterprise === -1 ? -1 : Math.max(0, limits.enterprise - usage.enterprise),
+  };
+
+  return {
+    planId,
+    limits,
+    usage,
+    remaining,
+    canProvision: {
+      local: remaining.local === -1 || remaining.local > 0,
+      enterprise: remaining.enterprise === -1 || remaining.enterprise > 0,
+      total: remaining.total === -1 || remaining.total > 0,
+    },
+  };
+}
+
 module.exports = {
   DEFAULT_WORKSPACE,
   assertNexusProvisionAllowed,
   getNodeMode,
+  getWorkspaceNexusBillingSummary,
   getWorkspaceNexusUsage,
   getWorkspacePlanId,
 };

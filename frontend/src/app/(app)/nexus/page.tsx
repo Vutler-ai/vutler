@@ -8,6 +8,8 @@ import { getAgents } from '@/lib/api/endpoints/agents';
 import type {
   NexusNode,
   NexusStats,
+  NexusBillingSnapshot,
+  NexusCommandStats,
   Agent,
   Client,
   CreateClientPayload,
@@ -28,6 +30,19 @@ function relativeTime(iso?: string): string {
 function formatProviderLabel(value?: string): string {
   if (!value) return 'Unknown';
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatQuotaValue(value?: number): string {
+  if (value === undefined || value === null) return '0';
+  if (value === -1) return 'Unlimited';
+  return String(value);
+}
+
+function formatDurationMs(value?: number): string {
+  if (!value || value <= 0) return '—';
+  if (value < 1000) return `${value}ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(1)}s`;
+  return `${Math.round(value / 60000)}m`;
 }
 
 const STATUS_DOT: Record<NexusNode['status'], string> = {
@@ -96,10 +111,12 @@ function DeployModal({
   onClose,
   initialMode,
   initialClientName,
+  billing,
 }: {
   onClose: () => void;
   initialMode?: DeployMode;
   initialClientName?: string;
+  billing?: NexusBillingSnapshot | null;
 }) {
   const [step, setStep] = useState<DeployStep>(initialMode === 'local' ? 'local-config' : initialMode === 'enterprise' ? 'ent-basics' : 'select');
   const [mode, setMode] = useState<DeployMode>(initialMode ?? 'local');
@@ -152,6 +169,14 @@ function DeployModal({
 
   const handleGenerate = async () => {
     setError('');
+    if (mode === 'local' && billing && (!billing.canProvision.local || !billing.canProvision.total)) {
+      setError('No local Nexus quota remaining on the current billing plan.');
+      return;
+    }
+    if (mode === 'enterprise' && billing && (!billing.canProvision.enterprise || !billing.canProvision.total)) {
+      setError('No enterprise Nexus quota remaining on the current billing plan.');
+      return;
+    }
     setLoading(true);
     try {
       let result: { token: string };
@@ -199,6 +224,14 @@ function DeployModal({
   const installerBaseUrl = 'https://github.com/Vutler-ai/vutler/releases/latest/download';
 
   const isTokenStep = step === 'local-token' || step === 'ent-token';
+  const modeQuota = mode === 'enterprise'
+    ? { remaining: billing?.remaining.enterprise, limit: billing?.limits.enterprise, label: 'Enterprise' }
+    : { remaining: billing?.remaining.local, limit: billing?.limits.local, label: 'Local' };
+  const quotaBlocked = billing
+    ? mode === 'enterprise'
+      ? (!billing.canProvision.enterprise || !billing.canProvision.total)
+      : (!billing.canProvision.local || !billing.canProvision.total)
+    : false;
 
   const stepLabel: Record<DeployStep, string> = {
     select: 'Choose type',
@@ -228,6 +261,21 @@ function DeployModal({
           <button onClick={onClose} className="text-[#6b7280] hover:text-white transition-colors text-2xl leading-none" aria-label="Close">×</button>
         </div>
 
+        {billing && (
+          <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs text-[#6b7280] uppercase tracking-wide">Billing plan</p>
+              <p className="text-sm text-white font-medium">{formatProviderLabel(billing.planId)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-[#6b7280]">{modeQuota.label} quota</p>
+              <p className={`text-sm font-medium ${modeQuota.remaining === 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {formatQuotaValue(modeQuota.remaining)} left / {formatQuotaValue(modeQuota.limit)}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* ── Step: select mode ── */}
         {step === 'select' && (
           <div className="space-y-4">
@@ -256,18 +304,27 @@ function DeployModal({
                   bgHover: 'hover:bg-emerald-900/5',
                   textHover: 'group-hover:text-emerald-400',
                 },
-              ] as const).map(({ m, icon, label, badge, desc, badgeCls, borderHover, bgHover, textHover }) => (
+              ] as const).map(({ m, icon, label, badge, desc, badgeCls, borderHover, bgHover, textHover }) => {
+                const disabled = billing
+                  ? m === 'enterprise'
+                    ? (!billing.canProvision.enterprise || !billing.canProvision.total)
+                    : (!billing.canProvision.local || !billing.canProvision.total)
+                  : false;
+                return (
                 <button
                   key={m}
-                  onClick={() => { setMode(m); setStep(m === 'local' ? 'local-config' : 'ent-basics'); }}
-                  className={`flex flex-col items-start gap-2 p-4 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] ${borderHover} ${bgHover} rounded-xl text-left transition-all group`}
+                  onClick={() => { if (!disabled) { setMode(m); setStep(m === 'local' ? 'local-config' : 'ent-basics'); } }}
+                  disabled={disabled}
+                  className={`flex flex-col items-start gap-2 p-4 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] ${disabled ? 'opacity-50 cursor-not-allowed' : `${borderHover} ${bgHover}`} rounded-xl text-left transition-all group`}
                 >
                   <span className="text-2xl">{icon}</span>
                   <p className={`text-white font-semibold text-sm transition-colors ${textHover}`}>{label}</p>
                   <p className="text-[#6b7280] text-xs">{desc}</p>
                   <span className={`mt-1 text-xs px-2 py-0.5 rounded-full ${badgeCls}`}>{badge}</span>
+                  {disabled && <span className="text-[10px] text-amber-400">No quota remaining</span>}
                 </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -318,9 +375,10 @@ function DeployModal({
             </div>
 
             {error && <p className="text-red-400 text-sm">{error}</p>}
+            {quotaBlocked && <p className="text-amber-400 text-sm">This billing plan cannot provision another {modeQuota.label.toLowerCase()} node.</p>}
             <button
               onClick={handleGenerate}
-              disabled={loading}
+              disabled={loading || quotaBlocked}
               className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
               {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
@@ -536,9 +594,10 @@ function DeployModal({
             </div>
 
             {error && <p className="text-red-400 text-sm">{error}</p>}
+            {quotaBlocked && <p className="text-amber-400 text-sm">This billing plan cannot provision another {modeQuota.label.toLowerCase()} node.</p>}
             <button
               onClick={handleGenerate}
-              disabled={loading}
+              disabled={loading || quotaBlocked}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
               {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
@@ -877,11 +936,83 @@ function StatsBar({ stats }: { stats: NexusStats }) {
   );
 }
 
+function BillingOverviewCard({ billing }: { billing: NexusBillingSnapshot }) {
+  const rows = [
+    { label: 'Total nodes', usage: billing.usage.total, limit: billing.limits.total, remaining: billing.remaining.total },
+    { label: 'Local', usage: billing.usage.local, limit: billing.limits.local, remaining: billing.remaining.local },
+    { label: 'Enterprise', usage: billing.usage.enterprise, limit: billing.limits.enterprise, remaining: billing.remaining.enterprise },
+  ];
+
+  return (
+    <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-5 space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-[#6b7280] uppercase tracking-wide">Billing</p>
+          <h3 className="text-white font-semibold mt-1">{formatProviderLabel(billing.planId)}</h3>
+        </div>
+        <span className="px-2 py-0.5 rounded-full text-xs bg-[#0a0b14] border border-[rgba(255,255,255,0.08)] text-[#9ca3af]">
+          Nexus quota
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between gap-3 text-sm">
+            <div>
+              <p className="text-white">{row.label}</p>
+              <p className="text-xs text-[#6b7280]">
+                {row.usage} used / {formatQuotaValue(row.limit)}
+              </p>
+            </div>
+            <span className={`text-sm font-medium ${row.remaining === 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+              {formatQuotaValue(row.remaining)} left
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RuntimeOverviewCard({ stats }: { stats: NexusCommandStats }) {
+  const items = [
+    { label: 'Queued', value: stats.queued, tone: 'text-amber-400' },
+    { label: 'Running', value: stats.inProgress, tone: 'text-blue-300' },
+    { label: 'Completed 24h', value: stats.completed24h, tone: 'text-emerald-400' },
+    { label: 'Failed 24h', value: stats.failed24h + stats.expired24h, tone: 'text-red-400' },
+  ];
+
+  return (
+    <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-5 space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-[#6b7280] uppercase tracking-wide">Runtime</p>
+          <h3 className="text-white font-semibold mt-1">Command channel</h3>
+        </div>
+        <span className="text-xs text-[#6b7280]">
+          Avg {formatDurationMs(stats.avgDurationMs)}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        {items.map((item) => (
+          <div key={item.label} className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+            <p className="text-xs text-[#6b7280]">{item.label}</p>
+            <p className={`text-lg font-semibold mt-1 ${item.tone}`}>{item.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── My Nodes Tab ─────────────────────────────────────────────────────────────
 
 function MyNodesTab({
   nodes,
   stats,
+  billing,
+  commandStats,
   loading,
   error,
   onRetry,
@@ -889,6 +1020,8 @@ function MyNodesTab({
 }: {
   nodes: NexusNode[];
   stats: NexusStats | null;
+  billing: NexusBillingSnapshot | null;
+  commandStats: NexusCommandStats | null;
   loading: boolean;
   error: string;
   onRetry: () => void;
@@ -899,6 +1032,12 @@ function MyNodesTab({
   return (
     <div className="space-y-6">
       {!loading && stats && <StatsBar stats={stats} />}
+      {!loading && (billing || commandStats) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {billing && <BillingOverviewCard billing={billing} />}
+          {commandStats && <RuntimeOverviewCard stats={commandStats} />}
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
@@ -1058,6 +1197,8 @@ function ClientSkeleton() {
 function EnterpriseTab({
   clients,
   enterpriseNodes,
+  billing,
+  commandStats,
   loading,
   error,
   onRetry,
@@ -1068,6 +1209,8 @@ function EnterpriseTab({
 }: {
   clients: Client[];
   enterpriseNodes: NexusNode[];
+  billing: NexusBillingSnapshot | null;
+  commandStats: NexusCommandStats | null;
   loading: boolean;
   error: string;
   onRetry: () => void;
@@ -1078,6 +1221,13 @@ function EnterpriseTab({
 }) {
   return (
     <div className="space-y-6">
+      {!loading && (billing || commandStats) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {billing && <BillingOverviewCard billing={billing} />}
+          {commandStats && <RuntimeOverviewCard stats={commandStats} />}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-[#6b7280]">
           {clients.length > 0
@@ -1156,6 +1306,8 @@ export default function NexusPage() {
 
   const [nodes, setNodes] = useState<NexusNode[]>([]);
   const [stats, setStats] = useState<NexusStats | null>(null);
+  const [billing, setBilling] = useState<NexusBillingSnapshot | null>(null);
+  const [commandStats, setCommandStats] = useState<NexusCommandStats | null>(null);
   const [nodesLoading, setNodesLoading] = useState(true);
   const [nodesError, setNodesError] = useState('');
 
@@ -1177,9 +1329,13 @@ export default function NexusPage() {
       const data = await getNodes();
       setNodes(data.nodes ?? []);
       setStats(data.stats ?? null);
+      setBilling(data.billing ?? null);
+      setCommandStats(data.commandStats ?? null);
     } catch (err) {
       setNodesError(err instanceof Error ? err.message : 'Failed to load Nexus data. Please refresh.');
       setNodes([]);
+      setBilling(null);
+      setCommandStats(null);
     } finally {
       setNodesLoading(false);
     }
@@ -1295,6 +1451,8 @@ export default function NexusPage() {
         <MyNodesTab
           nodes={nodes}
           stats={stats}
+          billing={billing}
+          commandStats={commandStats}
           loading={nodesLoading}
           error={nodesError}
           onRetry={fetchNodes}
@@ -1306,6 +1464,8 @@ export default function NexusPage() {
         <EnterpriseTab
           clients={clients}
           enterpriseNodes={enterpriseNodes}
+          billing={billing}
+          commandStats={commandStats}
           loading={clientsLoading || nodesLoading}
           error={clientsError || nodesError}
           onRetry={() => { fetchClients(); fetchNodes(); }}
@@ -1320,6 +1480,7 @@ export default function NexusPage() {
         <DeployModal
           initialMode={deployMode}
           initialClientName={deployClientName}
+          billing={billing}
           onClose={handleDeployClose}
         />
       )}

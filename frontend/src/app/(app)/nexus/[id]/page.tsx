@@ -8,6 +8,7 @@ import {
   createNodeAgent,
   stopNodeAgent,
   getNodeCapabilities,
+  getNodeCommands,
   getNodeCommand,
   queueDispatchAction,
   type CreateNodeAgentDefinition,
@@ -26,6 +27,7 @@ import type {
   NexusShellResult,
   NexusDocumentResult,
   NexusCommandStatus,
+  NexusCommandStats,
   NexusProviderSource,
 } from '@/lib/api/types';
 
@@ -35,6 +37,11 @@ interface ActivityEvent {
   id: string;
   message: string;
   timestamp: string;
+}
+
+interface CommandHistoryResponse {
+  commands: NexusCommandStatus[];
+  summary: NexusCommandStats | null;
 }
 
 interface NodeDetail {
@@ -117,6 +124,18 @@ function formatProviderLabel(value: string): string {
   return value
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatDuration(value?: number): string {
+  if (!value || value <= 0) return '—';
+  if (value < 1000) return `${value}ms`;
+  if (value < 60_000) return `${(value / 1000).toFixed(1)}s`;
+  return `${Math.round(value / 60000)}m`;
+}
+
+function describePayload(payload?: Record<string, unknown>): string {
+  const action = typeof payload?.action === 'string' ? payload.action : '';
+  return action ? formatProviderLabel(action) : '—';
 }
 
 // ─── Status styles ─────────────────────────────────────────────────────────────
@@ -1267,12 +1286,104 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
   );
 }
 
+function RuntimeObservabilityCard({
+  summary,
+  commands,
+}: {
+  summary: NexusCommandStats | null;
+  commands: NexusCommandStatus[];
+}) {
+  const summaryItems = summary ? [
+    { label: 'Queued', value: summary.queued, tone: 'text-amber-400' },
+    { label: 'Running', value: summary.inProgress, tone: 'text-blue-300' },
+    { label: 'Completed 24h', value: summary.completed24h, tone: 'text-emerald-400' },
+    { label: 'Failed 24h', value: summary.failed24h + summary.expired24h, tone: 'text-red-400' },
+  ] : [];
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Runtime Observability</h2>
+          <p className="text-xs text-[#6b7280] mt-0.5">Command queue health, retries, timing, and latest executions</p>
+        </div>
+        {summary && (
+          <span className="text-xs text-[#6b7280]">Avg completion {formatDuration(summary.avgDurationMs)}</span>
+        )}
+      </div>
+
+      {summaryItems.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {summaryItems.map((item) => (
+            <div key={item.label} className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+              <p className="text-xs text-[#6b7280]">{item.label}</p>
+              <p className={`text-lg font-semibold mt-1 ${item.tone}`}>{item.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {commands.length === 0 ? (
+        <p className="text-sm text-[#6b7280]">No commands recorded for this node yet.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[#6b7280] text-xs uppercase tracking-wide border-b border-[rgba(255,255,255,0.07)]">
+                <th className="py-2 pr-3 font-medium">Type</th>
+                <th className="py-2 pr-3 font-medium">Action</th>
+                <th className="py-2 pr-3 font-medium">Status</th>
+                <th className="py-2 pr-3 font-medium">Attempts</th>
+                <th className="py-2 pr-3 font-medium">Duration</th>
+                <th className="py-2 pr-3 font-medium">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {commands.map((entry) => (
+                <tr key={entry.id} className="border-b border-[rgba(255,255,255,0.05)] last:border-0 align-top">
+                  <td className="py-3 pr-3">
+                    <p className="text-white font-medium">{entry.type}</p>
+                    <p className="text-[11px] text-[#6b7280] font-mono break-all">{entry.id}</p>
+                  </td>
+                  <td className="py-3 pr-3 text-[#d1d5db]">{describePayload(entry.payload)}</td>
+                  <td className="py-3 pr-3">
+                    <span className={`px-2 py-0.5 rounded-full text-xs border ${
+                      entry.status === 'completed'
+                        ? 'bg-emerald-900/20 text-emerald-400 border-emerald-500/30'
+                        : entry.status === 'failed' || entry.status === 'expired'
+                          ? 'bg-red-900/20 text-red-400 border-red-500/30'
+                          : entry.status === 'in_progress'
+                            ? 'bg-blue-900/20 text-blue-300 border-blue-500/30'
+                            : 'bg-amber-900/20 text-amber-300 border-amber-500/30'
+                    }`}>
+                      {entry.status.replace('_', ' ')}
+                    </span>
+                    {entry.error && <p className="text-[11px] text-red-300 mt-1">{entry.error}</p>}
+                    {entry.progress?.message && <p className="text-[11px] text-[#93c5fd] mt-1">{entry.progress.message}</p>}
+                  </td>
+                  <td className="py-3 pr-3 text-[#d1d5db]">
+                    {entry.attempts || 0}/{entry.maxAttempts || 0}
+                  </td>
+                  <td className="py-3 pr-3 text-[#d1d5db]">{formatDuration(entry.durationMs)}</td>
+                  <td className="py-3 pr-3 text-[#9ca3af] whitespace-nowrap">{formatDateTime(entry.updatedAt || entry.createdAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NexusNodePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
 
   const [node, setNode] = useState<NodeDetail | null>(null);
+  const [commandHistory, setCommandHistory] = useState<NexusCommandStatus[]>([]);
+  const [commandSummary, setCommandSummary] = useState<NexusCommandStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -1295,7 +1406,25 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
     }
   }, [id]);
 
+  const fetchCommandHistory = useCallback(async () => {
+    try {
+      const data = await getNodeCommands(id, 20) as CommandHistoryResponse;
+      setCommandHistory(data.commands ?? []);
+      setCommandSummary(data.summary ?? null);
+    } catch (_) {
+      // Keep node detail usable even if observability fetch fails.
+    }
+  }, [id]);
+
   useEffect(() => { fetchNode(); }, [fetchNode]);
+  useEffect(() => { fetchCommandHistory(); }, [fetchCommandHistory]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      fetchNode();
+      fetchCommandHistory();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [fetchNode, fetchCommandHistory]);
 
   // Load pool agents for enterprise nodes (for spawn dropdown)
   useEffect(() => {
@@ -1410,6 +1539,8 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
       {/* Capabilities */}
       <CapabilitiesCard nodeId={id} />
 
+      <RuntimeObservabilityCard summary={commandSummary} commands={commandHistory} />
+
       {/* ── Agents section ── */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
         {/* Section header */}
@@ -1474,7 +1605,13 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
       </section>
 
       {/* Action dispatch panel (replaces old "Send Task") */}
-      <ActionDispatchPanel nodeId={id} onCommandSettled={fetchNode} />
+      <ActionDispatchPanel
+        nodeId={id}
+        onCommandSettled={() => {
+          fetchNode();
+          fetchCommandHistory();
+        }}
+      />
 
       {/* Recent activity */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">

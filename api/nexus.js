@@ -14,6 +14,7 @@ const {
 } = require('../services/apiKeys');
 const {
   getNodeMode,
+  getWorkspaceNexusBillingSummary,
   getWorkspaceNexusUsage,
 } = require('../services/nexusBilling');
 
@@ -22,6 +23,9 @@ const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const HEARTBEAT_ONLINE_SECONDS = 90;
 const DEPLOY_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+const NODE_COMMAND_DEFAULT_TTL_MS = Number.parseInt(process.env.NEXUS_COMMAND_TTL_MS || '600000', 10);
+const NODE_COMMAND_DEFAULT_LEASE_MS = Number.parseInt(process.env.NEXUS_COMMAND_LEASE_MS || '45000', 10);
+const NODE_COMMAND_DEFAULT_MAX_ATTEMPTS = Number.parseInt(process.env.NEXUS_COMMAND_MAX_ATTEMPTS || '3', 10);
 
 function base64urlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -232,8 +236,15 @@ async function ensureNexusCommandsTable() {
           command_type TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'expired')),
           payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          progress JSONB NULL,
           result JSONB NULL,
           error TEXT NULL,
+          timeout_ms INTEGER NOT NULL DEFAULT 600000,
+          lease_ms INTEGER NOT NULL DEFAULT 45000,
+          expires_at TIMESTAMPTZ NULL,
+          lease_expires_at TIMESTAMPTZ NULL,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 3,
           created_by_user_id UUID NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           started_at TIMESTAMPTZ NULL,
@@ -244,9 +255,101 @@ async function ensureNexusCommandsTable() {
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_node_status ON ${SCHEMA}.nexus_commands (node_id, status, created_at ASC)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_workspace_created ON ${SCHEMA}.nexus_commands (workspace_id, created_at DESC)`);
     }
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS progress JSONB NULL`);
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS timeout_ms INTEGER NOT NULL DEFAULT 600000`);
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS lease_ms INTEGER NOT NULL DEFAULT 45000`);
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL`);
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NULL`);
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_expiry ON ${SCHEMA}.nexus_commands (workspace_id, node_id, status, expires_at, lease_expires_at)`);
   } catch (err) {
     console.warn('[NEXUS] ensureNexusCommandsTable warning:', err.message);
   }
+}
+
+function clampInteger(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function resolveCommandTiming(options = {}) {
+  return {
+    timeoutMs: clampInteger(options.timeoutMs ?? options.timeout_ms, NODE_COMMAND_DEFAULT_TTL_MS, 100, 30 * 60 * 1000),
+    leaseMs: clampInteger(options.leaseMs ?? options.lease_ms, NODE_COMMAND_DEFAULT_LEASE_MS, 100, 10 * 60 * 1000),
+    maxAttempts: clampInteger(options.maxAttempts ?? options.max_attempts, NODE_COMMAND_DEFAULT_MAX_ATTEMPTS, 1, 10),
+  };
+}
+
+function buildCommandFilter(workspaceId, { nodeId = null, commandId = null } = {}) {
+  const params = [workspaceId];
+  const clauses = ['workspace_id = $1'];
+
+  if (nodeId) {
+    params.push(nodeId);
+    clauses.push(`node_id = $${params.length}::uuid`);
+  }
+  if (commandId) {
+    params.push(commandId);
+    clauses.push(`id::text = $${params.length}`);
+  }
+
+  return { params, where: clauses.join(' AND ') };
+}
+
+async function refreshCommandState(workspaceId, filters = {}) {
+  await ensureNexusCommandsTable();
+  const { params, where } = buildCommandFilter(workspaceId, filters);
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.nexus_commands
+        SET status = 'expired',
+            error = COALESCE(error, 'Command expired before completion'),
+            completed_at = COALESCE(completed_at, NOW()),
+            lease_expires_at = NULL,
+            updated_at = NOW()
+      WHERE ${where}
+        AND status IN ('queued', 'in_progress')
+        AND expires_at IS NOT NULL
+        AND expires_at <= NOW()`,
+    params
+  );
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.nexus_commands
+        SET status = 'expired',
+            error = COALESCE(error, 'Command lease expired after maximum retry attempts'),
+            completed_at = COALESCE(completed_at, NOW()),
+            lease_expires_at = NULL,
+            updated_at = NOW()
+      WHERE ${where}
+        AND status = 'in_progress'
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at <= NOW()
+        AND attempt_count >= max_attempts
+        AND (expires_at IS NULL OR expires_at > NOW())`,
+    params
+  );
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.nexus_commands
+        SET status = 'queued',
+            progress = jsonb_build_object(
+              'stage', 'requeued',
+              'message', 'Previous execution lease expired, command requeued',
+              'updatedAt', NOW()
+            ),
+            lease_expires_at = NULL,
+            updated_at = NOW()
+      WHERE ${where}
+        AND status = 'in_progress'
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at <= NOW()
+        AND attempt_count < max_attempts
+        AND (expires_at IS NULL OR expires_at > NOW())`,
+    params
+  );
 }
 
 function mapNode(row) {
@@ -457,16 +560,33 @@ async function createEnterpriseAgentForNode({ workspaceId, nodeId, body = {} }) 
   };
 }
 
-async function enqueueNodeCommand({ workspaceId, nodeId, commandType, payload = {}, userId = null }) {
+async function enqueueNodeCommand({ workspaceId, nodeId, commandType, payload = {}, userId = null, timing = {} }) {
   await ensureNexusCommandsTable();
+  const commandTiming = resolveCommandTiming(timing);
   const safeUserId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(userId || ''))
     ? userId
     : null;
+  const expiresAt = new Date(Date.now() + commandTiming.timeoutMs).toISOString();
   const inserted = await pool.query(
-    `INSERT INTO ${SCHEMA}.nexus_commands (workspace_id, node_id, command_type, payload, created_by_user_id)
-     VALUES ($1, $2::uuid, $3, $4::jsonb, $5)
-     RETURNING id, command_type, status, payload, created_at`,
-    [workspaceId, nodeId, commandType, JSON.stringify(payload || {}), safeUserId]
+    `INSERT INTO ${SCHEMA}.nexus_commands (
+       workspace_id, node_id, command_type, payload, created_by_user_id,
+       timeout_ms, lease_ms, expires_at, max_attempts
+     )
+     VALUES ($1, $2::uuid, $3, $4::jsonb, $5, $6, $7, $8::timestamptz, $9)
+     RETURNING id, command_type, status, payload, progress, result, error,
+               timeout_ms, lease_ms, expires_at, lease_expires_at, attempt_count, max_attempts,
+               created_at, started_at, completed_at, updated_at`,
+    [
+      workspaceId,
+      nodeId,
+      commandType,
+      JSON.stringify(payload || {}),
+      safeUserId,
+      commandTiming.timeoutMs,
+      commandTiming.leaseMs,
+      expiresAt,
+      commandTiming.maxAttempts,
+    ]
   );
   return inserted.rows[0];
 }
@@ -475,8 +595,11 @@ async function waitForNodeCommand(workspaceId, commandId, timeoutMs = 15000) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
+    await refreshCommandState(workspaceId, { commandId });
     const result = await pool.query(
-      `SELECT id, command_type, status, payload, result, error, created_at, started_at, completed_at, updated_at
+      `SELECT id, command_type, status, payload, progress, result, error,
+              timeout_ms, lease_ms, expires_at, lease_expires_at, attempt_count, max_attempts,
+              created_at, started_at, completed_at, updated_at
          FROM ${SCHEMA}.nexus_commands
         WHERE id::text = $1
           AND workspace_id = $2
@@ -497,7 +620,10 @@ async function waitForNodeCommand(workspaceId, commandId, timeoutMs = 15000) {
 function mapNodeCommand(row) {
   const payload = row.payload || {};
   const result = row.result || null;
-  const progress = row.status === 'in_progress' ? (result?.progress || null) : null;
+  const progress = row.progress || result?.progress || null;
+  const startedAt = row.started_at ? new Date(row.started_at).getTime() : null;
+  const completedAt = row.completed_at ? new Date(row.completed_at).getTime() : null;
+  const durationMs = startedAt && completedAt ? Math.max(0, completedAt - startedAt) : (progress?.elapsedMs ?? undefined);
 
   return {
     id: row.id,
@@ -507,10 +633,57 @@ function mapNodeCommand(row) {
     progress,
     result: row.status === 'completed' || row.status === 'failed' ? result : undefined,
     error: row.error || undefined,
+    attempts: Number(row.attempt_count || 0),
+    maxAttempts: Number(row.max_attempts || 0),
+    timeoutMs: Number(row.timeout_ms || 0),
+    leaseMs: Number(row.lease_ms || 0),
+    durationMs,
     createdAt: row.created_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    leaseExpiresAt: row.lease_expires_at,
+    expiresAt: row.expires_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function describeNodeCommand(row) {
+  const action = row.payload?.action ? `:${row.payload.action}` : '';
+  return `${row.command_type}${action} ${row.status}`;
+}
+
+async function getWorkspaceCommandStats(workspaceId, nodeId = null) {
+  const params = [workspaceId];
+  const nodeFilter = nodeId
+    ? (() => {
+        params.push(nodeId);
+        return `AND node_id = $${params.length}::uuid`;
+      })()
+    : '';
+
+  const result = await pool.query(
+    `SELECT
+        COUNT(*) FILTER (WHERE status = 'queued')::int AS queued,
+        COUNT(*) FILTER (WHERE status = 'in_progress')::int AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'completed' AND created_at >= NOW() - INTERVAL '24 hours')::int AS completed_24h,
+        COUNT(*) FILTER (WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours')::int AS failed_24h,
+        COUNT(*) FILTER (WHERE status = 'expired' AND created_at >= NOW() - INTERVAL '24 hours')::int AS expired_24h,
+        COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)
+          FILTER (WHERE status = 'completed' AND started_at IS NOT NULL AND completed_at IS NOT NULL), 0)::bigint AS avg_duration_ms
+       FROM ${SCHEMA}.nexus_commands
+      WHERE workspace_id = $1
+        ${nodeFilter}`,
+    params
+  ).catch(() => ({ rows: [{}] }));
+
+  const row = result.rows[0] || {};
+  return {
+    queued: Number(row.queued || 0),
+    inProgress: Number(row.in_progress || 0),
+    completed24h: Number(row.completed_24h || 0),
+    failed24h: Number(row.failed_24h || 0),
+    expired24h: Number(row.expired_24h || 0),
+    avgDurationMs: Number(row.avg_duration_ms || 0),
   };
 }
 
@@ -911,7 +1084,9 @@ router.post('/local-token', async (_req, res) => {
 router.get('/status', async (req, res) => {
   try {
     await ensureNexusNodesTable();
+    await ensureNexusCommandsTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    await refreshCommandState(workspaceId);
     const nodesRes = await pool.query(
       `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE workspace_id = $1 ORDER BY created_at DESC`,
       [workspaceId]
@@ -923,6 +1098,8 @@ router.get('/status', async (req, res) => {
       }))
     );
     const usage = await getWorkspaceNexusUsage(pool, workspaceId).catch(() => ({ total: nodes.length, enterprise: 0, local: 0 }));
+    const billing = await getWorkspaceNexusBillingSummary(pool, workspaceId).catch(() => null);
+    const commandStats = await getWorkspaceCommandStats(workspaceId).catch(() => null);
     const online = nodes.filter((node) => node.status === 'online').length;
     const agentCount = nodes.reduce((sum, node) => sum + (node.agentCount || 0), 0);
     const tasksCompleted = nodesRes.rows.reduce((sum, row) => {
@@ -944,6 +1121,8 @@ router.get('/status', async (req, res) => {
         agents: agentCount,
         tasksCompleted,
       },
+      billing,
+      commandStats,
       registered: nodes.length > 0,
       connected: online > 0,
       syncState: 'cloud',
@@ -1466,6 +1645,7 @@ router.get('/:nodeId/commands', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Node not found' });
     }
 
+    await refreshCommandState(workspaceId, { nodeId });
     const limit = Math.max(1, Math.min(10, Number.parseInt(String(req.query.limit || '5'), 10) || 5));
     const claim = String(req.query.claim || '1') !== '0';
 
@@ -1484,17 +1664,19 @@ router.get('/:nodeId/commands', async (req, res) => {
          )
          UPDATE ${SCHEMA}.nexus_commands cmd
             SET status = 'in_progress',
-                started_at = NOW(),
-                updated_at = NOW()
+                started_at = COALESCE(cmd.started_at, NOW()),
+                updated_at = NOW(),
+                lease_expires_at = NOW() + (cmd.lease_ms * INTERVAL '1 millisecond'),
+                attempt_count = cmd.attempt_count + 1
            FROM next_commands
           WHERE cmd.id = next_commands.id
-          RETURNING cmd.id, cmd.command_type, cmd.payload, cmd.created_at, cmd.started_at`,
+          RETURNING cmd.id, cmd.command_type, cmd.payload, cmd.created_at, cmd.started_at, cmd.attempt_count, cmd.max_attempts, cmd.lease_expires_at, cmd.expires_at`,
         [workspaceId, nodeId, limit]
       );
       commands = claimRes.rows;
     } else {
       const listRes = await pool.query(
-        `SELECT id, command_type, payload, created_at, started_at
+        `SELECT id, command_type, payload, created_at, started_at, attempt_count, max_attempts, lease_expires_at, expires_at
            FROM ${SCHEMA}.nexus_commands
           WHERE workspace_id = $1
             AND node_id = $2::uuid
@@ -1514,6 +1696,10 @@ router.get('/:nodeId/commands', async (req, res) => {
         payload: row.payload || {},
         createdAt: row.created_at,
         startedAt: row.started_at || null,
+        attempts: Number(row.attempt_count || 0),
+        maxAttempts: Number(row.max_attempts || 0),
+        leaseExpiresAt: row.lease_expires_at || null,
+        expiresAt: row.expires_at || null,
       })),
     });
   } catch (err) {
@@ -1527,6 +1713,7 @@ router.post('/:nodeId/commands/:commandId/result', async (req, res) => {
     await ensureNexusCommandsTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
     const { nodeId, commandId } = req.params;
+    await refreshCommandState(workspaceId, { nodeId, commandId });
     const { status, result, error } = req.body || {};
     const safeStatus = status === 'completed' ? 'completed' : 'failed';
 
@@ -1535,17 +1722,28 @@ router.post('/:nodeId/commands/:commandId/result', async (req, res) => {
           SET status = $3,
               result = $4::jsonb,
               error = $5,
+              progress = COALESCE(progress, $6::jsonb),
               completed_at = NOW(),
+              lease_expires_at = NULL,
               updated_at = NOW()
         WHERE id::text = $1
           AND workspace_id = $2
-          AND node_id = $6::uuid
+          AND node_id = $7::uuid
+          AND status IN ('queued', 'in_progress')
         RETURNING id`,
-      [commandId, workspaceId, safeStatus, JSON.stringify(result || null), error || null, nodeId]
+      [
+        commandId,
+        workspaceId,
+        safeStatus,
+        JSON.stringify(result || null),
+        error || null,
+        JSON.stringify(result?.progress || null),
+        nodeId,
+      ]
     );
 
     if (!updated.rows.length) {
-      return res.status(404).json({ success: false, error: 'Command not found' });
+      return res.status(409).json({ success: false, error: 'Command is no longer claimable' });
     }
 
     res.json({ success: true, commandId, status: safeStatus });
@@ -1560,6 +1758,7 @@ router.post('/:nodeId/commands/:commandId/progress', async (req, res) => {
     await ensureNexusCommandsTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
     const { nodeId, commandId } = req.params;
+    await refreshCommandState(workspaceId, { nodeId, commandId });
     const progress = {
       ...(req.body?.progress || {}),
       updatedAt: req.body?.progress?.updatedAt || new Date().toISOString(),
@@ -1568,14 +1767,17 @@ router.post('/:nodeId/commands/:commandId/progress', async (req, res) => {
     const updated = await pool.query(
       `UPDATE ${SCHEMA}.nexus_commands
           SET status = CASE WHEN status = 'queued' THEN 'in_progress' ELSE status END,
-              result = jsonb_build_object('progress', $4::jsonb),
+              progress = $4::jsonb,
+              lease_expires_at = NOW() + (lease_ms * INTERVAL '1 millisecond'),
               updated_at = NOW(),
               started_at = COALESCE(started_at, NOW())
         WHERE id::text = $1
           AND workspace_id = $2
           AND node_id = $3::uuid
           AND status IN ('queued', 'in_progress')
-        RETURNING id, command_type, status, payload, result, error, created_at, started_at, completed_at, updated_at`,
+        RETURNING id, command_type, status, payload, progress, result, error,
+                  timeout_ms, lease_ms, expires_at, lease_expires_at, attempt_count, max_attempts,
+                  created_at, started_at, completed_at, updated_at`,
       [commandId, workspaceId, nodeId, JSON.stringify(progress)]
     );
 
@@ -1586,6 +1788,40 @@ router.post('/:nodeId/commands/:commandId/progress', async (req, res) => {
     res.json({ success: true, command: mapNodeCommand(updated.rows[0]) });
   } catch (err) {
     console.error('[NEXUS] Command progress error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/nodes/:nodeId/commands', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    await ensureNexusCommandsTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const { nodeId } = req.params;
+    await refreshCommandState(workspaceId, { nodeId });
+
+    const node = await loadNodeForWorkspace(workspaceId, nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const limit = Math.max(1, Math.min(100, Number.parseInt(String(req.query.limit || '25'), 10) || 25));
+    const result = await pool.query(
+      `SELECT id, command_type, status, payload, progress, result, error,
+              timeout_ms, lease_ms, expires_at, lease_expires_at, attempt_count, max_attempts,
+              created_at, started_at, completed_at, updated_at
+         FROM ${SCHEMA}.nexus_commands
+        WHERE workspace_id = $1
+          AND node_id = $2::uuid
+        ORDER BY created_at DESC
+        LIMIT $3`,
+      [workspaceId, nodeId, limit]
+    );
+
+    res.json({
+      success: true,
+      summary: await getWorkspaceCommandStats(workspaceId, nodeId),
+      commands: result.rows.map(mapNodeCommand),
+    });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -1609,14 +1845,16 @@ router.post('/:nodeId/agents/create', async (req, res) => {
 router.get('/nodes/:id', async (req, res) => {
   try {
     await ensureNexusNodesTable();
+    await ensureNexusCommandsTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    await refreshCommandState(workspaceId, { nodeId: req.params.id });
     const node = await loadNodeForWorkspace(workspaceId, req.params.id);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
     const mapped = mapNode(node);
     const providerSources = await getNodeProviderSources(workspaceId, node);
     const commandsRes = await pool.query(
-      `SELECT id, command_type, status, created_at, completed_at
+      `SELECT id, command_type, status, payload, created_at, completed_at
          FROM ${SCHEMA}.nexus_commands
         WHERE workspace_id = $1
           AND node_id = $2::uuid
@@ -1640,7 +1878,7 @@ router.get('/nodes/:id', async (req, res) => {
         providerSources,
         recentActivity: commandsRes.rows.map((row) => ({
           id: row.id,
-          message: `${row.command_type} ${row.status}`,
+          message: describeNodeCommand(row),
           timestamp: row.completed_at || row.created_at,
         })),
       },
@@ -1654,8 +1892,11 @@ router.get('/nodes/:nodeId/commands/:commandId', async (req, res) => {
   try {
     await ensureNexusCommandsTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    await refreshCommandState(workspaceId, { nodeId: req.params.nodeId, commandId: req.params.commandId });
     const commandRes = await pool.query(
-      `SELECT id, command_type, status, payload, result, error, created_at, started_at, completed_at, updated_at
+      `SELECT id, command_type, status, payload, progress, result, error,
+              timeout_ms, lease_ms, expires_at, lease_expires_at, attempt_count, max_attempts,
+              created_at, started_at, completed_at, updated_at
          FROM ${SCHEMA}.nexus_commands
         WHERE workspace_id = $1
           AND node_id = $2::uuid
@@ -1710,6 +1951,7 @@ router.post('/nodes/:nodeId/agents/spawn', async (_req, res) => {
       commandType: 'spawn_agent',
       payload: { agentId: _req.body?.agentId || null },
       userId: _req.userId || _req.user?.id || null,
+      timing: _req.body || {},
     });
 
     const done = await waitForNodeCommand(workspaceId, command.id, 30000);
@@ -1738,6 +1980,7 @@ router.post('/nodes/:nodeId/agents/:agentId/stop', async (req, res) => {
       commandType: 'stop_agent',
       payload: { agentId: req.params.agentId },
       userId: req.userId || req.user?.id || null,
+      timing: req.body || {},
     });
 
     const done = await waitForNodeCommand(workspaceId, command.id);
@@ -1769,6 +2012,7 @@ router.post('/nodes/:nodeId/dispatch', async (req, res) => {
         args: req.body?.args || {},
       },
       userId: req.userId || req.user?.id || null,
+      timing: req.body || {},
     });
 
     const shouldWait = !(
