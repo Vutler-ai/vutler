@@ -23,6 +23,20 @@ function formatToolResultContent(result) {
   }
 }
 
+function normalizeToolCall(toolCall = {}) {
+  const callId = toolCall.call_id || toolCall.id || null;
+  return {
+    id: callId,
+    call_id: callId,
+    name: toolCall.name || toolCall.function?.name || null,
+    arguments: toolCall.arguments || toolCall.function?.arguments || {},
+  };
+}
+
+function getToolCallId(toolCall = {}) {
+  return toolCall.call_id || toolCall.id || null;
+}
+
 function mapResponsesTool(tool) {
   if (!tool || tool.type !== 'function') return tool;
   if (!tool.function) return tool;
@@ -38,6 +52,27 @@ function mapResponsesTool(tool) {
 
 function mapResponsesInputItem(message) {
   if (!message) return null;
+
+  if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    const items = [];
+    if (message.content) {
+      items.push({
+        role: 'assistant',
+        content: String(message.content || ''),
+      });
+    }
+    for (const rawToolCall of message.tool_calls) {
+      const toolCall = normalizeToolCall(rawToolCall);
+      if (!toolCall.call_id || !toolCall.name) continue;
+      items.push({
+        type: 'function_call',
+        call_id: toolCall.call_id,
+        name: toolCall.name,
+        arguments: JSON.stringify(toolCall.arguments || {}),
+      });
+    }
+    return items;
+  }
 
   if (message.role === 'tool' && message.tool_call_id) {
     return {
@@ -615,8 +650,11 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
   if (cfg.format === 'responses') {
     const input = messages
       .filter((message) => message.role !== 'system')
-      .map((message) => mapResponsesInputItem(message))
-      .filter(Boolean);
+      .flatMap((message) => {
+        const item = mapResponsesInputItem(message);
+        if (Array.isArray(item)) return item;
+        return item ? [item] : [];
+      });
 
     const body = {
       model: model || cfg.defaultModel,
@@ -759,7 +797,7 @@ function normalizeResponse(provider, model, result, latency_ms) {
     const textContent = contentBlocks.filter(b => b.type === 'text').map(b => b.text).join('');
     const toolCalls = contentBlocks
       .filter(b => b.type === 'tool_use')
-      .map(b => ({ id: b.id, name: b.name, arguments: b.input || {} }));
+      .map((block) => normalizeToolCall({ id: block.id, call_id: block.id, name: block.name, arguments: block.input || {} }));
 
     return {
       content: textContent,
@@ -785,9 +823,9 @@ function normalizeResponse(provider, model, result, latency_ms) {
       .join('');
     const toolCalls = outputItems
       .filter((item) => item.type === 'function_call')
-      .map((item) => ({
+      .map((item) => normalizeToolCall({
         id: item.id || item.call_id,
-        call_id: item.call_id,
+        call_id: item.call_id || item.id,
         name: item.name,
         arguments: (() => {
           try {
@@ -816,8 +854,9 @@ function normalizeResponse(provider, model, result, latency_ms) {
   const message = result.choices?.[0]?.message || {};
   const rawToolCalls = message.tool_calls || null;
   const toolCalls = rawToolCalls
-    ? rawToolCalls.map((tc) => ({
+    ? rawToolCalls.map((tc) => normalizeToolCall({
       id: tc.id,
+      call_id: tc.id,
       name: tc.function?.name,
       arguments: (() => {
         try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
@@ -1093,11 +1132,11 @@ async function chat(agent, messages, db, opts = {}) {
               throw rememberErr;
             }
             // remember doesn't need a re-call — inject a confirmation as tool result
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-              { role: 'tool', tool_call_id: toolCall.id, name: 'remember', content: 'Memory stored successfully.' },
-            ];
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: 'Memory stored successfully.' },
+              ];
             continueLoop = true;
 
           } else if (toolCall.name === 'recall' && memoryScope && memoryMode.read && memoryGateway && memoryBindings) {
@@ -1119,11 +1158,11 @@ async function chat(agent, messages, db, opts = {}) {
               throw recallErr;
             }
             // Inject recall result and let LLM continue
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-              { role: 'tool', tool_call_id: toolCall.id, name: 'recall', content: recalledText },
-            ];
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: recalledText },
+              ];
             continueLoop = true;
 
           } else if (toolCall.name === 'vutler_post_social_media' && hasSocialSkill) {
@@ -1170,7 +1209,7 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
               ];
               const socialResult = {
                 success: true,
@@ -1186,7 +1225,7 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
               ];
             }
             continueLoop = true;
@@ -1214,14 +1253,14 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: formatToolResultContent(skillResult) },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: formatToolResultContent(skillResult) },
               ];
             } catch (skillErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, skillErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: `Error: ${skillErr.message}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${skillErr.message}` },
               ];
             }
             continueLoop = true;
@@ -1243,14 +1282,14 @@ async function chat(agent, messages, db, opts = {}) {
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                  { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content },
+                  { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content },
                 ];
               } catch (nexusErr) {
                 await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, nexusErr);
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                  { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: `Error: ${nexusErr.message}` },
+                  { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${nexusErr.message}` },
                 ];
               }
               continueLoop = true;
