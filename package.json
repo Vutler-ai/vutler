@@ -15,6 +15,7 @@
     "test:email-receive": "node tests/email-receive.test.js",
     "test:chat": "node tests/chat.test.js",
     "test:e2e": "node tests/e2e/run-all.js",
+    "test:e2e:nexus": "node tests/e2e/nexus.test.js",
     "test:watch": "nodemon --exec npm test",
     "lint": "eslint .",
     "format": "prettier --write '**/*.js'"
@@ -23,6 +24,11 @@
     "testEnvironment": "node",
     "testMatch": [
       "**/tests/**/*.test.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/e2e/",
+      "/\\.claude/worktrees/"
     ],
     "forceExit": true,
     "testTimeout": 30000
