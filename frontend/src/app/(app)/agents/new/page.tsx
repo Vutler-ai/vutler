@@ -21,6 +21,12 @@ import {
   getRecommendedSkills,
   isNonCountedCapabilityKey,
 } from '@/lib/agent-types';
+import {
+  AVATAR_PERSONAS,
+  getAvatarImageUrl,
+  getPersonaAvatarForAgentTypes,
+  isEmojiAvatar,
+} from '@/lib/avatar';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -39,6 +45,7 @@ const FALLBACK_MODELS = [
 ];
 
 const EMOJIS = ['🤖', '🧠', '⚡', '🔥', '🎯', '💡', '🛡️', '🚀', '🌟', '🎨', '📊', '🔧', '🤝', '👾', '🦾', '🧬'];
+const DEFAULT_AVATAR = getPersonaAvatarForAgentTypes([]);
 
 const PROVIDER_NAMES: Record<string, string> = {
   openai: 'OpenAI',
@@ -73,7 +80,7 @@ export default function NewAgentPage() {
   const [error, setError] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(true);
   const [models, setModels] = useState<LLMModel[]>([]);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [showAllSkills, setShowAllSkills] = useState(false);
 
   // Skills data
@@ -89,7 +96,7 @@ export default function NewAgentPage() {
     provider: 'anthropic',
     system_prompt: '',
     tools: [] as string[],
-    avatar: '🤖',
+    avatar: DEFAULT_AVATAR,
     agentTypes: [] as string[],
     skills: [] as string[],
   });
@@ -162,7 +169,7 @@ export default function NewAgentPage() {
         ...prev,
         agentTypes: next,
         skills: recommended,
-        avatar: firstType?.icon || prev.avatar,
+        avatar: next.length > 0 ? getPersonaAvatarForAgentTypes(next) : prev.avatar,
       };
     });
   };
@@ -233,6 +240,7 @@ export default function NewAgentPage() {
   };
 
   const { recommended: recommendedSkills, sameCategory: sameCategorySkills, others: otherSkills } = getFilteredSkills();
+  const avatarPreviewUrl = !isEmojiAvatar(form.avatar) ? getAvatarImageUrl(form.avatar, form.name || 'Agent') : null;
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -263,23 +271,64 @@ export default function NewAgentPage() {
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setShowEmojiPicker(v => !v)}
-                className="size-16 rounded-xl bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-3xl hover:border-blue-500 transition-colors"
+                onClick={() => setShowAvatarPicker(v => !v)}
+                className="size-16 rounded-xl overflow-hidden bg-[#0e0f1a] border border-[rgba(255,255,255,0.07)] flex items-center justify-center text-3xl hover:border-blue-500 transition-colors"
               >
-                {form.avatar}
+                {avatarPreviewUrl ? (
+                  <img src={avatarPreviewUrl} alt="Selected avatar" className="size-full object-cover" />
+                ) : (
+                  form.avatar
+                )}
               </button>
-              {showEmojiPicker && (
-                <div className="absolute top-full mt-2 left-0 bg-[#1a1b2a] border border-[rgba(255,255,255,0.1)] rounded-lg p-3 grid grid-cols-8 gap-1 z-10 shadow-xl">
-                  {EMOJIS.map(e => (
-                    <button
-                      key={e}
-                      type="button"
-                      onClick={() => { set('avatar', e); setShowEmojiPicker(false); }}
-                      className="size-8 flex items-center justify-center hover:bg-[#0e0f1a] rounded text-lg"
-                    >
-                      {e}
-                    </button>
-                  ))}
+              {showAvatarPicker && (
+                <div className="absolute top-full mt-2 left-0 w-[22rem] bg-[#1a1b2a] border border-[rgba(255,255,255,0.1)] rounded-xl p-3 z-10 shadow-xl">
+                  <div className="mb-3">
+                    <p className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider mb-2">
+                      Persona Library
+                    </p>
+                    <div className="grid grid-cols-4 gap-2">
+                      {AVATAR_PERSONAS.map((persona) => (
+                        <button
+                          key={persona.slug}
+                          type="button"
+                          title={`${persona.label} — ${persona.category}`}
+                          onClick={() => { set('avatar', `/static/avatars/${persona.slug}.svg`); setShowAvatarPicker(false); }}
+                          className={`rounded-xl border overflow-hidden transition-colors text-left ${
+                            form.avatar === `/static/avatars/${persona.slug}.svg`
+                              ? 'border-blue-500 ring-1 ring-blue-500/40'
+                              : 'border-[rgba(255,255,255,0.08)] hover:border-[rgba(255,255,255,0.2)]'
+                          }`}
+                        >
+                          <img
+                            src={`/static/avatars/${persona.slug}.svg`}
+                            alt={persona.label}
+                            className="w-full aspect-square object-cover bg-[#0e0f1a]"
+                          />
+                          <span className="block px-2 py-1 text-[10px] text-[#9ca3af] truncate">
+                            {persona.label}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-[rgba(255,255,255,0.08)]">
+                    <p className="text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider mb-2">
+                      Emoji fallback
+                    </p>
+                    <div className="grid grid-cols-8 gap-1">
+                      {EMOJIS.map(e => (
+                        <button
+                          key={e}
+                          type="button"
+                          onClick={() => { set('avatar', e); setShowAvatarPicker(false); }}
+                          className="size-8 flex items-center justify-center hover:bg-[#0e0f1a] rounded text-lg"
+                        >
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

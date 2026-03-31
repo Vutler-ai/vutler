@@ -8,7 +8,7 @@ import { getAgents, createAgent } from '@/lib/api/endpoints/agents';
 import { getTemplates } from '@/lib/api/endpoints/marketplace';
 import { getTasks } from '@/lib/api/endpoints/tasks';
 import type { Agent, Task, MarketplaceTemplate } from '@/lib/api/types';
-import { getAvatarImageUrl } from '@/lib/avatar';
+import { getAvatarImageUrl, getStaticAvatarUrl } from '@/lib/avatar';
 import {
   Card,
   CardContent,
@@ -115,6 +115,9 @@ function getAgentAvatarUrl(agent: Agent): string | null {
 
 /** Map a template category to the best matching avatar PNG. */
 function getTemplateAvatarUrl(template: MarketplaceTemplate): string {
+  const explicitAvatar = getStaticAvatarUrl(template.avatar || template.config.icon);
+  if (explicitAvatar) return explicitAvatar;
+
   const category = template.category.toLowerCase();
   const name = template.name.toLowerCase();
 

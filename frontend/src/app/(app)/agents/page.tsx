@@ -60,7 +60,7 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
-import { getAvatarImageUrl, isEmojiAvatar } from '@/lib/avatar';
+import { getAvatarImageUrl, getStaticAvatarUrl, isEmojiAvatar } from '@/lib/avatar';
 
 function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
   const [imgError, setImgError] = useState(false);
@@ -210,11 +210,12 @@ function TemplateAvatar({
   name: string;
 }) {
   const [imgError, setImgError] = useState(false);
+  const avatarUrl = getStaticAvatarUrl(avatar || undefined);
 
-  if (avatar && !imgError) {
+  if (avatarUrl && !imgError) {
     return (
       <img
-        src={`/static/avatars/${avatar}.png`}
+        src={avatarUrl}
         alt={name}
         className="size-12 rounded-xl object-cover shrink-0"
         onError={() => setImgError(true)}
