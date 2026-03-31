@@ -22,10 +22,6 @@ async function main() {
       dest: path.join(driveRoot, 'projects/Vutler/chunks/chunk-001-drive.md')
     },
     {
-      src: path.join(workspaceRoot, 'docs/chunks/chunk-002-whatsapp-mirror.md'),
-      dest: path.join(driveRoot, 'projects/Vutler/chunks/chunk-002-whatsapp-mirror.md')
-    },
-    {
       src: path.join(workspaceRoot, 'docs/chunks/chunk-003-blockers-triage.md'),
       dest: path.join(driveRoot, 'projects/Vutler/chunks/chunk-003-blockers-triage.md')
     }

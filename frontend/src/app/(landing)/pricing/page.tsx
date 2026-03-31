@@ -46,7 +46,7 @@ const PLANS: Plan[] = [
     tier: 'office',
     price: { monthly: 7900, yearly: 79000 },
     limits: { agents: 0, storage_gb: 50 },
-    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'goals', 'crm', 'pixel-office'],
   },
   {
     id: 'agents_starter',
@@ -129,7 +129,6 @@ const COMPARISON_ROWS: ComparisonRow[] = [
   { label: 'CRM', key: 'crm', type: 'feature' },
   { label: 'Goals', key: 'goals', type: 'feature' },
   { label: 'Integrations', key: 'integrations', type: 'feature' },
-  { label: 'WhatsApp', key: 'whatsapp', type: 'feature' },
   { label: 'Agents', key: 'agents_feature', type: 'feature', getValue: (p) => p.features.includes('*') || p.features.includes('agents') },
   { label: 'Nexus CLI', key: 'nexus', type: 'feature' },
   { label: 'Builder', key: 'builder', type: 'feature' },
