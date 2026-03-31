@@ -531,6 +531,7 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
   try {
     const fileId = req.params.id;
     const requestedPath = req.query.path;
+    const wantsJson = req.query.format === 'json' || req.accepts(['json', 'html']) === 'json';
     const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
 
     if (!workspaceId) {
@@ -541,7 +542,7 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
 
     if (fileId && fileId !== 'unused') {
       const result = await pool.query(
-        `SELECT id, name, mime_type, size_bytes, s3_key
+        `SELECT id, name, path, mime_type, size_bytes, s3_key, updated_at
          FROM tenant_vutler.drive_files
          WHERE id = $1 AND workspace_id = $2 AND is_deleted = false`,
         [fileId, workspaceId]
@@ -552,7 +553,7 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
     if (!fileRecord && requestedPath) {
       const normalized = normalizeVirtualPath(requestedPath);
       const result = await pool.query(
-        `SELECT id, name, mime_type, size_bytes, s3_key
+        `SELECT id, name, path, mime_type, size_bytes, s3_key, updated_at
          FROM tenant_vutler.drive_files
          WHERE path = $1 AND workspace_id = $2 AND is_deleted = false`,
         [normalized, workspaceId]
@@ -589,6 +590,28 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
 
     // Markdown → render as simple HTML
     const ext = path.extname(fileRecord.name || '').toLowerCase();
+    if (wantsJson) {
+      if (ext === '.md' || ext === '.mdx' || mime.startsWith('text/') || mime === 'application/json') {
+        return sendDriveSuccess(res, {
+          type: 'text',
+          name: fileRecord.name,
+          path: fileRecord.path,
+          mimeType: `${mime}${mime.startsWith('text/') || mime === 'application/json' ? '; charset=utf-8' : ''}`,
+          modified: fileRecord.updated_at?.toISOString(),
+          content: buffer.toString('utf8').slice(0, 250000),
+        });
+      }
+
+      return sendDriveSuccess(res, {
+        type: 'binary',
+        name: fileRecord.name,
+        path: fileRecord.path,
+        mimeType: mime,
+        modified: fileRecord.updated_at?.toISOString(),
+        url: `/api/v1/drive/download/${fileRecord.id}?path=${encodeURIComponent(fileRecord.path || requestedPath || '')}&inline=true`,
+      });
+    }
+
     if (ext === '.md' || ext === '.mdx') {
       const escaped = buffer.toString('utf8')
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

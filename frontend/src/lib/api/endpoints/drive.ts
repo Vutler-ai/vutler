@@ -102,8 +102,17 @@ export async function previewFile(
   path: string
 ): Promise<DrivePreviewResponse> {
   const res = await authFetch(
-    `/api/v1/drive/preview/${id}?path=${encodeURIComponent(path)}`
+    `/api/v1/drive/preview/${id}?path=${encodeURIComponent(path)}&format=json`,
+    {
+      headers: {
+        Accept: 'application/json',
+      },
+    }
   );
   if (!res.ok) throw new Error('Failed to preview file');
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Unexpected preview response (${contentType || 'unknown content type'})`);
+  }
   return res.json();
 }
