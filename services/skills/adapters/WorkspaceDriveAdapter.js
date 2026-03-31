@@ -248,7 +248,7 @@ class WorkspaceDriveAdapter {
        DO UPDATE SET
          is_deleted = false,
          updated_at = NOW()`,
-      [fileId, workspaceId, name, folderPath, parentPath, 'workspace-drive-adapter']
+      [fileId, workspaceId, name, folderPath, parentPath, null]
     );
 
     return {
@@ -298,7 +298,7 @@ class WorkspaceDriveAdapter {
         parentPath,
         contentType,
         Buffer.byteLength(String(content), 'utf8'),
-        'workspace-drive-adapter',
+        null,
         s3Key,
       ]
     );
