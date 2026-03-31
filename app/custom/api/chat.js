@@ -243,8 +243,22 @@ router.get('/chat/channels/:id/messages', async (req, res) => {
       idx++;
     }
 
-    query += ` ORDER BY created_at ASC LIMIT $${idx}`;
-    params.push(limit);
+    if (!before && !after) {
+      query = `
+        SELECT * FROM (
+          SELECT *
+          FROM ${SCHEMA}.chat_messages
+          WHERE channel_id = $1 AND workspace_id = $2
+          ORDER BY created_at DESC
+          LIMIT $${idx}
+        ) recent_messages
+        ORDER BY created_at ASC
+      `;
+      params.push(limit);
+    } else {
+      query += ` ORDER BY created_at ASC LIMIT $${idx}`;
+      params.push(limit);
+    }
 
     const result = await pg.query(query, params);
     res.json({ success: true, messages: result.rows.map(normalizeChatMessage) });
@@ -291,6 +305,9 @@ router.get('/chat/action-runs', async (req, res) => {
     res.json({ success: true, data: result.rows });
   } catch (err) {
     console.error('[Chat] GET /action-runs error:', err.message);
+    if (/chat_action_runs|started_at|requested_agent_id|display_agent_id|orchestrated_by|executed_by|input_json|output_json|error_json|completed_at/i.test(String(err.message || ''))) {
+      return res.json({ success: true, data: [] });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });

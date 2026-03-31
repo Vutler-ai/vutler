@@ -1,0 +1,43 @@
+{
+  "key": "catalog.report_writer",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "report_writer",
+    "actions": [
+      {
+        "action_key": "draft_report",
+        "category": "document",
+        "tool_class": "document_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat", "schedule"]
+      },
+      {
+        "action_key": "summarize_inputs",
+        "category": "document",
+        "tool_class": "workspace_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat"]
+      },
+      {
+        "action_key": "compile_sections",
+        "category": "document",
+        "tool_class": "document_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat", "schedule"]
+      },
+      {
+        "action_key": "prepare_delivery_email",
+        "category": "communication",
+        "tool_class": "communication_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat"]
+      }
+    ]
+  }
+}

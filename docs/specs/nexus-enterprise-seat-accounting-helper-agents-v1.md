@@ -3,7 +3,7 @@
 > **Status:** Draft — 2026-03-31
 > **Type:** Architecture Decision Record + Technical Spec
 > **Owner:** Codex
-> **Scope:** Nexus Enterprise, seat accounting, helper agents, local integrations
+> **Scope:** Nexus Enterprise, deployable agent profiles, seat accounting, helper agents, local integrations
 
 ---
 
@@ -28,6 +28,8 @@ Sans cette spec, on a deux risques:
 - contourner le modele commercial enterprise
 - construire une execution multi-agent peu lisible et peu gouvernable
 
+Cette spec s'applique a tous les `Deployable Agent Profiles`, pas seulement aux profils operations comme `AV Manager`.
+
 ---
 
 ## 2. Decision Summary
@@ -49,6 +51,7 @@ Le bon modele V1 est:
 ```text
 Local API call = extension du seat courant
 Helper agent = consommation explicite d'un seat
+Fixed active agent = consommation explicite d'un seat
 ```
 
 ---
@@ -126,6 +129,7 @@ Definition d'un helper agent disponible dans le catalogue d'un node, mais pas en
 | Capability | Consomme un seat ? | Notes |
 |-----------|---------------------|-------|
 | Principal agent actif | Oui | Seat reserve sur le node |
+| Agent metier actif "en dur" | Oui | Meme regle, qu'il soit principal ou non |
 | Helper agent actif | Oui | Meme regle qu'un agent principal |
 | Helper agent seulement enregistre | Non | Catalogue uniquement |
 | Appel d'API locale | Non | Execute dans le seat courant |
@@ -147,6 +151,49 @@ Il arrete de consommer un seat quand:
 ### 6.3 Important V1 Rule
 
 La consommation est basee sur les **agents actifs dans le runtime**, pas simplement sur les definitions existantes en base.
+
+### 6.4 Customer Planning Example
+
+Exemple:
+
+- une entreprise dispose de **5 seats**
+- elle veut:
+  - 1 `AV Manager`
+  - 1 `IT Helpdesk`
+  - 3 seats gardes disponibles pour des besoins ponctuels
+
+Option A: **baseline + elastic**
+
+```text
+AV Manager active       = 1 seat
+IT Helpdesk active      = 1 seat
+Seats disponibles       = 3
+```
+
+Ces 3 seats peuvent ensuite etre consommes par:
+- `Bid Manager`
+- `Report Writer`
+- `Network Helper`
+- tout autre agent autorise
+
+Option B: **5 agents en dur**
+
+Le client peut aussi choisir de demarrer directement avec 5 agents actifs.
+
+Dans ce cas:
+
+```text
+5 agents actifs = 5 seats consommes
+Seats disponibles = 0
+```
+
+Donc:
+- aucun auto-spawn n'est possible
+- aucun helper supplementaire ne peut etre active
+- il faut stopper un agent ou upgrader la capacite du plan, par exemple de **5** a **10 seats**
+
+Regle V1:
+- qu'un agent soit "principal", "helper", "metier", "temporaire" ou "en dur", s'il est actif il consomme un seat
 
 ---
 
@@ -276,6 +323,7 @@ Un node enterprise expose:
 
 Inclut:
 - principal agents
+- agents metier actifs en dur
 - helper agents actifs
 
 N'inclut pas:
@@ -546,7 +594,30 @@ Le client doit voir:
 - seats max / used / available
 - liste des agents actifs
 - distinction principal vs helper
+- distinction agents baseline vs elastic si configuree
 - raison d'activation des helper agents
+
+### Seat Planning View
+
+Le client doit pouvoir voir un plan simple du type:
+
+```text
+Seats total: 5
+Baseline agents:
+- AV Manager
+- IT Helpdesk
+
+Elastic capacity remaining: 3
+```
+
+Ou bien:
+
+```text
+Seats total: 5
+Active agents: 5
+Remaining capacity: 0
+Spawn blocked until a seat is released
+```
 
 ### Admin View
 
@@ -569,10 +640,13 @@ Le client doit pouvoir filtrer:
 
 - [ ] Un helper agent enregistre ne consomme pas de seat
 - [ ] Un helper agent actif consomme un seat
+- [ ] Un agent actif "en dur" consomme un seat
 - [ ] Un helper agent ne peut pas etre spawn si aucun seat n'est disponible
 - [ ] Un appel d'API locale n'augmente pas `used_seats`
 - [ ] Les allocations et releases de seat sont journalisees
 - [ ] L'UI peut expliquer quels agents consomment les seats
+- [ ] L'UI peut expliquer le cas "2 agents fixes + 3 seats elastiques"
+- [ ] L'UI peut expliquer le cas "5 agents actifs en dur = 0 spawn disponible"
 - [ ] Le policy engine peut refuser une delegation faute de capacite
 - [ ] Le modele reste coherent apres restart du node
 

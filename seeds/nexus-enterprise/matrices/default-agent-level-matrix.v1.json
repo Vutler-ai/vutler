@@ -1,0 +1,38 @@
+{
+  "key": "default_agent_level_matrix",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "levels": {
+      "1": {
+        "name": "administrative",
+        "allowed_capability_risk_classes": ["knowledge", "coordination"],
+        "restricted_capability_risk_classes": ["bounded_operations"],
+        "denied_capability_risk_classes": ["privileged_operations"]
+      },
+      "2": {
+        "name": "operational",
+        "allowed_capability_risk_classes": ["knowledge", "coordination", "bounded_operations"],
+        "restricted_capability_risk_classes": ["privileged_operations"],
+        "denied_capability_risk_classes": []
+      },
+      "3": {
+        "name": "technical_privileged",
+        "allowed_capability_risk_classes": ["knowledge", "coordination", "bounded_operations", "privileged_operations"],
+        "restricted_capability_risk_classes": [],
+        "denied_capability_risk_classes": []
+      }
+    },
+    "tool_classes": {
+      "document_tool": { "1": "allow", "2": "allow", "3": "allow" },
+      "communication_tool": { "1": "allow", "2": "allow", "3": "allow" },
+      "workspace_tool": { "1": "allow", "2": "allow", "3": "allow" },
+      "ticketing_tool": { "1": "allow", "2": "allow", "3": "allow" },
+      "bounded_local_api": { "1": "restricted", "2": "allow", "3": "allow" },
+      "bounded_device_control": { "1": "deny", "2": "dry_run", "3": "dry_run" },
+      "privileged_local_api": { "1": "deny", "2": "restricted", "3": "approval_required" },
+      "privileged_infra_control": { "1": "deny", "2": "deny", "3": "approval_required" }
+    }
+  }
+}

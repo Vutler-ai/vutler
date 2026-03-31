@@ -31,11 +31,16 @@ export async function createFolder(
 }
 
 export async function deleteFile(
-  path: string
+  target: { id?: string; path: string }
 ): Promise<SuccessResponse> {
-  return apiFetch<SuccessResponse>('/api/v1/drive/delete', {
-    method: 'POST',
-    body: JSON.stringify({ path }),
+  if (target.id) {
+    return apiFetch<SuccessResponse>(`/api/v1/drive/files/${encodeURIComponent(target.id)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  return apiFetch<SuccessResponse>(`/api/v1/files?path=${encodeURIComponent(target.path)}`, {
+    method: 'DELETE',
   });
 }
 

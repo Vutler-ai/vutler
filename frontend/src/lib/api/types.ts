@@ -334,6 +334,8 @@ export interface NexusAgentStatus {
   model: string;
   status: 'idle' | 'busy' | 'stopped';
   tasksCompleted: number;
+  profileKey?: string;
+  profileVersion?: string;
 }
 
 export interface NexusSeatsInfo {
@@ -415,6 +417,50 @@ export interface AutoSpawnRule {
   agentName: string;
 }
 
+export interface EnterpriseProfileSelectionValidation {
+  profileKey: string;
+  profileVersion: string;
+  profileName: string;
+  category: string;
+  agentLevel: number;
+  riskPosture: 'administrative' | 'operational' | 'technical_privileged';
+  deploymentMode: 'fixed' | 'elastic';
+  canProceed: boolean;
+  seatImpact: {
+    principalAgent: number;
+    registeredHelpers: number;
+    localIntegrations: number;
+    totalImmediate: number;
+  };
+  capabilities: Array<{
+    capabilityKey: string;
+    riskClass: string;
+    classification: 'allowed' | 'restricted' | 'denied';
+    required: boolean;
+    optional: boolean;
+  }>;
+  localIntegrations: Array<{
+    integrationKey: string;
+    requiredLevel: number;
+    toolClass: string | null;
+    classification: 'allowed' | 'restricted';
+  }>;
+  helperProfiles: Array<{
+    profileKey: string;
+    mode: string;
+    seatMode: string;
+    classification: 'allowed' | 'restricted';
+  }>;
+  warnings: string[];
+  summary: {
+    requiredCapabilities: string[];
+    optionalCapabilities: string[];
+    selectedCapabilities: string[];
+    selectedLocalIntegrations: string[];
+    selectedHelperProfiles: string[];
+  };
+}
+
 export interface DeployEnterprisePayload {
   name: string;
   clientName: string;
@@ -426,6 +472,12 @@ export interface DeployEnterprisePayload {
   role: string;
   filesystemRoot: string;
   offlineMode: boolean;
+  profileKey?: string;
+  profileVersion?: string;
+  deploymentMode?: 'fixed' | 'elastic';
+  selectedCapabilities?: string[];
+  selectedLocalIntegrations?: string[];
+  selectedHelperProfiles?: string[];
 }
 
 export interface NexusTokenResponse {
@@ -441,10 +493,107 @@ export type NexusAction =
 
 export interface NexusDispatchResult<T = unknown> {
   taskId: string;
-  status: 'completed' | 'error';
+  status: 'completed' | 'error' | 'dry_run' | 'approval_required';
   data?: T;
   error?: string;
-  metadata?: { durationMs: number; action: string; truncated?: boolean };
+  metadata?: {
+    durationMs?: number;
+    action: string;
+    truncated?: boolean;
+    governance?: Record<string, unknown>;
+  };
+}
+
+export interface NexusEnterpriseCatalogExecution {
+  action: NexusAction;
+  params?: Record<string, unknown>;
+}
+
+export interface NexusEnterpriseCatalogDispatchPayload {
+  agentId?: string;
+  actionKey: string;
+  requestSource?: 'chat' | 'event' | 'schedule';
+  governanceMode?: 'standard' | 'full_access';
+  approvalScopeKey?: string;
+  approvalScopeMode?: 'single' | 'process';
+  approvalScopeExpiresAt?: string;
+  execution?: NexusEnterpriseCatalogExecution;
+}
+
+export interface NexusEnterpriseLocalIntegrationPayload {
+  agentId?: string;
+  integrationKey: string;
+  operation: string;
+  governanceMode?: 'standard' | 'full_access';
+  approvalScopeKey?: string;
+  approvalScopeMode?: 'single' | 'process';
+  approvalScopeExpiresAt?: string;
+  request?: {
+    method?: 'GET' | 'POST';
+    url: string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  };
+  defaultDecision?: 'allow' | 'dry_run' | 'approval_required' | 'deny';
+}
+
+export interface NexusEnterpriseHelperDispatchPayload {
+  agentId?: string;
+  helperProfileKey: string;
+  helperAgentId?: string;
+  reason?: string;
+  governanceMode?: 'standard' | 'full_access';
+  approvalScopeKey?: string;
+  approvalScopeMode?: 'single' | 'process';
+  approvalScopeExpiresAt?: string;
+  task?: {
+    title?: string;
+    description?: string;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+export interface NexusGovernanceApproval {
+  id: string;
+  workspaceId: string;
+  nodeId: string;
+  commandId?: string | null;
+  executionCommandId?: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'failed';
+  requestType: 'catalog_action' | 'local_integration' | 'helper_delegation' | string;
+  title: string;
+  summary?: string | null;
+  profileKey?: string | null;
+  agentId?: string | null;
+  governance?: Record<string, unknown>;
+  requestPayload?: Record<string, unknown>;
+  scopeKey?: string | null;
+  scopeMode?: string | null;
+  scopeExpiresAt?: string | null;
+  resolutionComment?: string | null;
+  resolvedByUserId?: string | null;
+  resolvedByName?: string | null;
+  requestedAt: string;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NexusGovernanceAuditEvent {
+  id: string;
+  workspaceId: string;
+  nodeId: string;
+  commandId?: string | null;
+  approvalId?: string | null;
+  agentId?: string | null;
+  profileKey?: string | null;
+  requestType?: string | null;
+  eventType: string;
+  decision?: string | null;
+  outcomeStatus?: string | null;
+  message?: string | null;
+  payload?: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface NexusCommandProgress {

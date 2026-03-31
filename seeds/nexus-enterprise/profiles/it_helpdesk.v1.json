@@ -1,0 +1,22 @@
+{
+  "key": "it_helpdesk",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "it_helpdesk",
+    "name": "IT Helpdesk",
+    "category": "operations",
+    "agent_level": 2,
+    "description": "Handles bounded IT triage, ticketing, and local diagnostics",
+    "deployment_modes": ["fixed", "elastic"],
+    "seat_class": "standard_agent",
+    "required_capabilities": ["ticketing", "reporting", "local_api_bridge"],
+    "optional_capabilities": ["event_ingestion", "helper_delegation"],
+    "action_catalog_ref": "catalog.it_helpdesk",
+    "policy_bundle_ref": "policy.it_helpdesk.default",
+    "local_integrations_ref": "local_integrations.it_helpdesk",
+    "helper_rules_ref": "helper_rules.it_helpdesk",
+    "supported_event_sources": ["webhook", "schedule", "operator_chat"]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "key": "email_dispatch",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "email_dispatch",
+    "name": "Email Dispatch",
+    "risk_class": "coordination",
+    "provides": ["draft_email", "send_email"],
+    "default_tool_classes": ["communication_tool"],
+    "requires": ["policy_engine"],
+    "optional_with": ["document_generation", "reporting"]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "key": "catalog.av_manager",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "av_manager",
+    "actions": [
+      {
+        "action_key": "check_room_health",
+        "category": "diagnostics",
+        "tool_class": "bounded_local_api",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["event", "schedule", "chat"]
+      },
+      {
+        "action_key": "get_room_diagnostics",
+        "category": "diagnostics",
+        "tool_class": "bounded_local_api",
+        "risk_level": "medium",
+        "default_mode": "dry_run",
+        "allowed_request_sources": ["event", "chat"]
+      },
+      {
+        "action_key": "restart_room_system",
+        "category": "remediation",
+        "tool_class": "bounded_device_control",
+        "risk_level": "high",
+        "default_mode": "dry_run",
+        "allowed_request_sources": ["event", "chat"]
+      },
+      {
+        "action_key": "open_incident_ticket",
+        "category": "coordination",
+        "tool_class": "ticketing_tool",
+        "risk_level": "medium",
+        "default_mode": "allow",
+        "allowed_request_sources": ["event", "chat", "schedule"]
+      },
+      {
+        "action_key": "send_daily_report",
+        "category": "reporting",
+        "tool_class": "document_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["schedule"]
+      }
+    ]
+  }
+}

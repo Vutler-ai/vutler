@@ -1,0 +1,15 @@
+{
+  "key": "policy.av_manager.default",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "av_manager",
+    "default_rules": [
+      { "match": { "tool_class": "bounded_local_api" }, "decision": "dry_run" },
+      { "match": { "tool_class": "bounded_device_control" }, "decision": "approval_required" },
+      { "match": { "tool_class": "ticketing_tool" }, "decision": "allow" },
+      { "match": { "tool_class": "document_tool" }, "decision": "allow" }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "key": "device_diagnostics",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "device_diagnostics",
+    "name": "Device Diagnostics",
+    "risk_class": "bounded_operations",
+    "provides": ["check_device_health", "run_diagnostics", "restart_bounded_device"],
+    "default_tool_classes": ["bounded_local_api", "bounded_device_control"],
+    "requires": ["policy_engine"],
+    "optional_with": ["event_ingestion", "local_api_bridge"]
+  }
+}

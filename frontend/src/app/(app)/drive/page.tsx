@@ -674,7 +674,7 @@ export default function DrivePage() {
     setDeleting(true);
     setActionError(null);
     try {
-      await deleteFile(deleteTarget.path);
+      await deleteFile({ id: deleteTarget.id, path: deleteTarget.path });
       await mutate();
       setDeleteTarget(null);
     } catch (err: unknown) {

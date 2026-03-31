@@ -1,4 +1,6 @@
 const AgentWorker = require('./agent-worker');
+const { ProfileRegistry } = require('./profile-registry');
+const { ProfileValidator } = require('./profile-validator');
 
 class AgentManager {
   constructor(config, providers, sniparaClient) {
@@ -9,11 +11,28 @@ class AgentManager {
     this.autoSpawnRules = config.auto_spawn_rules || [];
     this.availablePool = config.available_pool || [];
     this.allowCreate = config.allow_create || false;
+    this.enterpriseProfile = config.enterprise_profile || null;
     this.providers = providers;
     this.sniparaClient = sniparaClient;
     this.cloudApiUrl = config.server;
     this.nodeId = null;
     this.apiKey = config.key;
+    this.profileRegistry = new ProfileRegistry({ server: this.cloudApiUrl, apiKey: this.apiKey });
+    this.profileValidator = new ProfileValidator(this.profileRegistry);
+  }
+
+  async _validateProfileConfig(agentConfig) {
+    const result = await this.profileValidator.validate(agentConfig, this.enterpriseProfile);
+    if (!result.valid) {
+      throw new Error(result.reason || 'Invalid enterprise profile configuration');
+    }
+
+    return {
+      ...agentConfig,
+      enterprise_profile: result.enterpriseProfile || agentConfig.enterprise_profile || this.enterpriseProfile || null,
+      profile_key: result.enterpriseProfile?.profile_key || agentConfig.profile_key,
+      profile_version: result.enterpriseProfile?.profile_version || agentConfig.profile_version,
+    };
   }
 
   async loadAgents(agentConfigs) {
@@ -22,9 +41,16 @@ class AgentManager {
         console.log(`[AgentManager] Seats full (${this.maxSeats}), skipping ${cfg.name}`);
         break;
       }
-      const worker = new AgentWorker(cfg, this.providers, this.sniparaClient);
-      this.agents.set(cfg.id, worker);
-      console.log(`[AgentManager] Loaded agent: ${cfg.name} (${cfg.id})`);
+      let validatedConfig;
+      try {
+        validatedConfig = await this._validateProfileConfig(cfg);
+      } catch (error) {
+        console.warn(`[AgentManager] Skipping agent ${cfg.name || cfg.id}: ${error.message}`);
+        continue;
+      }
+      const worker = new AgentWorker(validatedConfig, this.providers, this.sniparaClient);
+      this.agents.set(validatedConfig.id, worker);
+      console.log(`[AgentManager] Loaded agent: ${validatedConfig.name} (${validatedConfig.id})`);
     }
   }
 
@@ -61,7 +87,7 @@ class AgentManager {
     });
     if (!response.ok) throw new Error(`Failed to fetch agent config: ${response.status}`);
     const payload = await response.json();
-    const config = payload?.agent || payload;
+    const config = await this._validateProfileConfig(payload?.agent || payload);
     const worker = new AgentWorker(config, this.providers, this.sniparaClient);
     this.agents.set(agentId, worker);
     console.log(`[AgentManager] Spawned agent: ${config.name} (${agentId})`);
@@ -79,7 +105,7 @@ class AgentManager {
     });
     if (!response.ok) throw new Error(`Failed to create agent: ${response.status}`);
     const payload = await response.json();
-    const agent = payload?.agent || payload;
+    const agent = await this._validateProfileConfig(payload?.agent || payload);
     const worker = new AgentWorker(agent, this.providers, this.sniparaClient);
     this.agents.set(agent.id, worker);
     console.log(`[AgentManager] Created new agent: ${agent.name} (${agent.id})`);
@@ -96,7 +122,14 @@ class AgentManager {
 
   getStatus() {
     return Array.from(this.agents.values()).map(a => ({
-      id: a.id, name: a.name, status: a.status, model: a.model, tasksCompleted: a.tasksCompleted
+      id: a.id,
+      name: a.name,
+      status: a.status,
+      model: a.model,
+      tasksCompleted: a.tasksCompleted,
+      enterprise_profile: a.enterpriseProfile || undefined,
+      profile_key: a.profileKey || undefined,
+      profile_version: a.profileVersion || undefined,
     }));
   }
 

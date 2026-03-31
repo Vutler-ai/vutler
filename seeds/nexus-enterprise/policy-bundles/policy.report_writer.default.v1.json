@@ -1,0 +1,14 @@
+{
+  "key": "policy.report_writer.default",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "report_writer",
+    "default_rules": [
+      { "match": { "tool_class": "document_tool" }, "decision": "allow" },
+      { "match": { "tool_class": "workspace_tool" }, "decision": "allow" },
+      { "match": { "tool_class": "communication_tool" }, "decision": "allow" }
+    ]
+  }
+}

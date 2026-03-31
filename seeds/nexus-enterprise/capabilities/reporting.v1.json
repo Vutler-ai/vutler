@@ -1,0 +1,15 @@
+{
+  "key": "reporting",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "capability_key": "reporting",
+    "name": "Reporting",
+    "risk_class": "knowledge",
+    "provides": ["draft_report", "summarize_inputs", "deliver_report"],
+    "default_tool_classes": ["document_tool"],
+    "requires": ["policy_engine"],
+    "optional_with": ["document_generation", "ticketing"]
+  }
+}

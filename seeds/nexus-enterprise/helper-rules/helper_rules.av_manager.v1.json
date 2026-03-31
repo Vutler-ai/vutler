@@ -1,0 +1,17 @@
+{
+  "key": "helper_rules.av_manager",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "av_manager",
+    "allowed_helpers": [
+      {
+        "profile_key": "it_helpdesk",
+        "mode": "restricted",
+        "seat_mode": "consumes_seat",
+        "allowed_reasons": ["incident_out_of_scope", "ticket_escalation"]
+      }
+    ]
+  }
+}

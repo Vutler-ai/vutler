@@ -1,0 +1,43 @@
+{
+  "key": "catalog.bid_manager",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "bid_manager",
+    "actions": [
+      {
+        "action_key": "draft_bid_outline",
+        "category": "document",
+        "tool_class": "document_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat", "schedule"]
+      },
+      {
+        "action_key": "summarize_rfp",
+        "category": "document",
+        "tool_class": "workspace_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat"]
+      },
+      {
+        "action_key": "assemble_bid_sources",
+        "category": "document",
+        "tool_class": "workspace_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat", "schedule"]
+      },
+      {
+        "action_key": "draft_bid_email",
+        "category": "communication",
+        "tool_class": "communication_tool",
+        "risk_level": "low",
+        "default_mode": "allow",
+        "allowed_request_sources": ["chat"]
+      }
+    ]
+  }
+}

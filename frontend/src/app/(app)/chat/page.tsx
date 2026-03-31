@@ -291,6 +291,81 @@ function getMessageArtifacts(message: Message): ChatResourceArtifact[] {
   return parsed;
 }
 
+function isOptimisticMessage(message: Message): boolean {
+  return String(message.id || "").startsWith("tmp-")
+    || String(message.client_message_id || "").startsWith("tmp-");
+}
+
+function canHydrateOptimisticMessage(existing: Message, incoming: Message): boolean {
+  if (!isOptimisticMessage(existing) || incoming.client_message_id) return false;
+  if (String(existing.content || "").trim() !== String(incoming.content || "").trim()) return false;
+
+  const existingSender = String(existing.sender_id || "").toLowerCase();
+  const incomingSender = String(incoming.sender_id || "").toLowerCase();
+  if (existingSender && incomingSender && existingSender !== incomingSender) return false;
+
+  const existingAttachmentCount = existing.attachments?.length || 0;
+  const incomingAttachmentCount = incoming.attachments?.length || 0;
+  if (existingAttachmentCount !== incomingAttachmentCount) return false;
+
+  const existingTime = existing.created_at ? new Date(existing.created_at).getTime() : NaN;
+  const incomingTime = incoming.created_at ? new Date(incoming.created_at).getTime() : NaN;
+  if (Number.isFinite(existingTime) && Number.isFinite(incomingTime) && Math.abs(existingTime - incomingTime) > 30_000) {
+    return false;
+  }
+
+  return true;
+}
+
+function dedupeMessages(messages: Message[]): Message[] {
+  const seenIds = new Set<string>();
+  const seenClientIds = new Set<string>();
+  const deduped: Message[] = [];
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const id = String(message.id || "");
+    const clientId = String(message.client_message_id || "");
+
+    if ((id && seenIds.has(id)) || (clientId && seenClientIds.has(clientId))) {
+      continue;
+    }
+
+    if (id) seenIds.add(id);
+    if (clientId) seenClientIds.add(clientId);
+    deduped.push(message);
+  }
+
+  return deduped.reverse();
+}
+
+function upsertMessage(prev: Message[], incoming: Message): Message[] {
+  const byId = prev.findIndex((message) => message.id === incoming.id);
+  if (byId >= 0) {
+    const next = [...prev];
+    next[byId] = { ...next[byId], ...incoming };
+    return dedupeMessages(next);
+  }
+
+  const byClientId = incoming.client_message_id
+    ? prev.findIndex((message) => message.client_message_id === incoming.client_message_id)
+    : -1;
+  if (byClientId >= 0) {
+    const next = [...prev];
+    next[byClientId] = { ...next[byClientId], ...incoming };
+    return dedupeMessages(next);
+  }
+
+  const optimisticMatch = prev.findIndex((message) => canHydrateOptimisticMessage(message, incoming));
+  if (optimisticMatch >= 0) {
+    const next = [...prev];
+    next[optimisticMatch] = { ...next[optimisticMatch], ...incoming };
+    return dedupeMessages(next);
+  }
+
+  return dedupeMessages([...prev, incoming]);
+}
+
 function getArtifactIcon(kind?: string) {
   const normalized = String(kind || '').toLowerCase();
   if (normalized.includes('calendar')) return CalendarDaysIcon;
@@ -522,23 +597,7 @@ export default function ChatPage() {
     wsRef.current = ws;
 
     const offMessageNew = ws.on("message:new", (msg: Message) => {
-      setMessages((prev) => {
-        const byId = prev.findIndex((m) => m.id === msg.id);
-        if (byId >= 0) {
-          const next = [...prev];
-          next[byId] = { ...next[byId], ...msg };
-          return next;
-        }
-        const byClientId = msg.client_message_id
-          ? prev.findIndex((m) => m.client_message_id === msg.client_message_id)
-          : -1;
-        if (byClientId >= 0) {
-          const next = [...prev];
-          next[byClientId] = { ...next[byClientId], ...msg };
-          return next;
-        }
-        return [...prev, msg];
-      });
+      setMessages((prev) => upsertMessage(prev, msg));
     });
 
     const offTyping = ws.on(
@@ -689,16 +748,14 @@ export default function ChatPage() {
         content: text,
         client_message_id: clientMessageId,
       });
+      const confirmedMessage: Message = {
+        ...tempMessage,
+        ...sent,
+        client_message_id: sent.client_message_id ?? clientMessageId,
+        attachments: sent.attachments ?? (attachments.length > 0 ? tempMessage.attachments : sent.attachments),
+      };
 
-      setMessages((prev) => {
-        const idx = prev.findIndex(
-          (m) => m.id === clientMessageId || m.client_message_id === clientMessageId
-        );
-        if (idx < 0) return prev;
-        const next = [...prev];
-        next[idx] = { ...sent, attachments: sent.attachments ?? (attachments.length > 0 ? (sent.attachments ?? []) : tempMessage.attachments) };
-        return next;
-      });
+      setMessages((prev) => upsertMessage(prev, confirmedMessage));
 
       if (!wsRef.current?.connected) {
         await loadMessages(selectedChannel.id);

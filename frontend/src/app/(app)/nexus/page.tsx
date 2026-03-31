@@ -3,6 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { getNodes, deployLocal, deployEnterprise } from '@/lib/api/endpoints/nexus';
+import {
+  getEnterpriseProfiles,
+  validateEnterpriseProfileSelection,
+  type NexusEnterpriseRegistryRecord,
+} from '@/lib/api/endpoints/nexus-enterprise';
 import { getClients, createClient, updateClient, deleteClient } from '@/lib/api/endpoints/clients';
 import { getAgents } from '@/lib/api/endpoints/agents';
 import { getAvatarImageUrl } from '@/lib/avatar';
@@ -15,6 +20,7 @@ import type {
   Client,
   CreateClientPayload,
   AutoSpawnRule,
+  EnterpriseProfileSelectionValidation,
 } from '@/lib/api/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -44,6 +50,13 @@ function formatDurationMs(value?: number): string {
   if (value < 1000) return `${value}ms`;
   if (value < 60_000) return `${(value / 1000).toFixed(1)}s`;
   return `${Math.round(value / 60000)}m`;
+}
+
+function formatAgentLevelLabel(level?: number): string {
+  if (level === 1) return 'Level 1 - Administrative';
+  if (level === 2) return 'Level 2 - Operational';
+  if (level === 3) return 'Level 3 - Technical';
+  return 'Unknown level';
 }
 
 const STATUS_DOT: Record<NexusNode['status'], string> = {
@@ -109,7 +122,7 @@ function AgentAvatar({ agent, size = 8 }: { agent: Agent; size?: number }) {
 
 // ─── Deploy Modal (multi-step) ────────────────────────────────────────────────
 
-type DeployStep = 'select' | 'local-config' | 'local-token' | 'ent-basics' | 'ent-primary' | 'ent-pool' | 'ent-spawn-rules' | 'ent-token';
+type DeployStep = 'select' | 'local-config' | 'local-token' | 'ent-basics' | 'ent-profile' | 'ent-primary' | 'ent-pool' | 'ent-spawn-rules' | 'ent-token';
 type DeployMode = 'local' | 'enterprise';
 
 function DeployModal({
@@ -133,6 +146,9 @@ function DeployModal({
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
+  const [enterpriseProfiles, setEnterpriseProfiles] = useState<NexusEnterpriseRegistryRecord[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [profileValidationLoading, setProfileValidationLoading] = useState(false);
 
   // Local: config
   const [localNodeName, setLocalNodeName] = useState('');
@@ -147,6 +163,8 @@ function DeployModal({
   const [nodeName, setNodeName] = useState('');
   const [clientName, setClientName] = useState(initialClientName ?? '');
   const [seats, setSeats] = useState(5);
+  const [profileKey, setProfileKey] = useState('');
+  const [profileValidation, setProfileValidation] = useState<EnterpriseProfileSelectionValidation | null>(null);
   // Enterprise: step 2 — primary agent
   const [primaryAgentId, setPrimaryAgentId] = useState('');
   // Enterprise: step 3 — pool agents + allow creating
@@ -172,6 +190,17 @@ function DeployModal({
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (step !== 'ent-profile' || enterpriseProfiles.length > 0 || profilesLoading) return;
+    setProfilesLoading(true);
+    getEnterpriseProfiles()
+      .then(setEnterpriseProfiles)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load enterprise profiles'))
+      .finally(() => setProfilesLoading(false));
+  }, [step, enterpriseProfiles.length, profilesLoading]);
+
+  const selectedProfile = enterpriseProfiles.find((profile) => profile.key === profileKey) || null;
+
   const handleGenerate = async () => {
     setError('');
     if (mode === 'local' && billing && (!billing.canProvision.local || !billing.canProvision.total)) {
@@ -195,6 +224,9 @@ function DeployModal({
         setToken(result.token);
         setStep('local-token');
       } else {
+        if (!profileKey) {
+          throw new Error('Enterprise profile is required');
+        }
         result = await deployEnterprise({
           name: nodeName.trim(),
           clientName: clientName.trim(),
@@ -206,6 +238,12 @@ function DeployModal({
           role: 'general',
           filesystemRoot: `/opt/${clientName.toLowerCase().replace(/\s+/g, '-')}/`,
           offlineMode: false,
+          profileKey,
+          profileVersion: profileValidation?.profileVersion || selectedProfile?.version,
+          deploymentMode: 'fixed',
+          selectedCapabilities: profileValidation?.summary.selectedCapabilities,
+          selectedLocalIntegrations: profileValidation?.summary.selectedLocalIntegrations,
+          selectedHelperProfiles: profileValidation?.summary.selectedHelperProfiles,
         });
         setToken(result.token);
         setStep('ent-token');
@@ -242,11 +280,12 @@ function DeployModal({
     select: 'Choose type',
     'local-config': '1 of 2 — Configure node',
     'local-token': '2 of 2 — Install & Connect',
-    'ent-basics': '1 of 5 — Basics',
-    'ent-primary': '2 of 5 — Primary agent',
-    'ent-pool': '3 of 5 — Agent pool',
-    'ent-spawn-rules': '4 of 5 — Auto-spawn rules',
-    'ent-token': '5 of 5 — Token',
+    'ent-basics': '1 of 6 — Basics',
+    'ent-profile': '2 of 6 — Profile',
+    'ent-primary': '3 of 6 — Primary agent',
+    'ent-pool': '4 of 6 — Agent pool',
+    'ent-spawn-rules': '5 of 6 — Auto-spawn rules',
+    'ent-token': '6 of 6 — Token',
   };
 
   return (
@@ -425,7 +464,7 @@ function DeployModal({
               onClick={() => {
                 if (!nodeName.trim() || !clientName.trim()) { setError('Node name and client name are required'); return; }
                 setError('');
-                setStep('ent-primary');
+                setStep('ent-profile');
               }}
               className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
             >
@@ -434,11 +473,137 @@ function DeployModal({
           </div>
         )}
 
-        {/* ── ENTERPRISE: Step 2 — primary agent ── */}
-        {step === 'ent-primary' && (
+        {/* ── ENTERPRISE: Step 2 — profile ── */}
+        {step === 'ent-profile' && (
           <div className="space-y-4">
             <button onClick={() => setStep('ent-basics')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
+            <p className="text-[#9ca3af] text-sm">Choose the deployable profile that defines the risk posture, capabilities, and governance defaults for this node.</p>
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {profilesLoading && (
+                <div className="space-y-2">
+                  {[1, 2, 3, 4].map((i) => <div key={i} className="h-20 bg-[#0a0b14] rounded-lg animate-pulse" />)}
+                </div>
+              )}
+              {!profilesLoading && enterpriseProfiles.map((profile) => {
+                const selected = profileKey === profile.key;
+                const level = Number(profile.agent_level || (profile.definition as { agent_level?: number })?.agent_level || 0);
+                const definition = profile.definition as { name?: string; description?: string; category?: string };
+                const profileName = typeof profile.name === 'string' && profile.name
+                  ? profile.name
+                  : definition.name || profile.key;
+                const profileCategory = typeof profile.category === 'string' && profile.category
+                  ? profile.category
+                  : definition.category || 'general';
+                return (
+                  <label
+                    key={profile.key}
+                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                      selected
+                        ? 'border-emerald-500/60 bg-emerald-500/5'
+                        : 'border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-[rgba(255,255,255,0.14)]'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="enterpriseProfile"
+                      checked={selected}
+                      onChange={() => {
+                        setProfileKey(profile.key);
+                        setProfileValidation(null);
+                        setError('');
+                      }}
+                      className="w-4 h-4 accent-emerald-500 mt-1 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm text-white font-medium">{profileName}</p>
+                        <span className="px-2 py-0.5 rounded-full bg-[#111827] border border-[rgba(255,255,255,0.08)] text-[10px] text-[#9ca3af] uppercase tracking-wide">
+                          {profileCategory}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#6b7280] mt-1">{formatAgentLevelLabel(level)}</p>
+                      {definition.description && <p className="text-xs text-[#9ca3af] mt-1">{definition.description}</p>}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+
+            {profileValidation && (
+              <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-[#6b7280] uppercase tracking-wide">Validated profile</p>
+                    <p className="text-sm text-white font-medium">{profileValidation.profileName}</p>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-[#111827] border border-[rgba(255,255,255,0.08)] text-[10px] text-[#9ca3af] uppercase tracking-wide">
+                    {profileValidation.riskPosture.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="rounded-lg bg-[#111827] px-3 py-2">
+                    <p className="text-[#6b7280] uppercase tracking-wide">Seat impact now</p>
+                    <p className="text-white font-medium mt-1">{profileValidation.seatImpact.totalImmediate}</p>
+                  </div>
+                  <div className="rounded-lg bg-[#111827] px-3 py-2">
+                    <p className="text-[#6b7280] uppercase tracking-wide">Required capabilities</p>
+                    <p className="text-white font-medium mt-1">{profileValidation.summary.requiredCapabilities.length}</p>
+                  </div>
+                </div>
+                {profileValidation.warnings.length > 0 && (
+                  <div className="space-y-1">
+                    {profileValidation.warnings.map((warning) => (
+                      <p key={warning} className="text-xs text-amber-400">{warning}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button
+              onClick={async () => {
+                if (!profileKey) {
+                  setError('Please select an enterprise profile');
+                  return;
+                }
+                setProfileValidationLoading(true);
+                setError('');
+                try {
+                  const validation = await validateEnterpriseProfileSelection({
+                    profileKey,
+                    deploymentMode: 'fixed',
+                    startActive: true,
+                  });
+                  setProfileValidation(validation);
+                  setStep('ent-primary');
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Failed to validate enterprise profile');
+                } finally {
+                  setProfileValidationLoading(false);
+                }
+              }}
+              disabled={profileValidationLoading || profilesLoading}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              {profileValidationLoading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+              {profileValidationLoading ? 'Validating…' : 'Validate & Continue →'}
+            </button>
+          </div>
+        )}
+
+        {/* ── ENTERPRISE: Step 3 — primary agent ── */}
+        {step === 'ent-primary' && (
+          <div className="space-y-4">
+            <button onClick={() => setStep('ent-profile')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
             <p className="text-[#9ca3af] text-sm">Select the primary agent that handles requests by default.</p>
+            {profileValidation && (
+              <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2.5 text-xs">
+                <span className="text-[#6b7280]">Profile:</span> <span className="text-white">{profileValidation.profileName}</span>
+                <span className="text-[#6b7280]"> · </span>
+                <span className="text-[#9ca3af]">{formatAgentLevelLabel(profileValidation.agentLevel)}</span>
+              </div>
+            )}
             <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
               {agentsLoading && (
                 <div className="space-y-2">
@@ -487,7 +652,7 @@ function DeployModal({
           </div>
         )}
 
-        {/* ── ENTERPRISE: Step 3 — pool agents ── */}
+        {/* ── ENTERPRISE: Step 4 — pool agents ── */}
         {step === 'ent-pool' && (
           <div className="space-y-4">
             <button onClick={() => setStep('ent-primary')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>
@@ -532,7 +697,7 @@ function DeployModal({
           </div>
         )}
 
-        {/* ── ENTERPRISE: Step 4 — auto-spawn rules ── */}
+        {/* ── ENTERPRISE: Step 5 — auto-spawn rules ── */}
         {step === 'ent-spawn-rules' && (
           <div className="space-y-4">
             <button onClick={() => setStep('ent-pool')} className="text-xs text-[#6b7280] hover:text-white transition-colors">← Back</button>

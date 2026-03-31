@@ -6,7 +6,7 @@ const { createSniparaGateway } = require('./snipara/gateway');
 const { createMemoryRuntimeService } = require('./memory/runtime');
 const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
-const { buildInternalPlacementInstruction } = require('./agentConfigPolicy');
+const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
@@ -21,6 +21,79 @@ function formatToolResultContent(result) {
   } catch (_) {
     return 'Tool completed successfully.';
   }
+}
+
+function normalizeToolCall(toolCall = {}) {
+  const callId = toolCall.call_id || toolCall.id || null;
+  return {
+    id: callId,
+    call_id: callId,
+    name: toolCall.name || toolCall.function?.name || null,
+    arguments: toolCall.arguments || toolCall.function?.arguments || {},
+  };
+}
+
+function getToolCallId(toolCall = {}) {
+  return toolCall.call_id || toolCall.id || null;
+}
+
+function mapResponsesTool(tool) {
+  if (!tool || tool.type !== 'function') return tool;
+  if (!tool.function) return tool;
+
+  return {
+    type: 'function',
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters,
+    strict: false,
+  };
+}
+
+function mapResponsesInputItem(message) {
+  if (!message) return null;
+
+  if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+    const items = [];
+    if (message.content) {
+      items.push({
+        role: 'assistant',
+        content: String(message.content || ''),
+      });
+    }
+    for (const rawToolCall of message.tool_calls) {
+      const toolCall = normalizeToolCall(rawToolCall);
+      if (!toolCall.call_id || !toolCall.name) continue;
+      items.push({
+        type: 'function_call',
+        call_id: toolCall.call_id,
+        name: toolCall.name,
+        arguments: JSON.stringify(toolCall.arguments || {}),
+      });
+    }
+    return items;
+  }
+
+  if (message.role === 'tool' && message.tool_call_id) {
+    return {
+      type: 'function_call_output',
+      call_id: message.tool_call_id,
+      output: String(message.content || ''),
+    };
+  }
+
+  if (message.role === 'assistant' && !message.content) {
+    return null;
+  }
+
+  if (message.role === 'assistant' || message.role === 'user') {
+    return {
+      role: message.role,
+      content: String(message.content || ''),
+    };
+  }
+
+  return null;
 }
 
 function normalizeDrivePath(pathValue) {
@@ -575,10 +648,13 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
 
   // Responses API format (used by Codex via chatgpt.com/backend-api)
   if (cfg.format === 'responses') {
-    const input = [];
-    for (const m of messages.filter(m => m.role !== 'system')) {
-      input.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
-    }
+    const input = messages
+      .filter((message) => message.role !== 'system')
+      .flatMap((message) => {
+        const item = mapResponsesInputItem(message);
+        if (Array.isArray(item)) return item;
+        return item ? [item] : [];
+      });
 
     const body = {
       model: model || cfg.defaultModel,
@@ -587,6 +663,9 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       store: false,
       stream: true,
     };
+    if (tools && tools.length > 0) {
+      body.tools = tools.map((tool) => mapResponsesTool(tool));
+    }
 
     return {
       hostname,
@@ -718,7 +797,7 @@ function normalizeResponse(provider, model, result, latency_ms) {
     const textContent = contentBlocks.filter(b => b.type === 'text').map(b => b.text).join('');
     const toolCalls = contentBlocks
       .filter(b => b.type === 'tool_use')
-      .map(b => ({ id: b.id, name: b.name, arguments: b.input || {} }));
+      .map((block) => normalizeToolCall({ id: block.id, call_id: block.id, name: block.name, arguments: block.input || {} }));
 
     return {
       content: textContent,
@@ -742,9 +821,23 @@ function normalizeResponse(provider, model, result, latency_ms) {
       .filter(o => o.type === 'message')
       .flatMap(o => (o.content || []).filter(c => c.type === 'output_text').map(c => c.text))
       .join('');
+    const toolCalls = outputItems
+      .filter((item) => item.type === 'function_call')
+      .map((item) => normalizeToolCall({
+        id: item.id || item.call_id,
+        call_id: item.call_id || item.id,
+        name: item.name,
+        arguments: (() => {
+          try {
+            return JSON.parse(item.arguments || '{}');
+          } catch (_) {
+            return {};
+          }
+        })(),
+      }));
     return {
       content: textContent || result.output_text || '',
-      tool_calls: null,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
       stop_reason: result.status || 'completed',
       provider,
       model: result.model || model,
@@ -761,8 +854,9 @@ function normalizeResponse(provider, model, result, latency_ms) {
   const message = result.choices?.[0]?.message || {};
   const rawToolCalls = message.tool_calls || null;
   const toolCalls = rawToolCalls
-    ? rawToolCalls.map((tc) => ({
+    ? rawToolCalls.map((tc) => normalizeToolCall({
       id: tc.id,
+      call_id: tc.id,
       name: tc.function?.name,
       arguments: (() => {
         try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
@@ -884,8 +978,12 @@ async function chat(agent, messages, db, opts = {}) {
   if (memoryScope && memoryMode.read) memoryTools.push(MEMORY_RECALL_TOOL);
 
   // Inject social media tool when agent has relevant skills
-  const agentSkills = agent?.skills || agent?.tools || agent?.capabilities || [];
-  const hasSocialSkill = Array.isArray(agentSkills) && agentSkills.some(s =>
+  const agentSkillKeys = normalizeCapabilities([
+    ...(Array.isArray(agent?.skills) ? agent.skills : []),
+    ...(Array.isArray(agent?.tools) ? agent.tools : []),
+    ...(Array.isArray(agent?.capabilities) ? agent.capabilities : []),
+  ]);
+  const hasSocialSkill = agentSkillKeys.some(s =>
     typeof s === 'string' && (s.includes('social') || s.includes('posting') || s.includes('content_scheduling') || s.includes('multi_platform'))
   );
   const socialMediaTools = hasSocialSkill ? [SOCIAL_MEDIA_TOOL] : [];
@@ -902,7 +1000,7 @@ async function chat(agent, messages, db, opts = {}) {
   if (hasSocialSkill) {
     effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }
-  if (Array.isArray(agentSkills) && agentSkills.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
+  if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += '\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is /projects/Vutler. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under /projects/Vutler instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.';
   }
 
@@ -992,10 +1090,10 @@ async function chat(agent, messages, db, opts = {}) {
         }
         // Inject skill tools when the agent has skills configured
         let skillTools = [];
-        if (Array.isArray(agentSkills) && agentSkills.length > 0) {
+        if (agentSkillKeys.length > 0) {
           try {
             const { getSkillRegistry } = require('./skills');
-            skillTools = getSkillRegistry().getSkillTools(agentSkills);
+            skillTools = getSkillRegistry().getSkillTools(agentSkillKeys);
           } catch (_) { /* skills not available — skip */ }
         }
         const allTools = [...memoryTools, ...socialMediaTools, ...nexusTools, ...skillTools];
@@ -1034,11 +1132,11 @@ async function chat(agent, messages, db, opts = {}) {
               throw rememberErr;
             }
             // remember doesn't need a re-call — inject a confirmation as tool result
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-              { role: 'tool', tool_call_id: toolCall.id, name: 'remember', content: 'Memory stored successfully.' },
-            ];
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: 'Memory stored successfully.' },
+              ];
             continueLoop = true;
 
           } else if (toolCall.name === 'recall' && memoryScope && memoryMode.read && memoryGateway && memoryBindings) {
@@ -1060,11 +1158,11 @@ async function chat(agent, messages, db, opts = {}) {
               throw recallErr;
             }
             // Inject recall result and let LLM continue
-            currentMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-              { role: 'tool', tool_call_id: toolCall.id, name: 'recall', content: recalledText },
-            ];
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: recalledText },
+              ];
             continueLoop = true;
 
           } else if (toolCall.name === 'vutler_post_social_media' && hasSocialSkill) {
@@ -1111,7 +1209,7 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
               ];
               const socialResult = {
                 success: true,
@@ -1127,7 +1225,7 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
               ];
             }
             continueLoop = true;
@@ -1155,14 +1253,14 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: formatToolResultContent(skillResult) },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: formatToolResultContent(skillResult) },
               ];
             } catch (skillErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, skillErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: `Error: ${skillErr.message}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${skillErr.message}` },
               ];
             }
             continueLoop = true;
@@ -1184,14 +1282,14 @@ async function chat(agent, messages, db, opts = {}) {
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                  { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content },
+                  { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content },
                 ];
               } catch (nexusErr) {
                 await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, nexusErr);
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                  { role: 'tool', tool_call_id: toolCall.id, name: toolCall.name, content: `Error: ${nexusErr.message}` },
+                  { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${nexusErr.message}` },
                 ];
               }
               continueLoop = true;

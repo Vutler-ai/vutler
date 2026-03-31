@@ -9,6 +9,9 @@ class AgentWorker {
     this.skills = config.skills || [];
     this.temperature = config.temperature || 0.7;
     this.maxTokens = config.max_tokens || 2000;
+    this.enterpriseProfile = config.enterprise_profile || null;
+    this.profileKey = config.profile_key || this.enterpriseProfile?.profile_key || null;
+    this.profileVersion = config.profile_version || this.enterpriseProfile?.profile_version || null;
     this.providers = providers;
     this.sniparaClient = sniparaClient;
     this.status = 'idle'; // idle, busy, stopped

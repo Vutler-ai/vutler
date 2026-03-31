@@ -10,6 +10,9 @@
 
 Objectif: faire de Nexus la couche d'execution enterprise de Vutler pour deployer un "employe virtuel" chez un client, dans son reseau, avec un cadre de securite et de gouvernance acceptable par une DSI.
 
+Ce document traite le `AV Manager` comme **vertical de reference**.  
+La fondation generique du produit est maintenant decrite dans `Nexus Enterprise Deployable Agents`, afin que `nexus-enterprise` puisse supporter plusieurs profils deployables et pas seulement l'AV.
+
 Le cas d'usage de reference est un **Agent AV Manager** capable de:
 - surveiller l'etat de Teams Rooms, Zoom Rooms, codecs, ecrans, projecteurs et peripheriques AV
 - lancer des actions de remediation autorisees
@@ -140,6 +143,27 @@ Un agent dedie au parc AV et visioconference d'un client.
 - ouvrir un ticket si la remediation depasse le scope autorise
 - envoyer un rapport journalier ou hebdomadaire
 
+### Validation Model
+
+Le bon modele enterprise n'est pas:
+- une validation manuelle a chaque evenement identique
+
+Le bon modele est:
+- une validation unitaire pour une action sensible ponctuelle
+- ou une validation **une fois par process borne**
+
+Exemple:
+- le client valide une fois le process "surveiller et corriger les changements d'etat sur les interfaces AV du site Geneve"
+- ensuite les executions portant le meme `approvalScopeKey` repassent sans redemander une validation humaine a chaque changement d'etat
+
+Le runtime doit aussi supporter un mode operateur explicite:
+- `full_access`
+
+Ce mode permet de passer outre une demande `approval_required` si l'utilisateur le decide, tout en gardant:
+- la policy evaluation
+- le journal d'audit
+- la trace du bypass
+
 ### Exemples de jobs
 
 - "Check toutes les Teams Rooms du site Geneve a 07:00"
@@ -211,6 +235,8 @@ Responsabilites:
 - activer ou bloquer certaines categories d'actions
 - limiter par room, subnet, asset tag, vendor, horaire
 - exiger une approbation pour certaines actions
+- permettre une grant de process reutilisable quand c'est le bon niveau de controle
+- permettre un bypass explicite `full_access` pour certains operateurs
 - visualiser l'audit trail
 
 ### 4. Action Catalog
@@ -233,6 +259,28 @@ Chaque action doit definir:
 - timeout
 - politique d'approbation
 - format de resultat
+
+### 5. Governance Workflow
+
+Le workflow enterprise cible doit supporter:
+
+1. **standard execution**
+- la policy decide `allow`, `dry_run`, `approval_required` ou `deny`
+
+2. **approval request**
+- une demande est persistee
+- un email de validation peut etre envoye au client via Vutler cloud mail
+
+3. **process-scoped approval**
+- une approbation peut etre reutilisee pour un scope/metier borne
+- utile pour les integrations AV event-driven
+
+4. **full access override**
+- un operateur peut demander une execution immediate
+- l'evenement est journalise comme bypass explicite
+
+5. **audit**
+- toute demande, approbation, execution, rejection, bypass ou revoke est tracable
 
 ### 4.b Local Integration and Helper-Agent Model
 
@@ -274,6 +322,34 @@ Implication produit:
 - on ne doit pas contourner le modele enterprise en cachant des helper agents "gratuits"
 - chaque capacite multi-agent visible pour le client doit etre refletee dans le compteur de seats
 - le client doit pouvoir voir quels agents consomment ses seats et pourquoi
+
+### 4.d Seat Planning Example
+
+Exemple:
+
+- l'entreprise X achete **5 seats**
+- elle veut:
+  - 1 `AV Manager`
+  - 1 `IT Helpdesk`
+  - 3 seats restants pour des besoins ponctuels
+
+Mode 1: **baseline + elastic**
+- `AV Manager` actif = 1 seat
+- `IT Helpdesk` actif = 1 seat
+- 3 seats restent disponibles pour:
+  - `Bid Manager`
+  - `Report Writer`
+  - autre helper agent ou agent metier temporaire
+
+Mode 2: **5 agents en dur**
+- l'entreprise peut aussi choisir de demarrer directement avec 5 agents actifs
+- dans ce cas, les 5 seats sont deja consommes
+- aucun spawn supplementaire n'est possible tant qu'un seat n'est pas libere ou que le client n'upgrade pas son plan, par exemple a **10 seats**
+
+Regle produit:
+- un seat est une capacite active
+- peu importe que l'agent soit "principal", "helper", "metier", "temporaire" ou "en dur"
+- si l'agent est actif sur le node, il consomme un seat
 
 ### 5. Event Ingestion Layer
 
