@@ -12,16 +12,59 @@ export const KNOWN_AVATAR_SLUGS = new Set([
   'translator', 'workflow-automation',
 ]);
 
+const IMAGE_EXTENSION_RE = /\.(png|svg|jpg|jpeg|webp)$/i;
+const SIMPLE_AVATAR_TOKEN_RE = /^[a-z0-9_-]+$/i;
+
+function stripImageExtension(value: string): string {
+  return value.replace(IMAGE_EXTENSION_RE, '');
+}
+
+function toSpriteAvatarUrl(slug: string): string {
+  return `/sprites/agent-${slug}.png`;
+}
+
+function resolveLegacyAvatarPath(avatar: string): string {
+  if (avatar.startsWith('/avatars/')) {
+    const slug = stripImageExtension(avatar.split('/').pop() || '').toLowerCase();
+    return slug ? toSpriteAvatarUrl(slug) : avatar;
+  }
+
+  if (avatar.startsWith('/static/avatars/')) {
+    const slug = stripImageExtension(avatar.split('/').pop() || '').toLowerCase();
+    if (!slug) return avatar;
+    if (KNOWN_AVATAR_SLUGS.has(slug)) return `/static/avatars/${slug}.png`;
+    return toSpriteAvatarUrl(slug);
+  }
+
+  return avatar;
+}
+
+export function isEmojiAvatar(avatar: string | undefined): boolean {
+  if (!avatar) return false;
+  if (avatar.includes('/')) return false;
+  return /\p{Extended_Pictographic}/u.test(avatar);
+}
+
 /**
  * Resolve an agent's avatar field to a displayable image URL, or null if
  * the value is an emoji / missing.
  */
 export function getAvatarImageUrl(avatar: string | undefined, _name: string): string | null {
   if (!avatar) return null;
-  if (avatar.startsWith('/static/') || avatar.startsWith('/sprites/')) return avatar;
-  if (KNOWN_AVATAR_SLUGS.has(avatar)) return `/static/avatars/${avatar}.png`;
-  if (/^[a-z0-9-]+$/.test(avatar)) return `/static/avatars/${avatar}.png`;
+  if (isEmojiAvatar(avatar)) return null;
+
+  const normalizedAvatar = resolveLegacyAvatarPath(avatar);
+
+  if (normalizedAvatar.startsWith('/static/') || normalizedAvatar.startsWith('/sprites/')) {
+    return normalizedAvatar;
+  }
   if (avatar.startsWith('http')) return avatar;
-  if (/\.(png|svg|jpg|jpeg|webp)$/i.test(avatar)) return avatar;
+  if (KNOWN_AVATAR_SLUGS.has(avatar)) return `/static/avatars/${avatar}.png`;
+  if (SIMPLE_AVATAR_TOKEN_RE.test(avatar)) {
+    const slug = avatar.toLowerCase();
+    if (KNOWN_AVATAR_SLUGS.has(slug)) return `/static/avatars/${slug}.png`;
+    return toSpriteAvatarUrl(slug);
+  }
+  if (IMAGE_EXTENSION_RE.test(normalizedAvatar)) return normalizedAvatar;
   return null;
 }

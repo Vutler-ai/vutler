@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
+const { normalizeStoredAvatar, buildSpriteAvatar } = require('../lib/avatarPath');
 const { recommendAgents, getDomainAgents } = require('../services/coordinatorPrompt');
 const { ensureWorkspaceDriveSetup } = require('../app/custom/services/provisioning');
 const { syncWorkspacePlan } = require('../services/workspacePlanService');
@@ -207,7 +208,7 @@ router.post('/setup', async (req, res) => {
            RETURNING id, name, username, description, avatar`,
           [tmpl.name, username, workspaceId, tmpl.model || 'gpt-4o-mini',
            tmpl.system_prompt || `You are ${tmpl.name}, an AI agent on Vutler.`,
-           tmpl.avatar || `/sprites/agent-${username}.png`,
+           normalizeStoredAvatar(tmpl.avatar, { username }) || buildSpriteAvatar(username),
            tmpl.description || '']
         );
         if (result.rows.length) createdAgents.push(result.rows[0]);

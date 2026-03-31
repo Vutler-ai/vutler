@@ -8,6 +8,7 @@ import { getAgents, createAgent } from '@/lib/api/endpoints/agents';
 import { getTemplates } from '@/lib/api/endpoints/marketplace';
 import { getTasks } from '@/lib/api/endpoints/tasks';
 import type { Agent, Task, MarketplaceTemplate } from '@/lib/api/types';
+import { getAvatarImageUrl } from '@/lib/avatar';
 import {
   Card,
   CardContent,
@@ -79,6 +80,9 @@ const FALLBACK_AVATAR = '/static/avatars/personal-assistant.png';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getAgentAvatarUrl(agent: Agent): string | null {
+  const directAvatarUrl = getAvatarImageUrl(agent.avatar, agent.name);
+  if (directAvatarUrl) return directAvatarUrl;
+
   // 0. If avatar is a full path (e.g. /static/avatars/andrea.png), use directly
   if (agent.avatar && (agent.avatar.startsWith('/static/') || agent.avatar.startsWith('/sprites/') || /\.(png|svg|jpg)$/i.test(agent.avatar))) {
     return agent.avatar;

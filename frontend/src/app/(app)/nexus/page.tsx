@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { getNodes, deployLocal, deployEnterprise } from '@/lib/api/endpoints/nexus';
 import { getClients, createClient, updateClient, deleteClient } from '@/lib/api/endpoints/clients';
 import { getAgents } from '@/lib/api/endpoints/agents';
+import { getAvatarImageUrl } from '@/lib/avatar';
 import type {
   NexusNode,
   NexusStats,
@@ -83,13 +84,17 @@ function Toggle({ on, onToggle, color = '#3b82f6' }: { on: boolean; onToggle: ()
 // ─── Agent Avatar ─────────────────────────────────────────────────────────────
 
 function AgentAvatar({ agent, size = 8 }: { agent: Agent; size?: number }) {
+  const [imgError, setImgError] = useState(false);
   const initials = agent.name.slice(0, 2).toUpperCase();
-  if (agent.avatar) {
+  const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
+
+  if (imageUrl) {
     return (
       <img
-        src={agent.avatar}
+        src={imageUrl}
         alt={agent.name}
         className={`w-${size} h-${size} rounded-full object-cover shrink-0`}
+        onError={() => setImgError(true)}
       />
     );
   }

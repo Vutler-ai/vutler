@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { requireApiKey } = require('../lib/auth');
 const pool = require('../lib/vaultbrix');
+const { normalizeStoredAvatar, buildSpriteAvatar } = require('../lib/avatarPath');
 const {
   createApiKey,
   listApiKeys,
@@ -523,7 +524,7 @@ async function createEnterpriseAgentForNode({ workspaceId, nodeId, body = {} }) 
       model,
       temperature,
       max_tokens,
-      avatar,
+      normalizeStoredAvatar(avatar, { username }) || buildSpriteAvatar(username || name),
       capabilities,
     ]
   );

@@ -4,6 +4,7 @@
  */
 const express = require("express");
 const pool = require("../lib/vaultbrix");
+const { normalizeStoredAvatar, buildSpriteAvatar } = require("../lib/avatarPath");
 const {
   normalizeCapabilities,
   splitCapabilities,
@@ -218,18 +219,20 @@ router.post("/", async (req, res) => {
     let finalEmail = email || null;
     if (!finalEmail) {
       try {
-        finalEmail = await generateAgentEmail(username, ws);
+      finalEmail = await generateAgentEmail(username, ws);
       } catch (emailErr) {
         console.warn("[AGENTS] Email auto-generation failed (non-fatal):", emailErr.message);
       }
     }
+
+    const normalizedAvatar = normalizeStoredAvatar(req.body.avatar, { username });
 
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
-       `/sprites/agent-${username}.png`, ws, capabilities]
+       normalizedAvatar || buildSpriteAvatar(username), ws, capabilities]
     );
 
     // Register email route for inbound routing
@@ -278,6 +281,12 @@ router.put("/:id", async (req, res) => {
         return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
       }
       fields.capabilities = normalizedCapabilities;
+    }
+
+    if (fields.avatar !== undefined) {
+      fields.avatar = normalizeStoredAvatar(fields.avatar, {
+        username: fields.username || ex.username || ex.name,
+      });
     }
 
     const allowed = ["name","username","email","status","type","role","mbti","model","provider","description","system_prompt","temperature","max_tokens","avatar","capabilities"];

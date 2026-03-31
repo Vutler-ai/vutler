@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { authFetch } from '@/lib/authFetch';
+import { getAvatarImageUrl } from '@/lib/avatar';
 
 const DOMAIN_CARDS = [
   { id: 'marketing', icon: '📣', label: 'Marketing & Contenu' },
@@ -223,9 +224,9 @@ export default function OnboardingPage() {
                   >
                     {/* Avatar */}
                     <div className="w-12 h-12 rounded-full overflow-hidden bg-[#0f172a] flex-shrink-0 flex items-center justify-center">
-                      {agent.avatar || agent.sprite ? (
+                      {getAvatarImageUrl(agent.avatar ?? agent.sprite, agent.name) ? (
                         <img
-                          src={agent.avatar ?? agent.sprite}
+                          src={getAvatarImageUrl(agent.avatar ?? agent.sprite, agent.name) ?? undefined}
                           alt={agent.name}
                           className="w-full h-full object-cover"
                         />
