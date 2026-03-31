@@ -82,7 +82,7 @@ async function loadAgents(workspaceId = DEFAULT_WORKSPACE) {
   if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
 
   const result = await pool.query(
-    `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id
+    `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id, capabilities
      FROM ${SCHEMA}.agents
      WHERE workspace_id = $1 AND COALESCE(status, 'online') IN ('online', 'active')`,
     [ws]
@@ -97,7 +97,7 @@ async function getChannelAgents(channelId, workspaceId = DEFAULT_WORKSPACE) {
   const result = await pool.query(
     `SELECT cm.user_id, cm.role AS channel_role,
             a.id, a.name, a.username, a.role, a.model, a.provider, a.system_prompt,
-            a.temperature, a.max_tokens, a.workspace_id
+            a.temperature, a.max_tokens, a.workspace_id, a.capabilities
      FROM ${SCHEMA}.chat_channel_members cm
      JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id OR a.username = cm.user_id
      WHERE cm.channel_id = $1 AND a.workspace_id = $2`,
@@ -454,6 +454,7 @@ async function handleMessage(message) {
       id: targetAgent.id,
       model: targetAgent.model,
       provider: targetAgent.provider,
+      capabilities: Array.isArray(targetAgent.capabilities) ? targetAgent.capabilities : [],
       system_prompt: soul,
       temperature: parseFloat(targetAgent.temperature) || 0.7,
       max_tokens: targetAgent.max_tokens || 4096,
