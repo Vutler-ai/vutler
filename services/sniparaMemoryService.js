@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { callSniparaTool } = require('./sniparaResolver');
 const {
   normalizeType,
@@ -466,6 +468,18 @@ async function loadWorkspaceSoulDocument({ db, workspaceId }) {
 
     const text = typeof doc === 'string' ? doc.trim() : JSON.stringify(doc || '').trim();
     if (text) return text;
+  }
+
+  const localSoulPaths = [
+    path.resolve(__dirname, '..', 'SOUL.md'),
+    path.resolve(process.cwd(), 'SOUL.md'),
+  ];
+
+  for (const localPath of localSoulPaths) {
+    try {
+      const text = fs.readFileSync(localPath, 'utf8').trim();
+      if (text) return text;
+    } catch (_) {}
   }
 
   return '';
