@@ -273,7 +273,11 @@ export interface PlanLimits {
   agents?: number;
   tokens?: number;
   storage?: string;
+  storage_gb?: number;
   nexusNodes?: number;
+  nexus_nodes?: number;
+  socialPosts?: number;
+  social_posts_month?: number;
 }
 
 export interface Plan {
@@ -303,6 +307,7 @@ export interface SubscriptionUsage {
   agents: { used: number; limit: number | null };
   tokens: { used: number; limit: number | null };
   storage_gb: { used: number; limit: number | null };
+  social_posts?: { used: number; limit: number | null; addon?: number | null };
 }
 
 export interface CheckoutPayload {

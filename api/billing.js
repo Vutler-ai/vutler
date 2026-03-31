@@ -32,6 +32,32 @@ const ADDONS = [
   { id: 'social_posts_2000',   label: '2000 Social Posts',   price: 4900, unit: '2000 posts/month', posts: 2000 },
 ];
 
+function normalizeBillingLimits(limits = {}) {
+  const storageGb = limits.storage_gb;
+  const nexusNodes = limits.nexus_nodes;
+  const socialPosts = limits.social_posts_month;
+
+  return {
+    ...limits,
+    storage_gb: storageGb,
+    storage: storageGb === undefined ? undefined : (storageGb === -1 ? 'Unlimited' : `${storageGb} GB`),
+    nexus_nodes: nexusNodes,
+    nexusNodes,
+    social_posts_month: socialPosts ?? 0,
+    socialPosts: socialPosts ?? 0,
+  };
+}
+
+function normalizeBillingPlanEntry(id, plan) {
+  return {
+    id,
+    label: plan.label,
+    price: plan.price,
+    features: plan.features,
+    limits: normalizeBillingLimits(plan.limits),
+  };
+}
+
 async function applyWorkspacePlan(workspaceId, planId, options = {}) {
   if (!pool || !workspaceId) return null;
   return syncWorkspacePlan({
@@ -51,7 +77,7 @@ router.get('/billing/plans', (req, res) => {
     // Skip enterprise/beta (custom pricing, not shown in self-serve grid)
     // but always include 'free' regardless of price
     if (id !== 'free' && plan.price && plan.price.monthly === 0 && plan.price.yearly === 0) continue;
-    const entry = { id, label: plan.label, price: plan.price, features: plan.features, limits: plan.limits };
+    const entry = normalizeBillingPlanEntry(id, plan);
     if (plan.tier === 'free' || plan.tier === 'office') grouped.office.push(entry);
     else if (plan.tier === 'agents') grouped.agents.push(entry);
     else if (plan.tier === 'full')   grouped.full.push(entry);
@@ -91,6 +117,7 @@ router.get('/billing/subscription', async (req, res) => {
     }
 
     const planDef = PLANS[planId] || PLANS.free;
+    const normalizedLimits = normalizeBillingLimits(planDef.limits);
 
     // ── Gather real usage data ────────────────────────────────────────────────
     let agentCount = 0;
@@ -155,12 +182,12 @@ router.get('/billing/subscription', async (req, res) => {
       } catch (_) {}
     }
 
-    const socialPostsLimit = (planDef.limits.social_posts_month ?? 0) + socialPostsAddon;
+    const socialPostsLimit = (normalizedLimits.social_posts_month ?? 0) + socialPostsAddon;
 
     const usage = {
-      agents:       { used: agentCount,      limit: planDef.limits.agents     ?? 1 },
-      tokens:       { used: tokenUsed,       limit: planDef.limits.tokens_month ?? planDef.limits.tokens ?? 50000 },
-      storage_gb:   { used: storageGbUsed,   limit: planDef.limits.storage_gb ?? 1 },
+      agents:       { used: agentCount,      limit: normalizedLimits.agents ?? 1 },
+      tokens:       { used: tokenUsed,       limit: normalizedLimits.tokens_month ?? normalizedLimits.tokens ?? 50000 },
+      storage_gb:   { used: storageGbUsed,   limit: normalizedLimits.storage_gb ?? 1 },
       social_posts: { used: socialPostsUsed, limit: socialPostsLimit, addon: socialPostsAddon },
     };
 
@@ -180,7 +207,7 @@ router.get('/billing/subscription', async (req, res) => {
           cancelAtPeriodEnd: false,
           stripeSubscriptionId: null,
           stripeCustomerId: null,
-          limits: planDef.limits,
+          limits: normalizedLimits,
           usage,
         },
       });
@@ -200,7 +227,7 @@ router.get('/billing/subscription', async (req, res) => {
         cancelAtPeriodEnd: subRow.cancel_at_period_end,
         stripeSubscriptionId: subRow.stripe_subscription_id,
         stripeCustomerId: subRow.stripe_customer_id,
-        limits: planDef.limits,
+        limits: normalizedLimits,
         usage,
       },
     });
@@ -331,8 +358,8 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
           const trialKey = process.env.VUTLER_TRIAL_OPENAI_KEY;
           if (trialKey) {
             await pool.query(
-              `INSERT INTO ${SCHEMA}.workspace_llm_providers (id, workspace_id, name, provider, api_key_encrypted, is_active, created_at)
-               VALUES (gen_random_uuid(), $1, 'Vutler Credits', 'vutler-trial', $2, true, NOW())
+              `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
+               VALUES ($1, 'vutler-trial', $2, 'https://api.openai.com/v1', TRUE, FALSE, '{"display_name":"Vutler Credits","source":"credits"}'::jsonb)
                ON CONFLICT DO NOTHING`,
               [workspaceId, trialKey]
             );

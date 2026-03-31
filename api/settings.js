@@ -89,6 +89,7 @@ async function readSettingsKV(wsId) {
     language: get('language', 'fr'),
     logo_url: get('logo_url', null) || null,
     default_provider: get('default_provider', ''),
+    drive_root: get('drive_root', '/projects/Vutler'),
     llm_providers: (typeof map['llm_providers'] === 'object' && map['llm_providers'] !== null && !('value' in map['llm_providers'])) ? map['llm_providers'] : {},
     snipara_api_key: get('snipara_api_key', null) || null,
     snipara_api_url: get('snipara_api_url', null) || null,
@@ -144,6 +145,7 @@ router.get('/', async (req, res) => {
         language: r0.language || 'fr',
         logo_url: r0.logo_url || null,
         default_provider: r0.default_provider || '',
+        drive_root: r0.drive_root || '/projects/Vutler',
         llm_providers: r0.llm_providers || {},
         updated_at: r0.updated_at || null,
       };
@@ -164,6 +166,7 @@ router.get('/', async (req, res) => {
       timezone: row.timezone || 'Europe/Zurich',
       language: row.language || 'fr',
       logo_url: row.logo_url || null,
+      drive_root: row.drive_root || '/projects/Vutler',
       llm_providers: masked,
       snipara_api_key: row.snipara_api_key ? maskKey(row.snipara_api_key) : null,
       snipara_api_url: row.snipara_api_url || null,
@@ -203,6 +206,7 @@ router.put('/', async (req, res) => {
     const language = body.language || extract('language');
     const logo_url = body.logo_url || extract('logo_url');
     const default_provider = body.default_provider || extract('default_provider');
+    const drive_root = body.drive_root || extract('drive_root');
     const snipara_api_key = body.snipara_api_key || extract('snipara_api_key');
     const snipara_api_url = body.snipara_api_url || extract('snipara_api_url');
     const snipara_project_id = body.snipara_project_id || extract('snipara_project_id');
@@ -220,6 +224,7 @@ router.put('/', async (req, res) => {
         language,
         logo_url,
         default_provider,
+        drive_root,
         snipara_api_key,
         snipara_api_url,
         snipara_project_id,
@@ -241,9 +246,10 @@ router.put('/', async (req, res) => {
              language=COALESCE($4,language),
              logo_url=COALESCE($5,logo_url),
              default_provider=COALESCE($6,default_provider),
+             drive_root=COALESCE($7,drive_root),
              updated_at=NOW()
-         WHERE workspace_id=$7`,
-        [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, wsId]
+         WHERE workspace_id=$8`,
+        [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, drive_root || null, wsId]
       );
     }
     clearSniparaConfigCache(wsId);

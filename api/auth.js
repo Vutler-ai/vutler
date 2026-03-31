@@ -609,13 +609,11 @@ async function registerHandler(req, res) {
         const trialDays = parseInt(process.env.VUTLER_TRIAL_EXPIRY_DAYS, 10) || 7;
         const expiresAt = new Date(Date.now() + trialDays * 86400000).toISOString();
 
-        // SECURITY: encrypt trial key before storing (audit 2026-03-29)
-        const encryptedTrialKey = cryptoSvc.encrypt(trialKey);
         await client.query(
-          `INSERT INTO ${SCHEMA}.workspace_llm_providers (id, workspace_id, name, provider, api_key_encrypted, is_active, created_at)
-           VALUES (gen_random_uuid(), $1, 'Vutler Trial', 'vutler-trial', $2, true, NOW())
+          `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
+           VALUES ($1, 'vutler-trial', $2, 'https://api.openai.com/v1', TRUE, FALSE, '{"display_name":"Vutler Trial","source":"trial"}'::jsonb)
            ON CONFLICT DO NOTHING`,
-          [workspaceId, encryptedTrialKey]
+          [workspaceId, trialKey]
         );
 
         const trialSettings = [

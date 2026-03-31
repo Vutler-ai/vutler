@@ -7,6 +7,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { getPlan, normalizePlanId } = require('../packages/core/middleware/featureGate');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -335,13 +336,8 @@ async function checkSocialPostsQuota(workspaceId) {
         `SELECT value FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'billing_plan'`,
         [workspaceId]
       );
-      const plan = settingsRows[0]?.value?.plan || settingsRows[0]?.value || 'free';
-      const SOCIAL_LIMITS = {
-        free: 0, office_starter: 0, office_team: 0,
-        agents_starter: 10, agents_pro: 50,
-        full: 100, enterprise: 500, beta: 100,
-      };
-      planLimit = SOCIAL_LIMITS[plan] || 0;
+      const plan = normalizePlanId(settingsRows[0]?.value?.plan || settingsRows[0]?.value || 'free');
+      planLimit = getPlan(plan).limits.social_posts_month || 0;
     } catch (_) {}
 
     // Check for addon packs

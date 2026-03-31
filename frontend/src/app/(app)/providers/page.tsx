@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useCallback } from "react";
 import { useApi } from "@/hooks/use-api";
 import { apiFetch } from "@/lib/api/client";
@@ -459,9 +460,9 @@ function AddProviderDialog({
           {form.provider === "codex" ? (
             <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-lg text-sm">
               Codex uses your ChatGPT subscription. Make sure you&apos;ve connected ChatGPT in{" "}
-              <a href="/integrations" className="underline font-medium hover:text-emerald-300">
+              <Link href="/integrations" className="underline font-medium hover:text-emerald-300">
                 Integrations
-              </a>.
+              </Link>.
             </div>
           ) : (
             <div className="space-y-1.5">

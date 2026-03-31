@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import Link from "next/link";
 import { useApi } from "@/hooks/use-api";
 import { getPlans, getSubscription, checkout, portal } from "@/lib/api/endpoints/billing";
 import type { Plan, PlansResponse, Subscription, SubscriptionUsage } from "@/lib/api/types";
@@ -22,7 +23,7 @@ const FALLBACK_PLANS: PlansResponse = {
       label: "Free",
       price: { monthly: 0, yearly: 0 },
       features: [],
-      limits: { agents: 1, storage: "1 GB" },
+      limits: { agents: 1, storage: "1 GB", socialPosts: 0 },
     },
     {
       id: "office_starter",
@@ -40,7 +41,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Pixel Office",
         "LLM: Bring Your Own Key",
       ],
-      limits: { storage: "10 GB" },
+      limits: { storage: "10 GB", socialPosts: 0 },
     },
     {
       id: "office_team",
@@ -58,7 +59,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Pixel Office",
         "LLM: Bring Your Own Key",
       ],
-      limits: { storage: "100 GB" },
+      limits: { storage: "100 GB", socialPosts: 0 },
     },
   ],
   agents: [
@@ -79,7 +80,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Providers & dashboard",
         "LLM: Bring Your Own Key",
       ],
-      limits: { agents: 25, nexusNodes: 2, storage: "10 GB" },
+      limits: { agents: 25, nexusNodes: 2, storage: "10 GB", socialPosts: 10 },
     },
     {
       id: "agents_pro",
@@ -99,7 +100,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "3 enterprise Nexus nodes",
         "LLM: Bring Your Own Key",
       ],
-      limits: { agents: 100, nexusNodes: 10, storage: "100 GB" },
+      limits: { agents: 100, nexusNodes: 10, storage: "100 GB", socialPosts: 50 },
     },
   ],
   full: [
@@ -117,7 +118,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "5 enterprise Nexus nodes",
         "LLM: Bring Your Own Key",
       ],
-      limits: { agents: 100, nexusNodes: 10, storage: "100 GB" },
+      limits: { agents: 100, nexusNodes: 10, storage: "100 GB", socialPosts: 100 },
     },
     {
       id: "enterprise",
@@ -149,6 +150,20 @@ function planBadgeClass(status: string | undefined): string {
   if (status === "past_due") return "border-yellow-500/30 text-yellow-400 bg-yellow-500/10";
   if (status === "canceled") return "border-red-500/30 text-red-400 bg-red-500/10";
   return "border-[rgba(255,255,255,0.1)] text-[#9ca3af] bg-transparent";
+}
+
+function resolveStorageLabel(plan: Plan): string | null {
+  if (plan.limits.storage) return plan.limits.storage;
+  if (plan.limits.storage_gb === undefined) return null;
+  return plan.limits.storage_gb === -1 ? "Unlimited" : `${plan.limits.storage_gb} GB`;
+}
+
+function resolveNexusNodes(plan: Plan): number | undefined {
+  return plan.limits.nexusNodes ?? plan.limits.nexus_nodes;
+}
+
+function resolveSocialPosts(plan: Plan): number | undefined {
+  return plan.limits.socialPosts ?? plan.limits.social_posts_month;
 }
 
 // ─── Usage Meter ──────────────────────────────────────────────────────────────
@@ -260,6 +275,13 @@ function CurrentPlanCard({
             limit={usage.storage_gb.limit}
             unit=" GB"
           />
+          {usage.social_posts && (
+            <UsageMeter
+              label="Social posts"
+              used={usage.social_posts.used}
+              limit={usage.social_posts.limit}
+            />
+          )}
         </CardContent>
       )}
 
@@ -294,6 +316,9 @@ function PlanCard({
   const isFree = plan.id === "free";
   const price = interval === "yearly" ? plan.price.yearly : plan.price.monthly;
   const isLoading = loadingId === plan.id;
+  const storageLabel = resolveStorageLabel(plan);
+  const nexusNodes = resolveNexusNodes(plan);
+  const socialPosts = resolveSocialPosts(plan);
 
   // For -1 limits (enterprise unlimited), display "Unlimited"
   function formatLimit(val: number | undefined): string {
@@ -350,17 +375,23 @@ function PlanCard({
               <p className="text-[#6b7280] text-xs">Agents</p>
             </div>
           )}
-          {plan.limits.nexusNodes !== undefined && (
+          {nexusNodes !== undefined && (
             <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-              <p className="text-white font-semibold text-sm">{formatLimit(plan.limits.nexusNodes)}</p>
+              <p className="text-white font-semibold text-sm">{formatLimit(nexusNodes)}</p>
               <p className="text-[#6b7280] text-xs">Nexus Nodes</p>
             </div>
           )}
           {/* Tokens/mo removed — LLM is BYOK, no plan-based token limits */}
-          {plan.limits.storage && (
+          {storageLabel && (
             <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
-              <p className="text-white font-semibold text-sm">{plan.limits.storage}</p>
+              <p className="text-white font-semibold text-sm">{storageLabel}</p>
               <p className="text-[#6b7280] text-xs">Storage</p>
+            </div>
+          )}
+          {socialPosts !== undefined && socialPosts > 0 && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{formatLimit(socialPosts)}</p>
+              <p className="text-[#6b7280] text-xs">Social Posts</p>
             </div>
           )}
         </div>
@@ -464,12 +495,12 @@ function SocialPostPacks() {
               Purchase post packs to let your agents publish to LinkedIn, X, Instagram, and more via Post for Me.
             </p>
           </div>
-          <a
+          <Link
             href="/integrations"
             className="text-sm text-[#3b82f6] hover:underline shrink-0"
           >
             Manage accounts →
-          </a>
+          </Link>
         </div>
       </CardHeader>
       <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5 space-y-4">
@@ -530,6 +561,114 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "agents", label: "Agents" },
   { key: "full", label: "Full Platform" },
 ];
+
+interface CreditPack {
+  id: string;
+  label: string;
+  tokens: number;
+  price_display: string;
+  price_cents: number;
+}
+
+function CreditPacks() {
+  const { data, isLoading } = useApi<{ data: CreditPack[] }>(
+    "/api/v1/billing/credits",
+    async () => {
+      const res = await fetch("/api/v1/billing/credits", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load LLM credit packs");
+      return res.json();
+    }
+  );
+
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  const packs = data?.data ?? [];
+
+  const handleCheckout = async (packId: string) => {
+    setLoadingId(packId);
+    setError("");
+    try {
+      const res = await fetch("/api/v1/billing/credits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ pack_id: packId }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      const checkoutUrl = payload?.data?.checkout_url;
+      if (!res.ok || !checkoutUrl) {
+        throw new Error(payload?.error || "Failed to start credits checkout");
+      }
+      window.location.href = checkoutUrl;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start credits checkout");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  return (
+    <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <CardTitle className="text-white">LLM Credits</CardTitle>
+            <p className="text-sm text-[#9ca3af] mt-1">
+              Buy managed Vutler credits if you do not want to bring your own provider key.
+            </p>
+          </div>
+          <Link href="/providers" className="text-sm text-[#3b82f6] hover:underline shrink-0">
+            Manage providers →
+          </Link>
+        </div>
+      </CardHeader>
+      <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5 space-y-4">
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+        {isLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-40 rounded-xl bg-[#1f2028]" />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {packs.map((pack) => (
+              <div
+                key={pack.id}
+                className="rounded-xl border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.14)] p-5 text-center"
+              >
+                <p className="text-white font-semibold text-lg">{pack.label}</p>
+                <p className="text-[#9ca3af] text-sm mt-1">{pack.tokens.toLocaleString()} tokens</p>
+                <div className="mt-3">
+                  <span className="text-2xl font-bold text-white">{pack.price_display}</span>
+                </div>
+                <Button
+                  onClick={() => handleCheckout(pack.id)}
+                  disabled={loadingId === pack.id}
+                  className="w-full mt-4 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-60"
+                >
+                  {loadingId === pack.id ? "Redirecting…" : "Buy Credits"}
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-[#6b7280] leading-relaxed">
+          Already have an API key?{" "}
+          <Link href="/providers" className="text-[#3b82f6] hover:underline">
+            Connect it in Providers
+          </Link>{" "}
+          — tokens are unlimited when you use your own key.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -606,39 +745,7 @@ export default function BillingPage() {
         />
       )}
 
-      {/* LLM Credits */}
-      <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
-        <CardHeader>
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <CardTitle className="text-white">LLM Credits</CardTitle>
-              <p className="text-sm text-[#9ca3af] mt-1">
-                Bring your own OpenRouter or Anthropic key, or purchase credits to use Vutler&apos;s managed LLM pool.
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs bg-[#1e293b] text-[#64748b] border border-[rgba(255,255,255,0.08)] px-2 py-1 rounded-md">
-                Coming soon
-              </span>
-              <Button
-                className="bg-[#3b82f6] hover:bg-[#2563eb] opacity-50 cursor-not-allowed"
-                disabled
-              >
-                Buy Credits — $10 / 1M tokens
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-4">
-          <p className="text-xs text-[#6b7280] leading-relaxed">
-            Already have an API key?{" "}
-            <a href="/settings/providers" className="text-[#3b82f6] hover:underline">
-              Connect it in Settings → Providers
-            </a>{" "}
-            — tokens are unlimited when you use your own key.
-          </p>
-        </CardContent>
-      </Card>
+      <CreditPacks />
 
       {/* Social Media Post Packs */}
       <SocialPostPacks />

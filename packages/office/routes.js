@@ -63,7 +63,7 @@ mount('/calendar', 'calendar', '../../api/calendar');
 
 // ── Integrations (relative: /) ──────────────────────────────────────────────
 mount('/integrations', 'integrations', '../../api/integrations');
-mount('/providers', 'integrations', '../../api/providers');
+mount('/providers', 'providers', '../../api/providers');
 
 // ── Jira ────────────────────────────────────────────────────────────────────
 mount('/jira', 'integrations', '../../api/jira');
