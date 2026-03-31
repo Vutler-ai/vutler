@@ -13,6 +13,7 @@ const https = require('https');
 const router = express.Router();
 const coordinatorPrompt = require('../services/coordinatorPrompt');
 const { CryptoService } = require('../services/crypto');
+const { syncWorkspacePlan } = require('../services/workspacePlanService');
 const cryptoSvc = new CryptoService();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
@@ -641,6 +642,7 @@ async function registerHandler(req, res) {
     }
 
     let sniparaProvisioning = { provisioned: false, skipped: true, reason: 'not_attempted' };
+    let driveProvisioning = { provisioned: false, skipped: true, reason: 'not_attempted' };
     if (workspaceMeta) {
       try {
         const { provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
@@ -658,6 +660,30 @@ async function registerHandler(req, res) {
           reason: provisionErr.message,
         };
       }
+
+      try {
+        const { ensureWorkspaceDriveSetup } = require('../app/custom/services/provisioning');
+        const drive = await ensureWorkspaceDriveSetup(workspaceMeta.id);
+        await syncWorkspacePlan({
+          workspaceId: workspaceMeta.id,
+          planId: 'free',
+          source: 'auth.register',
+          status: 'active',
+        });
+        driveProvisioning = {
+          provisioned: true,
+          skipped: false,
+          bucket: drive.bucketName,
+          drive_root: drive.driveRoot,
+        };
+      } catch (driveErr) {
+        console.warn('[AUTH] Drive provisioning warning:', driveErr.message);
+        driveProvisioning = {
+          provisioned: false,
+          skipped: false,
+          reason: driveErr.message,
+        };
+      }
     }
 
     const token = generateJWT(user);
@@ -667,6 +693,7 @@ async function registerHandler(req, res) {
       token,
       user: { id: user.id, email: user.email, name: user.name, role: user.role },
       snipara_provisioning: sniparaProvisioning,
+      drive_provisioning: driveProvisioning,
     });
   } catch (err) {
     console.error('[AUTH] Register error:', err.message);

@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { PLANS } = require('../packages/core/middleware/featureGate');
+const { syncWorkspacePlan, normalizePlanId } = require('../services/workspacePlanService');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -30,6 +31,19 @@ const ADDONS = [
   { id: 'social_posts_500',    label: '500 Social Posts',    price: 1900, unit: '500 posts/month',  posts: 500 },
   { id: 'social_posts_2000',   label: '2000 Social Posts',   price: 4900, unit: '2000 posts/month', posts: 2000 },
 ];
+
+async function applyWorkspacePlan(workspaceId, planId, options = {}) {
+  if (!pool || !workspaceId) return null;
+  return syncWorkspacePlan({
+    workspaceId,
+    planId: normalizePlanId(planId),
+    source: options.source || 'billing',
+    status: options.status || 'active',
+    interval: options.interval || null,
+    stripeCustomerId: options.stripeCustomerId || null,
+    stripeSubscriptionId: options.stripeSubscriptionId || null,
+  });
+}
 
 router.get('/billing/plans', (req, res) => {
   const grouped = { office: [], agents: [], full: [], addons: ADDONS };
@@ -351,6 +365,13 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
           stripe_customer_id=$4,stripe_subscription_id=$5,current_period_start=NOW(),
           current_period_end=NOW()+INTERVAL '1 month',cancel_at_period_end=false`;
         await pool.query(q, [workspaceId, planId, interval, s.customer, s.subscription]);
+        await applyWorkspacePlan(workspaceId, planId, {
+          source: 'billing.webhook.checkout',
+          status: 'active',
+          interval,
+          stripeCustomerId: s.customer,
+          stripeSubscriptionId: s.subscription,
+        });
       }
     } else if (event.type === 'customer.subscription.updated') {
       const sub = event.data.object;
@@ -367,9 +388,32 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
           `UPDATE ${SCHEMA}.social_media_addons SET status=$1 WHERE stripe_subscription_id=$2`,
           [sub.status === 'active' ? 'active' : 'canceled', sub.id]
         ).catch(() => {});
+        const subRow = (await pool.query(
+          `SELECT workspace_id, plan_id, interval, stripe_customer_id, stripe_subscription_id
+             FROM ${SCHEMA}.workspace_subscriptions
+            WHERE stripe_subscription_id = $1
+            LIMIT 1`,
+          [sub.id]
+        )).rows[0];
+        if (subRow?.workspace_id && subRow?.plan_id) {
+          await applyWorkspacePlan(subRow.workspace_id, subRow.plan_id, {
+            source: 'billing.webhook.subscription_updated',
+            status: sub.status || 'active',
+            interval: subRow.interval,
+            stripeCustomerId: subRow.stripe_customer_id,
+            stripeSubscriptionId: subRow.stripe_subscription_id,
+          });
+        }
       }
     } else if (event.type === 'customer.subscription.deleted') {
       if (pool) {
+        const subRow = (await pool.query(
+          `SELECT workspace_id
+             FROM ${SCHEMA}.workspace_subscriptions
+            WHERE stripe_subscription_id = $1
+            LIMIT 1`,
+          [event.data.object.id]
+        )).rows[0];
         await pool.query(
           `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
@@ -378,6 +422,12 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
           `UPDATE ${SCHEMA}.social_media_addons SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
         ).catch(() => {});
+        if (subRow?.workspace_id) {
+          await applyWorkspacePlan(subRow.workspace_id, 'free', {
+            source: 'billing.webhook.subscription_deleted',
+            status: 'canceled',
+          });
+        }
       }
     } else if (event.type === 'invoice.payment_failed') {
       const invoice = event.data.object;
@@ -431,6 +481,13 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
           stripe_customer_id=$4,stripe_subscription_id=$5,current_period_start=NOW(),
           current_period_end=NOW()+INTERVAL '1 month',cancel_at_period_end=false`;
         await pool.query(q, [workspaceId, planId, interval, s.customer, s.subscription]);
+        await applyWorkspacePlan(workspaceId, planId, {
+          source: 'billing.webhook.checkout_alias',
+          status: 'active',
+          interval,
+          stripeCustomerId: s.customer,
+          stripeSubscriptionId: s.subscription,
+        });
       }
     } else if (event.type === 'customer.subscription.updated') {
       const sub = event.data.object;
@@ -446,9 +503,32 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
           `UPDATE ${SCHEMA}.social_media_addons SET status=$1 WHERE stripe_subscription_id=$2`,
           [sub.status === 'active' ? 'active' : 'canceled', sub.id]
         ).catch(() => {});
+        const subRow = (await pool.query(
+          `SELECT workspace_id, plan_id, interval, stripe_customer_id, stripe_subscription_id
+             FROM ${SCHEMA}.workspace_subscriptions
+            WHERE stripe_subscription_id = $1
+            LIMIT 1`,
+          [sub.id]
+        )).rows[0];
+        if (subRow?.workspace_id && subRow?.plan_id) {
+          await applyWorkspacePlan(subRow.workspace_id, subRow.plan_id, {
+            source: 'billing.webhook.subscription_updated_alias',
+            status: sub.status || 'active',
+            interval: subRow.interval,
+            stripeCustomerId: subRow.stripe_customer_id,
+            stripeSubscriptionId: subRow.stripe_subscription_id,
+          });
+        }
       }
     } else if (event.type === 'customer.subscription.deleted') {
       if (pool) {
+        const subRow = (await pool.query(
+          `SELECT workspace_id
+             FROM ${SCHEMA}.workspace_subscriptions
+            WHERE stripe_subscription_id = $1
+            LIMIT 1`,
+          [event.data.object.id]
+        )).rows[0];
         await pool.query(
           `UPDATE ${SCHEMA}.workspace_subscriptions SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
@@ -457,6 +537,12 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
           `UPDATE ${SCHEMA}.social_media_addons SET status='canceled' WHERE stripe_subscription_id=$1`,
           [event.data.object.id]
         ).catch(() => {});
+        if (subRow?.workspace_id) {
+          await applyWorkspacePlan(subRow.workspace_id, 'free', {
+            source: 'billing.webhook.subscription_deleted_alias',
+            status: 'canceled',
+          });
+        }
       }
     } else if (event.type === 'invoice.payment_failed') {
       const invoice = event.data.object;
@@ -558,6 +644,13 @@ router.post('/billing/change-plan', async (req, res) => {
         `UPDATE ${SCHEMA}.workspace_subscriptions SET plan_id=$1 WHERE workspace_id=$2`,
         [planId, workspaceId]
       );
+      await applyWorkspacePlan(workspaceId, planId, {
+        source: 'billing.change_plan',
+        status: subRow.status || 'active',
+        interval,
+        stripeCustomerId: subRow.stripe_customer_id,
+        stripeSubscriptionId: subRow.stripe_subscription_id,
+      });
     }
 
     res.json({ success: true, data: { planId, label: PLANS[planId].label } });

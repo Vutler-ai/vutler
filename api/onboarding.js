@@ -4,6 +4,8 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const { recommendAgents, getDomainAgents } = require('../services/coordinatorPrompt');
+const { ensureWorkspaceDriveSetup } = require('../app/custom/services/provisioning');
+const { syncWorkspacePlan } = require('../services/workspacePlanService');
 const SCHEMA = 'tenant_vutler';
 
 function getWorkspaceId(req) {
@@ -132,13 +134,15 @@ router.post('/setup', async (req, res) => {
     }
 
     const workspace = await pool.query(
-      `SELECT name, slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
+      `SELECT name, slug, plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
       [workspaceId]
     );
     const workspaceName = workspace.rows[0]?.name || 'Workspace';
     const workspaceSlug = workspace.rows[0]?.slug || workspaceId;
+    const workspacePlan = workspace.rows[0]?.plan || 'free';
 
     let sniparaProvisioning = { provisioned: false, skipped: true, reason: 'not_attempted' };
+    let driveProvisioning = { provisioned: false, skipped: true, reason: 'not_attempted' };
     try {
       const { provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
       sniparaProvisioning = await provisionWorkspaceSnipara({
@@ -153,6 +157,29 @@ router.post('/setup', async (req, res) => {
         provisioned: false,
         skipped: false,
         reason: provisionErr.message,
+      };
+    }
+
+    try {
+      const drive = await ensureWorkspaceDriveSetup(workspaceId);
+      await syncWorkspacePlan({
+        workspaceId,
+        planId: workspacePlan,
+        source: 'onboarding.setup',
+        status: 'active',
+      });
+      driveProvisioning = {
+        provisioned: true,
+        skipped: false,
+        bucket: drive.bucketName,
+        drive_root: drive.driveRoot,
+      };
+    } catch (driveErr) {
+      console.warn('[ONBOARDING] Drive provisioning warning:', driveErr.message);
+      driveProvisioning = {
+        provisioned: false,
+        skipped: false,
+        reason: driveErr.message,
       };
     }
 
@@ -210,6 +237,7 @@ router.post('/setup', async (req, res) => {
         agents_created: createdAgents,
         onboarding_completed: true,
         snipara_provisioning: sniparaProvisioning,
+        drive_provisioning: driveProvisioning,
       },
     });
   } catch (err) {

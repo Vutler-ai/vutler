@@ -106,6 +106,11 @@ function getPlan(planId) {
   return PLANS[planId] || PLANS.free;
 }
 
+function normalizePlanId(planId) {
+  const candidate = String(planId || 'free').toLowerCase();
+  return PLANS[candidate] ? candidate : 'free';
+}
+
 /**
  * Returns the features array for a plan. ['*'] means all features.
  * @param {string} planId
@@ -198,9 +203,18 @@ function gateFeature(featureName) {
             'SELECT value FROM workspace_settings WHERE workspace_id = $1 AND key = $2',
             [workspaceId, 'billing_plan']
           );
-          req.workspacePlan = rows[0]?.value?.plan || 'free';
+          if (rows[0]?.value?.plan) {
+            req.workspacePlan = normalizePlanId(rows[0].value.plan);
+          } else {
+            const workspaceRows = await queryWithWorkspace(
+              workspaceId,
+              'SELECT plan FROM workspaces WHERE id = $1 LIMIT 1',
+              [workspaceId]
+            );
+            req.workspacePlan = normalizePlanId(workspaceRows.rows[0]?.plan || 'free');
+          }
         } catch (_) {
-          req.workspacePlan = 'full'; // Default to full in dev/error
+          req.workspacePlan = 'free';
         }
       }
 
@@ -229,6 +243,7 @@ module.exports = {
   PLANS,
   VALID_PLAN_IDS,
   getPlan,
+  normalizePlanId,
   getAllowedFeatures,
   hasFeature,
   getPlanLimits,

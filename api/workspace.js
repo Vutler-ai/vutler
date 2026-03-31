@@ -3,6 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { getAllowedFeatures, PLANS } = require('../packages/core/middleware/featureGate');
+const { normalizePlanId } = require('../services/workspacePlanService');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -31,7 +32,7 @@ router.get('/', (req, res) => res.json({
 // Returns the workspace plan and its allowed features / Snipara capabilities.
 router.get('/features', async (req, res) => {
   const wsId = req.workspaceId || DEFAULT_WS_ID;
-  let plan = 'full';
+  let plan = 'free';
 
   if (pool) {
     try {
@@ -45,19 +46,21 @@ router.get('/features', async (req, res) => {
         const val = kvResult.rows[0].value;
         // value may be a parsed object (jsonb) or a raw JSON string
         const parsed = typeof val === 'string' ? JSON.parse(val) : val;
-        if (parsed && parsed.plan) plan = parsed.plan;
+        if (parsed && parsed.plan) plan = normalizePlanId(parsed.plan);
       } else {
-        // Fall back to single-row schema with a dedicated 'plan' column
-        const colResult = await pool.query(
-          `SELECT plan FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`,
+        const workspaceResult = await pool.query(
+          `SELECT plan
+             FROM ${SCHEMA}.workspaces
+            WHERE id = $1
+            LIMIT 1`,
           [wsId]
         );
-        if (colResult.rows.length > 0 && colResult.rows[0].plan) {
-          plan = colResult.rows[0].plan;
+        if (workspaceResult.rows.length > 0 && workspaceResult.rows[0].plan) {
+          plan = normalizePlanId(workspaceResult.rows[0].plan);
         }
       }
     } catch (err) {
-      console.error('[WORKSPACE] features: DB error, defaulting to full plan:', err.message);
+      console.error('[WORKSPACE] features: DB error, defaulting to free plan:', err.message);
     }
   }
 
