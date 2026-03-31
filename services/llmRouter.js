@@ -842,7 +842,7 @@ async function chat(agent, messages, db, opts = {}) {
     effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }
   if (Array.isArray(agentSkills) && agentSkills.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email')))) {
-    effectiveSystemPrompt += '\n\nWhen you create or update a file, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. If a direct webViewLink or external URL is available, include it too.';
+    effectiveSystemPrompt += '\n\nWhen you create or update a file, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is /projects/Vutler. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under /projects/Vutler instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.';
   }
 
   const attempts = [

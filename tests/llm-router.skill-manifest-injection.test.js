@@ -110,7 +110,7 @@ describe('llmRouter manifest-backed skill tool injection', () => {
         expect.objectContaining({
           function: expect.objectContaining({
             parameters: expect.objectContaining({
-              required: ['path', 'content'],
+              required: ['content'],
             }),
           }),
         }),

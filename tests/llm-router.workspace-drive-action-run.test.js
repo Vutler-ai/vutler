@@ -110,9 +110,10 @@ describe('llmRouter workspace drive action runs', () => {
                 type: 'object',
                 properties: {
                   path: { type: 'string' },
+                  title: { type: 'string' },
                   content: { type: 'string' },
                 },
-                required: ['path', 'content'],
+                required: ['content'],
               },
             },
           },

@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const s3 = require('../../s3Storage');
+const { resolveWorkspaceDriveWritePath } = require('../../drivePlacementPolicy');
 
 function sanitizeKey(input) {
   const normalized = path.posix.normalize(String(input || '')).replace(/\\/g, '/');
@@ -48,7 +49,7 @@ class WorkspaceDriveAdapter {
       case 'write_text':
       case 'create':
       case 'update':
-        return this._writeText(workspaceId, params);
+        return this._writeText(workspaceId, params, context.skillKey);
       case 'move':
         return this._move(workspaceId, params);
       case 'delete':
@@ -133,8 +134,12 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _writeText(workspaceId, params) {
-    const key = sanitizeKey(params.path || params.filePath || params.targetPath);
+  async _writeText(workspaceId, params, skillKey = 'workspace_drive_write') {
+    const resolved = resolveWorkspaceDriveWritePath({
+      skillKey,
+      params,
+    });
+    const key = sanitizeKey(resolved.path || '');
     if (!key) return { success: false, error: 'path is required' };
 
     const content = params.content || params.body || '';
@@ -149,6 +154,12 @@ class WorkspaceDriveAdapter {
         name: key.split('/').pop(),
         size: Buffer.byteLength(String(content), 'utf8'),
         mimeType: contentType,
+        placement: {
+          root: '/projects/Vutler',
+          folder: resolved.folder ? `/${sanitizeKey(resolved.folder)}` : null,
+          defaulted: resolved.defaulted,
+          reason: resolved.reason,
+        },
       },
     };
   }
