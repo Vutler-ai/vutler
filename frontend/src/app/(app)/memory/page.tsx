@@ -108,8 +108,8 @@ function WorkspaceKnowledgeSection() {
     <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
       <SectionHeader
         icon={<BookOpen className="w-4 h-4" />}
-        title="Workspace Knowledge"
-        subtitle="Global instructions shared with all agents — SOUL.md (scope: platform-standards)"
+        title="Workspace Shared Instructions"
+        subtitle="Shared system instructions loaded into every agent. This is the workspace-level SOUL.md."
       />
 
       {isLoading ? (
@@ -126,6 +126,10 @@ function WorkspaceKnowledgeSection() {
           className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[200px] font-mono text-sm focus:border-blue-500/50"
         />
       )}
+
+      <p className="mt-3 text-xs text-[#6b7280] leading-relaxed">
+        This content is shared across agents in the workspace. Agent-specific soul/identity docs live inside each agent memory screen.
+      </p>
 
       <div className="flex items-center justify-between mt-3">
         {data?.updatedAt && (
@@ -306,7 +310,7 @@ function SharedKnowledgeSection() {
     <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
       <SectionHeader
         icon={<Layers className="w-4 h-4" />}
-        title="Shared Knowledge"
+        title="Role-Specific Knowledge"
         subtitle="Template-scoped memories shared across agents with the same role"
       />
 

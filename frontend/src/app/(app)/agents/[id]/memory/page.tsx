@@ -242,6 +242,26 @@ function MemoryCard({ memory, canPromote, onDelete, onPromote }: MemoryCardProps
 function ContextPanel({ context }: { context: AgentContext | undefined; isLoading: boolean }) {
   const [soulExpanded, setSoulExpanded] = useState(false);
 
+  function parseSoulDoc(value: string | undefined) {
+    if (!value) return { title: 'Agent soul', content: '' };
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('{')) return { title: 'Agent soul', content: trimmed };
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed?.content === 'string') {
+        return {
+          title: parsed.path ? `Agent soul · ${parsed.path}` : 'Agent soul',
+          content: parsed.content.trim(),
+        };
+      }
+    } catch {
+      // fall through to raw text
+    }
+
+    return { title: 'Agent soul', content: trimmed };
+  }
+
   if (!context) {
     return (
       <div className="space-y-3">
@@ -249,6 +269,8 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
       </div>
     );
   }
+
+  const soulDoc = parseSoulDoc(context.soul);
 
   return (
     <div className="space-y-4">
@@ -294,24 +316,29 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
 
       {context.context && (
         <div className="bg-[#0e0f1a] rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider mb-2">Context</h3>
+          <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider mb-2">Agent context</h3>
           <p className="text-xs text-[#9ca3af] leading-relaxed">{context.context}</p>
-          <p className="text-[11px] text-[#4b5563] mt-2">Internal memories stay available to agents but are hidden from this screen.</p>
+          <p className="text-[11px] text-[#4b5563] mt-2">
+            Workspace shared instructions live on the workspace memory screen. This panel shows the agent-specific soul / identity doc.
+          </p>
         </div>
       )}
 
-      {context.soul && (
+      {soulDoc.content && (
         <div className="bg-[#0e0f1a] rounded-xl p-4">
           <button
             onClick={() => setSoulExpanded(x => !x)}
             className="flex items-center justify-between w-full"
           >
-            <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider">Soul doc</h3>
+            <div className="text-left">
+              <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider">{soulDoc.title}</h3>
+              <p className="text-[11px] text-[#4b5563] mt-1">Loaded from the agent's own Snipara doc, not the workspace shared instructions.</p>
+            </div>
             <span className="text-[#4b5563] text-xs">{soulExpanded ? 'Hide' : 'Show'}</span>
           </button>
           {soulExpanded && (
             <pre className="mt-3 text-xs text-[#6b7280] leading-relaxed whitespace-pre-wrap max-h-48 overflow-y-auto">
-              {context.soul}
+              {soulDoc.content}
             </pre>
           )}
         </div>
