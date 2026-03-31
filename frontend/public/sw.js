@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'vutler-v2';
+const CACHE_VERSION = 'vutler-v3';
 const APP_SHELL_CACHE = `app-shell-${CACHE_VERSION}`;
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const API_CACHE = `api-${CACHE_VERSION}`;
@@ -46,12 +46,18 @@ self.addEventListener('fetch', (e) => {
   // Skip cross-origin requests
   if (url.origin !== self.location.origin) return;
 
+  // Never attempt to cache non-GET requests.
+  if (e.request.method !== 'GET') {
+    e.respondWith(fetch(e.request));
+    return;
+  }
+
   // Network-first for API calls (cache for offline fallback)
-  if (url.pathname.startsWith('/api/')) {
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/internal/')) {
     e.respondWith(
       fetch(e.request)
         .then((resp) => {
-          if (resp.ok && e.request.method === 'GET') {
+          if (resp.ok) {
             const clone = resp.clone();
             caches.open(API_CACHE).then((c) => c.put(e.request, clone));
           }

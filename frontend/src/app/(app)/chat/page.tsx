@@ -51,6 +51,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -1520,6 +1521,9 @@ export default function ChatPage() {
         <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create Channel</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Create a new chat channel and optionally add a short description.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -1575,6 +1579,9 @@ export default function ChatPage() {
         <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New Chat with Agent</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Pick an agent to open a direct conversation in this workspace.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
@@ -1646,6 +1653,9 @@ export default function ChatPage() {
             <DialogTitle>
               Members · {selectedChannel?.name}
             </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Review current members and add a user or agent to this channel.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">

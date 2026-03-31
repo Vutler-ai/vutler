@@ -22,6 +22,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -1150,6 +1151,9 @@ export default function DrivePage() {
                 <DialogTitle className="truncate">
                   {previewTarget?.name || "Preview"}
                 </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Preview the selected file and access browser or download actions.
+                </DialogDescription>
                 {previewTarget && (
                   <p className="mt-1 text-xs text-slate-400 truncate">{previewTarget.path}</p>
                 )}
@@ -1239,6 +1243,9 @@ export default function DrivePage() {
         <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Rename {renameTarget?.type === "folder" ? "folder" : "file"}</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Update the current name for the selected item.
+            </DialogDescription>
           </DialogHeader>
           <div className="py-2">
             <Input
@@ -1276,6 +1283,9 @@ export default function DrivePage() {
         <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Move {moveTarget?.type === "folder" ? "folder" : "file"}</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Choose the destination folder for the selected item.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -1388,6 +1398,9 @@ export default function DrivePage() {
         <DialogContent className="bg-[#14151f] border-white/10 text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New Folder</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Create a subfolder in the current drive location.
+            </DialogDescription>
           </DialogHeader>
           <div className="py-2">
             <Input
