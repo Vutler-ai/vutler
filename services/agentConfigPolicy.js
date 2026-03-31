@@ -17,6 +17,10 @@ const ALWAYS_ON_TOOL_SKILL_KEYS = [
   'workspace_drive_read',
   'workspace_drive_write',
   'workspace_drive_create_folder',
+  'vutler_calendar_list',
+  'vutler_calendar_create',
+  'vutler_calendar_update',
+  'vutler_calendar_delete',
 ];
 
 const OPTIONAL_TOOL_SKILL_KEYS = [

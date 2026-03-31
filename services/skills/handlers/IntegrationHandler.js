@@ -21,6 +21,7 @@ const ADAPTERS = {
   google_calendar: require('../adapters/GoogleCalendarAdapter').GoogleCalendarAdapter,
   google_drive: require('../adapters/GoogleDriveAdapter').GoogleDriveAdapter,
   workspace_drive: require('../adapters/WorkspaceDriveAdapter').WorkspaceDriveAdapter,
+  vutler_calendar: require('../adapters/VutlerCalendarAdapter').VutlerCalendarAdapter,
   project_management: require('../adapters/ProjectManagementAdapter').ProjectManagementAdapter,
 };
 
@@ -149,6 +150,7 @@ class IntegrationHandler {
   async _isIntegrationConnected(workspaceId, integrationProvider, agentId) {
     if (!workspaceId || !integrationProvider) return false;
     if (integrationProvider === 'workspace_drive') return true;
+    if (integrationProvider === 'vutler_calendar') return true;
     if (integrationProvider === 'project_management') return true;
 
     const provider = CONNECTION_PROVIDER_ALIASES[integrationProvider] || integrationProvider;

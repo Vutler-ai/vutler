@@ -4,6 +4,8 @@ const pool = require('../lib/vaultbrix');
 const skillHandlers = require('../seeds/skill-handlers.json');
 
 const SCHEMA = 'tenant_vutler';
+const POSTFORME_API_URL = process.env.POSTFORME_API_URL || 'https://app.postforme.dev/api/v1';
+const POSTFORME_API_KEY = process.env.POSTFORME_API_KEY || '';
 const SOCIAL_PROVIDERS = new Set([
   'linkedin',
   'twitter',
@@ -192,6 +194,7 @@ async function listConnectedWorkspaceIntegrationProviders(workspaceId, db = pool
 async function listConnectedSocialPlatforms(workspaceId, db = pool) {
   if (!workspaceId) return [];
 
+  let localPlatforms = [];
   try {
     const socialRows = await db.query(
       `SELECT DISTINCT platform
@@ -199,10 +202,40 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
        WHERE workspace_id = $1`,
       [workspaceId]
     );
-    return normalizeAgentIntegrationProviders(socialRows.rows.map((row) => row.platform));
+    localPlatforms = normalizeAgentIntegrationProviders(socialRows.rows.map((row) => row.platform));
   } catch (err) {
-    if (err?.code === '42P01') return [];
-    throw err;
+    if (err?.code !== '42P01') throw err;
+  }
+
+  if (localPlatforms.length > 0 || !POSTFORME_API_KEY) {
+    return localPlatforms;
+  }
+
+  try {
+    const externalId = `ws_${workspaceId}`;
+    const response = await fetch(`${POSTFORME_API_URL}/socials?external_id=${externalId}`, {
+      headers: { Authorization: `Bearer ${POSTFORME_API_KEY}` },
+    });
+    if (!response.ok) {
+      return localPlatforms;
+    }
+
+    const payload = await response.json();
+    const accounts = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.accounts)
+        ? payload.accounts
+        : Array.isArray(payload)
+          ? payload
+          : [];
+
+    return normalizeAgentIntegrationProviders(
+      accounts
+        .map((account) => account?.platform || account?.type)
+        .filter((platform) => SOCIAL_PROVIDERS.has(normalizeProvider(platform)))
+    );
+  } catch (_) {
+    return localPlatforms;
   }
 }
 
@@ -243,7 +276,14 @@ async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, integrati
   ]);
 
   const connectedProviders = await listConnectedWorkspaceIntegrationProviders(workspaceId, db).catch(() => new Set());
-  const availableProviders = enabledProviders.filter((provider) => connectedProviders.has(provider));
+  const availableProviders = [];
+  for (const provider of connectedProviders) {
+    const hasExplicitAccess = enabledProviders.includes(provider);
+    const hasOverrides = await workspaceHasAgentAccessOverrides(workspaceId, [provider], db).catch(() => false);
+    if (hasExplicitAccess || !hasOverrides) {
+      availableProviders.push(provider);
+    }
+  }
   const connectedSocialPlatforms = await listConnectedSocialPlatforms(workspaceId, db).catch(() => []);
   const socialPlatformSet = new Set(connectedSocialPlatforms);
   const allowedSocialPlatforms = availableProviders.filter((provider) => socialPlatformSet.has(provider));

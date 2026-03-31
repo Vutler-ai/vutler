@@ -1856,6 +1856,60 @@
       "required": ["name"]
     }
   },
+  "vutler_calendar_list": {
+    "type": "integration",
+    "integration_provider": "vutler_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "timeMin": { "type": "string", "format": "date-time" },
+        "timeMax": { "type": "string", "format": "date-time" }
+      },
+      "required": []
+    }
+  },
+  "vutler_calendar_create": {
+    "type": "integration",
+    "integration_provider": "vutler_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "event": { "type": "object", "description": "Event payload with title/summary, start, end, description, location and color" }
+      },
+      "required": ["event"]
+    }
+  },
+  "vutler_calendar_update": {
+    "type": "integration",
+    "integration_provider": "vutler_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "description": "Calendar event ID to update" },
+        "event": { "type": "object", "description": "Fields to update on the event" }
+      },
+      "required": ["eventId"]
+    }
+  },
+  "vutler_calendar_delete": {
+    "type": "integration",
+    "integration_provider": "vutler_calendar",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "description": "Calendar event ID to delete" }
+      },
+      "required": ["eventId"]
+    }
+  },
   "google_drive_list": {
     "type": "integration",
     "integration_provider": "google_drive",

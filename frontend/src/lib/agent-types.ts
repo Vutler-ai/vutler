@@ -196,6 +196,30 @@ export const ALWAYS_ON_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
     description: 'Create folders in the shared workspace drive.',
     alwaysOn: true,
   },
+  {
+    key: 'vutler_calendar_list',
+    label: 'Vutler Calendar List',
+    description: 'List events from the internal Vutler calendar.',
+    alwaysOn: true,
+  },
+  {
+    key: 'vutler_calendar_create',
+    label: 'Vutler Calendar Create',
+    description: 'Create events in the internal Vutler calendar.',
+    alwaysOn: true,
+  },
+  {
+    key: 'vutler_calendar_update',
+    label: 'Vutler Calendar Update',
+    description: 'Update events in the internal Vutler calendar.',
+    alwaysOn: true,
+  },
+  {
+    key: 'vutler_calendar_delete',
+    label: 'Vutler Calendar Delete',
+    description: 'Delete events from the internal Vutler calendar.',
+    alwaysOn: true,
+  },
 ];
 
 export const OPTIONAL_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
