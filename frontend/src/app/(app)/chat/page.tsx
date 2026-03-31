@@ -36,12 +36,12 @@ import {
   addChannelMember as apiAddChannelMember,
   removeChannelMember as apiRemoveChannelMember,
   uploadAttachment,
-  getChatAgents,
-  createAgentDmChannel,
+  getChatContacts,
+  createDirectConversation,
 } from "@/lib/api/endpoints/chat";
 import { ChatWebSocket } from "@/lib/websocket";
 import { useApi } from "@/hooks/use-api";
-import type { Agent, Channel, Message, ChannelMember, ChatActionRun } from "@/lib/api/types";
+import type { Channel, Message, ChannelMember, ChatActionRun, ChatContact } from "@/lib/api/types";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -477,7 +478,7 @@ function ChannelItem({ channel, isActive, onClick }: ChannelItemProps) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors group ${
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors group ${
         isActive
           ? "bg-[#14151f] text-white"
           : "hover:bg-white/5 text-gray-400 hover:text-gray-200"
@@ -486,9 +487,20 @@ function ChannelItem({ channel, isActive, onClick }: ChannelItemProps) {
       {channel.type === "channel" ? (
         <HashtagIcon className="w-4 h-4 shrink-0" />
       ) : (
-        <ChatBubbleLeftRightIcon className="w-4 h-4 shrink-0" />
+        <Avatar className="size-8 shrink-0">
+          <AvatarFallback className="bg-white/10 text-[11px] text-gray-200">
+            {getInitials(channel.name)}
+          </AvatarFallback>
+        </Avatar>
       )}
-      <span className="truncate text-sm">{channel.name}</span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-current">{channel.name}</p>
+        {channel.description && (
+          <p className="truncate text-[11px] text-gray-500 group-hover:text-gray-400">
+            {channel.description}
+          </p>
+        )}
+      </div>
     </button>
   );
 }
@@ -799,10 +811,10 @@ export default function ChatPage() {
   // ── channel search ──
   const [searchTerm, setSearchTerm] = useState("");
   const filteredChannelChannels = channelChannels.filter((c) =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+    [c.name, c.description || ""].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
   );
   const filteredDirectChannels = directChannels.filter((c) =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+    [c.name, c.description || ""].join(" ").toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // ── new channel dialog ──
@@ -813,43 +825,45 @@ export default function ChatPage() {
 
   // ── new DM with agent dialog ──
   const [showNewDm, setShowNewDm] = useState(false);
-  const [dmAgents, setDmAgents] = useState<Agent[]>([]);
-  const [dmAgentsLoading, setDmAgentsLoading] = useState(false);
-  const [selectedDmAgent, setSelectedDmAgent] = useState<Agent | null>(null);
+  const [dmContacts, setDmContacts] = useState<ChatContact[]>([]);
+  const [dmContactsLoading, setDmContactsLoading] = useState(false);
+  const [dmSearchTerm, setDmSearchTerm] = useState("");
+  const [selectedDmContact, setSelectedDmContact] = useState<ChatContact | null>(null);
   const [isCreatingDm, setIsCreatingDm] = useState(false);
 
   const openNewDm = useCallback(async () => {
     setShowNewDm(true);
-    setSelectedDmAgent(null);
-    setDmAgentsLoading(true);
+    setSelectedDmContact(null);
+    setDmSearchTerm("");
+    setDmContactsLoading(true);
     try {
-      const agents = await getChatAgents();
-      setDmAgents(agents);
+      const contacts = await getChatContacts();
+      setDmContacts(contacts);
     } catch {
-      setDmAgents([]);
+      setDmContacts([]);
     } finally {
-      setDmAgentsLoading(false);
+      setDmContactsLoading(false);
     }
   }, []);
 
   const handleCreateDm = useCallback(async () => {
-    if (!selectedDmAgent || isCreatingDm) return;
+    if (!selectedDmContact || isCreatingDm) return;
     setIsCreatingDm(true);
     try {
-      const ch = await createAgentDmChannel(
-        String(selectedDmAgent.id),
-        selectedDmAgent.name
+      const ch = await createDirectConversation(
+        String(selectedDmContact.id),
+        selectedDmContact.type
       );
       await mutateChannels();
       setSelectedChannel(ch);
       setShowNewDm(false);
-      setSelectedDmAgent(null);
+      setSelectedDmContact(null);
     } catch {
       // silently ignore — user can retry
     } finally {
       setIsCreatingDm(false);
     }
-  }, [selectedDmAgent, isCreatingDm, mutateChannels]);
+  }, [selectedDmContact, isCreatingDm, mutateChannels]);
 
   const handleCreateChannel = async () => {
     if (!newChannelName.trim() || isCreating) return;
@@ -874,8 +888,9 @@ export default function ChatPage() {
 
   // ── delete channel ──
   const handleDeleteChannel = async () => {
-    if (!selectedChannel || selectedChannel.type !== "channel") return;
-    if (!confirm(`Delete channel "${selectedChannel.name}"?`)) return;
+    if (!selectedChannel) return;
+    const label = selectedChannel.type === "direct" ? "direct message" : "channel";
+    if (!confirm(`Delete ${label} "${selectedChannel.name}"?`)) return;
     try {
       await deleteChannel(selectedChannel.id);
       const remaining = channels.filter((c) => c.id !== selectedChannel.id);
@@ -885,6 +900,15 @@ export default function ChatPage() {
       // ignore
     }
   };
+
+  const filteredDmContacts = dmContacts.filter((contact) => {
+    const haystack = [
+      contact.name,
+      contact.subtitle || "",
+      contact.username || "",
+    ].join(" ").toLowerCase();
+    return haystack.includes(dmSearchTerm.toLowerCase());
+  });
 
   // ── members dialog ──
   const [showMembers, setShowMembers] = useState(false);
@@ -978,10 +1002,10 @@ export default function ChatPage() {
               variant="ghost"
               className="h-7 px-2 gap-1 text-xs text-gray-400 hover:text-white"
               onClick={openNewDm}
-              title="New DM with Agent"
+              title="New chat"
             >
               <ChatBubbleLeftRightIcon className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Agent DM</span>
+              <span className="hidden sm:inline">New Chat</span>
             </Button>
             <Button
               size="sm"
@@ -1134,6 +1158,17 @@ export default function ChatPage() {
                       <TrashIcon className="w-4 h-4" />
                     </Button>
                   </>
+                )}
+                {selectedChannel.type === "direct" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0 text-red-400/70 hover:text-red-400"
+                    onClick={handleDeleteChannel}
+                    title="Delete direct message"
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </Button>
                 )}
               </div>
             </header>
@@ -1520,6 +1555,9 @@ export default function ChatPage() {
         <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Create Channel</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Create a new chat channel and optionally add a short description.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
@@ -1574,44 +1612,70 @@ export default function ChatPage() {
       <Dialog open={showNewDm} onOpenChange={setShowNewDm}>
         <DialogContent className="bg-[#0d0e1a] border-white/[0.07] text-white sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>New Chat with Agent</DialogTitle>
+            <DialogTitle>New Chat</DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Search for an agent or a workspace member to start a direct conversation.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
-            {dmAgentsLoading ? (
+            <div className="relative">
+              <MagnifyingGlassIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+              <Input
+                value={dmSearchTerm}
+                onChange={(e) => setDmSearchTerm(e.target.value)}
+                placeholder="Search agents or people..."
+                className="pl-9 bg-white/5 border-white/[0.07] text-white placeholder:text-gray-600 focus-visible:ring-blue-500"
+              />
+            </div>
+
+            {dmContactsLoading ? (
               <div className="space-y-2">
                 {[1, 2, 3].map((i) => (
                   <Skeleton key={i} className="h-12 w-full bg-white/5 rounded-lg" />
                 ))}
               </div>
-            ) : dmAgents.length === 0 ? (
+            ) : dmContacts.length === 0 ? (
               <p className="py-6 text-center text-sm text-gray-500">
-                No agents available. Create an agent first.
+                No contacts available in this workspace yet.
+              </p>
+            ) : filteredDmContacts.length === 0 ? (
+              <p className="py-6 text-center text-sm text-gray-500">
+                No contact matches this search.
               </p>
             ) : (
               <div className="max-h-72 overflow-y-auto space-y-1.5">
-                {dmAgents.map((agent) => (
+                {filteredDmContacts.map((contact) => (
                   <button
-                    key={agent.id}
-                    onClick={() => setSelectedDmAgent(agent)}
+                    key={`${contact.type}-${contact.id}`}
+                    onClick={() => setSelectedDmContact(contact)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                      selectedDmAgent?.id === agent.id
+                      selectedDmContact?.id === contact.id && selectedDmContact?.type === contact.type
                         ? "bg-blue-600/20 border border-blue-500/30 text-white"
                         : "hover:bg-white/5 text-gray-300 border border-transparent"
                     }`}
                   >
                     <Avatar className="size-8 shrink-0">
                       <AvatarFallback className="bg-white/10 text-gray-300 text-xs">
-                        {getInitials(agent.name)}
+                        {getInitials(contact.name)}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{agent.name}</p>
-                      {agent.model && (
-                        <p className="truncate text-xs text-gray-500">{agent.model}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-medium">{contact.name}</p>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
+                          contact.type === "agent"
+                            ? "bg-cyan-500/10 text-cyan-300"
+                            : "bg-emerald-500/10 text-emerald-300"
+                        }`}>
+                          {contact.type}
+                        </span>
+                      </div>
+                      {contact.subtitle && (
+                        <p className="truncate text-xs text-gray-500">{contact.subtitle}</p>
                       )}
                     </div>
-                    {selectedDmAgent?.id === agent.id && (
+                    {selectedDmContact?.id === contact.id && selectedDmContact?.type === contact.type && (
                       <div className="ml-auto shrink-0 w-2 h-2 rounded-full bg-blue-400" />
                     )}
                   </button>
@@ -1630,7 +1694,7 @@ export default function ChatPage() {
             </Button>
             <Button
               onClick={handleCreateDm}
-              disabled={!selectedDmAgent || isCreatingDm}
+              disabled={!selectedDmContact || isCreatingDm}
               className="bg-blue-600 hover:bg-blue-500"
             >
               {isCreatingDm ? "Starting…" : "Start Chat"}
@@ -1646,6 +1710,9 @@ export default function ChatPage() {
             <DialogTitle>
               Members · {selectedChannel?.name}
             </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              Review current members and add a user or agent to this channel.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">

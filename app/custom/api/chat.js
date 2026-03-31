@@ -28,14 +28,76 @@ function wsId(req) {
 function normaliseChannel(row) {
   return {
     id: row.id,
-    name: row.name,
-    description: row.description || '',
+    name: row.display_name || row.name,
+    description: row.display_description || row.description || '',
     type: row.type === 'dm' ? 'direct' : row.type,
     members: row.members || [],
     message_count: row.message_count ? parseInt(row.message_count, 10) : 0,
     member_count: row.member_count ? parseInt(row.member_count, 10) : 0,
     created_at: row.created_at,
+    raw_name: row.name,
+    contact_id: row.contact_id || null,
+    contact_type: row.contact_type || null,
+    avatar: row.contact_avatar || null,
+    username: row.contact_username || null,
   };
+}
+
+function actorId(req) {
+  return req.headers['x-user-id'] || req.user?.id || req.agent?.id || null;
+}
+
+function actorName(req) {
+  return req.headers['x-user-name'] || req.user?.name || req.agent?.name || 'User';
+}
+
+async function fetchChannelById(pg, workspaceId, channelId, currentUserId) {
+  const result = await pg.query(
+    `SELECT c.*,
+        (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) AS message_count,
+        (SELECT COUNT(*) FROM ${SCHEMA}.chat_channel_members cm WHERE cm.channel_id = c.id) AS member_count,
+        (SELECT MAX(m2.created_at) FROM ${SCHEMA}.chat_messages m2 WHERE m2.channel_id = c.id) AS last_message_at,
+        contact.contact_id,
+        contact.contact_type,
+        contact.contact_name AS display_name,
+        contact.contact_description AS display_description,
+        contact.contact_avatar,
+        contact.contact_username
+     FROM ${SCHEMA}.chat_channels c
+     LEFT JOIN LATERAL (
+       SELECT
+         cm.user_id AS contact_id,
+         CASE
+           WHEN a.id IS NOT NULL THEN a.name
+           WHEN ua.id IS NOT NULL THEN COALESCE(NULLIF(ua.name, ''), ua.email)
+           ELSE cm.user_id
+         END AS contact_name,
+         CASE WHEN a.id IS NOT NULL THEN 'agent' ELSE 'user' END AS contact_type,
+         CASE
+           WHEN a.id IS NOT NULL THEN COALESCE(
+             NULLIF(a.role, ''),
+             NULLIF(a.description, ''),
+             NULLIF(a.model, ''),
+             'Agent'
+           )
+           ELSE COALESCE(ua.email, 'Workspace member')
+         END AS contact_description,
+         a.avatar AS contact_avatar,
+         a.username AS contact_username
+       FROM ${SCHEMA}.chat_channel_members cm
+       LEFT JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id AND a.workspace_id = c.workspace_id
+       LEFT JOIN ${SCHEMA}.users_auth ua ON ua.id::text = cm.user_id
+       WHERE cm.channel_id = c.id
+         AND ($3::text IS NULL OR cm.user_id <> $3::text)
+       ORDER BY CASE WHEN a.id IS NOT NULL THEN 0 ELSE 1 END, cm.joined_at ASC
+       LIMIT 1
+     ) contact ON c.type = 'dm'
+     WHERE c.workspace_id = $1 AND c.id = $2
+     LIMIT 1`,
+    [workspaceId, channelId, currentUserId]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
@@ -100,13 +162,16 @@ async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
       runtime: 'chat',
       includeSummaries: true,
     }).catch(() => ({ prompt: '' }));
+    const fallbackPrompt = `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`;
+    const systemPrompt = memoryBundle.prompt
+      ? `${agent.system_prompt || fallbackPrompt}\n\n${memoryBundle.prompt}`
+      : (agent.system_prompt || fallbackPrompt);
+
     const llmResult = await llmRouter.chat(
       {
         model: agent.model || 'claude-sonnet-4-20250514',
         provider: agent.provider || undefined,
-        system_prompt: memoryBundle.prompt
-          ? `${agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`}\n\n${memoryBundle.prompt}`
-          : (agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`),
+        system_prompt: systemPrompt,
         temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
         max_tokens: agent.max_tokens || 4096,
         workspace_id: workspaceId,
@@ -137,15 +202,50 @@ router.get('/chat/channels', async (req, res) => {
 
   try {
     const ws = wsId(req);
+    const currentUserId = actorId(req);
     const result = await pg.query(
       `SELECT c.*,
           (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) AS message_count,
           (SELECT COUNT(*) FROM ${SCHEMA}.chat_channel_members cm WHERE cm.channel_id = c.id) AS member_count,
-          (SELECT MAX(m2.created_at) FROM ${SCHEMA}.chat_messages m2 WHERE m2.channel_id = c.id) AS last_message_at
+          (SELECT MAX(m2.created_at) FROM ${SCHEMA}.chat_messages m2 WHERE m2.channel_id = c.id) AS last_message_at,
+          contact.contact_id,
+          contact.contact_type,
+          contact.contact_name AS display_name,
+          contact.contact_description AS display_description,
+          contact.contact_avatar,
+          contact.contact_username
        FROM ${SCHEMA}.chat_channels c
+       LEFT JOIN LATERAL (
+         SELECT
+           cm.user_id AS contact_id,
+           CASE
+             WHEN a.id IS NOT NULL THEN a.name
+             WHEN ua.id IS NOT NULL THEN COALESCE(NULLIF(ua.name, ''), ua.email)
+             ELSE cm.user_id
+           END AS contact_name,
+           CASE WHEN a.id IS NOT NULL THEN 'agent' ELSE 'user' END AS contact_type,
+           CASE
+             WHEN a.id IS NOT NULL THEN COALESCE(
+               NULLIF(a.role, ''),
+               NULLIF(a.description, ''),
+               NULLIF(a.model, ''),
+               'Agent'
+             )
+             ELSE COALESCE(ua.email, 'Workspace member')
+           END AS contact_description,
+           a.avatar AS contact_avatar,
+           a.username AS contact_username
+         FROM ${SCHEMA}.chat_channel_members cm
+         LEFT JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id AND a.workspace_id = c.workspace_id
+         LEFT JOIN ${SCHEMA}.users_auth ua ON ua.id::text = cm.user_id
+         WHERE cm.channel_id = c.id
+           AND ($2::text IS NULL OR cm.user_id <> $2::text)
+         ORDER BY CASE WHEN a.id IS NOT NULL THEN 0 ELSE 1 END, cm.joined_at ASC
+         LIMIT 1
+       ) contact ON c.type = 'dm'
        WHERE c.workspace_id = $1
        ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC`,
-      [ws]
+      [ws, currentUserId]
     );
 
     res.json({ success: true, channels: result.rows.map(normaliseChannel) });
@@ -164,7 +264,7 @@ router.post('/chat/channels', async (req, res) => {
     if (!name) return res.status(400).json({ success: false, error: 'name is required' });
 
     const ws = wsId(req);
-    const createdBy = req.headers['x-user-id'] || req.user?.id || req.agent?.id || 'system';
+    const createdBy = actorId(req) || 'system';
     const dbType = type === 'direct' ? 'dm' : type;
 
     if (dbType === 'dm' && agentId) {
@@ -207,12 +307,182 @@ router.delete('/chat/channels/:id', async (req, res) => {
 
   try {
     const ws = wsId(req);
-    await pg.query(`DELETE FROM ${SCHEMA}.chat_messages WHERE channel_id = $1 AND workspace_id = $2`, [req.params.id, ws]);
+    await pg.query(
+      `DELETE FROM ${SCHEMA}.chat_messages WHERE channel_id = $1 AND workspace_id = $2`,
+      [req.params.id, ws]
+    );
     await pg.query(`DELETE FROM ${SCHEMA}.chat_channel_members WHERE channel_id = $1`, [req.params.id]);
     await pg.query(`DELETE FROM ${SCHEMA}.chat_channels WHERE id = $1 AND workspace_id = $2`, [req.params.id, ws]);
     res.json({ success: true });
   } catch (err) {
     console.error('[Chat] DELETE /channels/:id error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/chat/contacts', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const ws = wsId(req);
+    const currentUserId = actorId(req);
+    const query = String(req.query.query || '').trim();
+    const like = `%${query}%`;
+
+    const [agentsResult, usersResult] = await Promise.all([
+      pg.query(
+        `SELECT a.id::text AS id,
+                a.name,
+                'agent' AS type,
+                COALESCE(NULLIF(a.role, ''), NULLIF(a.description, ''), NULLIF(a.model, ''), 'Agent') AS subtitle,
+                a.avatar,
+                a.username
+         FROM ${SCHEMA}.agents a
+         WHERE a.workspace_id = $1
+           AND (
+             $2 = ''
+             OR a.name ILIKE $3
+             OR COALESCE(a.username, '') ILIKE $3
+             OR COALESCE(a.description, '') ILIKE $3
+           )
+         ORDER BY a.name ASC
+         LIMIT 50`,
+        [ws, query, like]
+      ),
+      pg.query(
+        `SELECT ua.id::text AS id,
+                COALESCE(NULLIF(ua.name, ''), ua.email) AS name,
+                'user' AS type,
+                ua.email AS subtitle,
+                NULL::text AS avatar,
+                NULL::text AS username
+         FROM ${SCHEMA}.workspace_members wm
+         JOIN ${SCHEMA}.users_auth ua ON ua.id = wm.user_id
+         WHERE wm.workspace_id = $1
+           AND ($2::text IS NULL OR ua.id::text <> $2::text)
+           AND (
+             $3 = ''
+             OR COALESCE(ua.name, '') ILIKE $4
+             OR ua.email ILIKE $4
+           )
+         ORDER BY COALESCE(NULLIF(ua.name, ''), ua.email) ASC
+         LIMIT 50`,
+        [ws, currentUserId, query, like]
+      ),
+    ]);
+
+    const contacts = [...agentsResult.rows, ...usersResult.rows]
+      .sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'agent' ? -1 : 1;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+      });
+
+    res.json({ success: true, contacts });
+  } catch (err) {
+    console.error('[Chat] GET /contacts error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/chat/dm', async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const ws = wsId(req);
+    const currentUserId = actorId(req);
+    const currentUserName = actorName(req);
+    const contactId = String(req.body.contactId || '').trim();
+    const contactType = req.body.contactType === 'user' ? 'user' : 'agent';
+
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, error: 'Authenticated user required' });
+    }
+    if (!contactId) {
+      return res.status(400).json({ success: false, error: 'contactId is required' });
+    }
+    if (contactId === currentUserId) {
+      return res.status(400).json({ success: false, error: 'Cannot open a DM with yourself' });
+    }
+
+    let contact = null;
+    if (contactType === 'agent') {
+      const result = await pg.query(
+        `SELECT id::text AS id, name
+         FROM ${SCHEMA}.agents
+         WHERE workspace_id = $1 AND id::text = $2
+         LIMIT 1`,
+        [ws, contactId]
+      );
+      contact = result.rows[0] || null;
+    } else {
+      const result = await pg.query(
+        `SELECT ua.id::text AS id, COALESCE(NULLIF(ua.name, ''), ua.email) AS name
+         FROM ${SCHEMA}.workspace_members wm
+         JOIN ${SCHEMA}.users_auth ua ON ua.id = wm.user_id
+         WHERE wm.workspace_id = $1 AND ua.id::text = $2
+         LIMIT 1`,
+        [ws, contactId]
+      );
+      contact = result.rows[0] || null;
+    }
+
+    if (!contact) {
+      return res.status(404).json({ success: false, error: 'Contact not found in this workspace' });
+    }
+
+    const existing = await pg.query(
+      `SELECT c.id
+       FROM ${SCHEMA}.chat_channels c
+       JOIN ${SCHEMA}.chat_channel_members target_cm
+         ON target_cm.channel_id = c.id
+        AND target_cm.user_id = $3
+       LEFT JOIN ${SCHEMA}.chat_channel_members self_cm
+         ON self_cm.channel_id = c.id
+        AND self_cm.user_id = $2
+       WHERE c.workspace_id = $1
+         AND c.type = 'dm'
+         AND (self_cm.user_id IS NOT NULL OR c.created_by = $2)
+       ORDER BY c.created_at DESC
+       LIMIT 1`,
+      [ws, currentUserId, contactId]
+    );
+
+    if (existing.rows.length > 0) {
+      const existingChannel = await fetchChannelById(pg, ws, existing.rows[0].id, currentUserId);
+      return res.json({ success: true, channel: normaliseChannel(existingChannel) });
+    }
+
+    const internalName = contactType === 'agent'
+      ? `dm__agent__${currentUserId}__${contactId}`
+      : `dm__user__${[currentUserId, contactId].sort().join('__')}`;
+
+    const created = await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
+       VALUES ($1, $2, 'dm', $3, $4)
+       RETURNING id`,
+      [internalName, `Direct message with ${contact.name}`, ws, currentUserId]
+    );
+
+    await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
+       VALUES ($1, $2, 'member')
+       ON CONFLICT DO NOTHING`,
+      [created.rows[0].id, currentUserId]
+    );
+
+    await pg.query(
+      `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
+       VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [created.rows[0].id, contactId, contactType === 'agent' ? 'agent' : 'member']
+    );
+
+    const channel = await fetchChannelById(pg, ws, created.rows[0].id, currentUserId);
+    res.status(201).json({ success: true, channel: normaliseChannel(channel), created_by_name: currentUserName });
+  } catch (err) {
+    console.error('[Chat] POST /dm error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -325,8 +595,8 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
 
     const text = content || req.body.text;
     const ws = wsId(req);
-    const senderId = req.headers['x-user-id'] || req.user?.id || req.agent?.id || 'user';
-    const senderName = req.headers['x-user-name'] || req.user?.name || req.agent?.name || 'User';
+    const senderId = actorId(req) || 'user';
+    const senderName = actorName(req);
 
     const saved = await insertChatMessage(pg, req.app, SCHEMA, {
       channel_id: channelId,
@@ -361,7 +631,7 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
   }
 });
 
-router.post('/chat/channels/:id/attachments', async (_req, res) => {
+router.post('/chat/channels/:id/attachments', (_req, res) => {
   res.status(501).json({ success: false, error: 'File uploads not yet supported' });
 });
 
@@ -460,8 +730,8 @@ router.post('/chat/send', async (req, res) => {
     }
 
     const ws = wsId(req);
-    const sId = sender_id || req.headers['x-user-id'] || req.agent?.id || 'user';
-    const sName = sender_name || req.headers['x-user-name'] || req.agent?.name || 'User';
+    const sId = sender_id || actorId(req) || 'user';
+    const sName = sender_name || actorName(req);
 
     const saved = await insertChatMessage(pg, req.app, SCHEMA, {
       channel_id,
@@ -499,8 +769,8 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
   const pg = getPool(req);
 
   try {
-    const userId = req.agent?.id || req.user?.id || 'user';
-    const userName = req.agent?.name || req.user?.name || 'user';
+    const userId = actorId(req) || 'user';
+    const userName = actorName(req);
     const ws = wsId(req);
 
     let jarvis = null;
@@ -541,7 +811,14 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
         );
       }
 
-      return res.json({ success: true, room: normaliseChannel(created.rows[0]) });
+      await pg.query(
+        `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
+         VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`,
+        [created.rows[0].id, userId]
+      );
+
+      const room = await fetchChannelById(pg, ws, created.rows[0].id, userId);
+      return res.json({ success: true, room: normaliseChannel(room) });
     }
 
     res.json({ success: true, room: { id: dmName, name: dmName, type: 'direct', members: [] } });
