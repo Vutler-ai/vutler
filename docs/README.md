@@ -12,10 +12,15 @@
 - [Orchestrator Anti-Double-Run](orchestrator-anti-double-run.md) documents the generic MVP anti-double-run design.
 - [Orchestrator Implementation Plan](orchestrator-implementation-plan.md) is the earlier planning note for that MVP.
 
-## Other Existing Areas
+## Product & Architecture notes
 
+- [Nexus Enterprise Virtual Employee](product-briefs/nexus-enterprise-virtual-employee.md) captures the AV Manager use case for Nexus enterprise nodes, governance, and policy lanes.
+- [Nexus Enterprise Event Ingestion V1](specs/nexus-enterprise-event-ingestion-v1.md) defines the webhook-driven ingestion surface for enterprise nodes and client-side automation.
+- [Nexus Enterprise Seat Accounting + Helper Agent Registry V1](specs/nexus-enterprise-seat-accounting-helper-agents-v1.md) defines how seats are consumed by principal and helper agents, and how local integrations stay outside seat accounting.
 - `docs/nexus/` covers Nexus install, deployment, and security.
-- `docs/specs/` contains feature-specific implementation specs.
+- `docs/specs/` contains feature-specific implementation specs, including agent wizard limits and mobile dispatch plans.
 - `docs/planning-artifacts/` contains product and architecture planning inputs.
-- [Nexus Enterprise Virtual Employee](product-briefs/nexus-enterprise-virtual-employee.md) is the product and execution plan for client-site virtual employees, with AV Manager as the reference use case.
-- [Nexus Enterprise Event Ingestion V1](specs/nexus-enterprise-event-ingestion-v1.md) defines the event-driven webhook ingestion model for enterprise nodes and virtual employees.
+
+## Recent updates
+
+- [March 2026 release snapshot](recent-2026-03.md) summarizes the last 20–30 commits, highlights drive/billing/session work, and notes documentation cleanup.

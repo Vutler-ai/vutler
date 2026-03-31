@@ -2,15 +2,14 @@
 
 Deploy, orchestrate, and manage AI agents that work autonomously. Built for developers who want full control over their AI workforce.
 
-## Features
+## Core capabilities
 
-- **17 Agent Templates** — Pre-built agents for sales, operations, technical, finance, customer success
-- **68 Skills** — Modular capabilities you can assign to any agent
-- **Nexus CLI** — Deploy agents locally or at client sites
-- **Multi-Agent Orchestration** — Rule-based task routing across agent teams
-- **OpenRouter Auto** — Automatically picks the best LLM per prompt (200+ models)
-- **Snipara Memory** — Persistent agent memory with 3-level scoping
-- **Marketplace** — Share and install agent configurations
+- **Drive Pro** — metadata-aware listing, drag/drop move, rename, preview, bulk actions, and native Exoscale SOS indexing for workspace-shared files
+- **Workspace gating & sessions** — route guards, upgrade flows, server-backed cookies, and feature snapshots keep plans enforcement close to the browser
+- **Nexus Enterprise runtime** — gated nodes, billing observability, sandboxed command streams, and enterprise-grade integrations for on-prem deployment
+- **Snipara memory + knowledge** — workspace-aware provisioning, resilient retrieval, and local SOUL fallbacks keep agent memory precise across agents and workspaces
+- **LLM routing + Codex** — `llmRouter` now normalizes providers (Anthropic fallback plus Codex via ChatGPT OAuth) with trial/credit packs and rich provider configs in the UI
+- **Billing & plan automation** — normalized limits, social post packs, recommended upgrades, and provider/product wiring keep plan boundaries aligned with agent skills
 
 ## Quick Start
 
@@ -49,6 +48,7 @@ Nexus CLI
 - [Chat and Task Orchestration Hardening](docs/chat-orchestration-hardening.md)
 - [Staging Deploy and Validation Runbook](docs/runbooks/staging-deploy-validation.md)
 - [VUTLER_API_KEY Rotation Runbook](docs/runbooks/vutler-api-key-rotation.md)
+- [March 2026 release snapshot](docs/recent-2026-03.md)
 
 ## Vutler Cloud
 
