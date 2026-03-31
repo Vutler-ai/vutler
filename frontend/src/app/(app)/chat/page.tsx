@@ -21,6 +21,7 @@ import {
   CalendarDaysIcon,
   EnvelopeIcon,
   FolderOpenIcon,
+  ClipboardDocumentListIcon,
 } from "@heroicons/react/24/outline";
 
 import { getAuthToken } from "@/lib/api/client";
@@ -295,15 +296,25 @@ function getArtifactIcon(kind?: string) {
   if (normalized.includes('calendar')) return CalendarDaysIcon;
   if (normalized.includes('email')) return EnvelopeIcon;
   if (normalized.includes('folder')) return FolderOpenIcon;
+  if (normalized.includes('task')) return ClipboardDocumentListIcon;
   if (normalized.includes('drive')) return DocumentIcon;
   return ArrowTopRightOnSquareIcon;
+}
+
+function getArtifactTone(kind?: string) {
+  const normalized = String(kind || '').toLowerCase();
+  if (normalized.includes('calendar')) return 'border-fuchsia-400/30 bg-fuchsia-500/[0.08] text-fuchsia-100';
+  if (normalized.includes('email')) return 'border-emerald-400/30 bg-emerald-500/[0.08] text-emerald-100';
+  if (normalized.includes('task')) return 'border-cyan-400/30 bg-cyan-500/[0.08] text-cyan-100';
+  if (normalized.includes('folder') || normalized.includes('drive')) return 'border-sky-400/30 bg-sky-500/[0.08] text-sky-100';
+  return 'border-white/10 bg-white/[0.04] text-white';
 }
 
 function ResourceArtifacts({ artifacts }: { artifacts: ChatResourceArtifact[] }) {
   if (artifacts.length === 0) return null;
 
   return (
-    <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
+    <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3 shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
           Liens utiles
@@ -315,6 +326,7 @@ function ResourceArtifacts({ artifacts }: { artifacts: ChatResourceArtifact[] })
       <div className="mt-2 space-y-2">
         {artifacts.map((artifact, idx) => {
           const Icon = getArtifactIcon(artifact.kind);
+          const tone = getArtifactTone(artifact.kind);
           return (
             <a
               key={`${artifact.href}-${idx}`}
@@ -322,24 +334,24 @@ function ResourceArtifacts({ artifacts }: { artifacts: ChatResourceArtifact[] })
               target="_blank"
               rel="noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 transition hover:border-blue-500/30 hover:bg-white/[0.06]"
+              className={`group flex items-stretch justify-between gap-3 rounded-xl border px-3 py-2 transition hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/20 ${tone}`}
             >
               <div className="flex min-w-0 items-start gap-2">
-                <span className="mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-200">
+                <span className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-black/15 text-white/90">
                   <Icon className="w-4 h-4" />
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-white">
+                  <p className="truncate text-sm font-semibold text-white">
                     {artifact.label}
                   </p>
                   {artifact.note && (
-                    <p className="truncate text-xs text-gray-400">
+                    <p className="truncate text-xs text-white/65">
                       {artifact.note}
                     </p>
                   )}
                 </div>
               </div>
-              <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-medium text-gray-200">
+              <span className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full border border-white/15 bg-black/20 px-3 py-1.5 text-[11px] font-semibold text-white/90 transition group-hover:bg-black/30">
                 {artifact.action || "Open"}
                 <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" />
               </span>

@@ -1,8 +1,18 @@
 'use strict';
 
 const path = require('path');
+let pool = null;
+
+try {
+  pool = require('../lib/vaultbrix');
+} catch (_) {
+  pool = null;
+}
 
 const CANONICAL_ROOT = '/projects/Vutler';
+const WORKSPACE_ROOT_SETTING_KEYS = ['drive_root', 'workspace_drive_root', 'drive_root_path'];
+const ROOT_CACHE_TTL_MS = 60_000;
+const workspaceRootCache = new Map();
 
 const CATEGORY_RULES = [
   { folder: 'Generated/Marketing', terms: ['marketing', 'campaign', 'social', 'linkedin', 'twitter', 'x ', 'content', 'brand', 'seo'] },
@@ -24,17 +34,21 @@ function compactSegments(input) {
     .join('/');
 }
 
-function normalizeDriveSubpath(inputPath) {
+function normalizeDriveSubpath(inputPath, root = CANONICAL_ROOT) {
   const raw = String(inputPath || '').trim().replace(/\\/g, '/');
   if (!raw) return '';
 
   const normalized = path.posix.normalize(raw).replace(/\/+/g, '/');
-  const prefixes = [
+  const prefixes = Array.from(new Set([
+    `/Workspace${root}`,
+    `Workspace${root}`,
+    root,
+    root.replace(/^\/+/, ''),
     '/Workspace/projects/Vutler',
     'Workspace/projects/Vutler',
     '/projects/Vutler',
     'projects/Vutler',
-  ];
+  ]));
 
   for (const prefix of prefixes) {
     if (normalized === prefix) return '';
@@ -50,14 +64,85 @@ function normalizeDriveSubpath(inputPath) {
     .join('/');
 }
 
-function ensureCanonicalRoot(inputPath) {
-  const relative = normalizeDriveSubpath(inputPath);
-  if (!relative) return CANONICAL_ROOT;
-  return `${CANONICAL_ROOT}/${relative}`.replace(/\/+/g, '/');
+function readSettingValue(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object' && typeof value.value === 'string') return value.value.trim();
+  return String(value).trim();
 }
 
-function classifyFolder({ skillKey = '', title = '', subject = '', content = '', folder = '', category = '' } = {}) {
-  const explicitFolder = compactSegments(normalizeDriveSubpath(folder));
+function normalizeDriveRoot(inputPath) {
+  const raw = String(inputPath || '').trim().replace(/\\/g, '/');
+  if (!raw) return CANONICAL_ROOT;
+  const normalized = path.posix.normalize(raw.startsWith('/') ? raw : `/${raw}`).replace(/\/+/g, '/');
+  return normalized.startsWith('/') ? normalized : `/${normalized}`;
+}
+
+async function resolveWorkspaceDriveRoot(workspaceId) {
+  if (!workspaceId) return CANONICAL_ROOT;
+
+  const cached = workspaceRootCache.get(workspaceId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.root;
+  }
+
+  let root = CANONICAL_ROOT;
+  if (pool?.query) {
+    try {
+      const result = await pool.query(
+        `SELECT key, value
+         FROM tenant_vutler.workspace_settings
+         WHERE workspace_id = $1
+           AND key = ANY($2::text[])`,
+        [workspaceId, WORKSPACE_ROOT_SETTING_KEYS]
+      );
+
+      for (const row of result.rows || []) {
+        const candidate = readSettingValue(row.value);
+        if (candidate) {
+          root = normalizeDriveRoot(candidate);
+          break;
+        }
+      }
+    } catch (err) {
+      console.warn('[DrivePlacement] workspace root lookup failed:', err.message);
+    }
+  }
+
+  workspaceRootCache.set(workspaceId, {
+    root,
+    expiresAt: Date.now() + ROOT_CACHE_TTL_MS,
+  });
+
+  return root;
+}
+
+function ensureCanonicalRoot(inputPath, root = CANONICAL_ROOT) {
+  const normalized = String(inputPath || '').trim().replace(/\\/g, '/');
+  if (!normalized) return root;
+
+  const pathWithRoot = path.posix.normalize(normalized).replace(/\/+/g, '/');
+  if (pathWithRoot.startsWith('/Workspace/')) {
+    const unwrapped = pathWithRoot.replace(/^\/Workspace/, '');
+    if (unwrapped === root || unwrapped.startsWith(`${root}/`) || unwrapped === CANONICAL_ROOT || unwrapped.startsWith(`${CANONICAL_ROOT}/`)) {
+      return unwrapped;
+    }
+  }
+
+  const roots = [root, CANONICAL_ROOT, `/Workspace${root}`, `/Workspace${CANONICAL_ROOT}`];
+  for (const candidateRoot of roots) {
+    if (pathWithRoot === candidateRoot || pathWithRoot.startsWith(`${candidateRoot}/`)) {
+      return pathWithRoot;
+    }
+  }
+
+  const relative = normalizeDriveSubpath(pathWithRoot, root);
+  if (!relative) return root;
+  return `${normalizeDriveRoot(root)}/${relative}`.replace(/\/+/g, '/');
+}
+
+function classifyFolder({ skillKey = '', title = '', subject = '', content = '', folder = '', category = '', root = CANONICAL_ROOT } = {}) {
+  const explicitFolder = compactSegments(normalizeDriveSubpath(folder, root));
   if (explicitFolder) return explicitFolder;
 
   const haystack = [skillKey, title, subject, content, category]
@@ -95,13 +180,14 @@ function inferFilename({ filename, fileName, name, title, subject, content = '',
   return `${safeBase}${looksLikeMarkdown ? '.md' : '.txt'}`;
 }
 
-function resolveWorkspaceDriveWritePath(context = {}) {
+async function resolveWorkspaceDriveWritePath(context = {}) {
   const params = context.params || {};
+  const workspaceRoot = await resolveWorkspaceDriveRoot(context.workspaceId);
   const explicitPath = String(params.path || params.filePath || params.targetPath || '').trim();
 
   if (explicitPath) {
     return {
-      path: ensureCanonicalRoot(explicitPath),
+      path: ensureCanonicalRoot(explicitPath.startsWith('/') ? explicitPath : `${workspaceRoot}/${explicitPath}`, workspaceRoot),
       defaulted: false,
       folder: null,
       reason: 'explicit_path',
@@ -115,9 +201,13 @@ function resolveWorkspaceDriveWritePath(context = {}) {
     content: params.content || params.body || '',
     folder: params.folder || params.directory || params.parentPath || '',
     category: params.category || params.document_type || '',
+    root: workspaceRoot,
   });
 
-  const folderPath = ensureCanonicalRoot(folder);
+  const folderPath = ensureCanonicalRoot(
+    folder.startsWith('/') ? folder : `${workspaceRoot}/${folder}`,
+    workspaceRoot
+  );
   const filename = inferFilename({
     filename: params.filename,
     fileName: params.fileName,
@@ -142,5 +232,6 @@ module.exports = {
   ensureCanonicalRoot,
   inferFilename,
   normalizeDriveSubpath,
+  resolveWorkspaceDriveRoot,
   resolveWorkspaceDriveWritePath,
 };

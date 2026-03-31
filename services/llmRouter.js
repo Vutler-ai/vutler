@@ -60,6 +60,13 @@ function safeEmailLink(data = {}, args = {}) {
   return `/email?folder=${encodeURIComponent(folder)}`;
 }
 
+function safeTaskLink(data = {}, args = {}) {
+  const taskId = data.taskId || data.task_id || data.id || args.taskId || args.task_id || args.id || null;
+  if (data.taskUrl) return String(data.taskUrl);
+  if (taskId) return `/tasks?task=${encodeURIComponent(String(taskId))}`;
+  return '/tasks';
+}
+
 function buildArtifact({ kind, label, href, note, action = 'Open' }) {
   if (!href) return null;
   return {
@@ -159,6 +166,19 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
       label: draftId ? 'Open email draft' : 'Open email',
       href,
       note: draftId ? `Draft ${draftId}` : subject,
+    });
+    if (artifact) artifacts.push(artifact);
+  }
+
+  if (skill.includes('task_management') || skill.includes('project_management') || /(^|[_-])task(s)?($|[_-])/.test(skill)) {
+    const href = safeTaskLink(data, args);
+    const taskId = data.taskId || data.task_id || data.id || args.taskId || args.task_id || args.id || null;
+    const taskTitle = data.title || data.task?.title || data.name || args.title || undefined;
+    const artifact = buildArtifact({
+      kind: 'task-item',
+      label: taskId ? 'Open task' : 'Open tasks',
+      href,
+      note: taskTitle || (taskId ? `Task ${taskId}` : undefined),
     });
     if (artifact) artifacts.push(artifact);
   }
@@ -841,8 +861,8 @@ async function chat(agent, messages, db, opts = {}) {
   if (hasSocialSkill) {
     effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }
-  if (Array.isArray(agentSkills) && agentSkills.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email')))) {
-    effectiveSystemPrompt += '\n\nWhen you create or update a file, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is /projects/Vutler. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under /projects/Vutler instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.';
+  if (Array.isArray(agentSkills) && agentSkills.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
+    effectiveSystemPrompt += '\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is /projects/Vutler. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under /projects/Vutler instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.';
   }
 
   const attempts = [

@@ -650,6 +650,7 @@ export interface WorkspaceSettings {
   workspace_description?: SettingValue | string;
   timezone?: SettingValue | string;
   default_provider?: SettingValue | string;
+  drive_root?: SettingValue | string;
   snipara_api_key?: SettingValue | string;
   snipara_api_url?: SettingValue | string;
   snipara_project_id?: SettingValue | string;

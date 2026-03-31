@@ -135,8 +135,9 @@ class WorkspaceDriveAdapter {
   }
 
   async _writeText(workspaceId, params, skillKey = 'workspace_drive_write') {
-    const resolved = resolveWorkspaceDriveWritePath({
+    const resolved = await resolveWorkspaceDriveWritePath({
       skillKey,
+      workspaceId,
       params,
     });
     const key = sanitizeKey(resolved.path || '');

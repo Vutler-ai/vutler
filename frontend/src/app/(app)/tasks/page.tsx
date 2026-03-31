@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { useApi } from "@/hooks/use-api";
 import {
   getTasks,
@@ -1041,6 +1042,8 @@ function ListSkeleton() {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function TasksPage() {
+  const searchParams = useSearchParams();
+  const taskQuery = searchParams.get("task");
   const { data: tasks, isLoading, error, mutate } = useApi<Task[]>(
     "/api/v1/tasks-v2",
     () => getTasks()
@@ -1056,6 +1059,14 @@ export default function TasksPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!taskQuery || !tasks || tasks.length === 0) return;
+    const found = tasks.find((task) => task.id === taskQuery);
+    if (found) {
+      setDetailTask(found);
+    }
+  }, [taskQuery, tasks]);
 
   const filteredTasks = useMemo(() => {
     let list = tasks ?? [];

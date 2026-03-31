@@ -54,6 +54,22 @@ const cx = {
     "w-full px-3 py-2 bg-[#14151f] border border-[rgba(255,255,255,0.05)] rounded-md text-[#6b7280] text-sm cursor-not-allowed select-none",
 };
 
+function extractArrayField<T>(value: unknown, key: string): T[] {
+  if (Array.isArray(value)) return value as T[];
+  if (typeof value === "object" && value !== null) {
+    const candidate = (value as Record<string, unknown>)[key];
+    if (Array.isArray(candidate)) return candidate as T[];
+  }
+  return [];
+}
+
+function extractObjectField<T extends object>(value: unknown, key: string): T | null {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = (value as Record<string, unknown>)[key];
+  if (candidate && typeof candidate === "object") return candidate as T;
+  return null;
+}
+
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 
 function ProfileTab({
@@ -280,6 +296,7 @@ function WorkspaceTab({
   const [wsDesc, setWsDesc] = useState(getStr(settings?.workspace_description));
   const [timezone, setTimezone] = useState(getStr(settings?.timezone) || "UTC");
   const [defaultProvider, setDefaultProvider] = useState(getStr(settings?.default_provider));
+  const [driveRoot, setDriveRoot] = useState(getStr(settings?.drive_root) || "/projects/Vutler");
   const [sniparaKey, setSniparaKey] = useState(getStr((settings as Record<string, unknown>)?.snipara_api_key));
   const [sniparaProjectId, setSniparaProjectId] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_id));
   const [sniparaProjectSlug, setSniparaProjectSlug] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
@@ -291,6 +308,7 @@ function WorkspaceTab({
       setWsDesc(getStr(settings.workspace_description));
       setTimezone(getStr(settings.timezone) || "UTC");
       setDefaultProvider(getStr(settings.default_provider));
+      setDriveRoot(getStr(settings.drive_root) || "/projects/Vutler");
       setSniparaKey(getStr((settings as Record<string, unknown>)?.snipara_api_key));
       setSniparaProjectId(getStr((settings as Record<string, unknown>)?.snipara_project_id));
       setSniparaProjectSlug(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
@@ -300,13 +318,13 @@ function WorkspaceTab({
   const handleSave = async () => {
     setSaving(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const payload: any = {
+      const payload: { settings: Record<string, unknown>; [key: string]: unknown } = {
         settings: {
           workspace_name: { value: wsName, type: "text" },
           workspace_description: { value: wsDesc, type: "text" },
           timezone: { value: timezone, type: "text" },
           default_provider: { value: defaultProvider, type: "text" },
+          drive_root: { value: driveRoot, type: "text" },
         },
       };
       // Only send Snipara fields if they contain real values (not masked)
@@ -392,6 +410,15 @@ function WorkspaceTab({
                 No active providers. Configure them in the Providers page.
               </p>
             )}
+          </div>
+          <div className="space-y-1.5">
+            <Label className={cx.label}>Drive Root</Label>
+            <Input
+              value={driveRoot}
+              onChange={(e) => setDriveRoot(e.target.value)}
+              placeholder="/projects/Vutler"
+              className={cx.input}
+            />
           </div>
         </div>
 
@@ -1145,18 +1172,13 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
       ]);
       if (dRes.status === 'fulfilled') setDomains(Array.isArray(dRes.value?.domains) ? dRes.value.domains : []);
       if (rRes.status === 'fulfilled') setRoutes(Array.isArray(rRes.value?.routes) ? rRes.value.routes : []);
-      if (gRes.status === 'fulfilled') {
-        const gd = gRes.value;
-        setGroups(Array.isArray(gd) ? gd : Array.isArray((gd as any)?.groups) ? (gd as any).groups : []);
-      }
-      if (aRes.status === 'fulfilled') {
-        const ad = aRes.value;
-        setAgents(Array.isArray(ad) ? ad : Array.isArray((ad as any)?.agents) ? (ad as any).agents : []);
-      }
+      if (gRes.status === 'fulfilled') setGroups(extractArrayField<EmailGroupItem>(gRes.value, 'groups'));
+      if (aRes.status === 'fulfilled') setAgents(extractArrayField<AgentItem>(aRes.value, 'agents'));
     } catch { /* silent */ }
     setLoading(false);
   }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
   const addDomain = async () => {
@@ -1223,7 +1245,7 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
     setExpandedGroupId(groupId);
     try {
       const data = await apiFetch<{ group?: EmailGroupItem } | EmailGroupItem>(`/api/v1/email/groups/${groupId}`);
-      const group = (data as any).group || data;
+      const group = extractObjectField<EmailGroupItem>(data, 'group') || data;
       const members = Array.isArray(group?.members) ? group.members : [];
       setGroups(prev => prev.map(g => g.id === groupId ? { ...g, members } : g));
     } catch { /* silent */ }
@@ -1253,7 +1275,6 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
 
   const sectionCx = "bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 sm:p-6";
   const inputCx = "px-3 py-2.5 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-lg text-white placeholder-[#6b7280] text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]";
-  const btnPrimary = "px-4 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors";
   const btnDanger = "px-3 py-1.5 text-xs bg-red-900/30 hover:bg-red-800/50 text-red-400 rounded-lg transition-colors";
   const btnGhost = "px-3 py-1.5 text-xs bg-[#1f2028] hover:bg-[#334155] rounded-lg transition-colors text-[#9ca3af]";
 

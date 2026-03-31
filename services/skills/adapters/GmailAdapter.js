@@ -103,6 +103,13 @@ class GmailAdapter {
         data: {
           status: 'pending_approval',
           draftId: result.rows[0]?.id,
+          draftUrl: `/email?folder=drafts&uid=${encodeURIComponent(String(result.rows[0]?.id || ''))}`,
+          placement: {
+            root: '/email',
+            folder: 'drafts',
+            defaulted: true,
+            reason: 'draft_created',
+          },
           message: `Email draft created for "${to}" — awaiting human approval before sending via Gmail.`,
         },
       };

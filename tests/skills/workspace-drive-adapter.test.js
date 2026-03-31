@@ -8,6 +8,9 @@ describe('WorkspaceDriveAdapter', () => {
   test('writes files to the canonical Vutler Drive location when path is omitted', async () => {
     const uploadFile = jest.fn().mockResolvedValue(undefined);
 
+    jest.doMock('../../lib/vaultbrix', () => ({
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    }));
     jest.doMock('../../services/s3Storage', () => ({
       listFiles: jest.fn().mockResolvedValue([]),
       uploadFile,

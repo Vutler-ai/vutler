@@ -59,6 +59,12 @@ class ProjectManagementAdapter {
         status: created.status,
         assigned_agent: created.assigned_agent,
         priority: created.priority,
+        taskUrl: `/tasks?task=${encodeURIComponent(String(created.id))}`,
+        placement: {
+          root: '/tasks',
+          defaulted: true,
+          reason: 'task_created',
+        },
       },
     };
   }
