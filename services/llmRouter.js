@@ -6,7 +6,7 @@ const { createSniparaGateway } = require('./snipara/gateway');
 const { createMemoryRuntimeService } = require('./memory/runtime');
 const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
-const { buildInternalPlacementInstruction } = require('./agentConfigPolicy');
+const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
@@ -884,8 +884,12 @@ async function chat(agent, messages, db, opts = {}) {
   if (memoryScope && memoryMode.read) memoryTools.push(MEMORY_RECALL_TOOL);
 
   // Inject social media tool when agent has relevant skills
-  const agentSkills = agent?.skills || agent?.tools || agent?.capabilities || [];
-  const hasSocialSkill = Array.isArray(agentSkills) && agentSkills.some(s =>
+  const agentSkillKeys = normalizeCapabilities([
+    ...(Array.isArray(agent?.skills) ? agent.skills : []),
+    ...(Array.isArray(agent?.tools) ? agent.tools : []),
+    ...(Array.isArray(agent?.capabilities) ? agent.capabilities : []),
+  ]);
+  const hasSocialSkill = agentSkillKeys.some(s =>
     typeof s === 'string' && (s.includes('social') || s.includes('posting') || s.includes('content_scheduling') || s.includes('multi_platform'))
   );
   const socialMediaTools = hasSocialSkill ? [SOCIAL_MEDIA_TOOL] : [];
@@ -902,7 +906,7 @@ async function chat(agent, messages, db, opts = {}) {
   if (hasSocialSkill) {
     effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }
-  if (Array.isArray(agentSkills) && agentSkills.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
+  if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += '\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is /projects/Vutler. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under /projects/Vutler instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.';
   }
 
@@ -992,10 +996,10 @@ async function chat(agent, messages, db, opts = {}) {
         }
         // Inject skill tools when the agent has skills configured
         let skillTools = [];
-        if (Array.isArray(agentSkills) && agentSkills.length > 0) {
+        if (agentSkillKeys.length > 0) {
           try {
             const { getSkillRegistry } = require('./skills');
-            skillTools = getSkillRegistry().getSkillTools(agentSkills);
+            skillTools = getSkillRegistry().getSkillTools(agentSkillKeys);
           } catch (_) { /* skills not available — skip */ }
         }
         const allTools = [...memoryTools, ...socialMediaTools, ...nexusTools, ...skillTools];
