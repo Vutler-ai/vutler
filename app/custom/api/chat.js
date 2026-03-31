@@ -243,8 +243,22 @@ router.get('/chat/channels/:id/messages', async (req, res) => {
       idx++;
     }
 
-    query += ` ORDER BY created_at ASC LIMIT $${idx}`;
-    params.push(limit);
+    if (!before && !after) {
+      query = `
+        SELECT * FROM (
+          SELECT *
+          FROM ${SCHEMA}.chat_messages
+          WHERE channel_id = $1 AND workspace_id = $2
+          ORDER BY created_at DESC
+          LIMIT $${idx}
+        ) recent_messages
+        ORDER BY created_at ASC
+      `;
+      params.push(limit);
+    } else {
+      query += ` ORDER BY created_at ASC LIMIT $${idx}`;
+      params.push(limit);
+    }
 
     const result = await pg.query(query, params);
     res.json({ success: true, messages: result.rows.map(normalizeChatMessage) });

@@ -23,6 +23,44 @@ function formatToolResultContent(result) {
   }
 }
 
+function mapResponsesTool(tool) {
+  if (!tool || tool.type !== 'function') return tool;
+  if (!tool.function) return tool;
+
+  return {
+    type: 'function',
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters,
+    strict: false,
+  };
+}
+
+function mapResponsesInputItem(message) {
+  if (!message) return null;
+
+  if (message.role === 'tool' && message.tool_call_id) {
+    return {
+      type: 'function_call_output',
+      call_id: message.tool_call_id,
+      output: String(message.content || ''),
+    };
+  }
+
+  if (message.role === 'assistant' && !message.content) {
+    return null;
+  }
+
+  if (message.role === 'assistant' || message.role === 'user') {
+    return {
+      role: message.role,
+      content: String(message.content || ''),
+    };
+  }
+
+  return null;
+}
+
 function normalizeDrivePath(pathValue) {
   const raw = String(pathValue || '').trim();
   if (!raw) return '';
@@ -575,10 +613,10 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
 
   // Responses API format (used by Codex via chatgpt.com/backend-api)
   if (cfg.format === 'responses') {
-    const input = [];
-    for (const m of messages.filter(m => m.role !== 'system')) {
-      input.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content });
-    }
+    const input = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => mapResponsesInputItem(message))
+      .filter(Boolean);
 
     const body = {
       model: model || cfg.defaultModel,
@@ -587,6 +625,9 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       store: false,
       stream: true,
     };
+    if (tools && tools.length > 0) {
+      body.tools = tools.map((tool) => mapResponsesTool(tool));
+    }
 
     return {
       hostname,
@@ -742,9 +783,23 @@ function normalizeResponse(provider, model, result, latency_ms) {
       .filter(o => o.type === 'message')
       .flatMap(o => (o.content || []).filter(c => c.type === 'output_text').map(c => c.text))
       .join('');
+    const toolCalls = outputItems
+      .filter((item) => item.type === 'function_call')
+      .map((item) => ({
+        id: item.id || item.call_id,
+        call_id: item.call_id,
+        name: item.name,
+        arguments: (() => {
+          try {
+            return JSON.parse(item.arguments || '{}');
+          } catch (_) {
+            return {};
+          }
+        })(),
+      }));
     return {
       content: textContent || result.output_text || '',
-      tool_calls: null,
+      tool_calls: toolCalls.length > 0 ? toolCalls : null,
       stop_reason: result.status || 'completed',
       provider,
       model: result.model || model,
