@@ -725,6 +725,12 @@
     "category": "operations",
     "icon": "edit-3"
   },
+  "workspace_drive_create_folder": {
+    "name": "Workspace Drive Create Folder",
+    "description": "Create a real folder inside the internal workspace drive for workspace-scoped organization",
+    "category": "operations",
+    "icon": "folder-plus"
+  },
   "google_drive_list": {
     "name": "Google Drive List",
     "description": "List files available through the connected Google Drive integration in read-only mode",

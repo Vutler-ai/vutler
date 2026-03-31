@@ -190,6 +190,12 @@ export const ALWAYS_ON_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
     description: 'Create and update internal workspace documents.',
     alwaysOn: true,
   },
+  {
+    key: 'workspace_drive_create_folder',
+    label: 'Workspace Drive Create Folder',
+    description: 'Create folders in the shared workspace drive.',
+    alwaysOn: true,
+  },
 ];
 
 export const OPTIONAL_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [

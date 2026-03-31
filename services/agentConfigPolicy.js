@@ -16,6 +16,7 @@ const ALWAYS_ON_TOOL_SKILL_KEYS = [
   'workspace_drive_search',
   'workspace_drive_read',
   'workspace_drive_write',
+  'workspace_drive_create_folder',
 ];
 
 const OPTIONAL_TOOL_SKILL_KEYS = [
@@ -125,6 +126,7 @@ function buildInternalPlacementInstruction() {
   return [
     'You are operating inside Vutler.',
     'When you create or update a file, email draft, task, or calendar event, choose the canonical internal destination automatically instead of asking the user for a path, folder, or location unless the destination is genuinely ambiguous.',
+    'When the user asks for a folder or folder tree in Drive, create real folders with the folder creation tool instead of placeholder files such as .gitkeep or README.md unless the user explicitly requests those files.',
     'The canonical Drive root is /projects/Vutler.',
     'If a document destination is unclear, prefer the best matching Generated/ folder under /projects/Vutler.',
     'When available, return a direct link to the created artifact so the user can open it immediately.',

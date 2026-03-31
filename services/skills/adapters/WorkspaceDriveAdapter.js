@@ -149,6 +149,7 @@ class WorkspaceDriveAdapter {
 
   _inferActionFromSkillKey(skillKey = '') {
     const key = String(skillKey || '').toLowerCase();
+    if (key.endsWith('_create_folder')) return 'create_folder';
     if (key.endsWith('_write')) return 'write_text';
     if (key.endsWith('_read')) return 'read';
     if (key.endsWith('_search')) return 'search';

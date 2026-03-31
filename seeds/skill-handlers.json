@@ -1841,6 +1841,21 @@
       "required": ["content"]
     }
   },
+  "workspace_drive_create_folder": {
+    "type": "integration",
+    "integration_provider": "workspace_drive",
+    "fallback_type": "llm_prompt",
+    "requires_nexus": false,
+    "params_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Parent folder path where the new folder should be created" },
+        "parentPath": { "type": "string", "description": "Alias for the parent folder path" },
+        "name": { "type": "string", "description": "Folder name to create inside the selected parent path" }
+      },
+      "required": ["name"]
+    }
+  },
   "google_drive_list": {
     "type": "integration",
     "integration_provider": "google_drive",
