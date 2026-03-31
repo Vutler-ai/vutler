@@ -1137,6 +1137,10 @@ interface EmailRoute { id: string; emailAddress: string; agentId: string; agentN
 interface EmailGroupItem { id: string; name: string; emailAddress: string; description?: string; memberCount: number; members?: { id: string; memberType: 'agent' | 'human'; agentId?: string; agentName?: string; humanEmail?: string; humanName?: string }[] }
 interface AgentItem { id: string; name: string; username: string; email?: string }
 
+function isEmailGroupItem(value: unknown): value is EmailGroupItem {
+  return typeof value === "object" && value !== null && "id" in value && "name" in value && "emailAddress" in value;
+}
+
 function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error") => void }) {
   const [domains, setDomains] = useState<EmailDomain[]>([]);
   const [routes, setRoutes] = useState<EmailRoute[]>([]);
@@ -1245,7 +1249,7 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
     setExpandedGroupId(groupId);
     try {
       const data = await apiFetch<{ group?: EmailGroupItem } | EmailGroupItem>(`/api/v1/email/groups/${groupId}`);
-      const group = extractObjectField<EmailGroupItem>(data, 'group') || data;
+      const group = extractObjectField<EmailGroupItem>(data, 'group') || (isEmailGroupItem(data) ? data : null);
       const members = Array.isArray(group?.members) ? group.members : [];
       setGroups(prev => prev.map(g => g.id === groupId ? { ...g, members } : g));
     } catch { /* silent */ }
