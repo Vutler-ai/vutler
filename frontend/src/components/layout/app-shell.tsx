@@ -1,14 +1,15 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import AppSidebar from './app-sidebar';
 import AppHeader from './app-header';
 import BottomNav from './bottom-nav';
 import OfflineBanner from '../offline-banner';
 import PWAInstallPrompt from '../pwa-install-prompt';
 import PushPermission from '../push-permission';
-import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useFeatures } from '@/hooks/useFeatures';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,22 @@ interface AppShellProps {
   };
 }
 
+const FEATURE_ROUTE_GUARDS: Array<{ prefix: string; feature: string }> = [
+  { prefix: '/chat', feature: 'chat' },
+  { prefix: '/tasks', feature: 'tasks' },
+  { prefix: '/email', feature: 'email' },
+  { prefix: '/drive', feature: 'drive' },
+  { prefix: '/calendar', feature: 'calendar' },
+  { prefix: '/agents', feature: 'agents' },
+  { prefix: '/memory', feature: 'agents' },
+  { prefix: '/nexus', feature: 'nexus' },
+  { prefix: '/sandbox', feature: 'sandbox' },
+  { prefix: '/providers', feature: 'providers' },
+  { prefix: '/integrations', feature: 'integrations' },
+  { prefix: '/settings/integrations', feature: 'integrations' },
+  { prefix: '/settings/email', feature: 'email' },
+];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AppShell({
@@ -31,6 +48,9 @@ export default function AppShell({
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { user: authUser, logout } = useAuth();
+  const { hasFeature, loading: featuresLoading } = useFeatures();
+  const pathname = usePathname();
+  const router = useRouter();
 
   // Resolve user from auth context or prop fallback
   const user = authUser
@@ -68,6 +88,16 @@ export default function AppShell({
     window.addEventListener('sidebar-toggle', handler);
     return () => window.removeEventListener('sidebar-toggle', handler);
   }, []);
+
+  useEffect(() => {
+    if (featuresLoading || !pathname) return;
+
+    const guard = FEATURE_ROUTE_GUARDS.find(({ prefix }) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+    if (!guard) return;
+    if (hasFeature(guard.feature)) return;
+
+    router.replace(`/billing?upgrade=${encodeURIComponent(guard.feature)}`);
+  }, [featuresLoading, hasFeature, pathname, router]);
 
   return (
     <div className="min-h-screen bg-[#08090f]">
