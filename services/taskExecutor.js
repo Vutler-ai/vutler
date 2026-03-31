@@ -14,7 +14,7 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
   try {
     // 1. Fetch agent details
     const agentResult = await pool.query(
-      `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, workspace_id
+      `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, workspace_id, capabilities
        FROM ${SCHEMA}.agents
        WHERE username = $1 LIMIT 1`,
       [agentUsername]
@@ -53,6 +53,7 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
           temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
           max_tokens: agent.max_tokens || 4096,
           workspace_id: workspaceId,
+          capabilities: agent.capabilities || [],
         },
         messages,
         pool // pass db for OAuth token resolution (codex/chatgpt)
@@ -67,6 +68,7 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
           temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
           max_tokens: agent.max_tokens || 4096,
           workspace_id: workspaceId,
+          capabilities: agent.capabilities || [],
         },
         messages,
         pool

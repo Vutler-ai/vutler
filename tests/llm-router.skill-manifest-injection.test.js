@@ -124,4 +124,24 @@ describe('llmRouter manifest-backed skill tool injection', () => {
       ])
     );
   });
+
+  test('injects the canonical Vutler placement policy for all agents', async () => {
+    const result = await chat(
+      {
+        id: 'agent-2',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are a general assistant.',
+      },
+      [{ role: 'user', content: 'Prepare the document and save it somewhere sensible.' }],
+      { query: jest.fn().mockResolvedValue({ rows: [] }) }
+    );
+
+    expect(result.content).toBe('Ready.');
+    expect(recordedBodies).toHaveLength(1);
+    expect(recordedBodies[0].messages[0].content).toContain('/projects/Vutler');
+    expect(recordedBodies[0].messages[0].content).toContain('Generated/');
+    expect(recordedBodies[0].messages[0].content).toContain('direct link');
+  });
 });

@@ -4,6 +4,10 @@
  */
 const express = require("express");
 const pool = require("../lib/vaultbrix");
+const {
+  splitCapabilities,
+  buildAgentConfigUpdate,
+} = require("../services/agentConfigPolicy");
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
@@ -136,6 +140,8 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ success: false, error: "Agent not found", id });
     }
     const a = result.rows[0];
+    const capabilities = a.capabilities || [];
+    const { skills, tools } = splitCapabilities(capabilities);
     res.json({
       success: true,
       agent: {
@@ -146,7 +152,9 @@ router.get("/:id", async (req, res) => {
         model: a.model, provider: a.provider, platform: a.platform || a.role || null,
         system_prompt: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? null : a.system_prompt),
         temperature: a.temperature, max_tokens: a.max_tokens,
-        capabilities: a.capabilities || [],
+        capabilities,
+        skills,
+        tools,
         badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
         systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
         createdAt: a.created_at, updatedAt: a.updated_at
@@ -270,6 +278,111 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// PUT /api/v1/agents/:id/config — update agent runtime config and capabilities
+router.put("/:id/config", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await pool.query(
+      `SELECT id, name, username, type, role, system_prompt, capabilities
+         FROM ${SCHEMA}.agents
+        WHERE (id::text = $1 OR username = $1)
+        LIMIT 1`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, error: "Agent not found" });
+    }
+
+    const current = existing.rows[0];
+    const isCoordinator = current.type === 'coordinator' || String(current.role || '').toLowerCase() === 'coordinator' || String(current.username || '').toLowerCase().startsWith(COORDINATOR_NAME);
+    const normalized = buildAgentConfigUpdate({
+      body: req.body || {},
+      existing: current,
+      isCoordinator,
+    });
+
+    if (Object.keys(normalized.updates).length === 0) {
+      return res.status(400).json({ success: false, error: "No fields to update" });
+    }
+
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+    for (const [key, value] of Object.entries(normalized.updates)) {
+      if (key === 'capabilities') {
+        sets.push(`${key} = $${idx}::jsonb`);
+        vals.push(JSON.stringify(value));
+      } else if (key === 'type') {
+        sets.push(`${key} = $${idx}`);
+        vals.push(serializeType(value));
+      } else {
+        sets.push(`${key} = $${idx}`);
+        vals.push(value);
+      }
+      idx++;
+    }
+    sets.push(`updated_at = NOW()`);
+    vals.push(id);
+
+    const result = await pool.query(
+      `UPDATE ${SCHEMA}.agents
+          SET ${sets.join(", ")}
+        WHERE (id::text = $${idx} OR username = $${idx})
+        RETURNING *`,
+      vals
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
+
+    const row = result.rows[0];
+    const capabilities = row.capabilities || normalized.capabilities || [];
+    const { skills, tools } = splitCapabilities(capabilities);
+
+    return res.json({
+      success: true,
+      agent: {
+        id: row.id,
+        name: row.name,
+        username: row.username,
+        email: row.email,
+        status: row.status,
+        type: deserializeType(row.type),
+        avatar: row.avatar || null,
+        description: row.description || "",
+        role: row.role,
+        mbti: row.mbti,
+        model: row.model,
+        provider: row.provider,
+        system_prompt: isCoordinator ? null : row.system_prompt,
+        temperature: row.temperature,
+        max_tokens: row.max_tokens,
+        capabilities,
+        skills,
+        tools,
+        badge: isCoordinator ? 'system-coordinator' : null,
+        systemAgent: isCoordinator,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+      config: {
+        model: row.model,
+        provider: row.provider,
+        temperature: row.temperature,
+        max_tokens: row.max_tokens,
+        system_prompt: isCoordinator ? null : row.system_prompt,
+        skills,
+        tools,
+        capabilities,
+        type: deserializeType(row.type),
+        locked_prompt: isCoordinator,
+      },
+      ignored: normalized.ignored,
+    });
+  } catch (err) {
+    console.error("[AGENTS] Config update error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // DELETE /api/v1/agents/:id
 router.delete("/:id", async (req, res) => {
   try {
@@ -300,14 +413,17 @@ router.get("/:id/config", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const row = result.rows[0];
     const isCoordinator = row.type === 'coordinator' || String(row.role||'').toLowerCase() === 'coordinator';
+    const capabilities = row.capabilities || [];
+    const { skills, tools } = splitCapabilities(capabilities);
     const cfg = {
       model: row.model,
       provider: row.provider,
       temperature: row.temperature,
       max_tokens: row.max_tokens,
       system_prompt: isCoordinator ? null : row.system_prompt,
-      skills: row.capabilities || [],
-      tools: row.capabilities || [],
+      skills,
+      tools,
+      capabilities,
       type: deserializeType(row.type),
       locked_prompt: isCoordinator
     };

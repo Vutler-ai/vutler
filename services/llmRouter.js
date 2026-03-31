@@ -4,6 +4,7 @@ const https = require('https');
 const sniparaClient = require('./sniparaClient');
 const { recordToolObservation } = require('./memoryExtractionService');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
+const { buildInternalPlacementInstruction } = require('./agentConfigPolicy');
 
 function formatToolResultContent(result) {
   if (!result) return 'Tool completed with no result.';
@@ -847,17 +848,19 @@ async function chat(agent, messages, db, opts = {}) {
   const memoryTools = memoryScope ? MEMORY_TOOLS : null;
 
   // Inject social media tool when agent has relevant skills
-  const agentSkills = agent?.skills || agent?.tools || [];
+  const agentSkills = agent?.skills || agent?.tools || agent?.capabilities || [];
   const hasSocialSkill = Array.isArray(agentSkills) && agentSkills.some(s =>
     typeof s === 'string' && (s.includes('social') || s.includes('posting') || s.includes('content_scheduling') || s.includes('multi_platform'))
   );
   const socialMediaTools = hasSocialSkill ? [SOCIAL_MEDIA_TOOL] : [];
+  const internalPlacementInstruction = buildInternalPlacementInstruction();
 
   let effectiveSystemPrompt = agent?.system_prompt || '';
   if (memoryScope) {
     const memoryInstruction = '\n\nYou have access to persistent memory. Use remember() to store important information and recall() to search your memory before responding to questions about past context.';
     effectiveSystemPrompt = effectiveSystemPrompt + memoryInstruction;
   }
+  effectiveSystemPrompt += `\n\n${internalPlacementInstruction}`;
   if (hasSocialSkill) {
     effectiveSystemPrompt += '\n\nYou can post to social media using vutler_post_social_media(). The user has connected social accounts. Use this tool when asked to publish, share, or schedule content on social media.';
   }

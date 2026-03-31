@@ -42,6 +42,9 @@ export interface Agent {
   autoApproveEmail?: boolean;
   auto_approve_email?: boolean;
   config?: Record<string, unknown>;
+  capabilities?: string[];
+  skills?: string[];
+  tools?: string[];
   avatar?: string;
   username?: string;
 }
