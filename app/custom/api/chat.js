@@ -136,7 +136,7 @@ async function fetchChannelById(pg, workspaceId, channelId, currentUserId) {
      ) contact ON c.type = 'dm'
      LEFT JOIN ${SCHEMA}.chat_channel_preferences pref
        ON pref.workspace_id = c.workspace_id
-      AND pref.channel_id = c.id
+      AND pref.channel_id::text = c.id::text
       AND pref.user_id = COALESCE($3::text, '')
      WHERE c.workspace_id = $1 AND c.id = $2
      LIMIT 1`,
@@ -301,7 +301,7 @@ router.get('/chat/channels', async (req, res) => {
        ) contact ON c.type = 'dm'
        LEFT JOIN ${SCHEMA}.chat_channel_preferences pref
          ON pref.workspace_id = c.workspace_id
-        AND pref.channel_id = c.id
+        AND pref.channel_id::text = c.id::text
         AND pref.user_id = COALESCE($2::text, '')
        WHERE c.workspace_id = $1
        ORDER BY
