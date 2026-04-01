@@ -12,6 +12,7 @@
 const { CryptoService } = require('./crypto');
 const { pool } = require('../lib/postgres');
 const { chat } = require('./llmRouter');
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 const crypto = new CryptoService();
 
@@ -54,6 +55,13 @@ let _tableEnsured = false;
  */
 async function ensureVaultTable() {
   if (_tableEnsured) return;
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertTableExists(pool, 'tenant_vutler', 'vault_secrets', {
+      label: 'Vault secrets table',
+    });
+    _tableEnsured = true;
+    return;
+  }
   await pool.query(CREATE_TABLE_SQL);
   _tableEnsured = true;
 }

@@ -10,6 +10,11 @@
 const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const pool = require('../lib/vaultbrix');
+const {
+  assertColumnsExist,
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -176,6 +181,19 @@ function buildExecutionTarget(language, code) {
 async function ensureSandboxSchema(db = pool) {
   if (!ensureSchemaPromise) {
     ensureSchemaPromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(db, SCHEMA, 'sandbox_jobs', { label: 'Sandbox jobs table' });
+        await assertTableExists(db, SCHEMA, 'sandbox_executions', { label: 'Sandbox executions table' });
+        await assertColumnsExist(
+          db,
+          SCHEMA,
+          'sandbox_executions',
+          ['workspace_id', 'duration_ms', 'batch_id', 'batch_index', 'status'],
+          { label: 'Sandbox executions table' }
+        );
+        return;
+      }
+
       await db.query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.sandbox_jobs (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -840,9 +858,11 @@ async function executeBatch(scripts, {
   return settled.length > 0 ? settled : jobs;
 }
 
-ensureSandboxSchema().catch((err) => {
-  console.warn('[Sandbox] ensureSandboxSchema warning:', err.message);
-});
+if (runtimeSchemaMutationsAllowed()) {
+  ensureSandboxSchema().catch((err) => {
+    console.warn('[Sandbox] ensureSandboxSchema warning:', err.message);
+  });
+}
 
 module.exports = {
   ensureSandboxSchema,

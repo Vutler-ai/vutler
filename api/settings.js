@@ -5,6 +5,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { clearSniparaConfigCache } = require('../services/sniparaResolver');
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch(e) {
@@ -22,6 +23,13 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 
 async function ensureTables() {
   try {
+    if (!runtimeSchemaMutationsAllowed()) {
+      await assertTableExists(pool, SCHEMA, 'workspace_api_keys', {
+        label: 'Workspace API keys table',
+      });
+      return;
+    }
+
     // Only create workspace_api_keys if it doesn't exist — don't touch workspace_settings schema
     const check2 = await pool.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_api_keys'`

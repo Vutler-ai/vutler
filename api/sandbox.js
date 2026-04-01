@@ -17,6 +17,7 @@ const {
   listSandboxJobs,
   getSandboxJob,
 } = require('../services/sandbox');
+const { runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 const MAX_TIMEOUT_MS = 60_000;
 
@@ -31,9 +32,11 @@ function isPendingJob(result) {
   return result?.status === 'pending' || result?.status === 'running';
 }
 
-ensureSandboxSchema().catch((err) => {
-  console.warn('[SandboxAPI] ensureSandboxSchema warning:', err.message);
-});
+if (runtimeSchemaMutationsAllowed()) {
+  ensureSandboxSchema().catch((err) => {
+    console.warn('[SandboxAPI] ensureSandboxSchema warning:', err.message);
+  });
+}
 
 router.use((req, res, next) => {
   if (!req.user || !req.userId) {

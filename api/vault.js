@@ -33,6 +33,7 @@ const {
   updateSecret,
   extractCredentialsFromText,
 } = require('../services/vault');
+const { runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
@@ -72,9 +73,11 @@ function requireVaultApiKey(req, res, next) {
 
 // ── Ensure table exists at module load ───────────────────────────────────────
 
-ensureVaultTable().catch(err =>
-  console.error('[Vault] Failed to ensure table on startup:', err.message),
-);
+if (runtimeSchemaMutationsAllowed()) {
+  ensureVaultTable().catch(err =>
+    console.error('[Vault] Failed to ensure table on startup:', err.message),
+  );
+}
 
 // ── GET /api/v1/vault — list all secrets (masked) ────────────────────────────
 

@@ -6,6 +6,12 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "migrate": "node scripts/run-migrations.js",
+    "migrate:status": "node scripts/run-migrations.js --status",
+    "migrate:dry-run": "node scripts/run-migrations.js --dry-run",
+    "db:owners:audit": "node scripts/audit-schema-owners.js",
+    "db:owners:audit:json": "node scripts/audit-schema-owners.js --json",
+    "db:owners:sql": "node scripts/generate-owner-normalization-sql.js",
     "sandbox:worker": "node workers/sandbox-worker.js",
     "test": "jest --testPathPattern='tests/' --forceExit 2>/dev/null || bash tests/run-all.sh",
     "test:unit": "jest tests/llm-router.test.js --forceExit",

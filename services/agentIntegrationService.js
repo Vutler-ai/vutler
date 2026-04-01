@@ -4,6 +4,7 @@ const pool = require('../lib/vaultbrix');
 const skillHandlers = require('../seeds/skill-handlers.json');
 const { listSocialAccounts, toInternalPlatform } = require('./postForMeClient');
 const { normalizeScopeStrings } = require('./socialAccountScope');
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 const SOCIAL_PROVIDERS = new Set([
@@ -77,6 +78,13 @@ function readAgentSocialProvisioning(agent = null) {
 }
 
 async function ensureAgentIntegrationTable(db = pool) {
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertTableExists(db, SCHEMA, 'workspace_integration_agents', {
+      label: 'Agent integration access table',
+    });
+    return;
+  }
+
   await db.query(
     `CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_integration_agents (
       workspace_id UUID NOT NULL,

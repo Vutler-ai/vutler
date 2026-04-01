@@ -5,6 +5,7 @@
 
 const webpush = require('web-push');
 const { getPool } = require('./pg');
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 // Configure VAPID keys from env
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
@@ -44,6 +45,13 @@ const PUSH_INDEX_SQL = `
 async function ensurePushTable() {
   if (!pool) return;
   try {
+    if (!runtimeSchemaMutationsAllowed()) {
+      await assertTableExists(pool, 'tenant_vutler', 'push_subscriptions', {
+        label: 'Push subscriptions table',
+      });
+      return;
+    }
+
     await pool.query(PUSH_TABLE_SQL);
     await pool.query(PUSH_INDEX_SQL);
   } catch (err) {
@@ -51,7 +59,9 @@ async function ensurePushTable() {
   }
 }
 
-ensurePushTable();
+if (runtimeSchemaMutationsAllowed()) {
+  ensurePushTable();
+}
 
 function requirePool() {
   if (!pool) throw new Error('PostgreSQL pool unavailable for push subscriptions');

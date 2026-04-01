@@ -22,6 +22,7 @@ const {
   ensureAgentDriveProvisioned,
   resolveAgentDriveRoot,
 } = require('../services/agentDriveService');
+const { ensureAgentConfigurationSchema } = require('../services/agentSchemaService');
 const {
   getDefaultCapabilitiesForAgentTypes,
 } = require('../services/agentTypeProfiles');
@@ -363,6 +364,7 @@ router.get("/:id/capability-matrix", async (req, res) => {
 router.post("/", async (req, res) => {
   let client = null;
   try {
+    await ensureAgentConfigurationSchema(pool);
     const {
       payload,
       identity,
@@ -525,6 +527,7 @@ router.post("/", async (req, res) => {
 // PUT /api/v1/agents/:id — update agent
 router.put("/:id", async (req, res) => {
   try {
+    await ensureAgentConfigurationSchema(pool);
     const { id } = req.params;
     const {
       payload,
@@ -701,6 +704,7 @@ router.put("/:id", async (req, res) => {
 // PUT /api/v1/agents/:id/config — update agent runtime config and capabilities
 router.put("/:id/config", async (req, res) => {
   try {
+    await ensureAgentConfigurationSchema(pool);
     const { id } = req.params;
     const workspaceId = getWorkspaceId(req);
     const {
@@ -913,6 +917,7 @@ router.delete("/:id", async (req, res) => {
 // GET /api/v1/agents/:id/config — returns agent config (system_prompt, model, temperature, skills, tools)
 router.get("/:id/config", async (req, res) => {
   try {
+    await ensureAgentConfigurationSchema(pool);
     const result = await findAgentByRef(
       req.params.id,
       getWorkspaceId(req),
@@ -931,6 +936,7 @@ router.get("/:id/config", async (req, res) => {
 
 router.patch("/:id/access", async (req, res) => {
   try {
+    await ensureAgentConfigurationSchema(pool);
     const workspaceId = getWorkspaceId(req);
     const existing = await findAgentByRef(req.params.id, workspaceId, 'id,type,capabilities,config');
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
@@ -976,6 +982,7 @@ router.patch("/:id/access", async (req, res) => {
 
 router.patch("/:id/provisioning", async (req, res) => {
   try {
+    await ensureAgentConfigurationSchema(pool);
     const workspaceId = getWorkspaceId(req);
     const existing = await findAgentByRef(req.params.id, workspaceId, 'id,email,type,capabilities,config');
     if (existing.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });

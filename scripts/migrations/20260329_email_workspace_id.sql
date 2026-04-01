@@ -20,4 +20,19 @@ WHERE e.agent_id = a.id::text AND e.workspace_id IS NULL;
 UPDATE tenant_vutler.email_messages em
 SET workspace_id = er.workspace_id
 FROM tenant_vutler.email_routes er
-WHERE em.to_addr LIKE '%' || er.address || '%' AND em.workspace_id IS NULL;
+WHERE em.workspace_id IS NULL
+  AND (
+    (
+      jsonb_typeof(em.to_addresses) = 'array'
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(em.to_addresses) AS addr(value)
+        WHERE lower(addr.value) = lower(er.email_address)
+           OR lower(addr.value) LIKE '%' || lower(er.email_address) || '%'
+      )
+    )
+    OR (
+      jsonb_typeof(em.to_addresses) = 'string'
+      AND lower(em.to_addresses #>> '{}') LIKE '%' || lower(er.email_address) || '%'
+    )
+  );
