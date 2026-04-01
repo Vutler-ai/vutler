@@ -50,7 +50,9 @@ function isUuidLike(value) {
 }
 
 function canonicalDmNameForContact(contactName, username) {
-  const token = slugifyContactToken(username || contactName);
+  let token = slugifyContactToken(username || contactName);
+  token = token.replace(/^(dm-)+/i, '');
+  if (!token || isGenericChannelToken(token)) return null;
   return token ? `DM-${token}` : null;
 }
 
@@ -135,7 +137,7 @@ function canonicalChannelName(row) {
 
   return deriveReadableChannelName(row.raw_name || row.name)
     || deriveReadableChannelNameFromDescription(row.description)
-    || `Channel ${String(row.id || '').slice(0, 8)}`;
+    || 'Untitled Channel';
 }
 
 function shouldNormalizeLegacyChannel(row) {
