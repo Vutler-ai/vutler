@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { adminFetch } from "@/lib/api/client";
-import type { ServiceHealth, VpsHealth, VpsHealthResponse } from "@/lib/api/types";
+import type { AdminChatMaintenanceResult, ServiceHealth, VpsHealth, VpsHealthResponse } from "@/lib/api/types";
 import { Button } from "@/components/ui/button";
 import {
   Server,
@@ -17,6 +17,9 @@ import {
   MemoryStick,
   Network,
   Activity,
+  Wrench,
+  Archive,
+  MessageSquareText,
 } from "lucide-react";
 
 const REFRESH_OPTIONS = [
@@ -34,6 +37,9 @@ export default function AdminServicesPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [refreshInterval, setRefreshInterval] = useState("10000");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isNormalizingDms, setIsNormalizingDms] = useState(false);
+  const [isArchivingDms, setIsArchivingDms] = useState(false);
+  const [chatMaintenanceMessage, setChatMaintenanceMessage] = useState<string | null>(null);
 
   const fetchServices = useCallback(async (showIndicator = false) => {
     if (showIndicator) setIsRefreshing(true);
@@ -66,6 +72,35 @@ export default function AdminServicesPage() {
     if (s < 60) return `${s}s ago`;
     return `${Math.floor(s / 60)}m ago`;
   };
+
+  const runChatMaintenance = useCallback(async (
+    action: "normalize" | "archive"
+  ) => {
+    if (action === "normalize") setIsNormalizingDms(true);
+    if (action === "archive") setIsArchivingDms(true);
+    setChatMaintenanceMessage(null);
+    try {
+      const endpoint = action === "normalize"
+        ? "/api/v1/admin/chat/maintenance/normalize-legacy-dms"
+        : "/api/v1/admin/chat/maintenance/archive-technical-dms";
+      const result = await adminFetch<{ success: boolean; data: AdminChatMaintenanceResult }>(endpoint, {
+        method: "POST",
+        body: {},
+      });
+      const data = result.data || {};
+      if (action === "normalize") {
+        setChatMaintenanceMessage(`Normalized ${data.normalized_count || 0} legacy DM(s).`);
+      } else {
+        setChatMaintenanceMessage(`Archived ${data.archived_channel_count || 0} technical DM(s).`);
+      }
+      await fetchServices();
+    } catch (err) {
+      setChatMaintenanceMessage(err instanceof Error ? err.message : "Chat maintenance failed");
+    } finally {
+      setIsNormalizingDms(false);
+      setIsArchivingDms(false);
+    }
+  }, [fetchServices]);
 
   if (loading) {
     return (
@@ -143,6 +178,41 @@ export default function AdminServicesPage() {
 
       {/* VPS Metrics */}
       {vps && <VpsHealthSection vps={vps} />}
+
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Wrench className="h-5 w-5 text-muted-foreground" />
+              Chat Maintenance
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Normalize legacy DM labels and archive technical DM channels that should not clutter the chat list.
+            </p>
+            {chatMaintenanceMessage && (
+              <p className="mt-2 text-sm text-blue-400">{chatMaintenanceMessage}</p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="outline"
+              onClick={() => void runChatMaintenance("normalize")}
+              disabled={isNormalizingDms || isArchivingDms}
+            >
+              <MessageSquareText className="mr-2 h-4 w-4" />
+              {isNormalizingDms ? "Normalizing…" : "Normalize Legacy DMs"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void runChatMaintenance("archive")}
+              disabled={isArchivingDms || isNormalizingDms}
+            >
+              <Archive className="mr-2 h-4 w-4" />
+              {isArchivingDms ? "Archiving…" : "Archive Technical DMs"}
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Service Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

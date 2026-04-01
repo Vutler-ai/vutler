@@ -11,6 +11,10 @@ const os = require('os');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const { pool } = require('../lib/postgres');
+const {
+  archiveTechnicalDmChannels,
+  normalizeLegacyDmChannels,
+} = require('../../../services/chatChannelMaintenance');
 const router = express.Router();
 
 const SCHEMA = 'tenant_vutler';
@@ -19,7 +23,7 @@ const TABLE = `${SCHEMA}.users_auth`;
 // In-memory admin sessions (token -> { userId, email, expires })
 const adminSessions = new Map();
 // Share admin sessions with auth middleware
-const { setAdminSessions } = require("../lib/auth");
+const { setAdminSessions } = require('../lib/auth');
 setAdminSessions(adminSessions);
 
 // Clean expired sessions every 10 min
@@ -88,18 +92,18 @@ router.post('/login', async (req, res) => {
     // SECURITY: no fallback — fail hard if JWT_SECRET missing (audit 2026-03-28)
     const JWT_SECRET = process.env.JWT_SECRET;
     if (!JWT_SECRET) return res.status(500).json({ success: false, error: 'Server configuration error' });
-    const header = Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url');
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
     const payload = Buffer.from(JSON.stringify({
       userId: user.id,
       email: user.email,
       name: user.name || user.email,
       role: user.role || 'admin',
       workspaceId: '00000000-0000-0000-0000-000000000001',
-      iat: Math.floor(Date.now()/1000),
-      exp: Math.floor(Date.now()/1000) + 86400
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 86400
     })).toString('base64url');
-    const sig = crypto.createHmac('sha256', JWT_SECRET).update(header+'.'+payload).digest('base64url');
-    const token = header+'.'+payload+'.'+sig;
+    const sig = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');
+    const token = `${header}.${payload}.${sig}`;
 
     console.log(`[Admin] Login successful: ${user.email}`);
     // Register JWT in adminSessions so authenticateAgent recognizes it
@@ -477,8 +481,19 @@ function getDiskInfo() {
       if (/^(tmpfs|devtmpfs|overlay|none|shm)/.test(dev) || dev.startsWith('/dev/loop')) continue;
       const isReal = /^\/dev\/(sd|nvme|vd|xvd)/.test(dev);
       let mp, fsType, total, used, avail;
-      if (p.length >= 7) { fsType = p[1]; total = +p[2]; used = +p[3]; avail = +p[4]; mp = p[6]; }
-      else { fsType = 'unknown'; total = +p[1]*1024; used = +p[2]*1024; avail = +p[3]*1024; mp = p[5]; }
+      if (p.length >= 7) {
+        fsType = p[1];
+        total = +p[2];
+        used = +p[3];
+        avail = +p[4];
+        mp = p[6];
+      } else {
+        fsType = 'unknown';
+        total = +p[1] * 1024;
+        used = +p[2] * 1024;
+        avail = +p[3] * 1024;
+        mp = p[5];
+      }
       const relevant = mp === '/' || mp.startsWith('/home') || mp.startsWith('/var') || mp.startsWith('/data');
       if ((isReal || relevant) && !seen.has(dev)) {
         seen.add(dev);
@@ -570,6 +585,34 @@ router.get('/health/vps', async (req, res) => {
     res.json({ success: true, services, summary, vps, timestamp: new Date().toISOString() });
   } catch (err) {
     console.error('[Admin] VPS health error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/chat/maintenance/normalize-legacy-dms', async (req, res) => {
+  try {
+    const workspaceId = req.body?.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const result = await normalizeLegacyDmChannels(pool, {
+      workspaceId,
+      schema: SCHEMA,
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[Admin] Normalize legacy DMs error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/chat/maintenance/archive-technical-dms', async (req, res) => {
+  try {
+    const workspaceId = req.body?.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const result = await archiveTechnicalDmChannels(pool, {
+      workspaceId,
+      schema: SCHEMA,
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[Admin] Archive technical DMs error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

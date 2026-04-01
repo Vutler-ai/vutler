@@ -1152,3 +1152,19 @@ export interface VpsHealthResponse {
   vps: VpsHealth | null;
   timestamp: string;
 }
+
+export interface AdminChatMaintenanceResult {
+  normalized_count?: number;
+  normalized?: Array<{
+    id: string;
+    previous_name: string;
+    canonical_name: string;
+  }>;
+  archived_channel_count?: number;
+  archived_preference_count?: number;
+  channels?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+  }>;
+}
