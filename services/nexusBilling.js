@@ -1,8 +1,7 @@
 'use strict';
 
 const { getNexusLimits } = require('../packages/core/middleware/featureGate');
-
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const { DEFAULT_WORKSPACE, getWorkspacePlanId } = require('./workspacePlanService');
 
 function getNodeMode(node = {}) {
   const config = node.config || node.metadata || {};
@@ -11,37 +10,6 @@ function getNodeMode(node = {}) {
   if (config.client_name || config.clientName || node.client_name) return 'enterprise';
   if (node.type === 'local') return 'local';
   return 'standard';
-}
-
-async function getWorkspacePlanId(pg, workspaceId = DEFAULT_WORKSPACE) {
-  try {
-    const settings = await pg.query(
-      `SELECT value
-         FROM tenant_vutler.workspace_settings
-        WHERE workspace_id = $1
-          AND key = 'billing_plan'
-        LIMIT 1`,
-      [workspaceId]
-    );
-    const raw = settings.rows[0]?.value;
-    const planFromSettings = raw && typeof raw === 'object' ? raw.plan : raw;
-    if (planFromSettings) return String(planFromSettings).toLowerCase();
-  } catch (_) {
-    // Fall through to workspaces.plan
-  }
-
-  try {
-    const workspaces = await pg.query(
-      `SELECT plan
-         FROM tenant_vutler.workspaces
-        WHERE id = $1
-        LIMIT 1`,
-      [workspaceId]
-    );
-    return String(workspaces.rows[0]?.plan || 'free').toLowerCase();
-  } catch (_) {
-    return 'free';
-  }
 }
 
 async function getWorkspaceNexusUsage(pg, workspaceId = DEFAULT_WORKSPACE) {

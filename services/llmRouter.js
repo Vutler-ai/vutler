@@ -968,7 +968,7 @@ async function chat(agent, messages, db, opts = {}) {
     ? await resolveMemoryMode({ db, workspaceId, agent })
     : { mode: 'disabled', read: false, write: false, inject: false, source: 'none' };
   const memoryBindings = memoryScope
-    ? buildAgentMemoryBindings({
+    ? buildAgentMemoryBindings(agent || {
       snipara_instance_id: memoryScope,
       username: memoryScope,
       role: agent?.role,

@@ -9,6 +9,7 @@ const { chat: llmChat } = require('../../../services/llmRouter');
 const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
+const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 10_000;
@@ -25,6 +26,19 @@ const agentCache = new Map();
 
 function normalizeWorkspaceId(workspaceId) {
   return workspaceId || '00000000-0000-0000-0000-000000000001';
+}
+
+async function hydrateAgent(agent, workspaceId) {
+  if (!agent) return agent;
+  const ws = normalizeWorkspaceId(workspaceId || agent.workspace_id);
+  const agentRef = agent.id || agent.username || agent.agent_id;
+  if (!agentRef) return { ...agent, workspace_id: ws };
+
+  try {
+    return await resolveAgentRecord(pool, ws, agentRef, { ...agent, workspace_id: ws });
+  } catch (_) {
+    return { ...agent, workspace_id: ws };
+  }
 }
 
 function appendPlacementInstruction(prompt, instruction) {
@@ -200,10 +214,11 @@ async function executeTask(task) {
     return;
   }
 
+  const hydratedAgent = await hydrateAgent(agent, workspaceId);
   const swarmCoordinator = getSwarmCoordinator();
   const executionAgent = typeof swarmCoordinator.resolveAgentExecutionContext === 'function'
-    ? await swarmCoordinator.resolveAgentExecutionContext(agent, workspaceId)
-    : agent;
+    ? await swarmCoordinator.resolveAgentExecutionContext(hydratedAgent, workspaceId)
+    : hydratedAgent;
   const agentRef = executionAgent.username || String(executionAgent.id);
   const startedAt = Date.now();
 

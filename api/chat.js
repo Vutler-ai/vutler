@@ -9,6 +9,7 @@ const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const llmRouter = require('../services/llmRouter');
 const { createMemoryRuntimeService } = require('../services/memory/runtime');
+const { resolveAgentRecord } = require('../services/sniparaMemoryService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -29,7 +30,7 @@ async function _triggerAgentResponse(req, channelId, wsId) {
 
     if (agentResult.rows.length === 0) return; // No agent in channel
 
-    const agent = agentResult.rows[0];
+    const agent = await resolveAgentRecord(pool, wsId, agentResult.rows[0]?.id || agentResult.rows[0]?.username, agentResult.rows[0] || {});
     console.log(`[Chat] Agent detected: ${agent.name} in channel ${channelId}`);
 
     // Get recent message history (last 20)

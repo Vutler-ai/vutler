@@ -150,6 +150,7 @@ describe('llmRouter memory modes', () => {
     );
     expect(recallMock).toHaveBeenCalledWith(expect.objectContaining({
       query: 'language preference',
+      agentId: 'agent-1',
     }));
     expect(recordedBodies[1].messages).toEqual(
       expect.arrayContaining([

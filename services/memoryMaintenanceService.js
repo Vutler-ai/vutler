@@ -6,6 +6,7 @@ const {
   rememberScopedMemory,
   softDeleteAgentMemory,
 } = require('./sniparaMemoryService');
+const { filterNovelMemories } = require('./memoryConsolidationService');
 const { isNearDuplicate } = require('./memoryConsolidationService');
 const { isMemoryExpired, normalizeType } = require('./memoryPolicy');
 const { logMemoryEvent } = require('./memoryTelemetryService');
@@ -145,8 +146,15 @@ async function harvestAgentUserProfiles({ db, workspaceId, agent }) {
 
     if (payload.length === 0) continue;
 
+    const novelPayload = await filterNovelMemories({
+      db,
+      workspaceId,
+      agent,
+      memories: payload,
+    }).catch(() => payload);
+
     const persisted = [];
-    for (const memory of payload) {
+    for (const memory of novelPayload) {
       try {
         await rememberScopedMemory({
           db,

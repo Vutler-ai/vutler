@@ -34,4 +34,33 @@ describe('memory mode resolver', () => {
       inject: false,
     });
   });
+
+  test('plan with snipara memory defaults to active when no explicit mode is set', async () => {
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('key IN (\'memory_mode\', \'snipara_memory_mode\')')) {
+          return { rows: [] };
+        }
+        if (sql.includes(`key = 'billing_plan'`)) {
+          return { rows: [{ value: { plan: 'agents_pro' } }] };
+        }
+        return { rows: [] };
+      }),
+    };
+
+    const resolved = await resolveMemoryMode({
+      db,
+      workspaceId: 'ws-1',
+      agent: {},
+      defaultMode: MEMORY_MODE_PASSIVE,
+    });
+
+    expect(resolved).toMatchObject({
+      mode: MEMORY_MODE_ACTIVE,
+      source: 'plan',
+      read: true,
+      write: true,
+      inject: true,
+    });
+  });
 });

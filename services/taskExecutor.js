@@ -2,6 +2,7 @@
 
 const pool = require('../lib/vaultbrix');
 const llmRouter = require('./llmRouter');
+const { resolveAgentRecord } = require('./sniparaMemoryService');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -26,7 +27,7 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
       return;
     }
 
-    const agent = agentResult.rows[0];
+    const agent = await resolveAgentRecord(pool, workspaceId, agentResult.rows[0]?.id || agentResult.rows[0]?.username, agentResult.rows[0] || {});
     console.log(`[TaskExecutor] Executing task ${taskId} via LLM with agent ${agent.name} (${agent.model})`);
 
     // 2. Mark in_progress
