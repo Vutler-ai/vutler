@@ -94,7 +94,7 @@ export default function AdminServicesPage() {
       });
       const data = result.data || {};
       if (action === "normalize") {
-        setChatMaintenanceMessage(`Normalized ${data.normalized_count || 0} legacy DM(s).`);
+        setChatMaintenanceMessage(`Normalized ${data.normalized_count || 0} legacy chat(s).`);
       } else {
         setChatMaintenanceMessage(`Archived ${data.archived_channel_count || 0} technical DM(s).`);
       }
@@ -196,10 +196,13 @@ export default function AdminServicesPage() {
             </p>
             <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
               <span className="rounded-full border border-border px-2 py-1">
-                Legacy candidates: {chatMaintenanceStatus?.legacy_count || 0}
+                Legacy chats: {chatMaintenanceStatus?.legacy_count || 0}
               </span>
               <span className="rounded-full border border-border px-2 py-1">
                 Technical DMs: {chatMaintenanceStatus?.technical_count || 0}
+              </span>
+              <span className="rounded-full border border-border px-2 py-1">
+                Technical channels: {chatMaintenanceStatus?.technical_workspace_channel_count || 0}
               </span>
             </div>
             {chatMaintenanceStatus && (
@@ -212,6 +215,11 @@ export default function AdminServicesPage() {
                 {chatMaintenanceStatus.technical_channels && chatMaintenanceStatus.technical_channels.length > 0 && (
                   <p>
                     Technical: {chatMaintenanceStatus.technical_channels.slice(0, 3).map((channel) => channel.name).join(", ")}
+                  </p>
+                )}
+                {chatMaintenanceStatus.technical_workspace_channels && chatMaintenanceStatus.technical_workspace_channels.length > 0 && (
+                  <p>
+                    Technical channels: {chatMaintenanceStatus.technical_workspace_channels.slice(0, 3).map((channel) => channel.name).join(", ")}
                   </p>
                 )}
               </div>
@@ -227,7 +235,7 @@ export default function AdminServicesPage() {
               disabled={isNormalizingDms || isArchivingDms}
             >
               <MessageSquareText className="mr-2 h-4 w-4" />
-              {isNormalizingDms ? "Normalizing…" : "Normalize Legacy DMs"}
+              {isNormalizingDms ? "Normalizing…" : "Normalize Legacy Chats"}
             </Button>
             <Button
               variant="outline"

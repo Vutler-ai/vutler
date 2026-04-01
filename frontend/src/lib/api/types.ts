@@ -256,6 +256,162 @@ export interface DriveFile {
   path: string;
 }
 
+// ─── Browser Operator ────────────────────────────────────────────────────────
+
+export interface BrowserOperatorRegistryRecord<T = Record<string, unknown>> {
+  key: string;
+  version: string;
+  status: string;
+  managed_by: string;
+  definition: T;
+}
+
+export interface BrowserOperatorProfileDefinition {
+  profile_key: string;
+  name: string;
+  default_runtime_mode: string;
+  governance_mode: string;
+  risk_level: string;
+  action_catalog_ref: string;
+  supported_flows: string[];
+  [key: string]: unknown;
+}
+
+export type BrowserOperatorProfile = BrowserOperatorRegistryRecord<BrowserOperatorProfileDefinition>;
+
+export interface BrowserOperatorFlowStep {
+  action_key: string;
+  input?: Record<string, unknown>;
+}
+
+export interface BrowserOperatorFlowDefinition {
+  flow_key: string;
+  name: string;
+  steps: BrowserOperatorFlowStep[];
+  [key: string]: unknown;
+}
+
+export type BrowserOperatorFlow = BrowserOperatorRegistryRecord<BrowserOperatorFlowDefinition>;
+
+export interface BrowserOperatorActionDefinition {
+  action_key: string;
+  risk_level: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface BrowserOperatorActionCatalogDefinition {
+  catalog_key: string;
+  name: string;
+  actions: BrowserOperatorActionDefinition[];
+  [key: string]: unknown;
+}
+
+export type BrowserOperatorActionCatalog = BrowserOperatorRegistryRecord<BrowserOperatorActionCatalogDefinition>;
+
+export interface BrowserOperatorRun {
+  id: string;
+  workspace_id: string;
+  requested_by_user_id?: string | null;
+  runtime_mode: string;
+  profile_key: string;
+  profile_version?: string | null;
+  flow_key?: string | null;
+  flow_version?: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  target: Record<string, unknown>;
+  governance: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  report_format: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrowserOperatorRunStep {
+  id: string;
+  run_id: string;
+  step_index: number;
+  action_key: string;
+  status: string;
+  input: Record<string, unknown>;
+  output?: Record<string, unknown> | null;
+  error?: Record<string, unknown> | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface BrowserOperatorRunEvidence {
+  id: string;
+  run_id: string;
+  step_id?: string | null;
+  artifact_kind: string;
+  storage_key: string;
+  mime_type?: string | null;
+  metadata: Record<string, unknown>;
+  inline_text?: string | null;
+  artifact_payload?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface BrowserOperatorRunReport {
+  status: string;
+  profileKey: string;
+  flowKey: string;
+  runtimeMode: string;
+  target: Record<string, unknown>;
+  totals: {
+    steps: number;
+    passed: number;
+    failed: number;
+  };
+  checks: Array<Record<string, unknown>>;
+  unsupportedActions: string[];
+  generatedAt: string;
+}
+
+export interface BrowserOperatorCredential {
+  id: string;
+  workspace_id: string;
+  app_key: string;
+  credential_key: string;
+  credential_type: string;
+  status: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  last_tested_at?: string | null;
+}
+
+export interface CreateBrowserOperatorRunPayload {
+  runtimeMode?: 'cloud-browser' | 'nexus-browser' | string;
+  profileKey: string;
+  profileVersion?: string;
+  flowKey: string;
+  flowVersion?: string;
+  target: {
+    appKey?: string;
+    baseUrl: string;
+    path?: string;
+  };
+  governance?: Record<string, unknown>;
+  reportFormat?: 'summary' | 'full' | string;
+}
+
+export interface CreateBrowserOperatorCredentialPayload {
+  appKey: string;
+  credentialKey: string;
+  credentialType?: string;
+  status?: string;
+  username?: string;
+  loginHint?: string;
+  vaultSecretId?: string;
+  credentialRef?: string;
+  allowedDomains?: string[];
+}
+
 export interface CreateFolderPayload {
   path: string;
   name: string;
@@ -1161,11 +1317,19 @@ export interface AdminChatMaintenanceResult {
     current_name: string;
     canonical_name: string | null;
     contact_type: string;
+    channel_type?: string;
   }>;
   technical_channels?: Array<{
     id: string;
     name: string;
     description?: string;
+  }>;
+  technical_workspace_channel_count?: number;
+  technical_workspace_channels?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    channel_type?: string;
   }>;
   normalized_count?: number;
   normalized?: Array<{

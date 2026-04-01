@@ -19,6 +19,22 @@ const TECHNICAL_DM_PATTERNS = [
   /^dm-[a-z0-9-]+-[a-f0-9]{8}$/i,
 ];
 
+const TECHNICAL_CHANNEL_PATTERNS = [
+  /^test[-_ ]/i,
+  /^verify[-_ ]/i,
+  /^e2e[-_ ]/i,
+  /^smoke[-_ ]/i,
+  /^codex[-_ ]/i,
+  /^jarvis[-_ ]/i,
+  /^tmp[-_ ]/i,
+  /^temp[-_ ]/i,
+  /^channel[-_ ]/i,
+  /^room[-_ ]/i,
+  /^workspace[-_ ]/i,
+  /^group[-_ ]/i,
+  /^[0-9a-f]{8,}$/i,
+];
+
 let chatPreferencesSchemaEnsured = false;
 
 function slugifyContactToken(value) {
@@ -38,8 +54,101 @@ function canonicalDmNameForContact(contactName, username) {
   return token ? `DM-${token}` : null;
 }
 
+function toTitleCase(value) {
+  return String(value || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function isGenericChannelToken(value) {
+  return [
+    'test',
+    'verify',
+    'e2e',
+    'smoke',
+    'codex',
+    'jarvis',
+    'tmp',
+    'temp',
+    'channel',
+    'room',
+    'workspace',
+    'group',
+    'direct',
+    'message',
+    'dm',
+  ].includes(String(value || '').toLowerCase());
+}
+
 function looksTechnicalDmName(name) {
   return TECHNICAL_DM_PATTERNS.some((pattern) => pattern.test(String(name || '')));
+}
+
+function looksTechnicalChannelName(name) {
+  const raw = String(name || '');
+  return TECHNICAL_CHANNEL_PATTERNS.some((pattern) => pattern.test(raw)) || isUuidLike(raw);
+}
+
+function deriveReadableChannelName(name) {
+  const rawName = String(name || '');
+  let normalized = rawName
+    .replace(/^[a-z]+(?:__[a-z0-9-]+)+/i, '')
+    .replace(/^(test|verify|e2e|smoke|codex|jarvis|tmp|temp|channel|room|workspace|group)[-_ ]+/i, '')
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/ig, '')
+    .replace(/[0-9a-f]{8,}/ig, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+
+  normalized = normalized
+    .split(/\s+/)
+    .filter((part) => !isGenericChannelToken(part))
+    .join(' ')
+    .trim();
+
+  if (!normalized) return null;
+  return toTitleCase(normalized);
+}
+
+function deriveReadableChannelNameFromDescription(description) {
+  const raw = String(description || '').trim();
+  if (!raw || looksTechnicalChannelName(raw)) return null;
+  const leading = raw.split(/[.,:;-]/)[0].trim();
+  if (!leading) return null;
+  const normalized = leading
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .filter((part) => part && !isGenericChannelToken(part))
+    .slice(0, 4)
+    .join(' ')
+    .trim();
+  if (!normalized) return null;
+  return toTitleCase(normalized);
+}
+
+function canonicalChannelName(row) {
+  const type = String(row.type || '').toLowerCase();
+  if (type === 'dm' || type === 'direct') {
+    return canonicalDmNameForContact(row.display_name || row.name, row.contact_username || row.username);
+  }
+
+  return deriveReadableChannelName(row.raw_name || row.name)
+    || deriveReadableChannelNameFromDescription(row.description)
+    || `Channel ${String(row.id || '').slice(0, 8)}`;
+}
+
+function shouldNormalizeLegacyChannel(row) {
+  const type = String(row.type || '').toLowerCase();
+  if (type === 'dm' || type === 'direct') {
+    return shouldNormalizeLegacyDm(row);
+  }
+
+  const rawName = String(row.raw_name || row.name || '');
+  const canonicalName = canonicalChannelName(row);
+  if (!rawName || !canonicalName) return false;
+  if (rawName.toLowerCase() === canonicalName.toLowerCase()) return false;
+  return looksTechnicalChannelName(rawName);
 }
 
 function shouldNormalizeLegacyDm(row) {
@@ -105,13 +214,15 @@ async function normalizeLegacyDmRows(pg, rows, { schema = DEFAULT_SCHEMA } = {})
   const normalized = [];
 
   for (const row of rows) {
-    if (!shouldNormalizeLegacyDm(row)) {
+    if (!shouldNormalizeLegacyChannel(row)) {
       nextRows.push(row);
       continue;
     }
 
-    const canonicalName = canonicalDmNameForContact(row.display_name || row.name, row.contact_username || row.username);
-    const canonicalDescription = `Direct message with ${row.display_name || row.name}`;
+    const canonicalName = canonicalChannelName(row);
+    const canonicalDescription = String(row.type || '').toLowerCase() === 'dm' || String(row.type || '').toLowerCase() === 'direct'
+      ? `Direct message with ${row.display_name || row.name}`
+      : (row.description || '');
     await pg.query(
       `UPDATE ${schema}.chat_channels
        SET name = $2, description = $3, updated_at = NOW()
@@ -171,7 +282,7 @@ async function listLegacyDmRows(pg, { schema = DEFAULT_SCHEMA, workspaceId }) {
        LIMIT 1
      ) contact ON TRUE
      WHERE c.workspace_id = $1
-       AND c.type = 'dm'`,
+       AND c.type IN ('dm', 'direct', 'channel', 'group', 'public', 'private')`,
     [workspaceId]
   );
 
@@ -192,7 +303,7 @@ async function listTechnicalDmChannels(pg, { schema = DEFAULT_SCHEMA, workspaceI
     `SELECT id, name, description, created_at
      FROM ${schema}.chat_channels
      WHERE workspace_id = $1
-       AND type = 'dm'
+       AND type IN ('dm', 'direct')
      ORDER BY created_at DESC`,
     [workspaceId]
   );
@@ -252,12 +363,25 @@ async function getChatMaintenanceStatus(pg, { schema = DEFAULT_SCHEMA, workspace
   ]);
 
   const legacyCandidates = legacyRows
-    .filter((row) => shouldNormalizeLegacyDm(row))
+    .filter((row) => shouldNormalizeLegacyChannel(row))
     .map((row) => ({
       id: row.id,
       current_name: row.raw_name || row.name,
-      canonical_name: canonicalDmNameForContact(row.display_name || row.name, row.contact_username || row.username),
+      canonical_name: canonicalChannelName(row),
       contact_type: row.contact_type || 'unknown',
+      channel_type: row.type || 'channel',
+    }));
+
+  const technicalWorkspaceChannels = legacyRows
+    .filter((row) => {
+      const type = String(row.type || '').toLowerCase();
+      return type !== 'dm' && type !== 'direct' && looksTechnicalChannelName(row.raw_name || row.name);
+    })
+    .map((row) => ({
+      id: row.id,
+      name: row.raw_name || row.name,
+      description: row.description || '',
+      channel_type: row.type || 'channel',
     }));
 
   return {
@@ -269,14 +393,18 @@ async function getChatMaintenanceStatus(pg, { schema = DEFAULT_SCHEMA, workspace
       name: channel.name,
       description: channel.description || '',
     })),
+    technical_workspace_channel_count: technicalWorkspaceChannels.length,
+    technical_workspace_channels: technicalWorkspaceChannels,
   };
 }
 
 module.exports = {
   getChatMaintenanceStatus,
   canonicalDmNameForContact,
+  canonicalChannelName,
   ensureChatPreferencesTable,
   findExistingDmChannelId,
+  looksTechnicalChannelName,
   looksTechnicalDmName,
   normalizeLegacyDmChannels,
   normalizeLegacyDmRows,
