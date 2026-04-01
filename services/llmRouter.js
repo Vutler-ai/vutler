@@ -651,19 +651,95 @@ function parseUrl(baseURL) {
   return { hostname: u.hostname, pathPrefix: u.pathname === '/' ? '' : u.pathname.replace(/\/$/, '') };
 }
 
-async function resolveWorkspaceProvider(db, workspaceId, providerName) {
-  if (!db || !workspaceId || !providerName) return null;
+function readWorkspaceSettingValue(rawValue) {
+  if (rawValue === undefined || rawValue === null) return null;
+  if (typeof rawValue === 'object' && rawValue !== null && 'value' in rawValue) {
+    return rawValue.value;
+  }
+  return rawValue;
+}
+
+async function resolveWorkspaceProvider(db, workspaceId, providerName, options = {}) {
+  if (!db || !workspaceId || (!providerName && !options.id)) return null;
   try {
-    const r = await db.query(
-      `SELECT id, provider, api_key, base_url, config, is_enabled
-       FROM tenant_vutler.llm_providers
-       WHERE workspace_id = $1 AND provider = $2 AND is_enabled = true
-       LIMIT 1`,
+    let r;
+    if (options.id) {
+      r = await db.query(
+        `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
+           FROM tenant_vutler.llm_providers
+          WHERE workspace_id = $1 AND id = $2 AND is_enabled = true
+          LIMIT 1`,
+        [workspaceId, options.id]
+      );
+      if (r.rows?.[0]) return r.rows[0];
+    }
+
+    if (!providerName) return null;
+
+    r = await db.query(
+      `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
+         FROM tenant_vutler.llm_providers
+        WHERE workspace_id = $1 AND provider = $2 AND is_enabled = true
+        ORDER BY is_default DESC, created_at DESC
+        LIMIT 1`,
       [workspaceId, providerName]
     );
     return r.rows?.[0] || null;
   } catch (err) {
     console.warn('[LLM Router] resolveWorkspaceProvider failed:', err.message);
+    return null;
+  }
+}
+
+async function resolveWorkspaceDefaultProvider(db, workspaceId) {
+  if (!db || !workspaceId) return null;
+
+  try {
+    const kvResult = await db.query(
+      `SELECT value
+         FROM tenant_vutler.workspace_settings
+        WHERE workspace_id = $1 AND key = 'default_provider'
+        LIMIT 1`,
+      [workspaceId]
+    );
+    const kvValue = readWorkspaceSettingValue(kvResult.rows?.[0]?.value);
+    const explicit = await resolveWorkspaceProvider(db, workspaceId, typeof kvValue === 'string' ? kvValue : null, {
+      id: typeof kvValue === 'string' ? kvValue : null,
+    });
+    if (explicit) return explicit;
+  } catch (_) {
+    // Workspace settings may use a flat schema in some environments.
+  }
+
+  try {
+    const flatResult = await db.query(
+      `SELECT default_provider
+         FROM tenant_vutler.workspace_settings
+        WHERE workspace_id = $1
+        LIMIT 1`,
+      [workspaceId]
+    );
+    const flatValue = readWorkspaceSettingValue(flatResult.rows?.[0]?.default_provider);
+    const explicit = await resolveWorkspaceProvider(db, workspaceId, typeof flatValue === 'string' ? flatValue : null, {
+      id: typeof flatValue === 'string' ? flatValue : null,
+    });
+    if (explicit) return explicit;
+  } catch (_) {
+    // Ignore and fall back to the provider flag below.
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
+         FROM tenant_vutler.llm_providers
+        WHERE workspace_id = $1 AND is_enabled = true AND is_default = true
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [workspaceId]
+    );
+    return result.rows?.[0] || null;
+  } catch (err) {
+    console.warn('[LLM Router] resolveWorkspaceDefaultProvider failed:', err.message);
     return null;
   }
 }
@@ -999,7 +1075,25 @@ async function logUsage(db, workspaceId, agent, llmResult) {
       ]
     );
   } catch (_) {
-    return;
+    try {
+      await db.query(
+        `INSERT INTO tenant_vutler.usage_logs
+         (workspace_id, agent_id, provider, model, input_tokens, output_tokens, latency_ms, estimated_cost, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
+        [
+          workspaceId,
+          agent?.id || null,
+          llmResult.provider,
+          llmResult.model,
+          llmResult.usage?.input_tokens || 0,
+          llmResult.usage?.output_tokens || 0,
+          llmResult.latency_ms || 0,
+          llmResult.cost || 0,
+        ]
+      );
+    } catch (_) {
+      return;
+    }
   }
 }
 
@@ -1040,11 +1134,16 @@ async function chat(agent, messages, db, opts = {}) {
     'claude-3-5-haiku-latest': 'claude-haiku-4-5',
   };
 
-  const rawModel = agent?.model || 'claude-sonnet-4-20250514';
-  const model = MODEL_MAP[rawModel] || rawModel;
   const workspaceId = agent?.workspace_id || agent?.workspaceId || null;
-
-  const primaryProvider = agent?.provider || detectProvider(model);
+  const workspaceDefaultProvider = await resolveWorkspaceDefaultProvider(db, workspaceId);
+  const requestedModel = agent?.model || null;
+  const normalizedRequestedModel = requestedModel ? (MODEL_MAP[requestedModel] || requestedModel) : null;
+  const inferredProvider = requestedModel ? detectProvider(normalizedRequestedModel) : null;
+  const primaryProvider = agent?.provider || inferredProvider || workspaceDefaultProvider?.provider || 'anthropic';
+  const primaryProviderId = (!agent?.provider && !inferredProvider && workspaceDefaultProvider?.provider === primaryProvider)
+    ? workspaceDefaultProvider.id
+    : null;
+  const model = normalizedRequestedModel || PROVIDERS[primaryProvider]?.defaultModel || 'claude-sonnet-4-20250514';
   const fallbackProvider = agent?.fallback_provider || agent?.fallback?.provider || null;
   const fallbackModel = agent?.fallback_model || agent?.fallback?.model || null;
 
@@ -1121,7 +1220,7 @@ async function chat(agent, messages, db, opts = {}) {
   }
 
   const attempts = [
-    { provider: primaryProvider, model },
+    { provider: primaryProvider, model, providerId: primaryProviderId },
     ...(fallbackProvider ? [{ provider: fallbackProvider, model: fallbackModel || PROVIDERS[fallbackProvider]?.defaultModel }] : []),
   ];
 
@@ -1164,7 +1263,7 @@ async function chat(agent, messages, db, opts = {}) {
         continue;
       }
     } else {
-      const row = await resolveWorkspaceProvider(db, workspaceId, a.provider);
+      const row = await resolveWorkspaceProvider(db, workspaceId, a.provider, { id: a.providerId });
       api_key = row?.api_key || process.env[`${a.provider.toUpperCase()}_API_KEY`] || process.env.OPENAI_API_KEY;
       base_url = row?.base_url || providerCfg.baseURL;
     }

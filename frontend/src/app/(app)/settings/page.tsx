@@ -70,6 +70,23 @@ function extractObjectField<T extends object>(value: unknown, key: string): T | 
   return null;
 }
 
+const SHOW_OPEN_SOURCE_SNIPARA_SETTINGS =
+  process.env.NEXT_PUBLIC_VUTLER_OPEN_SOURCE === "true";
+
+function normalizeDefaultProviderValue(value: unknown, providers: Provider[]): string {
+  const raw = typeof value === "string"
+    ? value.trim()
+    : (typeof value === "object" && value !== null && "value" in value
+        ? String((value as { value?: string }).value || "").trim()
+        : "");
+
+  if (!raw) return "";
+  const byId = providers.find((provider) => provider.id === raw);
+  if (byId) return byId.id;
+  const byType = providers.find((provider) => provider.provider === raw);
+  return byType?.id || raw;
+}
+
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 
 function ProfileTab({
@@ -295,7 +312,9 @@ function WorkspaceTab({
   const [wsName, setWsName] = useState(getStr(settings?.workspace_name));
   const [wsDesc, setWsDesc] = useState(getStr(settings?.workspace_description));
   const [timezone, setTimezone] = useState(getStr(settings?.timezone) || "UTC");
-  const [defaultProvider, setDefaultProvider] = useState(getStr(settings?.default_provider));
+  const [defaultProvider, setDefaultProvider] = useState(
+    normalizeDefaultProviderValue(settings?.default_provider, providers)
+  );
   const [driveRoot, setDriveRoot] = useState(getStr(settings?.drive_root) || "/projects/Vutler");
   const [sniparaKey, setSniparaKey] = useState(getStr((settings as Record<string, unknown>)?.snipara_api_key));
   const [sniparaProjectId, setSniparaProjectId] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_id));
@@ -307,13 +326,13 @@ function WorkspaceTab({
       setWsName(getStr(settings.workspace_name));
       setWsDesc(getStr(settings.workspace_description));
       setTimezone(getStr(settings.timezone) || "UTC");
-      setDefaultProvider(getStr(settings.default_provider));
+      setDefaultProvider(normalizeDefaultProviderValue(settings.default_provider, providers));
       setDriveRoot(getStr(settings.drive_root) || "/projects/Vutler");
       setSniparaKey(getStr((settings as Record<string, unknown>)?.snipara_api_key));
       setSniparaProjectId(getStr((settings as Record<string, unknown>)?.snipara_project_id));
       setSniparaProjectSlug(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
     }
-  }, [settings]);
+  }, [settings, providers]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -326,16 +345,19 @@ function WorkspaceTab({
           default_provider: { value: defaultProvider, type: "text" },
           drive_root: { value: driveRoot, type: "text" },
         },
+        default_provider: defaultProvider,
       };
-      // Only send Snipara fields if they contain real values (not masked)
-      if (sniparaKey && !sniparaKey.includes("••")) {
-        payload.snipara_api_key = sniparaKey;
-      }
-      if (sniparaProjectId) {
-        payload.snipara_project_id = sniparaProjectId;
-      }
-      if (sniparaProjectSlug) {
-        payload.snipara_project_slug = sniparaProjectSlug;
+      if (SHOW_OPEN_SOURCE_SNIPARA_SETTINGS) {
+        // Only send Snipara fields if they contain real values (not masked)
+        if (sniparaKey && !sniparaKey.includes("••")) {
+          payload.snipara_api_key = sniparaKey;
+        }
+        if (sniparaProjectId) {
+          payload.snipara_project_id = sniparaProjectId;
+        }
+        if (sniparaProjectSlug) {
+          payload.snipara_project_slug = sniparaProjectSlug;
+        }
       }
       await updateSettings(payload);
       onToast("Workspace settings saved", "success");
@@ -351,7 +373,7 @@ function WorkspaceTab({
       <CardHeader>
         <CardTitle className="text-white">Workspace Settings</CardTitle>
         <CardDescription className="text-[#9ca3af]">
-          Configure your workspace name, timezone, and default AI provider.
+          Configure workspace defaults used when agents and tasks do not override them.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -405,6 +427,9 @@ function WorkspaceTab({
                 </option>
               ))}
             </select>
+            <p className="text-xs text-[#6b7280]">
+              Used as the fallback connection when no provider is explicitly set on the agent.
+            </p>
             {providers.length === 0 && (
               <p className="text-xs text-[#6b7280]">
                 No active providers. Configure them in the Providers page.
@@ -422,42 +447,52 @@ function WorkspaceTab({
           </div>
         </div>
 
-        {/* Snipara Integration */}
         <div className="border-t border-[rgba(255,255,255,0.07)] pt-5 mt-2">
-          <h3 className="text-white text-sm font-medium mb-1">Snipara Integration</h3>
-          <p className="text-[#6b7280] text-xs mb-3">
-            Connect Snipara to enable swarm task execution and agent memory sync.
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label className={cx.label}>API Key</Label>
-              <Input
-                type="password"
-                value={sniparaKey}
-                onChange={(e) => setSniparaKey(e.target.value)}
-                placeholder="rlm_..."
-                className={cx.input}
-              />
+          <h3 className="text-white text-sm font-medium mb-1">Snipara</h3>
+          {SHOW_OPEN_SOURCE_SNIPARA_SETTINGS ? (
+            <>
+              <p className="text-[#6b7280] text-xs mb-3">
+                Manual Snipara configuration is only needed for the open-source deployment.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label className={cx.label}>API Key</Label>
+                  <Input
+                    type="password"
+                    value={sniparaKey}
+                    onChange={(e) => setSniparaKey(e.target.value)}
+                    placeholder="rlm_..."
+                    className={cx.input}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className={cx.label}>Project ID</Label>
+                  <Input
+                    value={sniparaProjectId}
+                    onChange={(e) => setSniparaProjectId(e.target.value)}
+                    placeholder="cmmf..."
+                    className={cx.input}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className={cx.label}>Project Slug</Label>
+                  <Input
+                    value={sniparaProjectSlug}
+                    onChange={(e) => setSniparaProjectSlug(e.target.value)}
+                    placeholder="vutler"
+                    className={cx.input}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-lg border border-[rgba(59,130,246,0.25)] bg-[rgba(59,130,246,0.08)] px-4 py-3">
+              <p className="text-sm text-white">Snipara is provisioned automatically on Vutler Cloud.</p>
+              <p className="text-xs text-[#9ca3af] mt-1">
+                No manual setup is required here. The editable Snipara section is reserved for the open-source edition.
+              </p>
             </div>
-            <div className="space-y-1.5">
-              <Label className={cx.label}>Project ID</Label>
-              <Input
-                value={sniparaProjectId}
-                onChange={(e) => setSniparaProjectId(e.target.value)}
-                placeholder="cmmf..."
-                className={cx.input}
-              />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label className={cx.label}>Project Slug</Label>
-              <Input
-                value={sniparaProjectSlug}
-                onChange={(e) => setSniparaProjectSlug(e.target.value)}
-                placeholder="vutler"
-                className={cx.input}
-              />
-            </div>
-          </div>
+          )}
         </div>
 
         <div className="flex justify-end pt-2">
@@ -1132,7 +1167,7 @@ function AccountTab({
 
 // ─── Email & Domains Tab ─────────────────────────────────────────────────────
 
-interface EmailDomain { id: string; domain: string; verification: { mx: boolean; spf: boolean; dkim: boolean; dmarc: boolean; fullyVerified: boolean }; dnsRecords: Record<string, { type: string; host: string; value: string; priority?: number }>; createdAt: string }
+interface EmailDomain { id: string; domain: string; verification: { mx: boolean; spf: boolean; dkim: boolean; dmarc: boolean; fullyVerified: boolean }; dnsRecords: Record<string, { type: string; host: string; value: string; priority?: number; description?: string }>; createdAt: string }
 interface EmailRoute { id: string; emailAddress: string; agentId: string; agentName: string; agentUsername: string; agentAvatar?: string; autoReply: boolean; approvalRequired: boolean }
 interface EmailGroupItem { id: string; name: string; emailAddress: string; description?: string; memberCount: number; members?: { id: string; memberType: 'agent' | 'human'; agentId?: string; agentName?: string; humanEmail?: string; humanName?: string }[] }
 interface AgentItem { id: string; name: string; username: string; email?: string }
@@ -1141,12 +1176,92 @@ function isEmailGroupItem(value: unknown): value is EmailGroupItem {
   return typeof value === "object" && value !== null && "id" in value && "name" in value && "emailAddress" in value;
 }
 
+function CopyInlineButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="text-[10px] uppercase tracking-wide text-[#60a5fa] hover:text-[#93c5fd]"
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+function DomainDnsRecord({
+  label,
+  record,
+  verified,
+}: {
+  label: string;
+  record: { type: string; host: string; value: string; priority?: number; description?: string };
+  verified: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#14151f] p-3 space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-white">{label}</p>
+          <p className="text-[11px] text-[#6b7280]">{record.description || "DNS record required for email delivery."}</p>
+        </div>
+        <Badge
+          variant="outline"
+          className={verified
+            ? "border-green-500/30 text-green-400 bg-green-500/10"
+            : "border-amber-500/30 text-amber-400 bg-amber-500/10"}
+        >
+          {verified ? "Verified" : "Pending"}
+        </Badge>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-[110px_1fr] sm:items-start">
+        <span className="text-[11px] uppercase tracking-wide text-[#6b7280]">Type / Host</span>
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-[#1f2028] px-2.5 py-2">
+          <code className="text-xs text-white">{record.type}</code>
+          <span className="text-[#4b5563]">•</span>
+          <code className="text-xs text-white">{record.host}</code>
+          <CopyInlineButton value={`${record.type} ${record.host}`} />
+        </div>
+
+        <span className="text-[11px] uppercase tracking-wide text-[#6b7280]">Value</span>
+        <div className="flex flex-wrap items-center gap-2 rounded-md bg-[#1f2028] px-2.5 py-2">
+          <code className="text-xs break-all text-white">{record.value}</code>
+          <CopyInlineButton value={record.value} />
+        </div>
+
+        {typeof record.priority === "number" && (
+          <>
+            <span className="text-[11px] uppercase tracking-wide text-[#6b7280]">Priority</span>
+            <div className="rounded-md bg-[#1f2028] px-2.5 py-2">
+              <code className="text-xs text-white">{record.priority}</code>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error") => void }) {
   const [domains, setDomains] = useState<EmailDomain[]>([]);
   const [routes, setRoutes] = useState<EmailRoute[]>([]);
   const [groups, setGroups] = useState<EmailGroupItem[]>([]);
   const [agents, setAgents] = useState<AgentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expandedDomains, setExpandedDomains] = useState<Record<string, boolean>>({});
+  const [verifyingDomainId, setVerifyingDomainId] = useState<string | null>(null);
 
   // Domain form
   const [newDomain, setNewDomain] = useState('');
@@ -1198,11 +1313,13 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
   };
 
   const verifyDomain = async (id: string) => {
+    setVerifyingDomainId(id);
     try {
       const data = await apiFetch<{ verification?: { fullyVerified?: boolean } }>(`/api/v1/email/domains/${id}/verify`, { method: 'POST' });
       onToast(data.verification?.fullyVerified ? 'All records verified!' : 'Some records still missing', data.verification?.fullyVerified ? 'success' : 'error');
       load();
     } catch { onToast('Verification failed', 'error'); }
+    setVerifyingDomainId(null);
   };
 
   const deleteDomain = async (id: string) => {
@@ -1307,10 +1424,54 @@ function EmailTab({ onToast }: { onToast: (msg: string, type: "success" | "error
                   ))}</div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => verifyDomain(d.id)} className={btnGhost}>Verify DNS</button>
+                  <button
+                    onClick={() => setExpandedDomains((prev) => ({ ...prev, [d.id]: !(prev[d.id] ?? !d.verification.fullyVerified) }))}
+                    className={btnGhost}
+                  >
+                    {(expandedDomains[d.id] ?? !d.verification.fullyVerified) ? 'Hide DNS' : 'DNS help'}
+                  </button>
+                  <button
+                    onClick={() => verifyDomain(d.id)}
+                    className={btnGhost}
+                    disabled={verifyingDomainId === d.id}
+                  >
+                    {verifyingDomainId === d.id ? 'Checking…' : 'Verify DNS'}
+                  </button>
                   <button onClick={() => deleteDomain(d.id)} className={btnDanger}>Remove</button>
                 </div>
               </div>
+              <p className="text-xs text-[#6b7280]">
+                Add the MX, SPF, DKIM, and DMARC records below in your DNS provider. If a record stays pending, double-check the host, the value, and the MX priority.
+              </p>
+              {(expandedDomains[d.id] ?? !d.verification.fullyVerified) && (
+                <div className="space-y-3">
+                  <div className="grid gap-3">
+                    {([
+                      ["mx", "MX"],
+                      ["spf", "SPF"],
+                      ["dkim", "DKIM"],
+                      ["dmarc", "DMARC"],
+                    ] as const).map(([key, label]) => {
+                      const record = d.dnsRecords?.[key];
+                      if (!record) return null;
+                      return (
+                        <DomainDnsRecord
+                          key={key}
+                          label={label}
+                          record={record}
+                          verified={Boolean(d.verification[key])}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#111827] px-3 py-3 text-xs text-[#9ca3af] space-y-1">
+                    <p>DNS troubleshooting:</p>
+                    <p>Use <span className="font-mono text-white">@</span> for the root domain if your DNS provider asks for a host. Some providers expect the host field to be left empty instead.</p>
+                    <p>You must keep a single SPF TXT record per domain. If you already have one, merge the new <span className="font-mono text-white">include:</span> value instead of creating a second SPF record.</p>
+                    <p>MX changes are not instant. It can work in a few minutes, but full propagation can still take up to 48 hours.</p>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </CardContent>
