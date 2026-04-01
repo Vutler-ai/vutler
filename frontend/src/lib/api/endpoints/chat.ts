@@ -135,16 +135,8 @@ export async function getChatContacts(query = ''): Promise<ChatContact[]> {
  * Create a direct-message channel with an agent.
  */
 export async function createAgentDmChannel(agentId: string, agentName: string): Promise<Channel> {
-  const dmName = `dm-${agentName.toLowerCase().replace(/\s+/g, '-')}-${agentId.slice(0, 8)}`;
-  return apiFetch<Channel>('/api/v1/chat/channels', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: dmName,
-      description: `Direct message with ${agentName}`,
-      type: 'direct',
-      agentId,
-    }),
-  });
+  void agentName;
+  return createDirectConversation(agentId, 'agent');
 }
 
 export async function createDirectConversation(contactId: string, contactType: 'user' | 'agent'): Promise<Channel> {

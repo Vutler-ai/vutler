@@ -510,6 +510,13 @@ export default function AgentsPage() {
     <>
       <PageHeader title="Agents" description="Manage your AI agents">
         <Button
+          variant="outline"
+          className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]"
+          onClick={() => router.push('/browser-operator')}
+        >
+          Browser Operator
+        </Button>
+        <Button
           className="bg-blue-600 hover:bg-blue-700 text-white"
           onClick={() => router.push('/agents/new')}
         >

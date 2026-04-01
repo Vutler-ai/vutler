@@ -1,0 +1,28 @@
+{
+  "key": "landing_visual_check_v1",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "flow_key": "landing_visual_check_v1",
+    "name": "Landing Visual Check",
+    "steps": [
+      {
+        "action_key": "browser.open",
+        "input": {}
+      },
+      {
+        "action_key": "browser.assert_status",
+        "input": {
+          "expectedStatus": 200
+        }
+      },
+      {
+        "action_key": "browser.capture",
+        "input": {
+          "fullPage": true
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "key": "local_session_resume_v1",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "flow_key": "local_session_resume_v1",
+    "name": "Local Session Resume",
+    "steps": [
+      {
+        "action_key": "browser.open",
+        "input": {
+          "path": "/dashboard"
+        }
+      },
+      {
+        "action_key": "browser.assert_text",
+        "input": {
+          "text": "Welcome"
+        }
+      },
+      {
+        "action_key": "browser.capture",
+        "input": {
+          "fullPage": true
+        }
+      }
+    ]
+  }
+}

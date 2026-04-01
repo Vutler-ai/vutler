@@ -40,6 +40,11 @@ function normalizeWorkspaceId(workspaceId) {
 }
 
 function parsePriority(priority) {
+  if (typeof priority === 'number' && Number.isFinite(priority)) {
+    if (priority >= 90) return 'high';
+    if (priority <= 30) return 'low';
+    return 'medium';
+  }
   const value = String(priority || 'medium').toLowerCase();
   if (/(urgent|high|critique|critical|asap|haute priorite|haute priorité)/.test(value)) return 'high';
   if (/(low|faible priorite|faible priorité|quand possible)/.test(value)) return 'low';
@@ -70,6 +75,26 @@ function safeJsonParse(raw) {
   } catch (_) {
     return null;
   }
+}
+
+function normalizeRemoteStatus(status, eventType = '') {
+  const value = String(status || '').trim().toLowerCase();
+  const fromEvent = String(eventType || '').trim().toLowerCase();
+
+  if (value === 'claimed' || value === 'claiming' || value === 'in_progress' || value === 'in-progress') return 'in_progress';
+  if (value === 'done' || value === 'completed' || value === 'complete' || value === 'closure_ready' || value === 'closed') return 'completed';
+  if (value === 'failed' || value === 'error') return 'failed';
+  if (value === 'cancelled' || value === 'canceled') return 'cancelled';
+  if (value === 'blocked') return 'blocked';
+  if (value === 'pending' || value === 'queued' || value === 'open') return 'pending';
+
+  if (fromEvent.endsWith('.claimed')) return 'in_progress';
+  if (fromEvent.endsWith('.completed') || fromEvent.endsWith('.closure_ready') || fromEvent.endsWith('.closed')) return 'completed';
+  if (fromEvent.endsWith('.failed')) return 'failed';
+  if (fromEvent.endsWith('.blocked')) return 'blocked';
+  if (fromEvent.endsWith('.created')) return 'pending';
+
+  return 'pending';
 }
 
 function buildWorkspacePlacementInstruction(driveRoot) {
@@ -391,10 +416,23 @@ class SwarmCoordinator {
     source = 'snipara',
     workspaceId = DEFAULT_WORKSPACE,
     parentId = null,
-    metadata = null
+    metadata = null,
+    taskKind = 'task',
+    sniparaSwarmId = null,
+    executionMode = null,
   }) {
     await this.ensureSniparaTaskColumn();
     const ws = normalizeWorkspaceId(workspaceId);
+    const normalizedTaskKind = taskKind === 'htask' ? 'htask' : 'task';
+    const mergedMetadata = {
+      execution_backend: 'snipara',
+      execution_mode: executionMode || (normalizedTaskKind === 'htask' ? 'hierarchical_htask' : 'simple_task'),
+      sync_mode: 'primary',
+      sync_status: swarmTaskId ? 'synced' : 'pending_push',
+      snipara_task_kind: normalizedTaskKind,
+      ...(sniparaSwarmId ? { snipara_swarm_id: sniparaSwarmId } : {}),
+      ...(metadata || {}),
+    };
     const existing = await pool.query(
       `SELECT id FROM ${SCHEMA}.tasks
        WHERE workspace_id = $2
@@ -406,7 +444,7 @@ class SwarmCoordinator {
       [swarmTaskId, ws, title || 'Nouvelle tache', assignedTo || null, source]
     );
 
-    const metaJson = metadata ? JSON.stringify(metadata) : null;
+    const metaJson = JSON.stringify(mergedMetadata);
 
     if (existing.rows.length) {
       const updated = await pool.query(
@@ -440,10 +478,62 @@ class SwarmCoordinator {
     return inserted.rows[0];
   }
 
+  async resolveLocalParentIdFromRemote(remoteParentId, workspaceId = DEFAULT_WORKSPACE) {
+    if (!remoteParentId) return null;
+    const ws = normalizeWorkspaceId(workspaceId);
+    const result = await pool.query(
+      `SELECT id
+       FROM ${SCHEMA}.tasks
+       WHERE workspace_id = $2
+         AND (snipara_task_id = $1 OR swarm_task_id = $1)
+       LIMIT 1`,
+      [remoteParentId, ws]
+    );
+    return result.rows[0]?.id || null;
+  }
+
+  async projectWebhookEvent(eventType, data = {}, workspaceId = DEFAULT_WORKSPACE) {
+    const remoteTaskId = data?.task_id || data?.id || data?.task?.id || null;
+    if (!remoteTaskId) return null;
+
+    const ws = normalizeWorkspaceId(workspaceId || data?.workspace_id);
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
+    const taskKind = String(eventType || '').startsWith('htask.') ? 'htask' : 'task';
+    const remoteParentId = data?.parent_id || data?.parent_task_id || null;
+    const parentId = await this.resolveLocalParentIdFromRemote(remoteParentId, ws);
+    const assignedTo = data?.assigned_to || data?.for_agent_id || data?.agent_id || data?.owner || null;
+    const status = normalizeRemoteStatus(data?.status, eventType);
+
+    return this.upsertPgTaskFromSwarm({
+      swarmTaskId: remoteTaskId,
+      title: data?.title || `${taskKind.toUpperCase()} ${remoteTaskId}`,
+      description: data?.description || '',
+      priority: parsePriority(data?.priority),
+      status,
+      assignedTo,
+      source: `snipara-webhook:${eventType}`,
+      workspaceId: ws,
+      parentId,
+      metadata: {
+        ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
+        ...(remoteParentId ? { snipara_remote_parent_id: remoteParentId } : {}),
+        ...(data?.level ? { snipara_hierarchy_level: data.level } : {}),
+        ...(eventType ? { snipara_last_event: eventType } : {}),
+        ...(data?.timestamp ? { snipara_last_event_at: data.timestamp } : {}),
+        ...(data?.blocker_type ? { snipara_blocker_type: data.blocker_type } : {}),
+        ...(data?.blocker_reason ? { snipara_blocker_reason: data.blocker_reason } : {}),
+        ...(data?.evidence_provided ? { snipara_last_evidence: data.evidence_provided } : {}),
+        ...(data?.result ? { last_output: data.result } : {}),
+      },
+      taskKind,
+      sniparaSwarmId: data?.swarm_id || swarmId || null,
+    });
+  }
+
   async createTask(task = {}, workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
     const sniparaReady = await this.hasSniparaConfig(ws);
-    const { swarmId } = await this.getSniparaRuntimeConfig(ws);
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
     let agentId = task.for_agent_id || task.assigned_agent || task.assignee;
     if (!agentId) {
       try {
@@ -517,7 +607,12 @@ class SwarmCoordinator {
       source: 'vutler-api',
       workspaceId: ws,
       parentId: task.parent_id || null,
-      metadata
+      metadata: {
+        ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
+        ...metadata,
+      },
+      taskKind: 'task',
+      sniparaSwarmId: swarmId,
     });
 
     if (sniparaReady) {
@@ -544,6 +639,7 @@ class SwarmCoordinator {
 
   async listTasks(workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
     const data = await getSniparaTaskAdapter().listTasks(ws);
     const tasks = Array.isArray(data?.tasks) ? data.tasks : Array.isArray(data) ? data : [];
     for (const task of tasks) {
@@ -558,7 +654,12 @@ class SwarmCoordinator {
         assignedTo: task.assigned_to || task.for_agent_id || task.agent_id,
         source: 'snipara-sync',
         workspaceId: ws,
-        metadata: task.metadata || null
+        metadata: {
+          ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
+          ...(task.metadata || {}),
+        },
+        taskKind: 'task',
+        sniparaSwarmId: swarmId,
       });
     }
     return data;
@@ -566,19 +667,26 @@ class SwarmCoordinator {
 
   async claimTask(taskId, agentId, workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
     const data = await getSniparaTaskAdapter().claimTask(ws, { taskId, agentId });
     await this.upsertPgTaskFromSwarm({
       swarmTaskId: taskId,
       assignedTo: agentId,
       status: 'in_progress',
       source: 'snipara-claim',
-      workspaceId: ws
+      workspaceId: ws,
+      metadata: {
+        ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
+      },
+      taskKind: 'task',
+      sniparaSwarmId: swarmId,
     });
     return data;
   }
 
   async completeTask(taskId, agentId, output, workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
     const data = await getSniparaTaskAdapter().completeTask(ws, { taskId, agentId, output });
 
     const existing = await pool.query(
@@ -596,7 +704,12 @@ class SwarmCoordinator {
       status: 'completed',
       source: 'snipara-complete',
       workspaceId: ws,
-      metadata: { last_output: output || null }
+      metadata: {
+        ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
+        last_output: output || null,
+      },
+      taskKind: 'task',
+      sniparaSwarmId: swarmId,
     });
 
     await this.rememberLearning(title, output || `Completed by ${agentId}`, ws);
@@ -699,7 +812,7 @@ class SwarmCoordinator {
 
   async syncFromSnipara(workspaceId = DEFAULT_WORKSPACE) {
     const ws = normalizeWorkspaceId(workspaceId);
-    const { swarmId } = await this.getSniparaRuntimeConfig(ws);
+    const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
     const data = await this.sniparaCall('rlm_tasks', { swarm_id: swarmId }, ws);
     const tasks = Array.isArray(data?.tasks) ? data.tasks : (Array.isArray(data) ? data : []);
 
@@ -720,7 +833,12 @@ class SwarmCoordinator {
           assignedTo: task.assigned_to || task.for_agent_id || task.agent_id,
           source: 'snipara-sync',
           workspaceId: ws,
-          metadata: task.metadata || null
+          metadata: {
+            ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
+            ...(task.metadata || {}),
+          },
+          taskKind: 'task',
+          sniparaSwarmId: swarmId,
         });
         idMap[taskId] = pgTask.id;
         synced += 1;

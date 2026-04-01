@@ -1143,10 +1143,16 @@ async function start() {
     const watchdog = getWatchdog();
     watchdog.start();
 
+    // Start Snipara reconciliation loop for bidirectional task projection
+    const { getSniparaSyncLoop } = require('./services/sniparaSyncLoop');
+    const sniparaSyncLoop = getSniparaSyncLoop();
+    sniparaSyncLoop.start();
+
     // Graceful shutdown
     const shutdown = (signal) => {
       console.log(`${signal} received, shutting down...`);
       watchdog.stop();
+      sniparaSyncLoop.stop();
       server.close(() => process.exit(0));
       setTimeout(() => process.exit(1), 10000);
     };

@@ -1,0 +1,37 @@
+{
+  "key": "local_magic_link_smoke_v1",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "flow_key": "local_magic_link_smoke_v1",
+    "name": "Local Magic Link Smoke",
+    "steps": [
+      {
+        "action_key": "browser.open",
+        "input": {}
+      },
+      {
+        "action_key": "browser.consume_magic_link",
+        "input": {
+          "subjectIncludes": "magic link",
+          "allowedLinkHostname": "127.0.0.1",
+          "successText": "Welcome",
+          "successUrlContains": "/magic"
+        }
+      },
+      {
+        "action_key": "browser.assert_text",
+        "input": {
+          "text": "Welcome"
+        }
+      },
+      {
+        "action_key": "browser.capture",
+        "input": {
+          "fullPage": true
+        }
+      }
+    ]
+  }
+}

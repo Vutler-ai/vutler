@@ -47,9 +47,18 @@ function verifySignature(rawBody, signature) {
 
 async function routeWebhookEvent(eventType, payload) {
   // Lazy-load services to avoid circular deps at startup
+  const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
   const { getVerificationEngine } = require('../services/verificationEngine');
   const { getWatchdog } = require('../services/watchdog');
   const { getScoringLoop } = require('../services/scoringLoop');
+  const workspaceId = payload?.data?.workspace_id || payload?.workspace_id;
+  const coordinator = getSwarmCoordinator();
+
+  if (/^(task|htask)\./.test(String(eventType || ''))) {
+    await coordinator.projectWebhookEvent(eventType, payload.data || {}, workspaceId).catch((err) => {
+      console.warn(`[SniparaWebhook] Projection warning for ${eventType}:`, err.message);
+    });
+  }
 
   switch (eventType) {
     case 'task.completed':

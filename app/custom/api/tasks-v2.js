@@ -137,6 +137,38 @@ async function insertHierarchicalTask({
   return inserted.rows[0];
 }
 
+async function insertRootHierarchicalTask({
+  workspaceId,
+  title,
+  description,
+  assignee,
+  priority,
+  status,
+  metadata,
+  sniparaTaskId,
+  source,
+}) {
+  const inserted = await pool.query(
+    `INSERT INTO ${SCHEMA}.tasks
+     (title, description, status, priority, assignee, assigned_agent, workspace_id, source, metadata, snipara_task_id, swarm_task_id, created_at, updated_at)
+     VALUES ($1, $2, COALESCE($3, 'pending'), COALESCE($4, 'medium'), $5, $5, $6, $7, COALESCE($8::jsonb, '{}'::jsonb), $9, $9, NOW(), NOW())
+     RETURNING *`,
+    [
+      title,
+      description || '',
+      status,
+      priority,
+      assignee || null,
+      workspaceId,
+      source,
+      JSON.stringify(metadata || {}),
+      sniparaTaskId,
+    ]
+  );
+
+  return inserted.rows[0];
+}
+
 async function ensureHierarchyRoot(parent, workspaceId, swarmCoordinator) {
   const meta = parseTaskMetadata(parent);
   if (meta.snipara_hierarchy_root_id) {
@@ -196,12 +228,53 @@ async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoord
     priority: body.priority || 'medium',
     status: body.status || 'pending',
     metadata: {
+      execution_backend: 'snipara',
+      execution_mode: 'hierarchical_htask',
+      sync_mode: 'primary',
+      sync_status: 'synced',
       snipara_task_kind: 'htask',
       snipara_hierarchy_level: level,
       snipara_hierarchy_root_id: isParentHtask
         ? (parentMeta.snipara_hierarchy_root_id || parent.snipara_task_id)
         : hierarchyRootId,
       snipara_remote_parent_id: remoteParentId,
+    },
+    sniparaTaskId,
+    source: 'vutler-htask',
+  });
+}
+
+async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator }) {
+  const level = normalizeHtaskLevel(body.level, 'N1_FEATURE');
+  const owner = body.owner || body.assignee || body.assigned_agent || 'jarvis';
+  const created = await swarmCoordinator.createHtask({
+    level,
+    title: body.title,
+    description: body.description || '',
+    owner,
+    workstreamType: level === 'N2_WORKSTREAM' ? (body.workstream_type || 'GENERAL') : undefined,
+  }, workspaceId);
+
+  const sniparaTaskId = created?.task_id || created?.id || created?.task?.id;
+  if (!sniparaTaskId) {
+    throw new Error('Snipara root htask creation did not return a task id');
+  }
+
+  return insertRootHierarchicalTask({
+    workspaceId,
+    title: body.title,
+    description: body.description || '',
+    assignee: body.assignee || body.assigned_agent || null,
+    priority: body.priority || 'medium',
+    status: body.status || 'pending',
+    metadata: {
+      execution_backend: 'snipara',
+      execution_mode: 'hierarchical_htask',
+      sync_mode: 'primary',
+      sync_status: 'synced',
+      snipara_task_kind: 'htask',
+      snipara_hierarchy_level: level,
+      ...(body.workflow_mode ? { workflow_mode: body.workflow_mode } : { workflow_mode: 'FULL' }),
     },
     sniparaTaskId,
     source: 'vutler-htask',
@@ -261,11 +334,28 @@ router.post('/tasks-v2', authenticateAgent, async (req, res) => {
     }
 
     const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
+    const shouldUseHierarchy = req.body?.hierarchical === true
+      || req.body?.execution_mode === 'hierarchical_htask'
+      || req.body?.workflow_mode === 'FULL';
+
+    if (shouldUseHierarchy) {
+      const created = await createHierarchicalRootTask({
+        body: req.body,
+        workspaceId: wsId(req),
+        swarmCoordinator,
+      });
+      return res.status(201).json({ success: true, data: created });
+    }
+
     const created = await swarmCoordinator.createTask({
       title,
       description: description || '',
       priority: priority || 'medium',
-      for_agent_id: assignee || null
+      for_agent_id: assignee || null,
+      metadata: {
+        execution_mode: 'simple_task',
+        workflow_mode: req.body?.workflow_mode || 'LITE',
+      },
     }, wsId(req));
 
     res.status(201).json({ success: true, data: created });
@@ -344,10 +434,21 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
            priority = $4,
            assignee = $5,
            assigned_agent = $6,
+           metadata = COALESCE(metadata, '{}'::jsonb) || $7::jsonb,
            updated_at = NOW()
-       WHERE id = $7 AND workspace_id = $8
+       WHERE id = $8 AND workspace_id = $9
        RETURNING *`,
-      [merged.title, merged.description, merged.status, merged.priority, merged.assignee, merged.assigned_agent, task.id, workspaceId]
+      [
+        merged.title,
+        merged.description,
+        merged.status,
+        merged.priority,
+        merged.assignee,
+        merged.assigned_agent,
+        JSON.stringify(updates.metadata || {}),
+        task.id,
+        workspaceId
+      ]
     );
 
     res.json({ success: true, data: saved.rows[0] });

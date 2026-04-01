@@ -14,6 +14,10 @@
 
 ## Product & Architecture notes
 
+- [Browser Operator / Synthetic User Agent V1](product-briefs/browser-operator-synthetic-user-agent-v1.md) defines the browser-based testing, review, and synthetic user capability across cloud, governed enterprise, and Nexus-local modes.
+- [Browser Operator Runtime V1](specs/browser-operator-runtime-v1.md) defines the execution model, session isolation, credentials, evidence pack, and cloud vs Nexus-local runtime split.
+- [Browser Operator Action Catalog V1](specs/browser-operator-action-catalog-v1.md) defines the bounded browser action surface, risk levels, and governance defaults.
+- [Browser Operator Implementation V1](specs/browser-operator-implementation-v1.md) translates the browser operator into concrete APIs, tables, services, storage, and rollout chunks.
 - [Nexus Enterprise Deployable Agents](product-briefs/nexus-enterprise-deployable-agents.md) defines the generic product model for all agent profiles deployable on enterprise nodes.
 - [Nexus Enterprise Deployable Agent Profile V1](specs/nexus-enterprise-deployable-agent-profile-v1.md) defines the technical contract for profile-based deployment, capability composition, and runtime invariants.
 - [Nexus Enterprise Agent Level Capability Matrix V1](specs/nexus-enterprise-agent-level-capability-matrix-v1.md) defines how agent levels bound capabilities, tools, wizard choices, and policy defaults.

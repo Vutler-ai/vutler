@@ -1,0 +1,26 @@
+{
+  "key": "homepage_healthcheck_v1",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "flow_key": "homepage_healthcheck_v1",
+    "name": "Homepage Healthcheck",
+    "steps": [
+      {
+        "action_key": "browser.open",
+        "input": {}
+      },
+      {
+        "action_key": "browser.assert_status",
+        "input": {
+          "expectedStatus": 200
+        }
+      },
+      {
+        "action_key": "browser.extract_title",
+        "input": {}
+      }
+    ]
+  }
+}

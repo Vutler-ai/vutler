@@ -256,6 +256,25 @@ export default function NewAgentPage() {
         <p className="text-sm text-[#9ca3af] mt-1">Build and deploy a new AI agent</p>
       </div>
 
+      <div className="mb-6 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-white">Need a browser testing or synthetic user agent?</div>
+            <div className="text-sm text-blue-100/80">
+              Use the dedicated Browser Operator surface when the agent needs browser runtime, agent mailbox, and evidence packs.
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="border-blue-400/30 bg-transparent text-white hover:bg-blue-500/10"
+            onClick={() => router.push('/browser-operator')}
+          >
+            Open Browser Operator
+          </Button>
+        </div>
+      </div>
+
       {error && (
         <div className="mb-6 p-4 bg-red-900/20 border border-red-500/20 rounded-lg text-red-400 text-sm">
           {error}

@@ -106,6 +106,29 @@ class ScoringLoop {
     const gateway = createSniparaGateway({ workspaceId });
 
     try {
+      if (task?.id) {
+        await pool.query(
+          `UPDATE ${SCHEMA}.tasks
+           SET status = 'completed',
+               metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+               updated_at = NOW(),
+               resolved_at = COALESCE(resolved_at, NOW())
+           WHERE id = $2`,
+          [
+            JSON.stringify({
+              execution_backend: 'snipara',
+              execution_mode: 'hierarchical_htask',
+              sync_mode: 'primary',
+              sync_status: 'synced',
+              snipara_task_kind: 'htask',
+              ...(level ? { snipara_hierarchy_level: level } : {}),
+              ...(Array.isArray(evidence_provided) ? { snipara_last_evidence: evidence_provided } : {}),
+            }),
+            task.id,
+          ]
+        );
+      }
+
       await gateway.memory.rememberForAgent(
         {
           username: agentId,

@@ -11,12 +11,17 @@ const express = require('express');
 const router = express.Router();
 
 const { insertChatMessage, normalizeChatMessage } = require('../../../services/chatMessages');
+const {
+  canonicalDmNameForContact,
+  ensureChatPreferencesTable,
+  findExistingDmChannelId,
+  normalizeLegacyDmRows,
+} = require('../../../services/chatChannelMaintenance');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const memoryRuntime = createMemoryRuntimeService();
-let chatPreferencesSchemaEnsured = false;
 
 function getPool(req) {
   return req.app.locals.pg;
@@ -24,30 +29,6 @@ function getPool(req) {
 
 function wsId(req) {
   return req.workspaceId || req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
-}
-
-async function ensureChatPreferencesTable(pg) {
-  if (chatPreferencesSchemaEnsured) return;
-
-  await pg.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.chat_channel_preferences (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      channel_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      pinned BOOLEAN NOT NULL DEFAULT FALSE,
-      muted BOOLEAN NOT NULL DEFAULT FALSE,
-      archived BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (workspace_id, channel_id, user_id)
-    )
-  `);
-  await pg.query(`
-    CREATE INDEX IF NOT EXISTS idx_chat_channel_preferences_workspace_user
-    ON ${SCHEMA}.chat_channel_preferences (workspace_id, user_id)
-  `);
-  chatPreferencesSchemaEnsured = true;
 }
 
 function normaliseChannel(row) {
@@ -83,7 +64,7 @@ function actorName(req) {
 }
 
 async function fetchChannelById(pg, workspaceId, channelId, currentUserId) {
-  await ensureChatPreferencesTable(pg);
+  await ensureChatPreferencesTable(pg, SCHEMA);
 
   const result = await pg.query(
     `SELECT c.*,
@@ -247,7 +228,7 @@ router.get('/chat/channels', async (req, res) => {
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   try {
-    await ensureChatPreferencesTable(pg);
+    await ensureChatPreferencesTable(pg, SCHEMA);
     const ws = wsId(req);
     const currentUserId = actorId(req);
     const result = await pg.query(
@@ -311,7 +292,8 @@ router.get('/chat/channels', async (req, res) => {
       [ws, currentUserId]
     );
 
-    res.json({ success: true, channels: result.rows.map(normaliseChannel) });
+    const normalizedRows = await normalizeLegacyDmRows(pg, result.rows, { schema: SCHEMA });
+    res.json({ success: true, channels: normalizedRows.rows.map(normaliseChannel) });
   } catch (err) {
     console.error('[Chat] GET /channels error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -323,21 +305,18 @@ router.post('/chat/channels', async (req, res) => {
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   try {
-    const { name, description, type = 'channel', agentId } = req.body;
+    const { name, description, type = 'channel' } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'name is required' });
 
     const ws = wsId(req);
     const createdBy = actorId(req) || 'system';
     const dbType = type === 'direct' ? 'dm' : type;
 
-    if (dbType === 'dm' && agentId) {
-      const existing = await pg.query(
-        `SELECT * FROM ${SCHEMA}.chat_channels WHERE name = $1 AND workspace_id = $2 LIMIT 1`,
-        [name, ws]
-      );
-      if (existing.rows.length > 0) {
-        return res.json({ success: true, ...normaliseChannel(existing.rows[0]) });
-      }
+    if (dbType === 'dm') {
+      return res.status(400).json({
+        success: false,
+        error: 'Direct messages must be created via /api/v1/chat/dm',
+      });
     }
 
     const result = await pg.query(
@@ -348,15 +327,6 @@ router.post('/chat/channels', async (req, res) => {
     );
 
     const channel = result.rows[0];
-    if (dbType === 'dm' && agentId) {
-      await pg.query(
-        `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
-         VALUES ($1, $2, 'agent')
-         ON CONFLICT DO NOTHING`,
-        [channel.id, agentId.toString()]
-      );
-    }
-
     res.status(201).json({ success: true, ...normaliseChannel(channel) });
   } catch (err) {
     console.error('[Chat] POST /channels error:', err.message);
@@ -369,7 +339,7 @@ router.delete('/chat/channels/:id', async (req, res) => {
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   try {
-    await ensureChatPreferencesTable(pg);
+    await ensureChatPreferencesTable(pg, SCHEMA);
     const ws = wsId(req);
     await pg.query(
       `DELETE FROM ${SCHEMA}.chat_messages WHERE channel_id = $1 AND workspace_id = $2`,
@@ -464,7 +434,7 @@ router.post('/chat/dm', async (req, res) => {
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   try {
-    await ensureChatPreferencesTable(pg);
+    await ensureChatPreferencesTable(pg, SCHEMA);
     const ws = wsId(req);
     const currentUserId = actorId(req);
     const currentUserName = actorName(req);
@@ -484,7 +454,7 @@ router.post('/chat/dm', async (req, res) => {
     let contact = null;
     if (contactType === 'agent') {
       const result = await pg.query(
-        `SELECT id::text AS id, name
+        `SELECT id::text AS id, name, username
          FROM ${SCHEMA}.agents
          WHERE workspace_id = $1 AND id::text = $2
          LIMIT 1`,
@@ -507,37 +477,26 @@ router.post('/chat/dm', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Contact not found in this workspace' });
     }
 
-    const existing = await pg.query(
-      `SELECT c.id
-       FROM ${SCHEMA}.chat_channels c
-       JOIN ${SCHEMA}.chat_channel_members target_cm
-         ON target_cm.channel_id = c.id
-        AND target_cm.user_id = $3
-       LEFT JOIN ${SCHEMA}.chat_channel_members self_cm
-         ON self_cm.channel_id = c.id
-        AND self_cm.user_id = $2
-       WHERE c.workspace_id = $1
-         AND c.type = 'dm'
-         AND (self_cm.user_id IS NOT NULL OR c.created_by = $2)
-       ORDER BY c.created_at DESC
-       LIMIT 1`,
-      [ws, currentUserId, contactId]
-    );
+    const existingChannelId = await findExistingDmChannelId(pg, {
+      schema: SCHEMA,
+      workspaceId: ws,
+      currentUserId,
+      contactId,
+    });
 
-    if (existing.rows.length > 0) {
-      const existingChannel = await fetchChannelById(pg, ws, existing.rows[0].id, currentUserId);
+    if (existingChannelId) {
+      const existingChannel = await fetchChannelById(pg, ws, existingChannelId, currentUserId);
       return res.json({ success: true, channel: normaliseChannel(existingChannel) });
     }
 
-    const internalName = contactType === 'agent'
-      ? `dm__agent__${currentUserId}__${contactId}`
-      : `dm__user__${[currentUserId, contactId].sort().join('__')}`;
+    const channelName = canonicalDmNameForContact(contact.name, contact.username) || `DM-${contactId.slice(0, 8)}`;
+    const channelDescription = `Direct message with ${contact.name}`;
 
     const created = await pg.query(
       `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
        VALUES ($1, $2, 'dm', $3, $4)
        RETURNING id`,
-      [internalName, `Direct message with ${contact.name}`, ws, currentUserId]
+      [channelName, channelDescription, ws, currentUserId]
     );
 
     await pg.query(
@@ -567,7 +526,7 @@ router.patch('/chat/channels/:id/preferences', async (req, res) => {
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   try {
-    await ensureChatPreferencesTable(pg);
+    await ensureChatPreferencesTable(pg, SCHEMA);
     const ws = wsId(req);
     const userId = actorId(req);
     if (!userId) {
@@ -884,7 +843,6 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
 
   try {
     const userId = actorId(req) || 'user';
-    const userName = actorName(req);
     const ws = wsId(req);
 
     let jarvis = null;
@@ -898,23 +856,37 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
       jarvis = r.rows[0] || null;
     }
 
-    const dmName = jarvis ? [userId, jarvis.id.toString()].sort().join('__') : `dm_${userId}_jarvis`;
+    const dmName = canonicalDmNameForContact(jarvis?.name || 'Jarvis', jarvis?.username) || 'DM-jarvis';
 
     if (pg) {
       const existing = await pg.query(
-        `SELECT * FROM ${SCHEMA}.chat_channels WHERE name = $1 AND workspace_id = $2 LIMIT 1`,
+        `SELECT id FROM ${SCHEMA}.chat_channels WHERE name = $1 AND workspace_id = $2 LIMIT 1`,
         [dmName, ws]
       );
 
       if (existing.rows.length > 0) {
-        return res.json({ success: true, room: normaliseChannel(existing.rows[0]) });
+        const room = await fetchChannelById(pg, ws, existing.rows[0].id, userId);
+        return res.json({ success: true, room: normaliseChannel(room) });
+      }
+
+      if (jarvis) {
+        const existingDmId = await findExistingDmChannelId(pg, {
+          schema: SCHEMA,
+          workspaceId: ws,
+          currentUserId: userId,
+          contactId: jarvis.id.toString(),
+        });
+        if (existingDmId) {
+          const room = await fetchChannelById(pg, ws, existingDmId, userId);
+          return res.json({ success: true, room: normaliseChannel(room) });
+        }
       }
 
       const created = await pg.query(
         `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
          VALUES ($1, $2, 'dm', $3, $4)
          RETURNING *`,
-        [dmName, `DM ${userName} ↔ Jarvis`, ws, userId]
+        [dmName, `Direct message with ${jarvis?.name || 'Jarvis'}`, ws, userId]
       );
 
       if (jarvis) {

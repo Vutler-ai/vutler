@@ -1,0 +1,22 @@
+{
+  "key": "app_reviewer",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "profile_key": "app_reviewer",
+    "name": "App Reviewer",
+    "default_runtime_mode": "cloud-browser",
+    "governance_mode": "standard",
+    "risk_level": "low",
+    "action_catalog_ref": "default_browser_actions",
+    "supported_flows": [
+      "homepage_healthcheck_v1",
+      "login_readiness_probe_v1",
+      "landing_visual_check_v1",
+      "local_login_smoke_v1",
+      "local_session_resume_v1",
+      "local_magic_link_smoke_v1"
+    ]
+  }
+}
