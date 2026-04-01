@@ -29,6 +29,18 @@ function getExternalId(workspaceId) {
   return `ws_${workspaceId}`;
 }
 
+function getPlatformData(platform) {
+  if (platform === 'linkedin') {
+    return {
+      linkedin: {
+        connection_type: 'organization',
+      },
+    };
+  }
+
+  return undefined;
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /**
@@ -47,6 +59,7 @@ router.get('/auth-url/:platform', async (req, res) => {
     const data = await createSocialAccountAuthUrl({
       platform,
       externalId: getExternalId(workspaceId),
+      platformData: getPlatformData(platform),
       permissions: ['posts'],
     });
 

@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'vutler-v3';
+const CACHE_VERSION = 'vutler-v4';
 const APP_SHELL_CACHE = `app-shell-${CACHE_VERSION}`;
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const API_CACHE = `api-${CACHE_VERSION}`;
@@ -57,10 +57,7 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(e.request)
         .then((resp) => {
-          if (resp.ok) {
-            const clone = resp.clone();
-            caches.open(API_CACHE).then((c) => c.put(e.request, clone));
-          }
+          safeCachePut(API_CACHE, e.request, resp);
           return resp;
         })
         .catch(() => caches.match(e.request))
@@ -78,8 +75,7 @@ self.addEventListener('fetch', (e) => {
         (cached) =>
           cached ||
           fetch(e.request).then((resp) => {
-            const clone = resp.clone();
-            caches.open(STATIC_CACHE).then((c) => c.put(e.request, clone));
+            safeCachePut(STATIC_CACHE, e.request, resp);
             return resp;
           })
       )
@@ -91,8 +87,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(e.request)
       .then((resp) => {
-        const clone = resp.clone();
-        caches.open(APP_SHELL_CACHE).then((c) => c.put(e.request, clone));
+        safeCachePut(APP_SHELL_CACHE, e.request, resp);
         return resp;
       })
       .catch(
@@ -102,6 +97,17 @@ self.addEventListener('fetch', (e) => {
       )
   );
 });
+
+function safeCachePut(cacheName, request, response) {
+  if (request.method !== 'GET' || !response || !response.ok) {
+    return;
+  }
+
+  const clone = response.clone();
+  caches.open(cacheName)
+    .then((cache) => cache.put(request, clone))
+    .catch(() => {});
+}
 
 // ─── Push Notifications ──────────────────────────────────────────────────────
 

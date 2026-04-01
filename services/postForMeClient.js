@@ -102,11 +102,12 @@ async function listSocialAccounts({ externalId, status = 'connected' } = {}) {
   return Array.isArray(payload?.data) ? payload.data : [];
 }
 
-async function createSocialAccountAuthUrl({ platform, externalId, redirectUrlOverride, permissions } = {}) {
+async function createSocialAccountAuthUrl({ platform, externalId, redirectUrlOverride, permissions, platformData } = {}) {
   return postForMeFetchJson('/social-accounts/auth-url', {
     method: 'POST',
     body: JSON.stringify({
       platform: toExternalPlatform(platform),
+      platform_data: platformData,
       external_id: externalId,
       redirect_url_override: redirectUrlOverride,
       permissions,
