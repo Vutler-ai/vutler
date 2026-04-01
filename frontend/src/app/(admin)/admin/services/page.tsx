@@ -32,6 +32,7 @@ export default function AdminServicesPage() {
   const [services, setServices] = useState<ServiceHealth[]>([]);
   const [summary, setSummary] = useState<VpsHealthResponse["summary"] | null>(null);
   const [vps, setVps] = useState<VpsHealth | null>(null);
+  const [chatMaintenanceStatus, setChatMaintenanceStatus] = useState<AdminChatMaintenanceResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -44,11 +45,15 @@ export default function AdminServicesPage() {
   const fetchServices = useCallback(async (showIndicator = false) => {
     if (showIndicator) setIsRefreshing(true);
     try {
-      const result = await adminFetch<VpsHealthResponse>("/api/v1/admin/health/vps");
-      setServices(result.services);
-      setSummary(result.summary);
-      setVps(result.vps || null);
-      setLastUpdated(new Date(result.timestamp));
+      const [healthResult, maintenanceResult] = await Promise.all([
+        adminFetch<VpsHealthResponse>("/api/v1/admin/health/vps"),
+        adminFetch<{ success: boolean; data: AdminChatMaintenanceResult }>("/api/v1/admin/chat/maintenance/status"),
+      ]);
+      setServices(healthResult.services);
+      setSummary(healthResult.summary);
+      setVps(healthResult.vps || null);
+      setLastUpdated(new Date(healthResult.timestamp));
+      setChatMaintenanceStatus(maintenanceResult.data || null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
@@ -189,6 +194,28 @@ export default function AdminServicesPage() {
             <p className="mt-1 text-sm text-muted-foreground">
               Normalize legacy DM labels and archive technical DM channels that should not clutter the chat list.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span className="rounded-full border border-border px-2 py-1">
+                Legacy candidates: {chatMaintenanceStatus?.legacy_count || 0}
+              </span>
+              <span className="rounded-full border border-border px-2 py-1">
+                Technical DMs: {chatMaintenanceStatus?.technical_count || 0}
+              </span>
+            </div>
+            {chatMaintenanceStatus && (
+              <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                {chatMaintenanceStatus.legacy_channels && chatMaintenanceStatus.legacy_channels.length > 0 && (
+                  <p>
+                    Legacy: {chatMaintenanceStatus.legacy_channels.slice(0, 3).map((channel) => `${channel.current_name} -> ${channel.canonical_name || "n/a"}`).join(", ")}
+                  </p>
+                )}
+                {chatMaintenanceStatus.technical_channels && chatMaintenanceStatus.technical_channels.length > 0 && (
+                  <p>
+                    Technical: {chatMaintenanceStatus.technical_channels.slice(0, 3).map((channel) => channel.name).join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
             {chatMaintenanceMessage && (
               <p className="mt-2 text-sm text-blue-400">{chatMaintenanceMessage}</p>
             )}

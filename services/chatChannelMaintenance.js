@@ -3,6 +3,9 @@
 const DEFAULT_SCHEMA = 'tenant_vutler';
 
 const TECHNICAL_DM_PATTERNS = [
+  /^dm__agent__/i,
+  /^dm__user__/i,
+  /^dm_/i,
   /^jarvis-policy-check-/i,
   /^jarvis-e2e-/i,
   /^codex-verify-/i,
@@ -43,13 +46,11 @@ function shouldNormalizeLegacyDm(row) {
   if (String(row.type || '').toLowerCase() !== 'dm' && String(row.type || '').toLowerCase() !== 'direct') {
     return false;
   }
-  if (String(row.contact_type || '').toLowerCase() !== 'agent') return false;
 
   const rawName = String(row.raw_name || row.name || '');
   const canonicalName = canonicalDmNameForContact(row.display_name || row.name, row.contact_username || row.username);
   if (!rawName || !canonicalName) return false;
   if (rawName.toLowerCase() === canonicalName.toLowerCase()) return false;
-  if (rawName.startsWith('dm__agent__') || rawName.startsWith('dm__user__')) return false;
 
   return looksTechnicalDmName(rawName) || /^dm-/i.test(rawName) || isUuidLike(rawName);
 }
@@ -134,23 +135,43 @@ async function normalizeLegacyDmRows(pg, rows, { schema = DEFAULT_SCHEMA } = {})
   return { rows: nextRows, normalized };
 }
 
-async function listLegacyAgentDmRows(pg, { schema = DEFAULT_SCHEMA, workspaceId }) {
+async function listLegacyDmRows(pg, { schema = DEFAULT_SCHEMA, workspaceId }) {
   const result = await pg.query(
-    `SELECT DISTINCT ON (c.id)
+    `SELECT
         c.id,
         c.name,
         c.name AS raw_name,
         c.description,
         c.type,
-        a.name AS display_name,
-        a.username AS contact_username,
-        'agent' AS contact_type
+        contact.display_name,
+        contact.contact_username,
+        contact.contact_type
      FROM ${schema}.chat_channels c
-     JOIN ${schema}.chat_channel_members cm ON cm.channel_id = c.id
-     JOIN ${schema}.agents a ON a.id::text = cm.user_id AND a.workspace_id = c.workspace_id
+     LEFT JOIN LATERAL (
+       SELECT
+         CASE
+           WHEN a.id IS NOT NULL THEN a.name
+           WHEN ua.id IS NOT NULL THEN COALESCE(NULLIF(ua.name, ''), ua.email)
+           ELSE cm.user_id
+         END AS display_name,
+         a.username AS contact_username,
+         CASE
+           WHEN a.id IS NOT NULL THEN 'agent'
+           WHEN ua.id IS NOT NULL THEN 'user'
+           ELSE 'unknown'
+         END AS contact_type
+       FROM ${schema}.chat_channel_members cm
+       LEFT JOIN ${schema}.agents a ON a.id::text = cm.user_id AND a.workspace_id = c.workspace_id
+       LEFT JOIN ${schema}.users_auth ua ON ua.id::text = cm.user_id
+       WHERE cm.channel_id = c.id
+       ORDER BY
+         CASE WHEN c.created_by IS NOT NULL AND cm.user_id = c.created_by::text THEN 1 ELSE 0 END,
+         CASE WHEN a.id IS NOT NULL THEN 0 ELSE 1 END,
+         cm.joined_at ASC
+       LIMIT 1
+     ) contact ON TRUE
      WHERE c.workspace_id = $1
-       AND c.type = 'dm'
-     ORDER BY c.id, cm.joined_at ASC`,
+       AND c.type = 'dm'`,
     [workspaceId]
   );
 
@@ -158,7 +179,7 @@ async function listLegacyAgentDmRows(pg, { schema = DEFAULT_SCHEMA, workspaceId 
 }
 
 async function normalizeLegacyDmChannels(pg, { schema = DEFAULT_SCHEMA, workspaceId }) {
-  const rows = await listLegacyAgentDmRows(pg, { schema, workspaceId });
+  const rows = await listLegacyDmRows(pg, { schema, workspaceId });
   const result = await normalizeLegacyDmRows(pg, rows, { schema });
   return {
     normalized_count: result.normalized.length,
@@ -224,7 +245,35 @@ async function archiveTechnicalDmChannels(pg, { schema = DEFAULT_SCHEMA, workspa
   };
 }
 
+async function getChatMaintenanceStatus(pg, { schema = DEFAULT_SCHEMA, workspaceId }) {
+  const [legacyRows, technicalChannels] = await Promise.all([
+    listLegacyDmRows(pg, { schema, workspaceId }),
+    listTechnicalDmChannels(pg, { schema, workspaceId }),
+  ]);
+
+  const legacyCandidates = legacyRows
+    .filter((row) => shouldNormalizeLegacyDm(row))
+    .map((row) => ({
+      id: row.id,
+      current_name: row.raw_name || row.name,
+      canonical_name: canonicalDmNameForContact(row.display_name || row.name, row.contact_username || row.username),
+      contact_type: row.contact_type || 'unknown',
+    }));
+
+  return {
+    legacy_count: legacyCandidates.length,
+    technical_count: technicalChannels.length,
+    legacy_channels: legacyCandidates,
+    technical_channels: technicalChannels.map((channel) => ({
+      id: channel.id,
+      name: channel.name,
+      description: channel.description || '',
+    })),
+  };
+}
+
 module.exports = {
+  getChatMaintenanceStatus,
   canonicalDmNameForContact,
   ensureChatPreferencesTable,
   findExistingDmChannelId,

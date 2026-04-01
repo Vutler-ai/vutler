@@ -12,6 +12,7 @@ const router = express.Router();
 
 const { insertChatMessage, normalizeChatMessage } = require('../../../services/chatMessages');
 const {
+  canonicalDmNameForContact,
   ensureChatPreferencesTable,
   findExistingDmChannelId,
   normalizeLegacyDmRows,
@@ -453,7 +454,7 @@ router.post('/chat/dm', async (req, res) => {
     let contact = null;
     if (contactType === 'agent') {
       const result = await pg.query(
-        `SELECT id::text AS id, name
+        `SELECT id::text AS id, name, username
          FROM ${SCHEMA}.agents
          WHERE workspace_id = $1 AND id::text = $2
          LIMIT 1`,
@@ -488,15 +489,14 @@ router.post('/chat/dm', async (req, res) => {
       return res.json({ success: true, channel: normaliseChannel(existingChannel) });
     }
 
-    const internalName = contactType === 'agent'
-      ? `dm__agent__${currentUserId}__${contactId}`
-      : `dm__user__${[currentUserId, contactId].sort().join('__')}`;
+    const channelName = canonicalDmNameForContact(contact.name, contact.username) || `DM-${contactId.slice(0, 8)}`;
+    const channelDescription = `Direct message with ${contact.name}`;
 
     const created = await pg.query(
       `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
        VALUES ($1, $2, 'dm', $3, $4)
        RETURNING id`,
-      [internalName, `Direct message with ${contact.name}`, ws, currentUserId]
+      [channelName, channelDescription, ws, currentUserId]
     );
 
     await pg.query(
@@ -843,7 +843,6 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
 
   try {
     const userId = actorId(req) || 'user';
-    const userName = actorName(req);
     const ws = wsId(req);
 
     let jarvis = null;
@@ -857,7 +856,7 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
       jarvis = r.rows[0] || null;
     }
 
-    const dmName = jarvis ? [userId, jarvis.id.toString()].sort().join('__') : `dm_${userId}_jarvis`;
+    const dmName = canonicalDmNameForContact(jarvis?.name || 'Jarvis', jarvis?.username) || 'DM-jarvis';
 
     if (pg) {
       const existing = await pg.query(
@@ -887,7 +886,7 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
         `INSERT INTO ${SCHEMA}.chat_channels (name, description, type, workspace_id, created_by)
          VALUES ($1, $2, 'dm', $3, $4)
          RETURNING *`,
-        [dmName, `DM ${userName} ↔ Jarvis`, ws, userId]
+        [dmName, `Direct message with ${jarvis?.name || 'Jarvis'}`, ws, userId]
       );
 
       if (jarvis) {

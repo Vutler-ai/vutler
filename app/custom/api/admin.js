@@ -13,6 +13,7 @@ const fs = require('fs');
 const { pool } = require('../lib/postgres');
 const {
   archiveTechnicalDmChannels,
+  getChatMaintenanceStatus,
   normalizeLegacyDmChannels,
 } = require('../../../services/chatChannelMaintenance');
 const router = express.Router();
@@ -599,6 +600,20 @@ router.post('/chat/maintenance/normalize-legacy-dms', async (req, res) => {
     res.json({ success: true, data: result });
   } catch (err) {
     console.error('[Admin] Normalize legacy DMs error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/chat/maintenance/status', async (req, res) => {
+  try {
+    const workspaceId = req.query?.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const result = await getChatMaintenanceStatus(pool, {
+      workspaceId,
+      schema: SCHEMA,
+    });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[Admin] Chat maintenance status error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
