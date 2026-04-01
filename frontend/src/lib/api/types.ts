@@ -368,6 +368,7 @@ export interface BrowserOperatorRunReport {
   runtimeEngine?: string;
   target: Record<string, unknown>;
   evidenceCounts?: Record<string, unknown>;
+  target: Record<string, unknown>;
   totals: {
     steps: number;
     passed: number;
