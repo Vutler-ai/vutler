@@ -12,6 +12,7 @@ Use this runbook when `tenant_vutler` objects have mixed owners such as `postgre
 
 - owner role: `tenant_vutler_owner` (`NOLOGIN`)
 - app roles: `tenant_vutler`, `tenant_vutler_service`
+- derived app roles: keep environment-scoped roles such as `tenant_vutler_service.vaultbrix-prod`
 - migrations: executed by admin, then `SET ROLE tenant_vutler_owner` if needed
 
 ## 1. Audit current owners
@@ -45,6 +46,10 @@ npm run db:owners:audit:json > tenant_vutler-owners.json
 ```bash
 npm run db:owners:sql > tenant_vutler-owner-normalization.sql
 ```
+
+The generator automatically expands derived roles that match a granted base role, for example:
+
+- `tenant_vutler_service` -> `tenant_vutler_service.vaultbrix-prod`
 
 Custom target role:
 
