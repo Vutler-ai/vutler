@@ -74,6 +74,9 @@ const REGISTRY_CONFIG = {
 };
 
 let ensurePromise = null;
+let seedPackPromise = null;
+let seedFallbackMode = false;
+let seedFallbackWarningLogged = false;
 
 function isObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
@@ -127,6 +130,21 @@ async function loadSeedPackFromDisk() {
     seedPack[kind] = (await readSeedDir(config.dir)).map((record) => normalizeRecord(record, kind)).sort(sortByKey);
   }
   return seedPack;
+}
+
+async function getValidatedSeedPack() {
+  if (seedPackPromise) return seedPackPromise;
+
+  seedPackPromise = (async () => {
+    const seedPack = await loadSeedPackFromDisk();
+    validateSeedPack(seedPack);
+    return seedPack;
+  })().catch((error) => {
+    seedPackPromise = null;
+    throw error;
+  });
+
+  return seedPackPromise;
 }
 
 function validateCommonSeedPack(seedPack) {
@@ -482,8 +500,7 @@ async function ensureEnterpriseRegistryReady() {
 
   ensurePromise = (async () => {
     await ensureRegistryTables();
-    const seedPack = await loadSeedPackFromDisk();
-    validateSeedPack(seedPack);
+    const seedPack = await getValidatedSeedPack();
     await persistSeedPack(seedPack);
     return true;
   })().catch((error) => {
@@ -534,66 +551,198 @@ function mapRow(row, kind) {
   return base;
 }
 
+function mapSeedRecord(record, kind) {
+  const base = {
+    key: record.key,
+    version: record.version,
+    status: record.status,
+    managed_by: record.managed_by,
+    created_at: null,
+    updated_at: null,
+    definition: record.definition,
+  };
+
+  if (kind === 'profiles') {
+    return {
+      ...base,
+      workspace_id: null,
+      name: record.definition?.name || record.key,
+      category: record.definition?.category || 'general',
+      agent_level: Number(record.definition?.agent_level || 0),
+      seat_class: record.definition?.seat_class || 'standard_agent',
+    };
+  }
+
+  if (kind === 'capabilities') {
+    return {
+      ...base,
+      risk_class: record.definition?.risk_class || null,
+    };
+  }
+
+  if (kind === 'actionCatalogs' || kind === 'policyBundles' || kind === 'localIntegrations' || kind === 'helperRules') {
+    return {
+      ...base,
+      profile_key: record.definition?.profile_key || null,
+    };
+  }
+
+  return base;
+}
+
+function sortRecordsLatestFirst(a, b) {
+  return a.key.localeCompare(b.key) || b.version.localeCompare(a.version);
+}
+
+function pickSeedRecord(records, key, version) {
+  const filtered = records.filter((record) => record.key === key && record.status === 'active');
+  if (!filtered.length) return null;
+  if (version) {
+    return filtered.find((record) => record.version === version) || null;
+  }
+  return [...filtered].sort((a, b) => b.version.localeCompare(a.version))[0] || null;
+}
+
+function shouldUseSeedFallback(error) {
+  return Boolean(error) && error.code !== 'NEXUS_ENTERPRISE_REGISTRY_INVALID';
+}
+
+function logSeedFallback(error) {
+  if (seedFallbackWarningLogged) return;
+  seedFallbackWarningLogged = true;
+  console.warn('[NexusEnterpriseRegistry] Falling back to seed registry:', error?.message || error);
+}
+
+async function readWithSeedFallback(dbReader, seedReader) {
+  if (seedFallbackMode) {
+    return seedReader();
+  }
+
+  try {
+    await ensureEnterpriseRegistryReady();
+    return await dbReader();
+  } catch (error) {
+    if (!shouldUseSeedFallback(error)) {
+      throw error;
+    }
+    seedFallbackMode = true;
+    logSeedFallback(error);
+    return seedReader();
+  }
+}
+
 async function listProfiles() {
-  await ensureEnterpriseRegistryReady();
-  const result = await pool.query(
-    `SELECT * FROM ${SCHEMA}.enterprise_agent_profiles
-     WHERE workspace_id IS NULL AND status = 'active'
-     ORDER BY profile_key ASC, created_at DESC`
+  return readWithSeedFallback(
+    async () => {
+      const result = await pool.query(
+        `SELECT * FROM ${SCHEMA}.enterprise_agent_profiles
+         WHERE workspace_id IS NULL AND status = 'active'
+         ORDER BY profile_key ASC, created_at DESC`
+      );
+      return result.rows.map((row) => mapRow(row, 'profiles'));
+    },
+    async () => {
+      const seedPack = await getValidatedSeedPack();
+      return seedPack.profiles
+        .filter((record) => record.status === 'active')
+        .sort(sortRecordsLatestFirst)
+        .map((record) => mapSeedRecord(record, 'profiles'));
+    }
   );
-  return result.rows.map((row) => mapRow(row, 'profiles'));
 }
 
 async function getProfile(profileKey, version) {
-  await ensureEnterpriseRegistryReady();
-  const params = [profileKey];
-  let sql = `SELECT * FROM ${SCHEMA}.enterprise_agent_profiles
-             WHERE workspace_id IS NULL AND profile_key = $1 AND status = 'active'`;
-  if (version) {
-    params.push(version);
-    sql += ` AND version = $2`;
-  }
-  sql += ' ORDER BY created_at DESC LIMIT 1';
-  const result = await pool.query(sql, params);
-  return mapRow(result.rows[0], 'profiles');
+  return readWithSeedFallback(
+    async () => {
+      const params = [profileKey];
+      let sql = `SELECT * FROM ${SCHEMA}.enterprise_agent_profiles
+                 WHERE workspace_id IS NULL AND profile_key = $1 AND status = 'active'`;
+      if (version) {
+        params.push(version);
+        sql += ` AND version = $2`;
+      }
+      sql += ' ORDER BY created_at DESC LIMIT 1';
+      const result = await pool.query(sql, params);
+      return mapRow(result.rows[0], 'profiles');
+    },
+    async () => {
+      const seedPack = await getValidatedSeedPack();
+      const record = pickSeedRecord(seedPack.profiles, profileKey, version);
+      return mapSeedRecord(record, 'profiles');
+    }
+  );
 }
 
 async function listCapabilities() {
-  await ensureEnterpriseRegistryReady();
-  const result = await pool.query(
-    `SELECT * FROM ${SCHEMA}.enterprise_capability_packs
-     WHERE status = 'active'
-     ORDER BY capability_key ASC, created_at DESC`
+  return readWithSeedFallback(
+    async () => {
+      const result = await pool.query(
+        `SELECT * FROM ${SCHEMA}.enterprise_capability_packs
+         WHERE status = 'active'
+         ORDER BY capability_key ASC, created_at DESC`
+      );
+      return result.rows.map((row) => mapRow(row, 'capabilities'));
+    },
+    async () => {
+      const seedPack = await getValidatedSeedPack();
+      return seedPack.capabilities
+        .filter((record) => record.status === 'active')
+        .sort(sortRecordsLatestFirst)
+        .map((record) => mapSeedRecord(record, 'capabilities'));
+    }
   );
-  return result.rows.map((row) => mapRow(row, 'capabilities'));
 }
 
 async function getActiveMatrix(version) {
-  await ensureEnterpriseRegistryReady();
-  const params = [];
-  let sql = `SELECT * FROM ${SCHEMA}.enterprise_agent_level_matrix WHERE status = 'active'`;
-  if (version) {
-    params.push(version);
-    sql += ` AND version = $1`;
-  }
-  sql += ' ORDER BY created_at DESC LIMIT 1';
-  const result = await pool.query(sql, params);
-  return mapRow(result.rows[0], 'matrices');
+  return readWithSeedFallback(
+    async () => {
+      const params = [];
+      let sql = `SELECT * FROM ${SCHEMA}.enterprise_agent_level_matrix WHERE status = 'active'`;
+      if (version) {
+        params.push(version);
+        sql += ` AND version = $1`;
+      }
+      sql += ' ORDER BY created_at DESC LIMIT 1';
+      const result = await pool.query(sql, params);
+      return mapRow(result.rows[0], 'matrices');
+    },
+    async () => {
+      const seedPack = await getValidatedSeedPack();
+      const activeMatrices = seedPack.matrices.filter((record) => record.status === 'active');
+      const record = version
+        ? activeMatrices.find((item) => item.version === version) || null
+        : [...activeMatrices].sort((a, b) => b.version.localeCompare(a.version))[0] || null;
+      return mapSeedRecord(record, 'matrices');
+    }
+  );
 }
 
 async function getProfileLinkedRecord(kind, profileKey, version) {
-  await ensureEnterpriseRegistryReady();
-  const config = REGISTRY_CONFIG[kind];
-  const params = [profileKey];
-  let sql = `SELECT * FROM ${SCHEMA}.${config.table}
-             WHERE profile_key = $1 AND status = 'active'`;
-  if (version) {
-    params.push(version);
-    sql += ` AND version = $2`;
-  }
-  sql += ' ORDER BY created_at DESC LIMIT 1';
-  const result = await pool.query(sql, params);
-  return mapRow(result.rows[0], kind);
+  return readWithSeedFallback(
+    async () => {
+      const config = REGISTRY_CONFIG[kind];
+      const params = [profileKey];
+      let sql = `SELECT * FROM ${SCHEMA}.${config.table}
+                 WHERE profile_key = $1 AND status = 'active'`;
+      if (version) {
+        params.push(version);
+        sql += ` AND version = $2`;
+      }
+      sql += ' ORDER BY created_at DESC LIMIT 1';
+      const result = await pool.query(sql, params);
+      return mapRow(result.rows[0], kind);
+    },
+    async () => {
+      const seedPack = await getValidatedSeedPack();
+      const records = seedPack[kind].filter(
+        (record) => record.status === 'active' && record.definition?.profile_key === profileKey
+      );
+      const record = version
+        ? records.find((item) => item.version === version) || null
+        : [...records].sort((a, b) => b.version.localeCompare(a.version))[0] || null;
+      return mapSeedRecord(record, kind);
+    }
+  );
 }
 
 module.exports = {
