@@ -205,6 +205,63 @@ async function listEventSubscriptions(workspaceId, filters = {}) {
   return result.rows.map(mapSubscription);
 }
 
+async function listAllEventSubscriptions(filters = {}) {
+  await ensureEventSubscriptionTables();
+  const params = [];
+  const clauses = ['1=1'];
+
+  if (filters.workspaceId) {
+    params.push(filters.workspaceId);
+    clauses.push(`workspace_id = $${params.length}`);
+  }
+
+  if (filters.provider) {
+    params.push(normalizeProvider(filters.provider));
+    clauses.push(`provider = $${params.length}`);
+  }
+
+  if (filters.status) {
+    params.push(filters.status);
+    clauses.push(`status = $${params.length}`);
+  }
+
+  if (filters.provisioningStatus) {
+    params.push(filters.provisioningStatus);
+    clauses.push(`provisioning_status = $${params.length}`);
+  }
+
+  const result = await pool.query(
+    `SELECT *
+       FROM ${SCHEMA}.nexus_enterprise_event_subscriptions
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY created_at DESC
+      LIMIT 250`,
+    params
+  );
+
+  return result.rows.map(mapSubscription);
+}
+
+async function getEventSubscriptionById(subscriptionId, workspaceId = null) {
+  await ensureEventSubscriptionTables();
+  const params = [subscriptionId];
+  let where = 'id = $1::uuid';
+  if (workspaceId) {
+    params.push(workspaceId);
+    where += ` AND workspace_id = $2`;
+  }
+
+  const result = await pool.query(
+    `SELECT *
+       FROM ${SCHEMA}.nexus_enterprise_event_subscriptions
+      WHERE ${where}
+      LIMIT 1`,
+    params
+  );
+
+  return mapSubscription(result.rows[0]);
+}
+
 async function getEventSubscriptionByCallback(callbackPath) {
   await ensureEventSubscriptionTables();
   const result = await pool.query(
@@ -258,11 +315,76 @@ async function updateEventSubscriptionProvisioning(subscriptionId, input = {}) {
   return mapSubscription(result.rows[0]);
 }
 
+async function updateEventSubscription(subscriptionId, input = {}, workspaceId = null) {
+  await ensureEventSubscriptionTables();
+
+  const setClauses = [];
+  const params = [subscriptionId];
+
+  if (input.status !== undefined) {
+    params.push(normalizeStatus(input.status));
+    setClauses.push(`status = $${params.length}`);
+  }
+  if (input.provisioningMode !== undefined) {
+    params.push(normalizeProvisioningMode(input.provisioningMode, input.provider));
+    setClauses.push(`provisioning_mode = $${params.length}`);
+  }
+  if (input.provisioningStatus !== undefined) {
+    params.push(input.provisioningStatus);
+    setClauses.push(`provisioning_status = $${params.length}`);
+  }
+  if (input.provisioningError !== undefined) {
+    params.push(input.provisioningError || null);
+    setClauses.push(`provisioning_error = $${params.length}`);
+  }
+  if (input.sourceResource !== undefined) {
+    params.push(input.sourceResource || null);
+    setClauses.push(`source_resource = $${params.length}`);
+  }
+  if (input.roomName !== undefined) {
+    params.push(input.roomName || null);
+    setClauses.push(`room_name = $${params.length}`);
+  }
+  if (input.events !== undefined) {
+    params.push(JSON.stringify(Array.isArray(input.events) ? input.events : []));
+    setClauses.push(`events = $${params.length}::jsonb`);
+  }
+  if (input.configPatch !== undefined) {
+    params.push(JSON.stringify(input.configPatch || {}));
+    setClauses.push(`config = config || $${params.length}::jsonb`);
+  }
+
+  if (setClauses.length === 0) {
+    return getEventSubscriptionById(subscriptionId, workspaceId);
+  }
+
+  setClauses.push('updated_at = NOW()');
+
+  let whereClause = 'id = $1::uuid';
+  if (workspaceId) {
+    params.push(workspaceId);
+    whereClause += ` AND workspace_id = $${params.length}`;
+  }
+
+  const result = await pool.query(
+    `UPDATE ${SCHEMA}.nexus_enterprise_event_subscriptions
+        SET ${setClauses.join(', ')}
+      WHERE ${whereClause}
+      RETURNING *`,
+    params
+  );
+
+  return mapSubscription(result.rows[0]);
+}
+
 module.exports = {
   ensureEventSubscriptionTables,
   createEventSubscription,
+  getEventSubscriptionById,
   listEventSubscriptions,
+  listAllEventSubscriptions,
   getEventSubscriptionByCallback,
   markSubscriptionDelivered,
+  updateEventSubscription,
   updateEventSubscriptionProvisioning,
 };

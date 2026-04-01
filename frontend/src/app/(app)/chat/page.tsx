@@ -845,10 +845,13 @@ export default function ChatPage() {
     setSelectedFiles([]);
 
     try {
-      let attachments: Array<{ id: string; url: string }> = [];
+      let attachments = [] as Message["attachments"];
       if (files.length > 0) {
         const form = new FormData();
         files.forEach((f) => form.append("files", f));
+        if (selectedChannel.contact_type === "agent" && selectedChannel.contact_id) {
+          form.append("agent_id", selectedChannel.contact_id);
+        }
         const res = await uploadAttachment(selectedChannel.id, form);
         attachments = res.attachments;
       }
@@ -856,12 +859,13 @@ export default function ChatPage() {
       const sent = await apiSendMessage(selectedChannel.id, {
         content: text,
         client_message_id: clientMessageId,
+        attachments,
       });
       const confirmedMessage: Message = {
         ...tempMessage,
         ...sent,
         client_message_id: sent.client_message_id ?? clientMessageId,
-        attachments: sent.attachments ?? (attachments.length > 0 ? tempMessage.attachments : sent.attachments),
+        attachments: sent.attachments ?? (attachments && attachments.length > 0 ? attachments : sent.attachments),
       };
 
       setMessages((prev) => upsertMessage(prev, confirmedMessage));

@@ -8,6 +8,7 @@
 'use strict';
 
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 
 const { insertChatMessage, normalizeChatMessage } = require('../../../services/chatMessages');
@@ -18,10 +19,18 @@ const {
   normalizeLegacyDmRows,
 } = require('../../../services/chatChannelMaintenance');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
+const { uploadFileToAgentDrive } = require('../../../services/agentDriveService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const memoryRuntime = createMemoryRuntimeService();
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    files: 5,
+    fileSize: 15 * 1024 * 1024,
+  },
+});
 
 function getPool(req) {
   return req.app.locals.pg;
@@ -61,6 +70,38 @@ function actorId(req) {
 
 function actorName(req) {
   return req.headers['x-user-name'] || req.user?.name || req.agent?.name || 'User';
+}
+
+async function resolveAttachmentAgentForChannel(pg, workspaceId, channelId, preferredAgentId = null) {
+  if (preferredAgentId) {
+    const preferred = await pg.query(
+      `SELECT a.id, a.name, a.username, a.workspace_id
+       FROM ${SCHEMA}.chat_channel_members cm
+       JOIN ${SCHEMA}.agents a
+         ON a.id::text = cm.user_id
+        AND a.workspace_id = $2
+       WHERE cm.channel_id = $1
+         AND a.id::text = $3
+       LIMIT 1`,
+      [channelId, workspaceId, preferredAgentId]
+    );
+    if (preferred.rows[0]) return preferred.rows[0];
+  }
+
+  const result = await pg.query(
+    `SELECT a.id, a.name, a.username, a.workspace_id
+     FROM ${SCHEMA}.chat_channel_members cm
+     JOIN ${SCHEMA}.agents a
+       ON a.id::text = cm.user_id
+      AND a.workspace_id = $2
+     WHERE cm.channel_id = $1
+     ORDER BY cm.joined_at ASC
+     LIMIT 2`,
+    [channelId, workspaceId]
+  );
+
+  if (result.rows.length === 1) return result.rows[0];
+  return null;
 }
 
 async function fetchChannelById(pg, workspaceId, channelId, currentUserId) {
@@ -662,11 +703,12 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
   try {
     const channelId = req.params.id;
     const { content, client_message_id, message_type = 'text', parent_id } = req.body;
-    if (!content && !req.body.text) {
-      return res.status(400).json({ success: false, error: 'content is required' });
+    const attachments = Array.isArray(req.body.attachments) ? req.body.attachments : [];
+    if (!content && !req.body.text && attachments.length === 0) {
+      return res.status(400).json({ success: false, error: 'content or attachments are required' });
     }
 
-    const text = content || req.body.text;
+    const text = content || req.body.text || '';
     const ws = wsId(req);
     const senderId = actorId(req) || 'user';
     const senderName = actorName(req);
@@ -678,6 +720,7 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
       content: text,
       message_type,
       parent_id: parent_id || null,
+      attachments,
       client_message_id: client_message_id || null,
       workspace_id: ws,
       processing_state: 'pending',
@@ -704,8 +747,50 @@ router.post('/chat/channels/:id/messages', async (req, res) => {
   }
 });
 
-router.post('/chat/channels/:id/attachments', (_req, res) => {
-  res.status(501).json({ success: false, error: 'File uploads not yet supported' });
+router.post('/chat/channels/:id/attachments', attachmentUpload.array('files', 5), async (req, res) => {
+  const pg = getPool(req);
+  if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
+
+  try {
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) {
+      return res.status(400).json({ success: false, error: 'No files provided' });
+    }
+
+    const channelId = req.params.id;
+    const ws = wsId(req);
+    const preferredAgentId = String(req.body?.agent_id || req.body?.agentId || '').trim() || null;
+    const agent = await resolveAttachmentAgentForChannel(pg, ws, channelId, preferredAgentId);
+    if (!agent) {
+      return res.status(400).json({ success: false, error: 'This channel is not bound to a single agent drive' });
+    }
+
+    const uploaderId = actorId(req) || req.userId || 'user';
+    const uploads = [];
+    for (const file of files) {
+      const uploaded = await uploadFileToAgentDrive(pg, {
+        workspaceId: ws,
+        agent,
+        uploadedBy: uploaderId,
+        file,
+        targetSubfolder: 'Chat',
+      });
+      uploads.push({
+        id: uploaded.id,
+        filename: uploaded.name,
+        mime: uploaded.mimeType,
+        size: uploaded.size,
+        path: uploaded.path,
+        url: `/api/v1/drive/download/${uploaded.id}?path=${encodeURIComponent(uploaded.path)}&inline=true`,
+        uploaded_at: new Date().toISOString(),
+      });
+    }
+
+    res.status(201).json({ success: true, attachments: uploads });
+  } catch (err) {
+    console.error('[Chat] POST /channels/:id/attachments error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.get('/chat/channels/:id/members', async (req, res) => {
@@ -797,9 +882,10 @@ router.post('/chat/send', async (req, res) => {
 
   try {
     const { channel_id, content, text, sender_id, sender_name, message_type = 'text', parent_id } = req.body;
-    const body = content || text;
-    if (!channel_id || !body) {
-      return res.status(400).json({ success: false, error: 'channel_id and content are required' });
+    const attachments = Array.isArray(req.body.attachments) ? req.body.attachments : [];
+    const body = content || text || '';
+    if (!channel_id || (!body && attachments.length === 0)) {
+      return res.status(400).json({ success: false, error: 'channel_id and content or attachments are required' });
     }
 
     const ws = wsId(req);
@@ -813,6 +899,7 @@ router.post('/chat/send', async (req, res) => {
       content: body,
       message_type,
       parent_id: parent_id || null,
+      attachments,
       workspace_id: ws,
       processing_state: 'pending',
       processing_attempts: 0,

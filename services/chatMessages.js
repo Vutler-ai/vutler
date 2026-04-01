@@ -4,6 +4,7 @@ const { publishChatMessage, normalizeRealtimeMessage } = require('./chatRealtime
 
 const OPTIONAL_COLUMNS = [
   'client_message_id',
+  'attachments',
   'processing_state',
   'processing_attempts',
   'processing_started_at',
@@ -35,6 +36,7 @@ function buildInsertPayload(message) {
     workspace_id: message.workspace_id,
     parent_id: hasOwn(message, 'parent_id') ? message.parent_id : undefined,
     client_message_id: hasOwn(message, 'client_message_id') ? message.client_message_id : undefined,
+    attachments: hasOwn(message, 'attachments') ? JSON.stringify(message.attachments || []) : undefined,
     processed_at: hasOwn(message, 'processed_at') ? message.processed_at : undefined,
     processing_state: hasOwn(message, 'processing_state') ? message.processing_state : undefined,
     processing_attempts: hasOwn(message, 'processing_attempts') ? message.processing_attempts : undefined,

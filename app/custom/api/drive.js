@@ -13,6 +13,8 @@ const { authenticateAgent } = require('../lib/auth');
 const { requireCorePermission } = require('../lib/core-permissions');
 const { pool } = require('../lib/postgres');
 const s3Driver = require('../services/s3Driver');
+const { findAssignedAgentForPath } = require('../../../services/agentDriveService');
+const { notifyAgentAboutDriveFile } = require('../../../services/agentDriveNotifications');
 
 const router = express.Router();
 
@@ -383,6 +385,30 @@ router.post('/drive/upload', authenticateAgent, requireCorePermission('drive.upl
     );
     
     console.log(`[DriveAPI] File uploaded: ${itemPath} (${req.file.size} bytes) to S3 bucket ${bucket}`);
+
+    const uploaderName = req.user?.name || req.agent?.name || req.headers['x-user-name'] || 'User';
+    findAssignedAgentForPath(pool, workspaceId, itemPath)
+      .then((match) => {
+        if (!match?.agent || !uploadedBy || String(match.agent.id) === String(uploadedBy)) return null;
+        return notifyAgentAboutDriveFile({
+          pg: pool,
+          app: req.app,
+          workspaceId,
+          userId: uploadedBy,
+          userName: uploaderName,
+          agent: match.agent,
+          file: {
+            id: fileId,
+            name: cleanName,
+            mimeType: req.file.mimetype || 'application/octet-stream',
+            size: req.file.size,
+            path: itemPath,
+          },
+        });
+      })
+      .catch((notifyErr) => {
+        console.error('[DriveAPI] Agent intake notification failed:', notifyErr.message);
+      });
     
     return sendDriveSuccess(res, {
       file: {
@@ -641,6 +667,210 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
   } catch (error) {
     console.error('[DriveAPI] Preview error:', error);
     return sendDriveError(res, 500, 'DRIVE_PREVIEW_FAILED', 'Preview failed', { reason: error.message });
+  }
+});
+
+/**
+ * POST /api/v1/drive/move
+ * Move or rename a file/folder.
+ */
+router.post('/drive/move', authenticateAgent, requireCorePermission('drive.upload'), async (req, res) => {
+  try {
+    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const actorId = req.userId || req.headers['x-user-id'] || req.user?.id || req.agent?.id || null;
+    const actorName = req.user?.name || req.agent?.name || req.headers['x-user-name'] || 'User';
+
+    if (!workspaceId) {
+      return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
+    }
+
+    const fromPathRaw = req.body?.fromPath || req.body?.path;
+    const toPathRaw = req.body?.toPath || req.body?.destinationPath;
+    if (!fromPathRaw || !toPathRaw) {
+      return sendDriveError(res, 400, 'VALIDATION_ERROR', 'fromPath and toPath are required');
+    }
+
+    const fromPath = normalizeVirtualPath(fromPathRaw);
+    const toPath = normalizeVirtualPath(toPathRaw);
+    const finalName = req.body?.newName ? safeFileName(req.body.newName) : null;
+
+    if (fromPath === '/') {
+      return sendDriveError(res, 400, 'INVALID_PATH', 'Cannot move the drive root');
+    }
+
+    const lookup = await pool.query(
+      `SELECT id, name, path, parent_path, mime_type, size_bytes, s3_key, type, uploaded_by
+       FROM tenant_vutler.drive_files
+       WHERE workspace_id = $1
+         AND path = $2
+         AND is_deleted = false
+       LIMIT 1`,
+      [workspaceId, fromPath]
+    );
+
+    if (lookup.rows.length === 0) {
+      return sendDriveError(res, 404, 'FILE_NOT_FOUND', 'File or folder not found');
+    }
+
+    const record = lookup.rows[0];
+    const nextName = finalName || safeFileName(record.name);
+    const nextPath = normalizeVirtualPath(toPath === '/' ? `/${nextName}` : `${toPath}/${nextName}`);
+
+    if (nextPath === fromPath) {
+      return sendDriveSuccess(res, {
+        moved: {
+          id: record.id,
+          name: nextName,
+          fromPath,
+          toPath: nextPath,
+        },
+      });
+    }
+
+    const isFolder = record.type === 'folder' || record.mime_type === 'inode/directory';
+    if (isFolder && (toPath === fromPath || toPath.startsWith(`${fromPath}/`))) {
+      return sendDriveError(res, 400, 'INVALID_DESTINATION', 'A folder cannot be moved inside itself');
+    }
+
+    const bucket = await getWorkspaceBucket(workspaceId);
+
+    if (isFolder) {
+      const descendants = await pool.query(
+        `SELECT id, path, parent_path, name, mime_type, s3_key, type
+         FROM tenant_vutler.drive_files
+         WHERE workspace_id = $1
+           AND is_deleted = false
+           AND (path = $2 OR path LIKE $3)
+         ORDER BY LENGTH(path) ASC`,
+        [workspaceId, fromPath, `${fromPath}/%`]
+      );
+
+      for (const item of descendants.rows) {
+        const suffix = item.path === fromPath ? '' : item.path.slice(fromPath.length);
+        const itemNextPath = normalizeVirtualPath(`${nextPath}${suffix}`);
+        const itemNextParent = parentPathFor(itemNextPath);
+
+        let itemNextS3Key = item.s3_key;
+        if ((item.type !== 'folder' && item.mime_type !== 'inode/directory') && item.s3_key) {
+          const itemFileName = path.posix.basename(itemNextPath);
+          itemNextS3Key = generateS3Key(itemNextParent, `${item.id}-${itemFileName}`);
+          if (item.s3_key !== itemNextS3Key) {
+            await s3Driver.move(bucket, s3Driver.prefixKey(item.s3_key), s3Driver.prefixKey(itemNextS3Key));
+          }
+        }
+
+        await pool.query(
+          `UPDATE tenant_vutler.drive_files
+           SET name = CASE WHEN id = $1 THEN $2 ELSE name END,
+               path = $3,
+               parent_path = $4,
+               s3_key = $5,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [
+            item.id,
+            item.path === fromPath ? nextName : item.name,
+            itemNextPath,
+            itemNextParent,
+            itemNextS3Key,
+          ]
+        );
+      }
+
+      const previousMatch = await findAssignedAgentForPath(pool, workspaceId, fromPath).catch(() => null);
+      const nextMatch = await findAssignedAgentForPath(pool, workspaceId, nextPath).catch(() => null);
+      const enteredAssignedFolder = Boolean(
+        nextMatch?.agent?.id
+        && (!previousMatch?.agent?.id || String(previousMatch.agent.id) !== String(nextMatch.agent.id))
+      );
+
+      if (enteredAssignedFolder && actorId && String(nextMatch.agent.id) !== String(actorId)) {
+        notifyAgentAboutDriveFile({
+          pg: pool,
+          app: req.app,
+          workspaceId,
+          userId: actorId,
+          userName: actorName,
+          agent: nextMatch.agent,
+          file: {
+            id: record.id,
+            name: nextName,
+            mimeType: 'inode/directory',
+            size: 0,
+            path: nextPath,
+          },
+        }).catch((notifyErr) => {
+          console.error('[DriveAPI] Agent move notification failed:', notifyErr.message);
+        });
+      }
+
+      console.log(`[DriveAPI] Folder moved: ${fromPath} -> ${nextPath}`);
+      return sendDriveSuccess(res, {
+        moved: {
+          id: record.id,
+          name: nextName,
+          fromPath,
+          toPath: nextPath,
+        },
+      });
+    }
+
+    const nextParent = parentPathFor(nextPath);
+    const nextS3Key = generateS3Key(nextParent, `${record.id}-${nextName}`);
+    if (record.s3_key && record.s3_key !== nextS3Key) {
+      await s3Driver.move(bucket, s3Driver.prefixKey(record.s3_key), s3Driver.prefixKey(nextS3Key));
+    }
+
+    await pool.query(
+      `UPDATE tenant_vutler.drive_files
+       SET name = $1,
+           path = $2,
+           parent_path = $3,
+           s3_key = $4,
+           updated_at = NOW()
+       WHERE id = $5`,
+      [nextName, nextPath, nextParent, nextS3Key, record.id]
+    );
+
+    const previousMatch = await findAssignedAgentForPath(pool, workspaceId, fromPath).catch(() => null);
+    const nextMatch = await findAssignedAgentForPath(pool, workspaceId, nextPath).catch(() => null);
+    const enteredAssignedFolder = Boolean(
+      nextMatch?.agent?.id
+      && (!previousMatch?.agent?.id || String(previousMatch.agent.id) !== String(nextMatch.agent.id))
+    );
+
+    if (enteredAssignedFolder && actorId && String(nextMatch.agent.id) !== String(actorId)) {
+      notifyAgentAboutDriveFile({
+        pg: pool,
+        app: req.app,
+        workspaceId,
+        userId: actorId,
+        userName: actorName,
+        agent: nextMatch.agent,
+        file: {
+          id: record.id,
+          name: nextName,
+          mimeType: record.mime_type || 'application/octet-stream',
+          size: Number(record.size_bytes || 0),
+          path: nextPath,
+        },
+      }).catch((notifyErr) => {
+        console.error('[DriveAPI] Agent move notification failed:', notifyErr.message);
+      });
+    }
+
+    console.log(`[DriveAPI] File moved: ${fromPath} -> ${nextPath}`);
+    return sendDriveSuccess(res, {
+      moved: {
+        id: record.id,
+        name: nextName,
+        fromPath,
+        toPath: nextPath,
+      },
+    });
+  } catch (error) {
+    console.error('[DriveAPI] Move error:', error);
+    return sendDriveError(res, 500, 'DRIVE_MOVE_FAILED', 'Move failed', { reason: error.message });
   }
 });
 

@@ -12,6 +12,12 @@ const pool = require('../lib/vaultbrix');
 const router = express.Router();
 
 const { VALID_PLAN_IDS } = require('../packages/core/middleware/featureGate');
+const {
+  listAllEventSubscriptions,
+  getEventSubscriptionById,
+  updateEventSubscription,
+} = require('../services/nexusEnterpriseEventSubscriptions');
+const { provisionEventSubscription } = require('../services/nexusEnterpriseSubscriptionProvisioner');
 
 const SCHEMA = 'tenant_vutler';
 const TABLE = `${SCHEMA}.users_auth`;
@@ -377,6 +383,80 @@ router.delete('/users/:id', async (req, res) => {
   }
 });
 
+router.get('/nexus-enterprise/event-subscriptions', async (req, res) => {
+  try {
+    const subscriptions = await listAllEventSubscriptions({
+      workspaceId: req.query.workspaceId || null,
+      provider: req.query.provider || null,
+      status: req.query.status || null,
+      provisioningStatus: req.query.provisioningStatus || null,
+    });
+    res.json({ success: true, data: subscriptions });
+  } catch (err) {
+    console.error('[Admin] List enterprise subscriptions error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/nexus-enterprise/event-subscriptions/:id', async (req, res) => {
+  try {
+    const current = await getEventSubscriptionById(req.params.id);
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Subscription not found' });
+    }
+
+    const payload = req.body || {};
+    const updated = await updateEventSubscription(req.params.id, {
+      provider: current.provider,
+      status: payload.status,
+      provisioningMode: payload.provisioningMode,
+      provisioningStatus: payload.provisioningStatus,
+      provisioningError: payload.provisioningError,
+      sourceResource: payload.sourceResource,
+      roomName: payload.roomName,
+      events: payload.events,
+      configPatch: {
+        ...(payload.configPatch || {}),
+        adminUpdatedAt: new Date().toISOString(),
+        adminUpdatedBy: req.adminUser?.email || 'admin',
+      },
+    });
+
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    console.error('[Admin] Update enterprise subscription error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/nexus-enterprise/event-subscriptions/:id/retry', async (req, res) => {
+  try {
+    const current = await getEventSubscriptionById(req.params.id);
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Subscription not found' });
+    }
+
+    const payload = req.body || {};
+    const prepared = await updateEventSubscription(req.params.id, {
+      provider: current.provider,
+      provisioningMode: payload.provisioningMode || current.provisioningMode,
+      provisioningStatus: 'pending',
+      provisioningError: null,
+      configPatch: {
+        retryRequestedAt: new Date().toISOString(),
+        retryRequestedBy: req.adminUser?.email || 'admin',
+        retryRequestedFrom: 'admin',
+      },
+    });
+
+    const provisioned = await provisionEventSubscription(prepared.workspaceId, prepared);
+    res.json({ success: true, data: provisioned });
+  } catch (err) {
+    console.error('[Admin] Retry enterprise subscription error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
 
 /**
@@ -630,4 +710,3 @@ router.delete('/users/:id/data', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
-

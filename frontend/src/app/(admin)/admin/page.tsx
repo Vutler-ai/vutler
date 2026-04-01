@@ -14,6 +14,10 @@ import {
   Ban,
 } from "lucide-react";
 
+function statValue(stats: AdminStats, key: keyof AdminStats): number {
+  return Number(stats[key] || 0);
+}
+
 export default function AdminOverviewPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,12 +55,24 @@ export default function AdminOverviewPage() {
 
   const planCards = [
     { label: "Free", value: stats.plan_free, icon: Users, color: "text-gray-400", bg: "bg-gray-500/10" },
-    { label: "Starter", value: stats.plan_starter, icon: Zap, color: "text-blue-400", bg: "bg-blue-500/10" },
-    { label: "Team", value: stats.plan_team, icon: Star, color: "text-amber-400", bg: "bg-amber-500/10" },
-    { label: "Enterprise", value: stats.plan_enterprise, icon: Crown, color: "text-purple-400", bg: "bg-purple-500/10" },
+    { label: "Office Starter", value: stats.plan_office_starter || "0", icon: Zap, color: "text-blue-400", bg: "bg-blue-500/10" },
+    { label: "Office Team", value: stats.plan_office_team || "0", icon: Star, color: "text-cyan-400", bg: "bg-cyan-500/10" },
+    { label: "Agents Starter", value: stats.plan_agents_starter || "0", icon: Zap, color: "text-violet-400", bg: "bg-violet-500/10" },
+    { label: "Agents Pro", value: stats.plan_agents_pro || "0", icon: Star, color: "text-amber-400", bg: "bg-amber-500/10" },
+    { label: "Nexus Enterprise", value: stats.plan_nexus_enterprise || "0", icon: Crown, color: "text-orange-400", bg: "bg-orange-500/10" },
+    { label: "Platform Enterprise", value: stats.plan_enterprise, icon: Crown, color: "text-purple-400", bg: "bg-purple-500/10" },
+    { label: "Full Platform", value: stats.plan_full || "0", icon: Shield, color: "text-emerald-400", bg: "bg-emerald-500/10" },
     { label: "Beta", value: stats.plan_beta, icon: Zap, color: "text-emerald-400", bg: "bg-emerald-500/10" },
     { label: "Banned", value: stats.banned, icon: Ban, color: "text-red-400", bg: "bg-red-500/10" },
   ];
+
+  const mrr =
+    statValue(stats, "plan_office_starter") * 29 +
+    statValue(stats, "plan_office_team") * 79 +
+    statValue(stats, "plan_agents_starter") * 29 +
+    statValue(stats, "plan_agents_pro") * 79 +
+    statValue(stats, "plan_full") * 129 +
+    statValue(stats, "plan_nexus_enterprise") * 1490;
 
   return (
     <div className="space-y-8">
@@ -88,7 +104,7 @@ export default function AdminOverviewPage() {
         <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-3">
           Plans Distribution
         </h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-8 gap-4">
           {planCards.map((card) => (
             <div key={card.label} className={`${card.bg} rounded-lg p-4 text-center`}>
               <card.icon className={`h-5 w-5 ${card.color} mx-auto mb-2`} />
@@ -106,16 +122,11 @@ export default function AdminOverviewPage() {
         </h2>
         <div className="bg-card border rounded-lg p-6">
           <div className="text-3xl font-bold text-emerald-400">
-            CHF{" "}
-            {(
-              Number(stats.plan_starter) * 19 +
-              Number(stats.plan_team) * 49 +
-              Number(stats.plan_enterprise) * 199
-            ).toLocaleString()}
+            ${mrr.toLocaleString()}
             <span className="text-sm font-normal text-muted-foreground ml-2">/month</span>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Based on: Starter CHF 19 x {stats.plan_starter} + Team CHF 49 x {stats.plan_team} + Enterprise CHF 199 x {stats.plan_enterprise}
+            Fixed-price plans only. Custom `enterprise` contracts stay outside this quick estimate.
           </p>
         </div>
       </div>

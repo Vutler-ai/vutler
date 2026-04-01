@@ -9,6 +9,7 @@ import {
   Server,
   Users,
   CreditCard,
+  RadioTower,
   LogOut,
   ChevronLeft,
   Shield,
@@ -27,6 +28,7 @@ const navigation = [
   { name: "VPS Health", href: "/admin/services", icon: Server },
   { name: "Users", href: "/admin/users", icon: Users },
   { name: "Plans & Revenue", href: "/admin/plans", icon: CreditCard },
+  { name: "Nexus Enterprise", href: "/admin/nexus-enterprise", icon: RadioTower },
 ];
 
 export default function AdminLayout({

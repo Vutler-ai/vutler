@@ -5,6 +5,7 @@ const path = require('path');
 const pool = require('../../../lib/vaultbrix');
 const s3Driver = require('../../../app/custom/services/s3Driver');
 const { resolveWorkspaceDriveRoot, resolveWorkspaceDriveWritePath } = require('../../drivePlacementPolicy');
+const { resolveAgentDriveRoot } = require('../../agentDriveService');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -36,6 +37,14 @@ function generateS3Key(virtualPath, fileName) {
   const normalized = normalizeVirtualPath(virtualPath);
   if (normalized === '/') return fileName;
   return `${normalized.slice(1)}/${fileName}`;
+}
+
+function resolveScopedPath(rawPath, agentDriveRoot = null, fallbackPath = '/') {
+  const value = String(rawPath || '').trim();
+  if (!value) return normalizeVirtualPath(fallbackPath);
+  if (value.startsWith('/')) return normalizeVirtualPath(value);
+  if (agentDriveRoot) return normalizeVirtualPath(`${agentDriveRoot}/${value}`);
+  return normalizeVirtualPath(value);
 }
 
 function mapRow(row) {
@@ -121,27 +130,30 @@ class WorkspaceDriveAdapter {
   async execute(context) {
     const { workspaceId, params = {} } = context;
     const action = params.action || this._inferActionFromSkillKey(context.skillKey);
+    const agentDriveRoot = context.agentId
+      ? await resolveAgentDriveRoot(workspaceId, { id: context.agentId }).catch(() => null)
+      : null;
 
     switch (action) {
       case 'list':
-        return this._list(workspaceId, params);
+        return this._list(workspaceId, params, agentDriveRoot);
       case 'search':
-        return this._search(workspaceId, params);
+        return this._search(workspaceId, params, agentDriveRoot);
       case 'read':
       case 'preview':
-        return this._read(workspaceId, params);
+        return this._read(workspaceId, params, agentDriveRoot);
       case 'download':
-        return this._download(workspaceId, params);
+        return this._download(workspaceId, params, agentDriveRoot);
       case 'create_folder':
-        return this._createFolder(workspaceId, params);
+        return this._createFolder(workspaceId, params, agentDriveRoot);
       case 'write_text':
       case 'create':
       case 'update':
-        return this._writeText(workspaceId, params, context.skillKey);
+        return this._writeText(workspaceId, params, context.skillKey, agentDriveRoot);
       case 'move':
-        return this._move(workspaceId, params);
+        return this._move(workspaceId, params, agentDriveRoot);
       case 'delete':
-        return this._delete(workspaceId, params);
+        return this._delete(workspaceId, params, agentDriveRoot);
       default:
         return { success: false, error: `Unknown workspace drive action: "${action}"` };
     }
@@ -157,8 +169,8 @@ class WorkspaceDriveAdapter {
     return 'list';
   }
 
-  async _list(workspaceId, params) {
-    const normalized = normalizeVirtualPath(params.path || '/');
+  async _list(workspaceId, params, agentDriveRoot = null) {
+    const normalized = resolveScopedPath(params.path || params.parentPath || '/', agentDriveRoot, agentDriveRoot || '/');
     const result = await pool.query(
       `SELECT id, name, path, parent_path, type, mime_type, size_bytes, s3_key, updated_at
        FROM ${SCHEMA}.drive_files
@@ -175,11 +187,11 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _search(workspaceId, params) {
+  async _search(workspaceId, params, agentDriveRoot = null) {
     const query = String(params.searchQuery || params.query || params.q || '').trim();
     if (!query) return { success: false, error: 'searchQuery is required' };
 
-    const prefix = normalizeVirtualPath(params.path || '/');
+    const prefix = resolveScopedPath(params.path || '/', agentDriveRoot, agentDriveRoot || '/');
     const result = await pool.query(
       `SELECT id, name, path, parent_path, type, mime_type, size_bytes, s3_key, updated_at
        FROM ${SCHEMA}.drive_files
@@ -198,8 +210,8 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _read(workspaceId, params) {
-    const record = await this._resolveRecord(workspaceId, params);
+  async _read(workspaceId, params, agentDriveRoot = null) {
+    const record = await this._resolveRecord(workspaceId, params, agentDriveRoot);
     if (!record) return { success: false, error: 'path or fileId is required' };
     if (record.type === 'folder') return { success: false, error: 'Folders cannot be read' };
 
@@ -219,8 +231,8 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _download(workspaceId, params) {
-    const record = await this._resolveRecord(workspaceId, params);
+  async _download(workspaceId, params, agentDriveRoot = null) {
+    const record = await this._resolveRecord(workspaceId, params, agentDriveRoot);
     if (!record) return { success: false, error: 'path or fileId is required' };
     if (record.type === 'folder') return { success: false, error: 'Folders cannot be downloaded' };
 
@@ -240,13 +252,13 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _createFolder(workspaceId, params) {
+  async _createFolder(workspaceId, params, agentDriveRoot = null) {
     const name = String(params.name || '').trim();
     if (!name || name.includes('/') || name.includes('\\') || name.includes('..')) {
       return { success: false, error: 'name is required and must be a valid folder name' };
     }
 
-    const parentPath = normalizeVirtualPath(params.path || params.parentPath || '/');
+    const parentPath = resolveScopedPath(params.path || params.parentPath || '/', agentDriveRoot, agentDriveRoot || '/');
     const folderPath = parentPath === '/' ? `/${name}` : `${parentPath}/${name}`;
     const fileId = crypto.randomUUID();
 
@@ -267,10 +279,11 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _writeText(workspaceId, params, skillKey = 'workspace_drive_write') {
+  async _writeText(workspaceId, params, skillKey = 'workspace_drive_write', agentDriveRoot = null) {
     const resolved = await resolveWorkspaceDriveWritePath({
       skillKey,
       workspaceId,
+      rootOverride: agentDriveRoot || undefined,
       params,
     });
     const workspaceRoot = await resolveWorkspaceDriveRoot(workspaceId);
@@ -322,7 +335,7 @@ class WorkspaceDriveAdapter {
         size: Buffer.byteLength(String(content), 'utf8'),
         mimeType: contentType,
         placement: {
-          root: workspaceRoot,
+          root: agentDriveRoot || workspaceRoot,
           folder: resolved.folder ? normalizeVirtualPath(resolved.folder) : null,
           defaulted: resolved.defaulted,
           reason: resolved.reason,
@@ -331,9 +344,9 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _move(workspaceId, params) {
-    const record = await this._resolveRecord(workspaceId, { path: params.fromPath, fileId: params.fileId, id: params.id });
-    const destinationPath = normalizeVirtualPath(params.toPath || params.destinationPath || '/');
+  async _move(workspaceId, params, agentDriveRoot = null) {
+    const record = await this._resolveRecord(workspaceId, { path: params.fromPath, fileId: params.fileId, id: params.id }, agentDriveRoot);
+    const destinationPath = resolveScopedPath(params.toPath || params.destinationPath || '/', agentDriveRoot, agentDriveRoot || '/');
     if (!record) return { success: false, error: 'fromPath or fileId is required' };
 
     const newPath = destinationPath === '/' ? `/${record.name}` : `${destinationPath}/${record.name}`;
@@ -362,8 +375,8 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _delete(workspaceId, params) {
-    const record = await this._resolveRecord(workspaceId, params);
+  async _delete(workspaceId, params, agentDriveRoot = null) {
+    const record = await this._resolveRecord(workspaceId, params, agentDriveRoot);
     if (!record) return { success: false, error: 'path or fileId is required' };
 
     if (record.type !== 'folder' && record.s3_key) {
@@ -386,9 +399,9 @@ class WorkspaceDriveAdapter {
     };
   }
 
-  async _resolveRecord(workspaceId, params) {
+  async _resolveRecord(workspaceId, params, agentDriveRoot = null) {
     const explicitPath = String(params.path || params.filePath || '').trim();
-    if (explicitPath) return findByPath(workspaceId, explicitPath);
+    if (explicitPath) return findByPath(workspaceId, resolveScopedPath(explicitPath, agentDriveRoot, '/'));
 
     const fileId = params.fileId || params.id;
     if (!fileId) return null;
