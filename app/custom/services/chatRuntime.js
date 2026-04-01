@@ -28,6 +28,7 @@ let consecutiveErrors = 0;
 let lastErrorMessage = null;
 let lastErrorLogTime = 0;
 let processingColumnsAvailable = true;
+let attachmentsColumnAvailable = true;
 
 const soulCache = new Map();
 const agentCache = new Map();
@@ -63,6 +64,10 @@ function getRetryDelayMs(attempts) {
 
 function isMissingColumnError(err) {
   return /processing_state|processing_attempts|processing_started_at|next_retry_at|last_error/i.test(String(err?.message || ''));
+}
+
+function isMissingAttachmentsColumnError(err) {
+  return /attachments/i.test(String(err?.message || ''));
 }
 
 function isTimeoutError(err) {
@@ -182,14 +187,34 @@ function appendPlacementInstruction(prompt, instruction) {
 
 async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEFAULT_WORKSPACE, limit = 10) {
   const ws = normalizeWorkspaceId(workspaceId);
-  const result = await pool.query(
-    `SELECT id, sender_id, sender_name, content, attachments
-     FROM ${SCHEMA}.chat_messages
-     WHERE channel_id = $1 AND workspace_id = $2
-     ORDER BY created_at DESC
-     LIMIT $3`,
-    [channelId, ws, limit]
-  );
+  let result;
+
+  if (attachmentsColumnAvailable !== false) {
+    try {
+      result = await pool.query(
+        `SELECT id, sender_id, sender_name, content, attachments
+         FROM ${SCHEMA}.chat_messages
+         WHERE channel_id = $1 AND workspace_id = $2
+         ORDER BY created_at DESC
+         LIMIT $3`,
+        [channelId, ws, limit]
+      );
+    } catch (err) {
+      if (!isMissingAttachmentsColumnError(err)) throw err;
+      attachmentsColumnAvailable = false;
+    }
+  }
+
+  if (!result) {
+    result = await pool.query(
+      `SELECT id, sender_id, sender_name, content, NULL::jsonb AS attachments
+       FROM ${SCHEMA}.chat_messages
+       WHERE channel_id = $1 AND workspace_id = $2
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [channelId, ws, limit]
+    );
+  }
 
   const agentIds = new Set(channelAgents.map((agent) => String(agent.id)));
   const agentUsernames = new Set(channelAgents.map((agent) => String(agent.username || '').toLowerCase()).filter(Boolean));
@@ -358,11 +383,11 @@ async function markFailed(message, err) {
     try {
       await pool.query(
         `UPDATE ${SCHEMA}.chat_messages
-         SET processing_state = 'failed',
+         SET processing_state = CASE WHEN $5 THEN 'processed' ELSE 'failed' END,
              processing_started_at = NULL,
              last_error = $3,
              next_retry_at = $4,
-             processed_at = CASE WHEN $5 THEN processed_at ELSE NULL END
+             processed_at = CASE WHEN $5 THEN NOW() ELSE NULL END
          WHERE id = $1 AND workspace_id = $2`,
         [
           message.id,
