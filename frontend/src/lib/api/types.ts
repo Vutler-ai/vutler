@@ -467,6 +467,10 @@ export interface PlanLimits {
   storage_gb?: number;
   nexusNodes?: number;
   nexus_nodes?: number;
+  nexusEnterpriseNodes?: number;
+  nexus_enterprise?: number;
+  nexusLocalNodes?: number;
+  nexus_local?: number;
   nexus_enterprise_seats?: number;
   socialPosts?: number;
   social_posts_month?: number;
@@ -495,6 +499,7 @@ export interface PlansResponse {
   office: Plan[];
   agents: Plan[];
   full: Plan[];
+  enterprise: Plan[];
   addons?: BillingAddon[];
 }
 
@@ -504,6 +509,7 @@ export interface Subscription {
   plan_name?: string;
   status?: string;
   current_period_end?: string | null;
+  limits?: PlanLimits;
   usage?: SubscriptionUsage | null;
   addons?: {
     enterpriseSeats: number;
