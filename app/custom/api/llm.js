@@ -4,7 +4,7 @@
  */
 
 const express = require('express');
-const pool = require('../lib/vaultbrix');
+const pool = require('../../../lib/vaultbrix');
 const { authenticateAgent } = require('../lib/auth');
 
 const router = express.Router();

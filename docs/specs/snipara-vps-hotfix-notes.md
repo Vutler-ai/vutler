@@ -97,3 +97,14 @@ Known good validation run after hotfix:
 
 ## Important operational note
 The local repo and `/home/ubuntu/vutler` can drift. Before the next full deploy, make sure the VPS repo still contains the clean `tasks-v2.js` hotfix and a `SwarmCoordinator` implementation with `createHtask`, `blockHtask`, `unblockHtask`, `completeHtask`, `verifyHtaskClosure`, and `closeHtask`.
+
+## Clean deploy path
+- The repeatable deploy source is `/home/ubuntu/vutler-deploy`
+- `/home/ubuntu/vutler` stays the Git source repo and may remain dirty between sessions
+- `/home/ubuntu/vutler/scripts/deploy-api.sh` now creates a detached worktree in `/home/ubuntu/vutler-deploy` from the requested revision, copies the current runtime env, then builds/runs from that clean tree
+- Preferred usage on the VPS:
+
+```bash
+cd /home/ubuntu/vutler
+./scripts/deploy-api.sh 7bbb90d
+```

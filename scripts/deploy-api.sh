@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/ubuntu/vutler
-TAG="vutler-api:$(date +%Y%m%d-%H%M%S)"
+
+REPO_ROOT=/home/ubuntu/vutler
+DEPLOY_ROOT=/home/ubuntu/vutler-deploy
+REVISION="${1:-HEAD}"
+SHORT_SHA="$(cd "$REPO_ROOT" && git rev-parse --short "$REVISION")"
+TAG="vutler-api:${SHORT_SHA}-$(date +%Y%m%d-%H%M%S)"
 ENV_FILE=/tmp/vutler-api-runtime.env
 RUNBOOK_PATH="docs/runbooks/vutler-api-key-rotation.md"
 
@@ -19,7 +23,7 @@ require_env_var() {
 if docker ps -aqf name='^vutler-api$' | grep -q .; then
   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' vutler-api > "$ENV_FILE"
 else
-  cp /home/ubuntu/vutler/.env "$ENV_FILE"
+  cp "$REPO_ROOT/.env" "$ENV_FILE"
 fi
 
 require_env_var "JWT_SECRET"
@@ -29,6 +33,16 @@ if docker ps -aqf name='^vutler-api$' | grep -q .; then
   docker commit vutler-api "vutler-api:pre-deploy-$(date +%Y%m%d-%H%M%S)" >/dev/null || true
 fi
 
+cd "$REPO_ROOT"
+git rev-parse --verify "$REVISION" >/dev/null
+git worktree remove --force "$DEPLOY_ROOT" >/dev/null 2>&1 || true
+git worktree add --force --detach "$DEPLOY_ROOT" "$REVISION" >/dev/null
+
+cp "$ENV_FILE" "$DEPLOY_ROOT/.env"
+rm -rf "$DEPLOY_ROOT/uploads"
+ln -s "$REPO_ROOT/uploads" "$DEPLOY_ROOT/uploads"
+
+cd "$DEPLOY_ROOT"
 docker build -t "$TAG" -t vutler-api:latest .
 
 docker rm -f vutler-api >/dev/null 2>&1 || true
@@ -57,4 +71,5 @@ done
 
 curl -fsS http://127.0.0.1:3001/api/v1/health >/dev/null
 echo "DEPLOY_OK tag=$TAG"
+echo "DEPLOY_REVISION=$(cd "$DEPLOY_ROOT" && git rev-parse HEAD)"
 echo "Next: ./scripts/smoke-test.sh"
