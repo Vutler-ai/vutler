@@ -10,6 +10,10 @@ const { authenticateAgent } = require('../lib/auth');
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
 
+function getDb(req) {
+  return req.app.locals.pg || pool;
+}
+
 function prettifyProvider(provider) {
   if (!provider) return 'Provider';
   return String(provider)
@@ -22,13 +26,18 @@ function normalizeProviderRow(row) {
   return {
     id: row.id,
     provider: row.provider,
-    name: config.display_name || prettifyProvider(row.provider),
-    baseUrl: row.base_url || null,
-    isActive: row.is_enabled !== false,
-    hasKey: Boolean(row.api_key),
+    name: row.name || config.display_name || prettifyProvider(row.provider),
+    baseUrl: config.base_url || null,
+    isActive: String(row.status || 'active').toLowerCase() === 'active',
+    hasKey: Boolean(row.api_key_encrypted),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    config,
+    config: {
+      ...config,
+      status: row.status || null,
+      is_byok: row.is_byok ?? null,
+      models: row.models || null,
+    },
   };
 }
 
@@ -43,8 +52,8 @@ router.get('/llm/providers', authenticateAgent, async (req, res) => {
       return res.status(401).json({ success: false, error: 'Workspace context required' });
     }
 
-    const result = await pool.query(
-      `SELECT id, provider, api_key, base_url, is_enabled, config, created_at, updated_at
+    const result = await getDb(req).query(
+      `SELECT id, provider, name, api_key_encrypted, is_byok, models, config, status, created_at, updated_at
          FROM ${SCHEMA}.llm_providers
         WHERE workspace_id = $1
         ORDER BY created_at DESC`,
