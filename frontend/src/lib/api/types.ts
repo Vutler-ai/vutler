@@ -51,18 +51,7 @@ export interface Agent {
 
 export interface CreateAgentPayload {
   name: string;
-  username?: string;
-  email?: string;
-  role?: string;
-  description?: string;
-  model?: string;
-  provider?: string;
-  system_prompt?: string;
-  avatar?: string | null;
-  type?: string[];
-  capabilities?: string[];
-  template_id?: string;
-  platform?: string;
+  platform: string;
   config?: Record<string, unknown>;
 }
 

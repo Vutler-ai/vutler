@@ -3,7 +3,6 @@
 const pool = require('../lib/vaultbrix');
 const skillHandlers = require('../seeds/skill-handlers.json');
 const { listSocialAccounts, toInternalPlatform } = require('./postForMeClient');
-const { normalizeScopeStrings } = require('./socialAccountScope');
 
 const SCHEMA = 'tenant_vutler';
 const SOCIAL_PROVIDERS = new Set([
@@ -19,13 +18,13 @@ const SOCIAL_PROVIDERS = new Set([
 ]);
 
 const ACCESS_PROVIDER_ALIASES = {
-  email: 'email',
+  email: 'google',
   google_calendar: 'google',
   google_drive: 'google',
 };
 
 const AGENT_PROVIDER_SKILL_PROVIDER_ALIASES = {
-  google: ['google_calendar', 'google_drive'],
+  google: ['email', 'google_calendar', 'google_drive'],
 };
 
 const PROVIDER_ALIASES = {
@@ -47,33 +46,6 @@ function normalizeProvider(value) {
 function normalizeAgentIntegrationProviders(values) {
   if (!Array.isArray(values)) return [];
   return Array.from(new Set(values.map(normalizeProvider).filter(Boolean)));
-}
-
-function normalizePlainObject(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-}
-
-function parseAgentConfig(value) {
-  if (!value) return {};
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-  if (typeof value !== 'string') return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-function readAgentSocialProvisioning(agent = null) {
-  const config = parseAgentConfig(agent?.config);
-  const provisioning = normalizePlainObject(config.provisioning);
-  const social = normalizePlainObject(provisioning.social);
-  return {
-    allowedPlatforms: normalizeAgentIntegrationProviders(social.allowed_platforms || social.platforms),
-    accountIds: normalizeScopeStrings(social.account_ids || social.accounts),
-    brandIds: normalizeScopeStrings(social.brand_ids),
-  };
 }
 
 async function ensureAgentIntegrationTable(db = pool) {
@@ -308,20 +280,20 @@ function getSkillKeysForIntegrationProviders(providers) {
     if (config?.type !== 'integration') continue;
     const integrationProvider = normalizeProvider(config.integration_provider);
     if (!integrationProvider || !expandedProviders.has(integrationProvider)) continue;
+    if (!skillKey.startsWith(`${integrationProvider}_`)) continue;
     skillKeys.push(skillKey);
   }
 
   return Array.from(new Set(skillKeys));
 }
 
-async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, agent = null, integrations = [], db = pool } = {}) {
+async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, integrations = [], db = pool } = {}) {
   const explicitProviders = normalizeAgentIntegrationProviders(integrations);
   const storedProviders = await listAgentIntegrationProviders(workspaceId, agentId, db).catch(() => []);
   const enabledProviders = normalizeAgentIntegrationProviders([
     ...explicitProviders,
     ...storedProviders,
   ]);
-  const socialProvisioning = readAgentSocialProvisioning(agent);
 
   const connectedProviders = await listConnectedWorkspaceIntegrationProviders(workspaceId, db).catch(() => new Set());
   const availableProviders = [];
@@ -334,10 +306,7 @@ async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, agent = n
   }
   const connectedSocialPlatforms = await listConnectedSocialPlatforms(workspaceId, db).catch(() => []);
   const socialPlatformSet = new Set(connectedSocialPlatforms);
-  const runtimeAllowedSocialPlatforms = availableProviders.filter((provider) => socialPlatformSet.has(provider));
-  const allowedSocialPlatforms = socialProvisioning.allowedPlatforms.length > 0
-    ? runtimeAllowedSocialPlatforms.filter((provider) => socialProvisioning.allowedPlatforms.includes(provider))
-    : runtimeAllowedSocialPlatforms;
+  const allowedSocialPlatforms = availableProviders.filter((provider) => socialPlatformSet.has(provider));
   const hasSocialAccessOverrides = await workspaceHasAgentAccessOverrides(
     workspaceId,
     ['social_media', ...connectedSocialPlatforms],
@@ -353,8 +322,6 @@ async function resolveAgentRuntimeIntegrations({ workspaceId, agentId, agent = n
     hasSocialMediaAccess: availableProviders.includes('social_media') || allowedSocialPlatforms.length > 0,
     hasSocialAccessOverrides,
     allowedSocialPlatforms,
-    allowedSocialAccountIds: socialProvisioning.accountIds,
-    allowedSocialBrandIds: socialProvisioning.brandIds,
   };
 }
 
@@ -365,8 +332,6 @@ module.exports = {
   replaceAgentIntegrationProviders,
   hasAgentIntegrationAccess,
   workspaceHasAgentAccessOverrides,
-  listConnectedWorkspaceIntegrationProviders,
-  listConnectedSocialPlatforms,
   getSkillKeysForIntegrationProviders,
   resolveAgentRuntimeIntegrations,
 };

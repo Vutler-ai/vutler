@@ -183,37 +183,6 @@ async function ensureSchema(pool) {
 }
 
 let schemaReady = false;
-let usersAuthHasDeletedAtColumn = null;
-
-async function hasUsersAuthDeletedAtColumn(db) {
-  if (typeof usersAuthHasDeletedAtColumn === 'boolean') {
-    return usersAuthHasDeletedAtColumn;
-  }
-
-  try {
-    const result = await db.query(
-      `SELECT EXISTS (
-         SELECT 1
-           FROM information_schema.columns
-          WHERE table_schema = $1
-            AND table_name = 'users_auth'
-            AND column_name = 'deleted_at'
-       ) AS exists`,
-      [SCHEMA]
-    );
-    usersAuthHasDeletedAtColumn = result.rows[0]?.exists === true;
-  } catch (_) {
-    usersAuthHasDeletedAtColumn = false;
-  }
-
-  return usersAuthHasDeletedAtColumn;
-}
-
-async function getUsersAuthActiveFilter(db, columnPrefix = '') {
-  return (await hasUsersAuthDeletedAtColumn(db))
-    ? ` AND ${columnPrefix}deleted_at IS NULL`
-    : '';
-}
 
 // --- GitHub OAuth Routes ---
 
@@ -303,11 +272,11 @@ router.get('/github/callback', async (req, res) => {
     console.log(`[AUTH] GitHub OAuth: ${githubUser.login} (${cleanEmail})`);
 
     // Check if user already exists by email
-    const activeFilter = await getUsersAuthActiveFilter(pool);
     const existingUser = await pool.query(
       `SELECT id, email, name, role, workspace_id 
        FROM ${SCHEMA}.users_auth 
-       WHERE email = $1${activeFilter}
+       WHERE email = $1
+         AND deleted_at IS NULL
        LIMIT 1`,
       [cleanEmail]
     );
@@ -456,11 +425,11 @@ router.get('/google/callback', async (req, res) => {
     console.log(`[AUTH] Google OAuth: ${googleUser.name || googleUser.email} (${cleanEmail})`);
 
     // Check if user already exists by email
-    const activeFilter = await getUsersAuthActiveFilter(pool);
     const existingUser = await pool.query(
       `SELECT id, email, name, role, workspace_id 
        FROM ${SCHEMA}.users_auth 
-       WHERE email = $1${activeFilter}
+       WHERE email = $1
+         AND deleted_at IS NULL
        LIMIT 1`,
       [cleanEmail]
     );
@@ -507,11 +476,11 @@ router.post('/login', async (req, res) => {
     const pool = getPool();
     if (!schemaReady) { await ensureSchema(pool); schemaReady = true; }
 
-    const activeFilter = await getUsersAuthActiveFilter(pool);
     const result = await pool.query(
       `SELECT id, email, password_hash, salt, name, role, workspace_id
        FROM ${SCHEMA}.users_auth
-       WHERE email = $1${activeFilter}
+       WHERE email = $1
+         AND deleted_at IS NULL
        LIMIT 1`,
       [email.toLowerCase().trim()]
     );
@@ -584,11 +553,11 @@ async function registerHandler(req, res) {
     if (!schemaReady) { await ensureSchema(pool); schemaReady = true; }
 
     const cleanEmail = email.toLowerCase().trim();
-    const activeFilter = await getUsersAuthActiveFilter(pool);
     const existing = await pool.query(
       `SELECT id
          FROM ${SCHEMA}.users_auth
-        WHERE email = $1${activeFilter}`,
+        WHERE email = $1
+          AND deleted_at IS NULL`,
       [cleanEmail]
     );
     if (existing.rows.length) return res.status(409).json({ success: false, error: 'User already exists' });
@@ -839,11 +808,11 @@ router.put('/me/password', async (req, res) => {
     }
 
     const pool = getPool();
-    const activeFilter = await getUsersAuthActiveFilter(pool);
     const result = await pool.query(
       `SELECT id, password_hash, salt
          FROM ${SCHEMA}.users_auth
-        WHERE id = $1${activeFilter}`,
+        WHERE id = $1
+          AND deleted_at IS NULL`,
       [req.user.id]
     );
     if (!result.rows.length) {
@@ -974,11 +943,11 @@ router.post('/forgot-password', async (req, res) => {
   try {
     const pool = require('../lib/vaultbrix');
     await ensureResetTokensTable(pool);
-    const activeFilter = await getUsersAuthActiveFilter(pool);
     const user = await pool.query(
       `SELECT id, email, name
          FROM ${SCHEMA}.users_auth
-        WHERE email = $1${activeFilter}
+        WHERE email = $1
+          AND deleted_at IS NULL
         LIMIT 1`,
       [email.toLowerCase().trim()]
     );

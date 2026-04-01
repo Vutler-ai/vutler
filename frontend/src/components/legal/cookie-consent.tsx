@@ -43,8 +43,6 @@ type CookieConsentContextValue = {
 };
 
 const CookieConsentContext = createContext<CookieConsentContextValue | null>(null);
-let cachedConsentSource: string | null = null;
-let cachedConsentPreferences: CookiePreferences | null = null;
 
 function buildPreferences(analytics: boolean): CookiePreferences {
   return {
@@ -74,9 +72,6 @@ function parsePreferences(value: string | null): CookiePreferences | null {
 function persistPreferences(preferences: CookiePreferences) {
   const payload = JSON.stringify(preferences);
 
-  cachedConsentSource = payload;
-  cachedConsentPreferences = preferences;
-
   try {
     window.localStorage.setItem(CONSENT_STORAGE_KEY, payload);
   } catch {}
@@ -87,30 +82,18 @@ function persistPreferences(preferences: CookiePreferences) {
 }
 
 function loadStoredPreferences(): CookiePreferences | null {
-  let serializedPreferences: string | null = null;
-
   try {
-    serializedPreferences = window.localStorage.getItem(CONSENT_STORAGE_KEY);
+    const fromStorage = parsePreferences(window.localStorage.getItem(CONSENT_STORAGE_KEY));
+    if (fromStorage) return fromStorage;
   } catch {}
 
-  if (!serializedPreferences) {
-    const cookieEntry = document.cookie
-      .split('; ')
-      .find((entry) => entry.startsWith(`${CONSENT_COOKIE_NAME}=`));
+  const cookieEntry = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith(`${CONSENT_COOKIE_NAME}=`));
 
-    if (cookieEntry) {
-      serializedPreferences = decodeURIComponent(cookieEntry.split('=').slice(1).join('='));
-    }
-  }
+  if (!cookieEntry) return null;
 
-  if (serializedPreferences === cachedConsentSource) {
-    return cachedConsentPreferences;
-  }
-
-  const parsedPreferences = parsePreferences(serializedPreferences);
-  cachedConsentSource = serializedPreferences;
-  cachedConsentPreferences = parsedPreferences;
-  return parsedPreferences;
+  return parsePreferences(decodeURIComponent(cookieEntry.split('=').slice(1).join('=')));
 }
 
 function subscribeToConsent(onStoreChange: () => void) {

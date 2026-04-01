@@ -17,11 +17,10 @@ export async function getAgent(id: string): Promise<Agent> {
 }
 
 export async function createAgent(payload: CreateAgentPayload): Promise<Agent> {
-  const data = await apiFetch<{ agent?: Agent } & Agent>('/api/v1/agents', {
+  return apiFetch<Agent>('/api/v1/agents', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-  return data.agent ?? data;
 }
 
 export async function updateAgent(

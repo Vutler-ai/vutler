@@ -2,7 +2,6 @@
 
 ## Operations
 
-- [Agent Configuration Model](agent-configuration-model.md) documents the current split between workspace integrations, agent access, agent provisioning, persistent skills, and the capability matrix used by the wizard and settings UI.
 - [Chat and Task Orchestration Hardening](chat-orchestration-hardening.md) explains the production hardening shipped for chat, tasks, Snipara, and realtime delivery.
 - [Staging Deploy and Validation Runbook](runbooks/staging-deploy-validation.md) is the operational path for migrations, deploy, smoke, and e2e checks on the Vutler staging VPS.
 - [Production Deploy From Clean Artifact](runbooks/production-deploy-clean-artifact.md) is the canonical production deploy path from an exact pushed commit.

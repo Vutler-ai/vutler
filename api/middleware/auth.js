@@ -14,7 +14,6 @@ const crypto = require("crypto");
 const JWT_SECRET = process.env.JWT_SECRET || (() => { console.error('[AUTH] WARNING: JWT_SECRET env var missing'); return 'MISSING-SET-JWT_SECRET-ENV'; })();
 
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
-let usersAuthHasDeletedAtColumn = null;
 
 // ── API key cache (avoid DB hit on every request) ──
 const apiKeyCache = new Map();
@@ -186,29 +185,6 @@ function attachIdentity(req, identity) {
   if (identity.apiKeyId) req.apiKeyId = identity.apiKeyId;
 }
 
-async function hasUsersAuthDeletedAtColumn(pg) {
-  if (typeof usersAuthHasDeletedAtColumn === 'boolean') {
-    return usersAuthHasDeletedAtColumn;
-  }
-
-  try {
-    const result = await pg.query(
-      `SELECT EXISTS (
-         SELECT 1
-           FROM information_schema.columns
-          WHERE table_schema = 'tenant_vutler'
-            AND table_name = 'users_auth'
-            AND column_name = 'deleted_at'
-       ) AS exists`
-    );
-    usersAuthHasDeletedAtColumn = result.rows[0]?.exists === true;
-  } catch (_) {
-    usersAuthHasDeletedAtColumn = false;
-  }
-
-  return usersAuthHasDeletedAtColumn;
-}
-
 async function resolveActiveJwtIdentity(req, decoded) {
   const pg = req.app.locals.pg;
   const fallback = {
@@ -222,12 +198,11 @@ async function resolveActiveJwtIdentity(req, decoded) {
   if (!pg || !decoded.userId) return fallback;
 
   try {
-    const activeFilter = (await hasUsersAuthDeletedAtColumn(pg)) ? 'AND deleted_at IS NULL' : '';
     const result = await pg.query(
       `SELECT id, email, name, role, workspace_id, avatar_url
          FROM tenant_vutler.users_auth
         WHERE id = $1
-          ${activeFilter}
+          AND deleted_at IS NULL
         LIMIT 1`,
       [decoded.userId]
     );

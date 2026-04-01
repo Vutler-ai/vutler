@@ -79,37 +79,6 @@ The selected role determines the initial setup, including default behavior and c
 - Each agent can have a maximum of **8 skills**
 - Skills are selected and constrained according to the agent’s intended role and runtime configuration
 
-### Configuration model
-Agent configuration is split across distinct layers:
-
-- **persistent skills** stay on the agent profile
-- **workspace integrations** are connected at workspace level, not owned by one agent
-- **agent access policy** decides which runtime capability an agent may use
-- **agent provisioning** stores local setup such as email identity, social scope, drive root, or visible channels
-
-When discussing agent setup, do not collapse these layers into one flat “skills + integrations” list.
-
-### Capability matrix
-Runtime capability readiness should be understood through four states:
-
-- `workspace_available`
-- `agent_allowed`
-- `provisioned`
-- `effective`
-
-Only `effective` means the capability is actually usable at runtime.
-
-### Sandbox rule
-`sandbox` is a governed execution capability and should stay limited to technical agent types such as:
-
-- `technical`
-- `security`
-- `qa`
-- `devops`
-- `engineering`
-
-Non-technical agents should rely on orchestration and delegation instead of exposing sandbox directly in their stable profile.
-
 ### Core agent configuration
 Each agent can be configured with:
 - `model`

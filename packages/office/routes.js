@@ -14,10 +14,6 @@ const { gateFeature } = require('../core/middleware/featureGate');
 
 const router = Router();
 
-function pathMatchesPrefix(pathname, prefix) {
-  return pathname === prefix || pathname.startsWith(`${prefix}/`);
-}
-
 // Mount with prefix (for relative-path modules like /calendar → GET /)
 function mount(path, gate, modulePath) {
   try {
@@ -28,32 +24,26 @@ function mount(path, gate, modulePath) {
 }
 
 // Mount at root (for full-path modules like /chat/channels, /drive/files)
-function mountRoot(gate, matchPrefixes, modulePath, label) {
+function mountRoot(gate, modulePath, label) {
   try {
-    const featureMiddleware = gateFeature(gate);
-    router.use('/', (req, res, next) => {
-      if (!matchPrefixes.some((prefix) => pathMatchesPrefix(req.path, prefix))) {
-        return next();
-      }
-      return featureMiddleware(req, res, next);
-    }, require(modulePath));
+    router.use('/', gateFeature(gate), require(modulePath));
   } catch (e) {
     console.warn(`[OFFICE] Skip ${label}: ${e.message}`);
   }
 }
 
 // ── Chat (full-path: /chat/channels, /chat/send, etc.) ──────────────────────
-mountRoot('chat', ['/chat'], '../../app/custom/api/chat', 'chat');
+mountRoot('chat', '../../app/custom/api/chat', 'chat');
 mount('/vchat', 'chat', '../../api/vchat');
 
 // ── Drive (full-path: /drive/files, /drive/upload, etc.) ────────────────────
-mountRoot('drive', ['/drive'], '../../app/custom/api/drive', 'drive');
+mountRoot('drive', '../../app/custom/api/drive', 'drive');
 mount('/drive-s3', 'drive', '../../app/custom/api/drive-s3');
 mount('/drive-chat', 'drive', '../../api/drive-chat');
 // vdrive (legacy encrypted drive) removed — use /drive (S3-backed)
 
 // ── Email (full-path: /email, /email/send) ──────────────────────────────────
-mountRoot('email', ['/email'], '../../app/custom/api/email', 'email');
+mountRoot('email', '../../app/custom/api/email', 'email');
 mount('/email/vaultbrix', 'email', '../../api/email-vaultbrix');
 mount('/emails', 'email', '../../api/emails');
 
@@ -63,7 +53,7 @@ mount('/email/routes', 'email', '../../api/email-routes');
 mount('/email/groups', 'email', '../../api/email-groups');
 
 // ── Tasks (full-path: /tasks-v2, /tasks-v2/:id) ────────────────────────────
-mountRoot('tasks', ['/tasks-v2'], '../../app/custom/api/tasks-v2', 'tasks-v2');
+mountRoot('tasks', '../../app/custom/api/tasks-v2', 'tasks-v2');
 mount('/task-router', 'tasks', '../../api/tasks-router');
 
 // ── Calendar (relative: /, /events, /events/:id) ───────────────────────────

@@ -15,10 +15,6 @@ const {
   listSocialAccounts,
   toInternalPlatform,
 } = require('../services/postForMeClient');
-const {
-  extractSocialAccountIdentifiers,
-  getPrimarySocialAccountIdentifier,
-} = require('../services/socialAccountScope');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -373,7 +369,7 @@ async function loadWorkspaceAccounts(workspaceId) {
     `SELECT *
      FROM (
        SELECT DISTINCT ON (COALESCE(platform_account_id, id::text))
-          id, platform, account_name, account_type, platform_account_id, external_id, metadata, connected_at, updated_at, created_at
+          id, platform, account_name, account_type, platform_account_id, connected_at, updated_at, created_at
        FROM ${SCHEMA}.social_accounts
        WHERE workspace_id = $1
        ORDER BY COALESCE(platform_account_id, id::text), connected_at DESC, updated_at DESC, created_at DESC
@@ -381,19 +377,7 @@ async function loadWorkspaceAccounts(workspaceId) {
      ORDER BY connected_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC NULLS LAST`,
     [workspaceId]
   );
-  return rows.map((row) => ({
-    id: row.id,
-    platform: row.platform,
-    account_name: row.account_name,
-    account_type: row.account_type,
-    platform_account_id: row.platform_account_id,
-    external_id: row.external_id,
-    connected_at: row.connected_at,
-    updated_at: row.updated_at,
-    created_at: row.created_at,
-    account_identifier: getPrimarySocialAccountIdentifier(row),
-    account_identifiers: extractSocialAccountIdentifiers(row),
-  }));
+  return rows;
 }
 
 /**

@@ -84,7 +84,7 @@ Before a full production rollout, double-check the following items so the platfo
 - **Runtime telemetry:** `/api/v1/runtime/status` now aggregates workspace agent statuses, uptime (since the server started), and the last restart record stored under `workspace_settings.runtime_last_restart`; `/runtime/restart` records the requesting user and reason. Continue to guard these tables so the UI shows accurate health.
 - **Usage analytics:** `/api/v1/usage` is provided by `api/usage-pg.js` and normalizes `usage_logs`, `agent_executions`, and `credit_transactions`. Keep those tables trimmed and indexed so Usage dashboards stay performant.
 - **Skill execution logging:** `services/skills/SkillRegistry.js` still only logs to console. Persist execution metadata once `tenant_vutler.skill_executions` is available so you can audit agent activity end-to-end.
-- **Sandbox hardening:** `services/sandbox.js` now supports an isolated Docker runtime and should use it in production (`SANDBOX_RUNTIME=docker`). Keep the Docker socket provisioning explicit, preserve the timeout guard, and monitor execution volume plus stderr spikes to detect abuse.
+- **Sandbox hardening:** `services/sandbox.js` currently executes code directly in the host process. In production, run it through a container (Docker or firejail) with strict network/file caps, keep the timeout guard, and monitor the streaming output to detect abuse.
 - **SSE observability & provider health:** Codex streaming is served via `services/llmRouter.js`. Prioritize the observability dashboard (see roadmap item “Observability dashboard: streaming SSE + provider health”) so you can trace fallback rates and streaming errors before enabling large workspaces.
 
 ## Contact

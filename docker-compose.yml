@@ -8,18 +8,6 @@ services:
     volumes:
       - ./uploads:/app/uploads
 
-  sandbox-worker:
-    build: .
-    container_name: vutler-sandbox-worker
-    restart: unless-stopped
-    network_mode: host
-    env_file: .env
-    command: ["node", "workers/sandbox-worker.js"]
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      - api
-
   frontend:
     build: ./frontend
     container_name: vutler-frontend

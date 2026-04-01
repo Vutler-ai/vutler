@@ -106,68 +106,24 @@ function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
 function TableSkeleton() {
   return (
     <>
-      <div className="lg:hidden space-y-3">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div
-            key={i}
-            className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 flex items-center gap-3"
-          >
-            <Skeleton className="size-10 rounded-xl" />
-            <div className="flex-1 space-y-2">
-              <Skeleton className="h-4 w-40" />
-              <Skeleton className="h-3 w-28" />
+      {Array.from({ length: 5 }).map((_, i) => (
+        <TableRow key={i} className="border-[rgba(255,255,255,0.05)]">
+          <TableCell className="px-4 py-3.5">
+            <div className="flex items-center gap-3">
+              <Skeleton className="size-10 rounded-xl" />
+              <div className="space-y-1.5">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-3 w-24" />
+              </div>
             </div>
-            <Skeleton className="h-5 w-16 rounded-full" />
-          </div>
-        ))}
-      </div>
-
-      <div className="hidden lg:block bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-[rgba(255,255,255,0.07)] hover:bg-transparent">
-              <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
-                Agent
-              </TableHead>
-              <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
-                Model
-              </TableHead>
-              <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
-                Status
-              </TableHead>
-              <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
-                Last Active
-              </TableHead>
-              <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
-                Provider
-              </TableHead>
-              <TableHead className="px-4 py-3 text-xs font-medium text-[#6b7280] uppercase tracking-wider">
-                Actions
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <TableRow key={i} className="border-[rgba(255,255,255,0.05)]">
-                <TableCell className="px-4 py-3.5">
-                  <div className="flex items-center gap-3">
-                    <Skeleton className="size-10 rounded-xl" />
-                    <div className="space-y-1.5">
-                      <Skeleton className="h-4 w-36" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-20" /></TableCell>
-                <TableCell className="px-4 py-3.5"><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
-                <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-28" /></TableCell>
-                <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-24" /></TableCell>
-                <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-20" /></TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+          </TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-20" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-28" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-24" /></TableCell>
+          <TableCell className="px-4 py-3.5"><Skeleton className="h-4 w-20" /></TableCell>
+        </TableRow>
+      ))}
     </>
   );
 }
@@ -244,16 +200,6 @@ const TEMPLATE_CATEGORIES = [
 ] as const;
 
 type TemplateCategory = typeof TEMPLATE_CATEGORIES[number]['key'];
-
-function buildTemplateUsername(template: MarketplaceTemplate): string {
-  const slug = template.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
-
-  return `${slug || 'agent'}-${template.id.slice(0, 6).toLowerCase()}`;
-}
 
 // ─── Template Avatar ───────────────────────────────────────────────────────────
 
@@ -370,13 +316,14 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
     try {
       const agent = await createAgent({
         name: template.name,
-        username: buildTemplateUsername(template),
-        description: template.description,
-        model: template.config.model,
-        system_prompt: template.config.system_prompt,
-        avatar: template.avatar ?? template.config.icon ?? null,
-        template_id: template.id,
-      });
+        platform: 'cloud',
+        config: {
+          model: template.config.model,
+          temperature: template.config.temperature,
+          system_prompt: template.config.system_prompt,
+          avatar: template.avatar ?? template.config.icon,
+        },
+      } as any);
       onCreated(agent.id);
     } catch (err: any) {
       setInstallError(err.message || 'Failed to create agent from template');

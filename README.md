@@ -5,7 +5,6 @@ Deploy, orchestrate, and manage AI agents that work autonomously. Built for deve
 ## Core capabilities
 
 - **Drive Pro** — metadata-aware listing, drag/drop move, rename, preview, bulk actions, and native Exoscale SOS indexing for workspace-shared files
-- **Agent configuration model** — agents now keep a small permanent skill set while workspace integrations, agent access, provisioning, and orchestration-driven runtime capability resolution stay explicitly separated
 - **Workspace gating & sessions** — route guards, upgrade flows, server-backed cookies, and feature snapshots keep plans enforcement close to the browser
 - **Nexus Enterprise runtime** — gated nodes, billing observability, sandboxed command streams, and enterprise-grade integrations for on-prem deployment
 - **Snipara memory + knowledge** — workspace-aware provisioning, resilient retrieval, and local SOUL fallbacks keep agent memory precise across agents and workspaces
@@ -46,7 +45,6 @@ Nexus CLI
 ## Documentation
 
 - [Documentation Index](docs/README.md)
-- [Agent Configuration Model](docs/agent-configuration-model.md)
 - [Chat and Task Orchestration Hardening](docs/chat-orchestration-hardening.md)
 - [Staging Deploy and Validation Runbook](docs/runbooks/staging-deploy-validation.md)
 - [VUTLER_API_KEY Rotation Runbook](docs/runbooks/vutler-api-key-rotation.md)
