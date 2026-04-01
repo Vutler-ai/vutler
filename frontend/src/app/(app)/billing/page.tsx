@@ -102,22 +102,6 @@ const FALLBACK_PLANS: PlansResponse = {
       ],
       limits: { agents: 100, nexusNodes: 10, storage: "100 GB", socialPosts: 50 },
     },
-    {
-      id: "nexus_enterprise",
-      label: "Nexus Enterprise",
-      price: { monthly: 149000, yearly: 1490000 },
-      features: [
-        "1 enterprise Nexus node included",
-        "5 Nexus Enterprise seats included",
-        "Specialized enterprise agent profiles",
-        "Governance, approvals, and audit",
-        "Drive repo provisioning",
-        "Webhook preparation and event ingestion",
-        "AV / IT runtime orchestration",
-        "LLM: Bring Your Own Key",
-      ],
-      limits: { agents: 100, nexusNodes: 1, storage: "100 GB", socialPosts: 100 },
-    },
   ],
   full: [
     {
@@ -135,6 +119,24 @@ const FALLBACK_PLANS: PlansResponse = {
         "LLM: Bring Your Own Key",
       ],
       limits: { agents: 100, nexusNodes: 10, storage: "100 GB", socialPosts: 100 },
+    },
+  ],
+  enterprise: [
+    {
+      id: "nexus_enterprise",
+      label: "Nexus Enterprise",
+      price: { monthly: 149000, yearly: 1490000 },
+      features: [
+        "1 governed Nexus Enterprise node included",
+        "5 Nexus Enterprise seats included",
+        "Specialized enterprise agent profiles",
+        "Governance, approvals, and audit",
+        "Drive repo provisioning",
+        "Webhook preparation and event ingestion",
+        "AV / IT runtime orchestration",
+        "LLM: Bring Your Own Key",
+      ],
+      limits: { agents: 100, nexusNodes: 1, nexusEnterpriseNodes: 1, nexus_enterprise_seats: 5, storage: "100 GB", socialPosts: 100 },
     },
     {
       id: "enterprise",
@@ -176,6 +178,14 @@ function resolveStorageLabel(plan: Plan): string | null {
 
 function resolveNexusNodes(plan: Plan): number | undefined {
   return plan.limits.nexusNodes ?? plan.limits.nexus_nodes;
+}
+
+function resolveEnterpriseNodes(plan: Plan): number | undefined {
+  return plan.limits.nexusEnterpriseNodes ?? plan.limits.nexus_enterprise;
+}
+
+function resolveEnterpriseSeats(plan: Plan): number | undefined {
+  return plan.limits.nexus_enterprise_seats;
 }
 
 function resolveSocialPosts(plan: Plan): number | undefined {
@@ -232,11 +242,20 @@ function CurrentPlanCard({
   portalLoading: boolean;
 }) {
   const planLabel =
-    subscription?.planId
-      ? subscription.planId.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+    subscription?.plan_name || subscription?.planId
+      ? (subscription.plan_name || subscription?.planId || "")
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (c) => c.toUpperCase())
       : "Free";
   const status = subscription?.status ?? (subscription?.planId ? "active" : "free");
   const usage: SubscriptionUsage | null = subscription?.usage ?? null;
+  const enterpriseSeats = subscription?.limits?.nexus_enterprise_seats ?? 0;
+  const enterpriseNodes =
+    subscription?.limits?.nexusEnterpriseNodes ??
+    subscription?.limits?.nexus_enterprise ??
+    0;
+  const showEnterpriseCapacity =
+    subscription?.planId === "nexus_enterprise" || enterpriseSeats > 0 || enterpriseNodes > 0;
 
   return (
     <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
@@ -266,6 +285,19 @@ function CurrentPlanCard({
           </div>
         </div>
       </CardHeader>
+
+      {showEnterpriseCapacity && (
+        <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="border-orange-500/30 text-orange-300 bg-orange-500/10">
+              {enterpriseSeats} enterprise seats
+            </Badge>
+            <Badge variant="outline" className="border-blue-500/30 text-blue-300 bg-blue-500/10">
+              {enterpriseNodes} governed nodes
+            </Badge>
+          </div>
+        </CardContent>
+      )}
 
       {usage && (
         <CardContent className="space-y-4 border-t border-[rgba(255,255,255,0.06)] pt-5">
@@ -330,14 +362,18 @@ function PlanCard({
   recommendedPlanId?: string | null;
 }) {
   const isCurrent = plan.id === currentPlanId;
-  const isEnterprise = plan.id === "enterprise";
+  const isCustomEnterprise = plan.id === "enterprise";
   const isFree = plan.id === "free";
   const price = interval === "yearly" ? plan.price.yearly : plan.price.monthly;
   const isLoading = loadingId === plan.id;
   const isRecommended = recommendedPlanId === plan.id && !isCurrent;
   const storageLabel = resolveStorageLabel(plan);
   const nexusNodes = resolveNexusNodes(plan);
+  const enterpriseNodes = resolveEnterpriseNodes(plan);
+  const enterpriseSeats = resolveEnterpriseSeats(plan);
   const socialPosts = resolveSocialPosts(plan);
+  const showTotalNexusNodes =
+    nexusNodes !== undefined && (enterpriseNodes === undefined || enterpriseNodes !== nexusNodes);
 
   // For -1 limits (enterprise unlimited), display "Unlimited"
   function formatLimit(val: number | undefined): string {
@@ -355,7 +391,7 @@ function PlanCard({
           ? "border-[#3b82f6] shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
           : isRecommended
           ? "border-emerald-400/40 shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
-          : isEnterprise
+          : isCustomEnterprise
           ? "border-[rgba(255,255,255,0.12)] hover:border-[rgba(255,255,255,0.2)]"
           : "border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.14)]"
       }`}
@@ -365,7 +401,7 @@ function PlanCard({
         <div>
           <p className="text-white font-semibold text-lg">{plan.label}</p>
           <div className="flex items-baseline gap-1 mt-1">
-            {isEnterprise ? (
+            {isCustomEnterprise ? (
               <span className="text-2xl font-bold text-white">Custom</span>
             ) : isFree ? (
               <span className="text-2xl font-bold text-white">$0</span>
@@ -404,10 +440,22 @@ function PlanCard({
               <p className="text-[#6b7280] text-xs">Agents</p>
             </div>
           )}
-          {nexusNodes !== undefined && (
+          {showTotalNexusNodes && (
             <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
               <p className="text-white font-semibold text-sm">{formatLimit(nexusNodes)}</p>
               <p className="text-[#6b7280] text-xs">Nexus Nodes</p>
+            </div>
+          )}
+          {enterpriseNodes !== undefined && enterpriseNodes > 0 && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{formatLimit(enterpriseNodes)}</p>
+              <p className="text-[#6b7280] text-xs">Governed Nodes</p>
+            </div>
+          )}
+          {enterpriseSeats !== undefined && enterpriseSeats > 0 && (
+            <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
+              <p className="text-white font-semibold text-sm">{formatLimit(enterpriseSeats)}</p>
+              <p className="text-[#6b7280] text-xs">Enterprise Seats</p>
             </div>
           )}
           {/* Tokens/mo removed — LLM is BYOK, no plan-based token limits */}
@@ -449,7 +497,7 @@ function PlanCard({
         <div className="py-2.5 text-center text-sm text-[#6b7280] border border-[rgba(255,255,255,0.07)] rounded-lg">
           Current Plan
         </div>
-      ) : isEnterprise ? (
+      ) : isCustomEnterprise ? (
         <Button
           asChild
           className="w-full bg-[#1f2028] hover:bg-[#2a2d3a] text-white border border-[rgba(255,255,255,0.1)]"
@@ -523,8 +571,15 @@ function NexusEnterpriseAddons({
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const addonSummary = subscription?.addons ?? null;
+  const hasBasePlan = subscription?.planId === "nexus_enterprise";
+  const totalEnterpriseSeats = subscription?.limits?.nexus_enterprise_seats ?? 0;
+  const totalEnterpriseNodes =
+    subscription?.limits?.nexusEnterpriseNodes ??
+    subscription?.limits?.nexus_enterprise ??
+    0;
 
   const handleAddonCheckout = async (addonId: string) => {
+    if (!hasBasePlan) return;
     setLoadingId(addonId);
     setError("");
     try {
@@ -544,22 +599,37 @@ function NexusEnterpriseAddons({
           <div>
             <CardTitle className="text-white">Nexus Enterprise Add-ons</CardTitle>
             <p className="text-sm text-[#9ca3af] mt-1">
-              Extend the enterprise base plan with more seats or another governed node.
+              Extend the base deployment with more seats or another governed node.
             </p>
           </div>
-          {addonSummary && (
+          {(addonSummary || totalEnterpriseSeats > 0 || totalEnterpriseNodes > 0) && (
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline" className="border-orange-500/30 text-orange-300 bg-orange-500/10">
-                +{addonSummary.enterpriseSeats} seats
+              <Badge variant="outline" className="border-emerald-500/30 text-emerald-300 bg-emerald-500/10">
+                {totalEnterpriseSeats} seats total
               </Badge>
-              <Badge variant="outline" className="border-blue-500/30 text-blue-300 bg-blue-500/10">
-                +{addonSummary.enterpriseNodes} nodes
+              <Badge variant="outline" className="border-cyan-500/30 text-cyan-300 bg-cyan-500/10">
+                {totalEnterpriseNodes} governed nodes
               </Badge>
+              {addonSummary && (
+                <>
+                  <Badge variant="outline" className="border-orange-500/30 text-orange-300 bg-orange-500/10">
+                    +{addonSummary.enterpriseSeats} addon seats
+                  </Badge>
+                  <Badge variant="outline" className="border-blue-500/30 text-blue-300 bg-blue-500/10">
+                    +{addonSummary.enterpriseNodes} addon nodes
+                  </Badge>
+                </>
+              )}
             </div>
           )}
         </div>
       </CardHeader>
       <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5 space-y-4">
+        {!hasBasePlan && (
+          <div className="p-3 rounded-lg bg-[#1f2028] border border-[rgba(255,255,255,0.08)] text-sm text-[#9ca3af]">
+            Activate the Nexus Enterprise base plan first to self-serve seats and governed node add-ons.
+          </div>
+        )}
         {error && (
           <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
             {error}
@@ -579,10 +649,10 @@ function NexusEnterpriseAddons({
               </div>
               <Button
                 onClick={() => handleAddonCheckout(addon.id)}
-                disabled={loadingId === addon.id}
+                disabled={!hasBasePlan || loadingId === addon.id}
                 className="w-full mt-4 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-60"
               >
-                {loadingId === addon.id ? "Redirecting…" : "Add to Subscription"}
+                {loadingId === addon.id ? "Redirecting…" : hasBasePlan ? "Add to Subscription" : "Requires Base Plan"}
               </Button>
             </div>
           ))}
@@ -684,12 +754,21 @@ function SocialPostPacks() {
 
 // ─── Plan tabs ─────────────────────────────────────────────────────────────────
 
-type TabKey = "office" | "agents" | "full";
+type TabKey = "office" | "agents" | "full" | "enterprise";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "office", label: "Office" },
   { key: "agents", label: "Agents" },
   { key: "full", label: "Full Platform" },
+  { key: "enterprise", label: "Enterprise" },
 ];
+
+function getTabForPlanId(planId: string | null | undefined): TabKey {
+  if (!planId) return "office";
+  if (planId === "nexus_enterprise" || planId === "enterprise") return "enterprise";
+  if (planId === "full") return "full";
+  if (planId.startsWith("agents_")) return "agents";
+  return "office";
+}
 
 interface CreditPack {
   id: string;
@@ -816,22 +895,31 @@ export default function BillingPage() {
   const [actionError, setActionError] = useState("");
 
   const isLoading = plansLoading || subLoading;
-  // Use API plans if available; fall back to static definitions from featureGate.js
   const resolvedPlans: PlansResponse = plans ?? FALLBACK_PLANS;
   const currentPlans: Plan[] = resolvedPlans[activeTab] ?? [];
+  const showEnterpriseAddons = activeTab === "enterprise";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
     const plan = params.get("plan");
-    if (tab === "office" || tab === "agents" || tab === "full") {
+    if (tab === "office" || tab === "agents" || tab === "full" || tab === "enterprise") {
       setActiveTab(tab);
+    } else if (plan) {
+      setActiveTab(getTabForPlanId(plan));
     }
     if (plan) {
       setRecommendedPlanId(plan);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !subscription?.planId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab")) return;
+    setActiveTab((current) => (current === "office" ? getTabForPlanId(subscription.planId) : current));
+  }, [subscription?.planId]);
 
   const handleCheckout = useCallback(
     async (planId: string) => {
@@ -890,8 +978,6 @@ export default function BillingPage() {
 
       <CreditPacks />
 
-      <NexusEnterpriseAddons subscription={subscription ?? null} />
-
       {/* Social Media Post Packs */}
       <SocialPostPacks />
 
@@ -946,18 +1032,21 @@ export default function BillingPage() {
           ))}
         </div>
       ) : currentPlans.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {currentPlans.map((plan) => (
-            <PlanCard
-              key={plan.id}
-              plan={plan}
-              interval={interval}
-              currentPlanId={subscription?.planId ?? null}
-              onCheckout={handleCheckout}
-              loadingId={checkoutLoadingId}
-              recommendedPlanId={recommendedPlanId}
-            />
-          ))}
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {currentPlans.map((plan) => (
+              <PlanCard
+                key={plan.id}
+                plan={plan}
+                interval={interval}
+                currentPlanId={subscription?.planId ?? null}
+                onCheckout={handleCheckout}
+                loadingId={checkoutLoadingId}
+                recommendedPlanId={recommendedPlanId}
+              />
+            ))}
+          </div>
+          {showEnterpriseAddons && <NexusEnterpriseAddons subscription={subscription ?? null} />}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
@@ -971,10 +1060,10 @@ export default function BillingPage() {
         <p className="text-[#6b7280] text-sm">
           Need custom limits, SLAs, or white-labelling? See the{" "}
           <button
-            onClick={() => setActiveTab("full")}
+            onClick={() => setActiveTab("enterprise")}
             className="text-[#3b82f6] hover:underline"
           >
-            Full Platform tab
+            Enterprise tab
           </button>{" "}
           or{" "}
           <a href="mailto:enterprise@vutler.com" className="text-[#3b82f6] hover:underline">

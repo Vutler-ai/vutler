@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const { PLANS } = require('../packages/core/middleware/featureGate');
-const { syncWorkspacePlan, normalizePlanId } = require('../services/workspacePlanService');
+const { syncWorkspacePlan, normalizePlanId, getWorkspacePlanId } = require('../services/workspacePlanService');
 const {
   getWorkspaceBillingAddonSummary,
   upsertWorkspaceBillingAddon,
@@ -59,6 +59,8 @@ const ADDONS = [
 function normalizeBillingLimits(limits = {}) {
   const storageGb = limits.storage_gb;
   const nexusNodes = limits.nexus_nodes;
+  const nexusEnterpriseNodes = limits.nexus_enterprise;
+  const nexusLocalNodes = limits.nexus_local;
   const socialPosts = limits.social_posts_month;
   const enterpriseSeats = limits.nexus_enterprise_seats;
 
@@ -68,6 +70,10 @@ function normalizeBillingLimits(limits = {}) {
     storage: storageGb === undefined ? undefined : (storageGb === -1 ? 'Unlimited' : `${storageGb} GB`),
     nexus_nodes: nexusNodes,
     nexusNodes,
+    nexus_enterprise: nexusEnterpriseNodes,
+    nexusEnterpriseNodes,
+    nexus_local: nexusLocalNodes,
+    nexusLocalNodes,
     nexus_enterprise_seats: enterpriseSeats,
     social_posts_month: socialPosts ?? 0,
     socialPosts: socialPosts ?? 0,
@@ -142,15 +148,15 @@ async function applyWorkspacePlan(workspaceId, planId, options = {}) {
 }
 
 router.get('/billing/plans', (req, res) => {
-  const grouped = { office: [], agents: [], full: [], addons: ADDONS.map(normalizeAddonEntry) };
+  const grouped = { office: [], agents: [], full: [], enterprise: [], addons: ADDONS.map(normalizeAddonEntry) };
   for (const [id, plan] of Object.entries(PLANS)) {
-    // Skip enterprise/beta (custom pricing, not shown in self-serve grid)
-    // but always include 'free' regardless of price
-    if (id !== 'free' && plan.price && plan.price.monthly === 0 && plan.price.yearly === 0) continue;
+    if (id === 'beta') continue;
+    if (id !== 'free' && id !== 'enterprise' && plan.price && plan.price.monthly === 0 && plan.price.yearly === 0) continue;
     const entry = normalizeBillingPlanEntry(id, plan);
-    if (plan.tier === 'free' || plan.tier === 'office') grouped.office.push(entry);
+    if (id === 'nexus_enterprise' || id === 'enterprise') grouped.enterprise.push(entry);
+    else if (plan.tier === 'free' || plan.tier === 'office') grouped.office.push(entry);
     else if (plan.tier === 'agents') grouped.agents.push(entry);
-    else if (plan.tier === 'full')   grouped.full.push(entry);
+    else if (plan.tier === 'full') grouped.full.push(entry);
   }
   res.json({ success: true, data: grouped });
 });
@@ -205,6 +211,13 @@ router.get('/billing/subscription', async (req, res) => {
       normalizedLimits.nexus_nodes += addonSummary.enterpriseNodes;
       normalizedLimits.nexusNodes = normalizedLimits.nexus_nodes;
     }
+    if (normalizedLimits.nexus_enterprise !== undefined && normalizedLimits.nexus_enterprise !== -1) {
+      normalizedLimits.nexus_enterprise += addonSummary.enterpriseNodes;
+      normalizedLimits.nexusEnterpriseNodes = normalizedLimits.nexus_enterprise;
+    }
+    if (normalizedLimits.nexus_enterprise_seats !== undefined && normalizedLimits.nexus_enterprise_seats !== -1) {
+      normalizedLimits.nexus_enterprise_seats += addonSummary.enterpriseSeats;
+    }
     if (normalizedLimits.social_posts_month !== undefined && normalizedLimits.social_posts_month !== -1) {
       normalizedLimits.social_posts_month += addonSummary.socialPosts;
       normalizedLimits.socialPosts = normalizedLimits.social_posts_month;
@@ -227,6 +240,7 @@ router.get('/billing/subscription', async (req, res) => {
 
       // Token usage from usage_logs (most common table name in Vutler)
       const TOKEN_QUERIES = [
+        `SELECT COALESCE(SUM(tokens_input + tokens_output), 0) AS total FROM ${SCHEMA}.llm_usage_logs WHERE workspace_id = $1`,
         `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM ${SCHEMA}.usage_logs WHERE workspace_id = $1`,
         `SELECT COALESCE(SUM(tokens_used), 0) AS total FROM ${SCHEMA}.agent_executions WHERE workspace_id = $1`,
         `SELECT COALESCE(SUM(value::bigint), 0) AS total FROM ${SCHEMA}.usage_records WHERE workspace_id = $1 AND metric = 'tokens_month'`,
@@ -719,6 +733,16 @@ router.post('/billing/addon-checkout', async (req, res) => {
     const { addonId, successUrl, cancelUrl } = req.body;
     const addon = ADDONS.find(a => a.id === addonId);
     if (!addon) return res.status(400).json({ success: false, error: 'Invalid addonId' });
+
+    if (addon.addonType && addon.addonType.startsWith('nexus_enterprise')) {
+      const currentPlanId = await getWorkspacePlanId(pool, req.workspaceId).catch(() => 'free');
+      if (currentPlanId !== 'nexus_enterprise') {
+        return res.status(403).json({
+          success: false,
+          error: 'Nexus Enterprise add-ons require an active Nexus Enterprise base plan.',
+        });
+      }
+    }
 
     if (!process.env.STRIPE_SECRET_KEY) {
       return res.status(500).json({ success: false, error: 'Stripe is not configured' });
