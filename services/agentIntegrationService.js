@@ -27,8 +27,20 @@ const AGENT_PROVIDER_SKILL_PROVIDER_ALIASES = {
   google: ['email', 'google_calendar', 'google_drive'],
 };
 
+const PROVIDER_ALIASES = {
+  'social-media': 'social_media',
+  socialmedia: 'social_media',
+  x: 'twitter',
+  'google-calendar': 'google',
+  google_calendar: 'google',
+  'google-drive': 'google',
+  google_drive: 'google',
+  gmail: 'google',
+};
+
 function normalizeProvider(value) {
-  return String(value || '').trim().toLowerCase();
+  const normalized = String(value || '').trim().toLowerCase();
+  return PROVIDER_ALIASES[normalized] || normalized;
 }
 
 function normalizeAgentIntegrationProviders(values) {
