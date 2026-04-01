@@ -54,6 +54,10 @@ Useful flags:
 - `--skip-smoke` if you must defer the smoke test intentionally
 - `--keep-tmp` to keep the local audit artifacts for inspection
 
+Rollback path:
+- [production-rollback-clean-artifact.md](/Users/alopez/Devs/Vutler/docs/runbooks/production-rollback-clean-artifact.md)
+- [rollback-clean-artifact.sh](/Users/alopez/Devs/Vutler/scripts/rollback-clean-artifact.sh)
+
 The script:
 - compares the target commit to the live `vutler-api` container
 - exports the exact commit as a tarball

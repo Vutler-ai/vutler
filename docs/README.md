@@ -4,6 +4,8 @@
 
 - [Chat and Task Orchestration Hardening](chat-orchestration-hardening.md) explains the production hardening shipped for chat, tasks, Snipara, and realtime delivery.
 - [Staging Deploy and Validation Runbook](runbooks/staging-deploy-validation.md) is the operational path for migrations, deploy, smoke, and e2e checks on the Vutler staging VPS.
+- [Production Deploy From Clean Artifact](runbooks/production-deploy-clean-artifact.md) is the canonical production deploy path from an exact pushed commit.
+- [Production Rollback From Rollback Note](runbooks/production-rollback-clean-artifact.md) explains how to roll back to the previous Docker images without using the dirty VPS checkout.
 - [VUTLER_API_KEY Rotation Runbook](runbooks/vutler-api-key-rotation.md) covers runtime API key rotation without breaking smoke validation.
 - [Security Actions Required](runbooks/security-actions-required.md) tracks remediation items left open after security reviews.
 - [Workspace / Google Skills Refactor](workspace-google-skills-refactor.md) documents the explicit `workspace_drive`, `google_drive`, and `google_calendar` skill split, template sync, and validation coverage.
