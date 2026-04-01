@@ -4,7 +4,6 @@ import { authFetch } from "@/lib/authFetch";
 import {
   CONNECTOR_META,
   WORKSPACE_CONNECTOR_ORDER,
-  SOCIAL_PLATFORM_PROVIDERS,
   getSocialPlatformMeta,
   isSocialPlatformProvider,
   normalizeIntegrationKey,
@@ -22,12 +21,23 @@ interface AgentIntegrationCard {
   scopes: string[];
   connectedPlatforms: Array<{ provider: string; name: string; icon: string }>;
   selectedPlatforms: string[];
+  connectedAccounts: SocialAccountOption[];
+  selectedAccountIds: string[];
 }
 
 interface WorkspaceIntegrationRow {
   provider: string;
   connected?: boolean;
   scopes?: string[];
+}
+
+interface SocialAccountOption {
+  id: string;
+  platform: string;
+  account_name: string;
+  account_type: string;
+  account_identifier?: string | null;
+  account_identifiers?: string[];
 }
 
 function sortByConnectorOrder(a: AgentIntegrationCard, b: AgentIntegrationCard) {
@@ -77,24 +87,51 @@ export default function AgentIntegrationsPage() {
           scopes: Array.isArray(row.scopes) ? row.scopes : [],
           connectedPlatforms: [],
           selectedPlatforms: [],
+          connectedAccounts: [],
+          selectedAccountIds: [],
         });
       }
 
+      const connectedAccounts: SocialAccountOption[] = (Array.isArray(socialData?.data) ? socialData.data : [])
+        .filter((account: SocialAccountOption) => account?.id && account?.platform)
+        .map((account: SocialAccountOption) => ({
+          ...account,
+          platform: normalizeIntegrationKey(account.platform),
+          account_identifiers: Array.isArray(account.account_identifiers)
+            ? account.account_identifiers.filter((value): value is string => Boolean(value))
+            : [],
+        }))
+        .filter((account: SocialAccountOption) => isSocialPlatformProvider(account.platform));
+
       const uniqueSocialPlatforms: string[] = Array.from(
         new Set<string>(
-          (Array.isArray(socialData?.data) ? socialData.data : [])
-            .map((account: { platform?: string }) => normalizeIntegrationKey(account?.platform))
+          connectedAccounts
+            .map((account) => normalizeIntegrationKey(account.platform))
             .filter((platform: string): platform is string => isSocialPlatformProvider(platform))
         )
       );
 
       const hasSocialConnector = workspaceRows.some((row) => normalizeIntegrationKey(row.provider) === "social_media");
       if (hasSocialConnector || uniqueSocialPlatforms.length > 0) {
+        const provisioningSocial = agentData?.config?.provisioning?.social || {};
+        const configuredAccountIds = Array.isArray(provisioningSocial.account_ids)
+          ? provisioningSocial.account_ids.filter(Boolean)
+          : [];
+        const configuredBrandIds = new Set<string>(
+          Array.isArray(provisioningSocial.brand_ids) ? provisioningSocial.brand_ids.filter(Boolean) : []
+        );
         const connectedPlatforms = uniqueSocialPlatforms.map((provider) => ({
           provider,
           ...getSocialPlatformMeta(provider),
         }));
         const selectedPlatforms = uniqueSocialPlatforms.filter((provider: string) => enabledSet.has(provider));
+        const effectiveSelectedPlatforms = enabledSet.has("social_media") ? uniqueSocialPlatforms : selectedPlatforms;
+        const scopedAccounts = connectedAccounts.filter((account) => {
+          if (!effectiveSelectedPlatforms.includes(account.platform)) return false;
+          if (configuredAccountIds.length === 0 && configuredBrandIds.size === 0) return true;
+          if (configuredAccountIds.includes(account.id)) return true;
+          return (account.account_identifiers || []).some((identifier) => configuredBrandIds.has(identifier));
+        });
         cards.push({
           provider: "social_media",
           name: CONNECTOR_META.social_media.name,
@@ -103,7 +140,9 @@ export default function AgentIntegrationsPage() {
           enabled: enabledSet.has("social_media") || selectedPlatforms.length > 0,
           scopes: ["post_content"],
           connectedPlatforms,
-          selectedPlatforms: enabledSet.has("social_media") ? uniqueSocialPlatforms : selectedPlatforms,
+          selectedPlatforms: effectiveSelectedPlatforms,
+          connectedAccounts,
+          selectedAccountIds: scopedAccounts.map((account) => account.id),
         });
       }
 
@@ -125,6 +164,7 @@ export default function AgentIntegrationsPage() {
           ...integration,
           enabled: nextEnabled,
           selectedPlatforms: nextEnabled ? integration.connectedPlatforms.map((platform) => platform.provider) : [],
+          selectedAccountIds: nextEnabled ? integration.connectedAccounts.map((account) => account.id) : [],
         };
       })
     );
@@ -136,17 +176,62 @@ export default function AgentIntegrationsPage() {
         if (integration.provider !== "social_media") return integration;
 
         const selected = new Set(integration.selectedPlatforms);
-        if (selected.has(provider)) selected.delete(provider);
+        const wasSelected = selected.has(provider);
+        if (wasSelected) selected.delete(provider);
         else selected.add(provider);
 
         const nextSelectedPlatforms = integration.connectedPlatforms
           .map((platform) => platform.provider)
           .filter((platform) => selected.has(platform));
+        const allowedPlatformSet = new Set(nextSelectedPlatforms);
+        const preservedAccountIds = new Set(integration.selectedAccountIds);
+        const nextSelectedAccountIds = integration.connectedAccounts
+          .filter((account) => {
+            if (!allowedPlatformSet.has(account.platform)) return false;
+            if (account.platform !== provider) return preservedAccountIds.has(account.id);
+            return wasSelected ? preservedAccountIds.has(account.id) : true;
+          })
+          .map((account) => account.id);
 
         return {
           ...integration,
           enabled: nextSelectedPlatforms.length > 0,
           selectedPlatforms: nextSelectedPlatforms,
+          selectedAccountIds: nextSelectedAccountIds,
+        };
+      })
+    );
+  };
+
+  const toggleSocialAccount = (accountId: string) => {
+    setIntegrations((previous) =>
+      previous.map((integration) => {
+        if (integration.provider !== "social_media") return integration;
+
+        const account = integration.connectedAccounts.find((entry) => entry.id === accountId);
+        if (!account) return integration;
+
+        const selectedAccountIds = new Set(integration.selectedAccountIds);
+        if (selectedAccountIds.has(accountId)) selectedAccountIds.delete(accountId);
+        else selectedAccountIds.add(accountId);
+
+        const nextSelectedAccountIds = integration.connectedAccounts
+          .map((entry) => entry.id)
+          .filter((id) => selectedAccountIds.has(id));
+        const selectedPlatformSet = new Set(
+          integration.connectedAccounts
+            .filter((entry) => nextSelectedAccountIds.includes(entry.id))
+            .map((entry) => entry.platform)
+        );
+        const nextSelectedPlatforms = integration.connectedPlatforms
+          .map((platform) => platform.provider)
+          .filter((platform) => selectedPlatformSet.has(platform));
+
+        return {
+          ...integration,
+          enabled: nextSelectedAccountIds.length > 0,
+          selectedPlatforms: nextSelectedPlatforms,
+          selectedAccountIds: nextSelectedAccountIds,
         };
       })
     );
@@ -156,9 +241,23 @@ export default function AgentIntegrationsPage() {
     setSaving(true);
     try {
       const providers: string[] = [];
+      let socialProvisioning:
+        | {
+            account_ids: string[];
+            brand_ids: string[];
+          }
+        | null = null;
 
       for (const integration of integrations) {
-        if (!integration.enabled) continue;
+        if (!integration.enabled) {
+          if (integration.provider === "social_media") {
+            socialProvisioning = {
+              account_ids: [],
+              brand_ids: [],
+            };
+          }
+          continue;
+        }
 
         if (integration.provider !== "social_media") {
           providers.push(integration.provider);
@@ -167,17 +266,41 @@ export default function AgentIntegrationsPage() {
 
         const connectedPlatforms = integration.connectedPlatforms.map((platform) => platform.provider);
         const selectedPlatforms = integration.selectedPlatforms.filter((platform) => connectedPlatforms.includes(platform));
+        const connectedAccountsById = new Map(integration.connectedAccounts.map((account) => [account.id, account]));
+        const selectedAccountIds = integration.selectedAccountIds.filter((accountId) => {
+          const account = connectedAccountsById.get(accountId);
+          return account ? selectedPlatforms.includes(account.platform) : false;
+        });
 
         if (connectedPlatforms.length > 0 && selectedPlatforms.length > 0 && selectedPlatforms.length < connectedPlatforms.length) {
           providers.push(...selectedPlatforms);
-        } else {
+        } else if (selectedPlatforms.length > 0) {
           providers.push("social_media");
         }
+
+        const selectedBrandIds = Array.from(
+          new Set(
+            selectedAccountIds.flatMap((accountId) => connectedAccountsById.get(accountId)?.account_identifiers || [])
+          )
+        );
+        socialProvisioning = {
+          account_ids: selectedAccountIds,
+          brand_ids: selectedBrandIds,
+        };
       }
 
       await authFetch(`/api/v1/agents/${id}/config`, {
         method: "PUT",
-        body: JSON.stringify({ integrations: Array.from(new Set(providers)) }),
+        body: JSON.stringify(
+          socialProvisioning
+            ? {
+                integrations: Array.from(new Set(providers)),
+                provisioning: {
+                  social: socialProvisioning,
+                },
+              }
+            : { integrations: Array.from(new Set(providers)) }
+        ),
       });
       setToast("Saved!");
       setTimeout(() => setToast(""), 2000);
@@ -282,6 +405,9 @@ export default function AgentIntegrationsPage() {
                       >
                         <span>{platform.icon}</span>
                         {platform.name}
+                        <span className="text-[11px] text-[#6b7280]">
+                          {integration.connectedAccounts.filter((account) => account.platform === platform.provider).length}
+                        </span>
                       </span>
                     ))}
                   </div>
@@ -289,7 +415,7 @@ export default function AgentIntegrationsPage() {
                   {integration.enabled && (
                     <>
                       <p className="text-xs text-[#6b7280] mb-3">
-                        Restrict this agent to specific social platforms if needed. Leaving all selected grants access to the full Social Media connector.
+                        Restrict this agent to specific platforms and then to the exact connected accounts this agent is allowed to use.
                       </p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {integration.connectedPlatforms.map((platform) => {
@@ -312,6 +438,49 @@ export default function AgentIntegrationsPage() {
                             </button>
                           );
                         })}
+                      </div>
+
+                      <div className="mt-4 space-y-4">
+                        {integration.connectedPlatforms
+                          .filter((platform) => integration.selectedPlatforms.includes(platform.provider))
+                          .map((platform) => {
+                            const platformAccounts = integration.connectedAccounts.filter(
+                              (account) => account.platform === platform.provider
+                            );
+
+                            return (
+                              <div key={platform.provider}>
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span>{platform.icon}</span>
+                                  <p className="text-sm font-medium text-white">{platform.name} accounts</p>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {platformAccounts.map((account) => {
+                                    const selected = integration.selectedAccountIds.includes(account.id);
+                                    return (
+                                      <button
+                                        key={account.id}
+                                        onClick={() => toggleSocialAccount(account.id)}
+                                        className={`flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors cursor-pointer ${
+                                          selected
+                                            ? "border-[#3b82f6]/40 bg-[#3b82f6]/10 text-white"
+                                            : "border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] text-[#9ca3af]"
+                                        }`}
+                                      >
+                                        <span className="min-w-0 text-left">
+                                          <span className="block truncate">{account.account_name || "Untitled account"}</span>
+                                          <span className="block text-xs text-[#6b7280] truncate">
+                                            {[account.account_type, account.account_identifier].filter(Boolean).join(" · ")}
+                                          </span>
+                                        </span>
+                                        <span className="text-xs">{selected ? "Allowed" : "Blocked"}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
                       </div>
                     </>
                   )}
