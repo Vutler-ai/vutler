@@ -48,6 +48,8 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
     try {
       llmResult = await llmRouter.chat(
         {
+          id: agent.id,
+          name: agent.name,
           model: agent.model || 'claude-sonnet-4-20250514',
           provider: agent.provider || undefined,
           system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,
@@ -63,6 +65,8 @@ async function executeTaskViaLLM(task, agentUsername, workspaceId) {
       console.log(`[TaskExecutor] Primary provider failed (${primaryErr.message}), falling back to Anthropic`);
       llmResult = await llmRouter.chat(
         {
+          id: agent.id,
+          name: agent.name,
           model: 'claude-sonnet-4-20250514',
           provider: 'anthropic',
           system_prompt: agent.system_prompt || `You are ${agent.name}, a helpful AI assistant.`,

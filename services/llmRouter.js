@@ -999,7 +999,25 @@ async function logUsage(db, workspaceId, agent, llmResult) {
       ]
     );
   } catch (_) {
-    return;
+    try {
+      await db.query(
+        `INSERT INTO tenant_vutler.usage_logs
+         (workspace_id, agent_id, provider, model, input_tokens, output_tokens, latency_ms, estimated_cost, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`,
+        [
+          workspaceId,
+          agent?.id || null,
+          llmResult.provider,
+          llmResult.model,
+          llmResult.usage?.input_tokens || 0,
+          llmResult.usage?.output_tokens || 0,
+          llmResult.latency_ms || 0,
+          llmResult.cost || 0,
+        ]
+      );
+    } catch (_) {
+      return;
+    }
   }
 }
 

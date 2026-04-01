@@ -12,6 +12,7 @@ const SCHEMA = 'tenant_vutler';
 // Cost-per-token estimates by provider (USD per token, rough averages)
 const COST_PER_TOKEN = {
   anthropic: 0.000015,
+  codex:     0.000010,
   openai:    0.000010,
   groq:      0.0000008,
   mistral:   0.000004,
@@ -23,6 +24,128 @@ const COST_PER_TOKEN = {
 function estimateCost(tokens, provider) {
   const rate = COST_PER_TOKEN[(provider || '').toLowerCase()] ?? COST_PER_TOKEN.default;
   return parseFloat((tokens * rate).toFixed(6));
+}
+
+async function queryTokenUsageRecords(pg, workspaceId, intervalSql) {
+  const strategies = [
+    {
+      timeColumn: 'ul.created_at',
+      query: `
+        SELECT
+          ul.id,
+          COALESCE(a.name, ul.agent_id::text, 'Unknown agent') AS agent_name,
+          ul.model,
+          ul.provider,
+          ul.tokens_input AS input_tokens,
+          ul.tokens_output AS output_tokens,
+          (ul.tokens_input + ul.tokens_output) AS tokens,
+          ul.latency_ms,
+          NULL::numeric AS estimated_cost,
+          ul.created_at
+        FROM ${SCHEMA}.llm_usage_logs ul
+        LEFT JOIN ${SCHEMA}.agents a ON a.id = ul.agent_id
+        WHERE ul.workspace_id = $1 %TIME_FILTER%
+        ORDER BY ul.created_at DESC
+        LIMIT 500
+      `,
+    },
+    {
+      timeColumn: 'ul.created_at',
+      query: `
+        SELECT
+          ul.id,
+          COALESCE(a.name, ul.agent_id::text, 'Unknown agent') AS agent_name,
+          ul.model,
+          ul.provider,
+          ul.input_tokens,
+          ul.output_tokens,
+          (ul.input_tokens + ul.output_tokens) AS tokens,
+          ul.latency_ms,
+          ul.estimated_cost,
+          ul.created_at
+        FROM ${SCHEMA}.usage_logs ul
+        LEFT JOIN ${SCHEMA}.agents a ON a.id = ul.agent_id
+        WHERE ul.workspace_id = $1 %TIME_FILTER%
+        ORDER BY ul.created_at DESC
+        LIMIT 500
+      `,
+    },
+    {
+      timeColumn: 'ae.created_at',
+      query: `
+        SELECT
+          ae.id,
+          COALESCE(a.name, ae.agent_id::text, 'Unknown agent') AS agent_name,
+          ae.model,
+          ae.provider,
+          ae.input_tokens,
+          ae.output_tokens,
+          ae.tokens_used AS tokens,
+          ae.latency_ms,
+          NULL::numeric AS estimated_cost,
+          ae.created_at
+        FROM ${SCHEMA}.agent_executions ae
+        LEFT JOIN ${SCHEMA}.agents a ON a.id = ae.agent_id
+        WHERE ae.workspace_id = $1 %TIME_FILTER%
+        ORDER BY ae.created_at DESC
+        LIMIT 500
+      `,
+    },
+    {
+      timeColumn: 'ct.created_at',
+      query: `
+        SELECT
+          ct.id,
+          COALESCE(a.name, ct.metadata->>'agent_name', ct.metadata->>'agent_id', 'System') AS agent_name,
+          ct.metadata->>'model' AS model,
+          ct.metadata->>'provider' AS provider,
+          (ct.metadata->>'input_tokens')::int AS input_tokens,
+          (ct.metadata->>'output_tokens')::int AS output_tokens,
+          ABS(ct.amount) AS tokens,
+          NULL::int AS latency_ms,
+          NULL::numeric AS estimated_cost,
+          ct.created_at
+        FROM ${SCHEMA}.credit_transactions ct
+        LEFT JOIN ${SCHEMA}.agents a ON a.id = (ct.metadata->>'agent_id')::uuid
+        WHERE ct.workspace_id = $1 AND ct.type = 'usage' %TIME_FILTER%
+        ORDER BY ct.created_at DESC
+        LIMIT 500
+      `,
+    },
+  ];
+
+  for (const strategy of strategies) {
+    try {
+      const whereTime = intervalSql ? `AND ${strategy.timeColumn} >= ${intervalSql}` : '';
+      const query = strategy.query.replace('%TIME_FILTER%', whereTime);
+      const result = await pg.query(query, [workspaceId]);
+      if (result.rows.length > 0) return result.rows;
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return [];
+}
+
+async function queryTokenUsageTotal(pg, workspaceId) {
+  const queries = [
+    `SELECT COALESCE(SUM(tokens_input + tokens_output), 0) AS total FROM ${SCHEMA}.llm_usage_logs WHERE workspace_id = $1`,
+    `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM ${SCHEMA}.usage_logs WHERE workspace_id = $1`,
+    `SELECT COALESCE(SUM(tokens_used), 0) AS total FROM ${SCHEMA}.agent_executions WHERE workspace_id = $1`,
+  ];
+
+  for (const query of queries) {
+    try {
+      const result = await pg.query(query, [workspaceId]);
+      const total = parseInt(result.rows[0]?.total || 0, 10);
+      if (total > 0) return total;
+    } catch (_) {
+      continue;
+    }
+  }
+
+  return 0;
 }
 
 // ─── GET /api/v1/usage ─────────────────────────────────────────────────────────
@@ -41,88 +164,10 @@ router.get('/usage', async (req, res) => {
       all:   null,
     }[period] || "NOW() - INTERVAL '30 days'";
 
-    let records = [];
-
-    if (pg) {
-      // Strategy 1 — usage_logs table (preferred)
-      try {
-        const whereTime = intervalSql ? `AND ul.created_at >= ${intervalSql}` : '';
-        const result = await pg.query(`
-          SELECT
-            ul.id,
-            COALESCE(a.name, ul.agent_id::text) AS agent_name,
-            ul.model,
-            ul.provider,
-            ul.input_tokens,
-            ul.output_tokens,
-            (ul.input_tokens + ul.output_tokens) AS tokens,
-            ul.latency_ms,
-            ul.estimated_cost,
-            ul.created_at
-          FROM ${SCHEMA}.usage_logs ul
-          LEFT JOIN ${SCHEMA}.agents a ON a.id = ul.agent_id
-          WHERE ul.workspace_id = $1 ${whereTime}
-          ORDER BY ul.created_at DESC
-          LIMIT 500
-        `, [workspaceId]);
-        records = result.rows;
-      } catch (_) {}
-
-      // Strategy 2 — agent_executions table
-      if (records.length === 0) {
-        try {
-          const whereTime = intervalSql ? `AND ae.created_at >= ${intervalSql}` : '';
-          const result = await pg.query(`
-            SELECT
-              ae.id,
-              COALESCE(a.name, ae.agent_id::text) AS agent_name,
-              ae.model,
-              ae.provider,
-              ae.input_tokens,
-              ae.output_tokens,
-              ae.tokens_used AS tokens,
-              ae.latency_ms,
-              NULL AS estimated_cost,
-              ae.created_at
-            FROM ${SCHEMA}.agent_executions ae
-            LEFT JOIN ${SCHEMA}.agents a ON a.id = ae.agent_id
-            WHERE ae.workspace_id = $1 ${whereTime}
-            ORDER BY ae.created_at DESC
-            LIMIT 500
-          `, [workspaceId]);
-          records = result.rows;
-        } catch (_) {}
-      }
-
-      // Strategy 3 — credit_transactions table
-      if (records.length === 0) {
-        try {
-          const whereTime = intervalSql ? `AND ct.created_at >= ${intervalSql}` : '';
-          const result = await pg.query(`
-            SELECT
-              ct.id,
-              COALESCE(a.name, ct.agent_id::text, 'System') AS agent_name,
-              ct.metadata->>'model' AS model,
-              ct.metadata->>'provider' AS provider,
-              (ct.metadata->>'input_tokens')::int AS input_tokens,
-              (ct.metadata->>'output_tokens')::int AS output_tokens,
-              ABS(ct.amount) AS tokens,
-              NULL AS latency_ms,
-              NULL AS estimated_cost,
-              ct.created_at
-            FROM ${SCHEMA}.credit_transactions ct
-            LEFT JOIN ${SCHEMA}.agents a ON a.id = (ct.metadata->>'agent_id')::uuid
-            WHERE ct.workspace_id = $1 AND ct.type = 'usage' ${whereTime}
-            ORDER BY ct.created_at DESC
-            LIMIT 500
-          `, [workspaceId]);
-          records = result.rows;
-        } catch (_) {}
-      }
-    }
+    const records = pg ? await queryTokenUsageRecords(pg, workspaceId, intervalSql) : [];
 
     // ── Normalise cost if missing ─────────────────────────────────────────────
-    records = records.map(r => ({
+    const normalizedRecords = records.map(r => ({
       ...r,
       tokens:          r.tokens ?? ((r.input_tokens ?? 0) + (r.output_tokens ?? 0)),
       estimated_cost:  r.estimated_cost ?? estimateCost(
@@ -132,16 +177,16 @@ router.get('/usage', async (req, res) => {
     }));
 
     // ── Summary ───────────────────────────────────────────────────────────────
-    const total_tokens   = records.reduce((s, r) => s + (r.tokens || 0), 0);
-    const total_requests = records.length;
-    const total_cost     = parseFloat(records.reduce((s, r) => s + (r.estimated_cost || 0), 0).toFixed(6));
-    const avg_latency_ms = records.length > 0
-      ? Math.round(records.reduce((s, r) => s + (r.latency_ms || 0), 0) / records.length)
+    const total_tokens   = normalizedRecords.reduce((s, r) => s + (r.tokens || 0), 0);
+    const total_requests = normalizedRecords.length;
+    const total_cost     = parseFloat(normalizedRecords.reduce((s, r) => s + (r.estimated_cost || 0), 0).toFixed(6));
+    const avg_latency_ms = normalizedRecords.length > 0
+      ? Math.round(normalizedRecords.reduce((s, r) => s + (r.latency_ms || 0), 0) / normalizedRecords.length)
       : 0;
 
     res.json({
       success: true,
-      data:            records,
+      data:            normalizedRecords,
       total_tokens,
       total_requests,
       total_cost,
@@ -160,19 +205,7 @@ router.get('/usage/summary', async (req, res) => {
     const pg = req.app.locals.pg;
     const workspaceId = req.workspaceId;
 
-    let totalTokens = 0;
-    if (pg) {
-      for (const q of [
-        `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM ${SCHEMA}.usage_logs WHERE workspace_id = $1`,
-        `SELECT COALESCE(SUM(tokens_used), 0) AS total FROM ${SCHEMA}.agent_executions WHERE workspace_id = $1`,
-      ]) {
-        try {
-          const r = await pg.query(q, [workspaceId]);
-          totalTokens = parseInt(r.rows[0]?.total || 0, 10);
-          if (totalTokens > 0) break;
-        } catch (_) {}
-      }
-    }
+    const totalTokens = pg ? await queryTokenUsageTotal(pg, workspaceId) : 0;
 
     res.json({
       success: true,
