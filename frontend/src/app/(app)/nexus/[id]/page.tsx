@@ -13,6 +13,12 @@ import {
   queueDispatchAction,
   type CreateNodeAgentDefinition,
 } from '@/lib/api/endpoints/nexus';
+import {
+  createEnterpriseEventSubscription,
+  listEnterpriseEventSubscriptions,
+  retryEnterpriseEventSubscription,
+  updateEnterpriseEventSubscription,
+} from '@/lib/api/endpoints/nexus-enterprise';
 import { getAgents } from '@/lib/api/endpoints/agents';
 import type {
   NexusAgentStatus,
@@ -29,6 +35,9 @@ import type {
   NexusCommandStatus,
   NexusCommandStats,
   NexusProviderSource,
+  NexusEnterpriseEventSubscription,
+  NexusEnterpriseEventSubscriptionProvider,
+  NexusEnterpriseProvisioningMode,
 } from '@/lib/api/types';
 
 // ─── Local types ──────────────────────────────────────────────────────────────
@@ -139,6 +148,76 @@ function describePayload(payload?: Record<string, unknown>): string {
   return action ? formatProviderLabel(action) : '—';
 }
 
+function shortId(value?: string | null): string {
+  if (!value) return '—';
+  if (value.length <= 12) return value;
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function buildSubscriptionPackage(subscription: NexusEnterpriseEventSubscription) {
+  return {
+    provider: subscription.provider,
+    provisioningMode: subscription.provisioningMode,
+    provisioningStatus: subscription.provisioningStatus,
+    roomName: subscription.roomName || null,
+    sourceResource: subscription.sourceResource || null,
+    events: subscription.events || [],
+    callbackUrl: subscription.callbackUrl,
+    callbackPath: subscription.callbackPath,
+    verificationSecret: subscription.verificationSecret,
+    externalSubscriptionId: subscription.externalSubscriptionId || null,
+    status: subscription.status,
+  };
+}
+
+function getProvisioningOwner(mode: string, status: string): string {
+  if (status === 'provisioned') return 'Vutler';
+  if (mode === 'automatic') return 'Vutler';
+  if (mode === 'assisted') return 'Partner / Client';
+  return 'Client / Partner';
+}
+
+function getProvisioningChecklist(subscription: NexusEnterpriseEventSubscription): string[] {
+  const common = [
+    'Register the callback URL exactly as shown.',
+    'Store the verification secret in the provider webhook or subscription config.',
+    'Keep the event scope narrow to the room or resource you are monitoring.',
+  ];
+
+  if (subscription.provider === 'microsoft_graph') {
+    return [
+      'Create or reuse the Azure app registration that owns Graph subscriptions.',
+      'Grant the Graph permissions needed for the selected room or Teams resource.',
+      'Set the notification URL to the callback URL and complete the validation challenge.',
+      ...common,
+    ];
+  }
+
+  if (subscription.provider === 'zoom') {
+    return [
+      'Open the Zoom admin app or marketplace app used for Room alerts.',
+      'Register the callback URL on the event subscription configuration.',
+      'Map the webhook to the room or room-alert scope you want to monitor.',
+      ...common,
+    ];
+  }
+
+  if (subscription.provider === 'google') {
+    return [
+      'Use the customer Workspace project or admin console that owns the watch channel.',
+      'Register the callback URL in the Google Workspace watch or push configuration.',
+      'Bind the watch to the room calendar or resource identifier listed here.',
+      ...common,
+    ];
+  }
+
+  return [
+    'Register the callback URL in the partner or device platform.',
+    'Pass the verification secret with each signed event payload.',
+    'Validate that the source system posts only the listed events for this room or resource.',
+  ];
+}
+
 // ─── Status styles ─────────────────────────────────────────────────────────────
 
 const NODE_STATUS: Record<string, { dot: string; badge: string; label: string }> = {
@@ -165,6 +244,70 @@ function StatusBadge({ status }: { status: string }) {
 
 const inputCls =
   'w-full bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-sm placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors';
+
+const EVENT_PROVIDER_OPTIONS: Array<{
+  value: NexusEnterpriseEventSubscriptionProvider;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: 'microsoft_graph',
+    label: 'Microsoft Graph',
+    hint: 'Teams Rooms, Microsoft 365 calendars, room events',
+  },
+  {
+    value: 'zoom',
+    label: 'Zoom',
+    hint: 'Zoom Rooms and meeting alert webhooks',
+  },
+  {
+    value: 'google',
+    label: 'Google',
+    hint: 'Google Workspace and calendar watch events',
+  },
+  {
+    value: 'generic_http',
+    label: 'Generic HTTP',
+    hint: 'Partner systems posting events to the enterprise webhook',
+  },
+];
+
+const PROVISIONING_MODE_HINTS: Record<NexusEnterpriseEventSubscriptionProvider, Record<NexusEnterpriseProvisioningMode, string>> = {
+  microsoft_graph: {
+    manual: 'Manual mode keeps the callback package visible for customer-side Azure setup.',
+    assisted: 'Assisted mode generates the callback and payload, then the partner finishes the app registration.',
+    automatic: 'Automatic mode attempts the Graph subscription immediately when the tenant credentials are available.',
+  },
+  zoom: {
+    manual: 'Manual mode is safest for Zoom admins and partner-led rollout.',
+    assisted: 'Assisted mode prepares the endpoint and tells the partner exactly what to configure in Zoom.',
+    automatic: 'Automatic falls back to assisted today because Zoom is not auto-provisioned yet.',
+  },
+  google: {
+    manual: 'Manual mode is recommended when the customer owns the Workspace project.',
+    assisted: 'Assisted mode prepares the webhook and watch payload for Google Workspace admins.',
+    automatic: 'Automatic falls back to assisted today because Google is not auto-provisioned yet.',
+  },
+  generic_http: {
+    manual: 'Manual mode exposes a stable endpoint and secret for custom systems.',
+    assisted: 'Assisted mode prepares the payload and endpoint details for the partner to wire up.',
+    automatic: 'Automatic is not available for generic HTTP sources and will behave like manual.',
+  },
+};
+
+const PROVISIONING_STATUS_STYLES: Record<string, string> = {
+  manual_required: 'bg-[#111827] text-[#cbd5e1] border-[rgba(255,255,255,0.1)]',
+  assisted_required: 'bg-amber-900/20 text-amber-300 border-amber-500/30',
+  pending: 'bg-blue-900/20 text-blue-300 border-blue-500/30',
+  provisioned: 'bg-emerald-900/20 text-emerald-400 border-emerald-500/30',
+  failed: 'bg-red-900/20 text-red-400 border-red-500/30',
+};
+
+const SUBSCRIPTION_STATUS_STYLES: Record<string, string> = {
+  active: 'bg-emerald-900/20 text-emerald-400 border-emerald-500/30',
+  paused: 'bg-amber-900/20 text-amber-300 border-amber-500/30',
+  disabled: 'bg-[#111827] text-[#94a3b8] border-[rgba(255,255,255,0.1)]',
+};
 
 // ─── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -527,6 +670,667 @@ function CreateAgentDialog({
           >
             {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
             {loading ? 'Creating…' : 'Create Agent'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProvisioningModeBadge({ mode }: { mode: string }) {
+  const tone = mode === 'automatic'
+    ? 'bg-blue-900/20 text-blue-300 border-blue-500/30'
+    : mode === 'assisted'
+      ? 'bg-amber-900/20 text-amber-300 border-amber-500/30'
+      : 'bg-[#111827] text-[#cbd5e1] border-[rgba(255,255,255,0.1)]';
+
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs border ${tone}`}>
+      {mode.replace('_', ' ')}
+    </span>
+  );
+}
+
+function ProvisioningStatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs border ${PROVISIONING_STATUS_STYLES[status] || PROVISIONING_STATUS_STYLES.manual_required}`}>
+      {status.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+function CopyValueButton({
+  value,
+  idleLabel,
+  copiedLabel = 'Copied',
+}: {
+  value: string;
+  idleLabel: string;
+  copiedLabel?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch (_) {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="px-2.5 py-1.5 rounded-lg text-xs bg-[#111827] hover:bg-[#172033] border border-[rgba(255,255,255,0.08)] text-[#d1d5db] transition-colors"
+    >
+      {copied ? copiedLabel : idleLabel}
+    </button>
+  );
+}
+
+function DeploymentSubscriptionsSection({
+  agents,
+}: {
+  agents: NexusAgentStatus[];
+}) {
+  const [subscriptions, setSubscriptions] = useState<NexusEnterpriseEventSubscription[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [providerFilter, setProviderFilter] = useState<'all' | NexusEnterpriseEventSubscriptionProvider>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  const loadSubscriptions = useCallback(async () => {
+    try {
+      setError('');
+      const next = await listEnterpriseEventSubscriptions();
+      setSubscriptions(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load event subscriptions');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSubscriptions();
+  }, [loadSubscriptions]);
+
+  useEffect(() => {
+    const timer = window.setInterval(loadSubscriptions, 12000);
+    return () => window.clearInterval(timer);
+  }, [loadSubscriptions]);
+
+  const counts = subscriptions.reduce(
+    (acc, subscription) => {
+      acc.total += 1;
+      acc[subscription.provisioningStatus] = (acc[subscription.provisioningStatus] || 0) + 1;
+      return acc;
+    },
+    { total: 0 } as Record<string, number>
+  );
+  const filteredSubscriptions = subscriptions.filter((subscription) => {
+    if (providerFilter !== 'all' && subscription.provider !== providerFilter) return false;
+    if (statusFilter !== 'all' && subscription.provisioningStatus !== statusFilter) return false;
+    return true;
+  });
+
+  const handleSubscriptionPatch = async (
+    subscription: NexusEnterpriseEventSubscription,
+    patch: {
+      status?: 'active' | 'paused' | 'disabled';
+      provisioningMode?: NexusEnterpriseProvisioningMode;
+    }
+  ) => {
+    setSavingId(subscription.id);
+    try {
+      const updated = await updateEnterpriseEventSubscription(subscription.id, patch);
+      setSubscriptions((current) => current.map((item) => (item.id === subscription.id ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update event subscription');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleSubscriptionRetry = async (subscription: NexusEnterpriseEventSubscription) => {
+    setRetryingId(subscription.id);
+    try {
+      const updated = await retryEnterpriseEventSubscription(subscription.id, {
+        provisioningMode: subscription.provisioningMode,
+      });
+      setSubscriptions((current) => current.map((item) => (item.id === subscription.id ? updated : item)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to retry event subscription');
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-[rgba(255,255,255,0.07)] flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Deployment Event Subscriptions</h2>
+          <p className="text-xs text-[#6b7280] mt-0.5">
+            Workspace-level subscriptions for room alerts, Graph callbacks, and partner-managed AV event flows.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowCreateDialog(true)}
+          className="px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          + Prepare Subscription
+        </button>
+      </div>
+
+      <div className="p-5 space-y-5">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Provider filter</label>
+            <select
+              value={providerFilter}
+              onChange={(event) => setProviderFilter(event.target.value as 'all' | NexusEnterpriseEventSubscriptionProvider)}
+              className="min-w-[180px] bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-[#3b82f6] transition-colors"
+            >
+              <option value="all">All providers</option>
+              {EVENT_PROVIDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Provisioning state</label>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="min-w-[180px] bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-[#3b82f6] transition-colors"
+            >
+              <option value="all">All states</option>
+              <option value="manual_required">Manual required</option>
+              <option value="assisted_required">Assisted required</option>
+              <option value="pending">Pending</option>
+              <option value="provisioned">Provisioned</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <div className="text-xs text-[#6b7280] pb-1">
+            Showing {filteredSubscriptions.length} of {subscriptions.length} subscription{subscriptions.length !== 1 ? 's' : ''}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+            <p className="text-xs text-[#6b7280]">Total</p>
+            <p className="text-lg font-semibold text-white mt-1">{counts.total || 0}</p>
+          </div>
+          <div className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+            <p className="text-xs text-[#6b7280]">Provisioned</p>
+            <p className="text-lg font-semibold text-emerald-400 mt-1">{counts.provisioned || 0}</p>
+          </div>
+          <div className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+            <p className="text-xs text-[#6b7280]">Needs Partner</p>
+            <p className="text-lg font-semibold text-amber-300 mt-1">
+              {(counts.manual_required || 0) + (counts.assisted_required || 0)}
+            </p>
+          </div>
+          <div className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+            <p className="text-xs text-[#6b7280]">Failed Auto-Provision</p>
+            <p className="text-lg font-semibold text-red-400 mt-1">{counts.failed || 0}</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-[rgba(59,130,246,0.2)] bg-[rgba(59,130,246,0.08)] px-4 py-3">
+          <p className="text-xs text-[#93c5fd] uppercase tracking-wide font-medium">Provisioning model</p>
+          <p className="text-sm text-[#dbeafe] mt-1">
+            Use <span className="font-medium text-white">manual</span> or <span className="font-medium text-white">assisted</span> when the customer or partner owns the tenant setup.
+            Use <span className="font-medium text-white">automatic</span> only when Vutler has the credentials and the provider supports direct provisioning.
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="animate-pulse space-y-3">
+            {[1, 2, 3].map((item) => (
+              <div
+                key={item}
+                className="h-20 rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)]"
+              />
+            ))}
+          </div>
+        ) : error ? (
+          <p className="text-sm text-red-400">{error}</p>
+        ) : subscriptions.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[rgba(255,255,255,0.12)] px-4 py-8 text-center">
+            <p className="text-sm text-white">No event subscriptions prepared yet.</p>
+            <p className="text-xs text-[#6b7280] mt-1">
+              Start with Graph, Zoom, Google, or a partner webhook endpoint for room incidents.
+            </p>
+          </div>
+        ) : filteredSubscriptions.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[rgba(255,255,255,0.12)] px-4 py-8 text-center">
+            <p className="text-sm text-white">No subscriptions match the current filters.</p>
+            <p className="text-xs text-[#6b7280] mt-1">
+              Change provider or provisioning-state filters to inspect the full deployment queue.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredSubscriptions.map((subscription) => {
+              const linkedAgent = agents.find((agent) => agent.id === subscription.agentId);
+              const registrationPackage = JSON.stringify(buildSubscriptionPackage(subscription), null, 2);
+              const checklist = getProvisioningChecklist(subscription);
+              return (
+                <div
+                  key={subscription.id}
+                  className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-4 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm text-white font-medium">
+                          {subscription.roomName || subscription.sourceResource || 'Unscoped subscription'}
+                        </p>
+                        <span className="px-2 py-0.5 rounded-full text-xs border bg-[#111827] text-[#cbd5e1] border-[rgba(255,255,255,0.1)]">
+                          {formatProviderLabel(subscription.provider)}
+                        </span>
+                        <ProvisioningModeBadge mode={subscription.provisioningMode} />
+                        <ProvisioningStatusBadge status={subscription.provisioningStatus} />
+                      </div>
+                      <p className="text-xs text-[#6b7280] mt-1">
+                        {linkedAgent?.name || subscription.agentId || subscription.profileKey || 'Deployment-level subscription'}
+                        {' · '}
+                        status {subscription.status}
+                      </p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-xs border ${SUBSCRIPTION_STATUS_STYLES[subscription.status] || SUBSCRIPTION_STATUS_STYLES.active}`}>
+                      {subscription.status}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-sm">
+                    <div>
+                      <p className="text-xs text-[#6b7280] uppercase tracking-wide mb-1">Resource</p>
+                      <p className="text-[#d1d5db] break-all">{subscription.sourceResource || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-[#6b7280] uppercase tracking-wide mb-1">Events</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(subscription.events || []).length > 0 ? subscription.events.map((event) => (
+                          <span
+                            key={`${subscription.id}-${event}`}
+                            className="px-2 py-0.5 rounded-full text-xs border bg-blue-900/20 text-blue-300 border-blue-500/30"
+                          >
+                            {event}
+                          </span>
+                        )) : (
+                          <span className="text-[#6b7280]">—</span>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs text-[#6b7280] uppercase tracking-wide mb-1">External ID</p>
+                      <p className="text-[#d1d5db] font-mono">{shortId(subscription.externalSubscriptionId)}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-[#6b7280] uppercase tracking-wide">Status</label>
+                      <select
+                        value={subscription.status}
+                        onChange={(event) => handleSubscriptionPatch(subscription, { status: event.target.value as 'active' | 'paused' | 'disabled' })}
+                        disabled={savingId === subscription.id}
+                        className="w-full bg-[#05060d] border border-[rgba(255,255,255,0.06)] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-[#3b82f6] transition-colors disabled:opacity-60"
+                      >
+                        <option value="active">Active</option>
+                        <option value="paused">Paused</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-[#6b7280] uppercase tracking-wide">Provisioning mode</label>
+                      <select
+                        value={subscription.provisioningMode}
+                        onChange={(event) => handleSubscriptionPatch(subscription, { provisioningMode: event.target.value as NexusEnterpriseProvisioningMode })}
+                        disabled={savingId === subscription.id}
+                        className="w-full bg-[#05060d] border border-[rgba(255,255,255,0.06)] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-[#3b82f6] transition-colors disabled:opacity-60"
+                      >
+                        <option value="manual">Manual</option>
+                        <option value="assisted">Assisted</option>
+                        <option value="automatic">Automatic</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-[#6b7280] uppercase tracking-wide">Operator action</label>
+                      <button
+                        type="button"
+                        onClick={() => handleSubscriptionRetry(subscription)}
+                        disabled={retryingId === subscription.id}
+                        className="w-full px-3 py-2 rounded-lg bg-[#111827] hover:bg-[#172033] border border-[rgba(255,255,255,0.08)] text-sm text-white transition-colors disabled:opacity-60"
+                      >
+                        {retryingId === subscription.id ? 'Retrying…' : 'Retry provisioning'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg bg-[#05060d] border border-[rgba(255,255,255,0.06)] p-3">
+                      <p className="text-[#6b7280] uppercase tracking-wide mb-1">Callback URL</p>
+                      <p className="text-[#d1d5db] font-mono break-all">{subscription.callbackUrl}</p>
+                      <div className="mt-3">
+                        <CopyValueButton value={subscription.callbackUrl} idleLabel="Copy URL" />
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-[#05060d] border border-[rgba(255,255,255,0.06)] p-3">
+                      <p className="text-[#6b7280] uppercase tracking-wide mb-1">Verification Secret</p>
+                      <p className="text-[#d1d5db] font-mono break-all">{subscription.verificationSecret}</p>
+                      <div className="mt-3">
+                        <CopyValueButton value={subscription.verificationSecret} idleLabel="Copy Secret" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-[#05060d] border border-[rgba(255,255,255,0.06)] p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-3 flex-wrap">
+                      <div>
+                        <p className="text-[#6b7280] uppercase tracking-wide mb-1 text-xs">Provisioning package</p>
+                        <p className="text-sm text-[#d1d5db]">
+                          Owner: <span className="text-white font-medium">{getProvisioningOwner(subscription.provisioningMode, subscription.provisioningStatus)}</span>
+                        </p>
+                      </div>
+                      <CopyValueButton value={registrationPackage} idleLabel="Copy Package JSON" copiedLabel="Package copied" />
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Next steps</p>
+                        <ul className="space-y-1.5 text-sm text-[#d1d5db]">
+                          {checklist.map((item) => (
+                            <li key={`${subscription.id}-${item}`} className="flex gap-2">
+                              <span className="text-[#3b82f6] shrink-0">•</span>
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="text-xs text-[#6b7280] uppercase tracking-wide mb-2">Package preview</p>
+                        <pre className="text-[11px] leading-5 text-[#cbd5e1] bg-[#02040a] border border-[rgba(255,255,255,0.04)] rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
+{registrationPackage}
+                        </pre>
+                      </div>
+                    </div>
+                  </div>
+
+                  {(subscription.provisioningError || subscription.provisioningStatus === 'manual_required' || subscription.provisioningStatus === 'assisted_required') && (
+                    <div className={`rounded-lg border px-3 py-2 text-xs ${
+                      subscription.provisioningError
+                        ? 'bg-red-900/10 border-red-500/20 text-red-300'
+                        : 'bg-amber-900/10 border-amber-500/20 text-amber-200'
+                    }`}>
+                      {subscription.provisioningError
+                        ? subscription.provisioningError
+                        : subscription.provisioningStatus === 'assisted_required'
+                          ? 'Partner action required: use the callback URL and secret above to finish provider-side setup.'
+                          : 'Customer or partner needs to register this webhook manually on the target platform.'}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3 flex-wrap text-xs text-[#6b7280]">
+                    <span>Created {formatDateTime(subscription.createdAt)}</span>
+                    <span>
+                      Last event {subscription.lastEventAt ? formatDateTime(subscription.lastEventAt) : 'not received yet'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {showCreateDialog && (
+        <CreateEventSubscriptionDialog
+          agents={agents}
+          onClose={() => setShowCreateDialog(false)}
+          onCreated={(subscription) => {
+            setShowCreateDialog(false);
+            setSubscriptions((current) => [subscription, ...current]);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function CreateEventSubscriptionDialog({
+  agents,
+  onClose,
+  onCreated,
+}: {
+  agents: NexusAgentStatus[];
+  onClose: () => void;
+  onCreated: (subscription: NexusEnterpriseEventSubscription) => void;
+}) {
+  const [provider, setProvider] = useState<NexusEnterpriseEventSubscriptionProvider>('microsoft_graph');
+  const [provisioningMode, setProvisioningMode] = useState<NexusEnterpriseProvisioningMode>('assisted');
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [roomName, setRoomName] = useState('');
+  const [sourceResource, setSourceResource] = useState('');
+  const [eventsInput, setEventsInput] = useState('created,updated');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+  const providerHint = EVENT_PROVIDER_OPTIONS.find((item) => item.value === provider)?.hint || '';
+  const modeHint = PROVISIONING_MODE_HINTS[provider][provisioningMode];
+
+  useEffect(() => {
+    if (provider === 'microsoft_graph' && provisioningMode === 'manual') return;
+    if (provider === 'microsoft_graph') {
+      setProvisioningMode('assisted');
+      return;
+    }
+    if ((provider === 'zoom' || provider === 'google') && provisioningMode === 'automatic') {
+      setProvisioningMode('assisted');
+      return;
+    }
+    if (provider === 'generic_http' && provisioningMode === 'automatic') {
+      setProvisioningMode('manual');
+    }
+  }, [provider, provisioningMode]);
+
+  const handleSubmit = async () => {
+    const events = eventsInput
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (!roomName.trim() && !sourceResource.trim()) {
+      setError('Add at least a room name or a source resource.');
+      return;
+    }
+
+    if ((provider === 'microsoft_graph' || provider === 'zoom' || provider === 'google') && !sourceResource.trim()) {
+      setError('Source resource is required for provider-backed subscriptions.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      const subscription = await createEnterpriseEventSubscription({
+        provider,
+        agentId: selectedAgentId || undefined,
+        profileKey: selectedAgent?.profileKey || undefined,
+        subscriptionType: 'room_event',
+        roomName: roomName.trim() || undefined,
+        sourceResource: sourceResource.trim() || undefined,
+        events,
+        status: 'active',
+        deliveryMode: 'manual',
+        provisioningMode,
+      });
+      onCreated(subscription);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to prepare event subscription');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl w-full max-w-2xl mx-4 p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-white font-semibold text-lg">Prepare Event Subscription</h2>
+            <p className="text-sm text-[#6b7280] mt-1">
+              Generate the callback package now, then let Vutler, the partner, or the customer finish provider-side setup.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-[#6b7280] hover:text-white transition-colors text-2xl leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Provider</label>
+            <select
+              value={provider}
+              onChange={(event) => setProvider(event.target.value as NexusEnterpriseEventSubscriptionProvider)}
+              className={inputCls}
+            >
+              {EVENT_PROVIDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-[#6b7280]">{providerHint}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Linked agent</label>
+            <select
+              value={selectedAgentId}
+              onChange={(event) => setSelectedAgentId(event.target.value)}
+              className={inputCls}
+            >
+              <option value="">Deployment-level subscription</option>
+              {agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>
+                  {agent.name}{agent.profileKey ? ` · ${agent.profileKey}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-[#6b7280]">
+              Attach this webhook to an AV or IT agent when you want clear ownership.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Provisioning mode</label>
+            <select
+              value={provisioningMode}
+              onChange={(event) => setProvisioningMode(event.target.value as NexusEnterpriseProvisioningMode)}
+              className={inputCls}
+            >
+              <option value="manual">Manual</option>
+              <option value="assisted">Assisted</option>
+              <option value="automatic">Automatic</option>
+            </select>
+            <p className="text-xs text-[#6b7280]">{modeHint}</p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Room name</label>
+            <input
+              type="text"
+              value={roomName}
+              onChange={(event) => setRoomName(event.target.value)}
+              placeholder="Zurich Boardroom A"
+              className={inputCls}
+            />
+          </div>
+
+          <div className="space-y-1.5 md:col-span-2">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Source resource</label>
+            <input
+              type="text"
+              value={sourceResource}
+              onChange={(event) => setSourceResource(event.target.value)}
+              placeholder={provider === 'microsoft_graph'
+                ? '/communications/callRecords'
+                : provider === 'zoom'
+                  ? 'room-alerts/zurich-boardroom-a'
+                  : provider === 'google'
+                    ? 'calendar-room-a@company.com'
+                    : 'https://partner.example.com/webhooks/room-a'}
+              className={inputCls}
+            />
+            <p className="text-xs text-[#6b7280]">
+              Use the provider resource identifier or the room-level endpoint used by the partner system.
+            </p>
+          </div>
+
+          <div className="space-y-1.5 md:col-span-2">
+            <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Events</label>
+            <input
+              type="text"
+              value={eventsInput}
+              onChange={(event) => setEventsInput(event.target.value)}
+              placeholder="created,updated,deleted"
+              className={inputCls}
+            />
+            <p className="text-xs text-[#6b7280]">
+              Comma-separated event names. Keep the list narrow for dangerous or noisy room signals.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] p-4 space-y-2">
+          <p className="text-xs text-[#9ca3af] uppercase tracking-wide">What happens next</p>
+          <ul className="space-y-1 text-sm text-[#d1d5db]">
+            <li>Vutler creates a callback URL and verification secret for this deployment.</li>
+            <li>The subscription is stored immediately with a provisioning status you can track from the node page.</li>
+            <li>
+              {provider === 'microsoft_graph' && provisioningMode === 'automatic'
+                ? 'Vutler attempts Graph provisioning right away and falls back with an explicit error if the tenant setup is incomplete.'
+                : 'The partner or customer can finish provider-side registration using the generated callback package.'}
+            </li>
+          </ul>
+        </div>
+
+        {error && <p className="text-sm text-red-400">{error}</p>}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-[#1e293b] hover:bg-[#334155] text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="flex-1 py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            {submitting && (
+              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            )}
+            {submitting ? 'Preparing…' : 'Prepare Subscription'}
           </button>
         </div>
       </div>
@@ -1548,6 +2352,10 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
       <CapabilitiesCard nodeId={id} />
 
       <RuntimeObservabilityCard summary={commandSummary} commands={commandHistory} />
+
+      {isEnterprise && (
+        <DeploymentSubscriptionsSection agents={agents} />
+      )}
 
       {/* ── Agents section ── */}
       <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">

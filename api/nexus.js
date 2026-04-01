@@ -15,6 +15,7 @@ const {
 } = require('../services/apiKeys');
 const {
   getNodeMode,
+  getWorkspaceEnterpriseSeatSummary,
   getWorkspaceNexusBillingSummary,
   getWorkspaceNexusUsage,
 } = require('../services/nexusBilling');
@@ -138,6 +139,17 @@ async function buildEnterpriseDeployToken({ req, body = {} }) {
     ].filter(Boolean);
     const error = new Error(`${missing.join(', ')} is required`);
     error.statusCode = 400;
+    throw error;
+  }
+
+  const seatSummary = await getWorkspaceEnterpriseSeatSummary(pool, workspaceId).catch(() => null);
+  if (seatSummary && seatSummary.total !== -1 && seats > seatSummary.available) {
+    const error = new Error(
+      `Requested ${seats} enterprise seats, but only ${seatSummary.available} seat${seatSummary.available === 1 ? '' : 's'} remain on the current billing plan.`
+    );
+    error.statusCode = 403;
+    error.code = 'NEXUS_ENTERPRISE_SEAT_LIMIT_REACHED';
+    error.details = { requestedSeats: seats, seatSummary };
     throw error;
   }
 

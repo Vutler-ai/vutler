@@ -219,6 +219,7 @@ export interface CreateChannelPayload {
 export interface SendMessagePayload {
   content: string;
   client_message_id?: string;
+  attachments?: Attachment[];
 }
 
 // ─── Email ────────────────────────────────────────────────────────────────────
@@ -465,6 +466,7 @@ export interface PlanLimits {
   storage_gb?: number;
   nexusNodes?: number;
   nexus_nodes?: number;
+  nexus_enterprise_seats?: number;
   socialPosts?: number;
   social_posts_month?: number;
 }
@@ -477,10 +479,22 @@ export interface Plan {
   limits: PlanLimits;
 }
 
+export interface BillingAddon {
+  id: string;
+  label: string;
+  price: number;
+  unit: string;
+  addonType?: string;
+  enterpriseSeats?: number;
+  enterpriseNodes?: number;
+  posts?: number;
+}
+
 export interface PlansResponse {
   office: Plan[];
   agents: Plan[];
   full: Plan[];
+  addons?: BillingAddon[];
 }
 
 export interface Subscription {
@@ -490,6 +504,20 @@ export interface Subscription {
   status?: string;
   current_period_end?: string | null;
   usage?: SubscriptionUsage | null;
+  addons?: {
+    enterpriseSeats: number;
+    enterpriseNodes: number;
+    socialPosts: number;
+    active: Array<{
+      id: string;
+      addonId: string;
+      addonType: string;
+      quantity: number;
+      status: string;
+      config?: Record<string, unknown>;
+      currentPeriodEnd?: string | null;
+    }>;
+  } | null;
 }
 
 export interface SubscriptionUsage {
@@ -575,6 +603,14 @@ export interface NexusBillingSnapshot {
     total: boolean;
     local: boolean;
     enterprise: boolean;
+  };
+  seats?: {
+    planId: string;
+    included: number;
+    addOnSeats: number;
+    total: number;
+    allocated: number;
+    available: number;
   };
 }
 
@@ -666,6 +702,54 @@ export interface DeployEnterprisePayload {
   selectedCapabilities?: string[];
   selectedLocalIntegrations?: string[];
   selectedHelperProfiles?: string[];
+}
+
+export type NexusEnterpriseEventSubscriptionProvider =
+  | 'microsoft_graph'
+  | 'zoom'
+  | 'google'
+  | 'generic_http';
+
+export type NexusEnterpriseEventSubscriptionStatus =
+  | 'active'
+  | 'paused'
+  | 'disabled';
+
+export type NexusEnterpriseProvisioningMode =
+  | 'manual'
+  | 'assisted'
+  | 'automatic';
+
+export type NexusEnterpriseProvisioningStatus =
+  | 'manual_required'
+  | 'assisted_required'
+  | 'pending'
+  | 'provisioned'
+  | 'failed';
+
+export interface NexusEnterpriseEventSubscription {
+  id: string;
+  workspaceId: string;
+  provider: NexusEnterpriseEventSubscriptionProvider | string;
+  profileKey?: string | null;
+  agentId?: string | null;
+  subscriptionType: string;
+  sourceResource?: string | null;
+  roomName?: string | null;
+  events: string[];
+  status: NexusEnterpriseEventSubscriptionStatus | string;
+  deliveryMode: string;
+  provisioningMode: NexusEnterpriseProvisioningMode;
+  provisioningStatus: NexusEnterpriseProvisioningStatus | string;
+  provisioningError?: string | null;
+  callbackPath: string;
+  callbackUrl: string;
+  verificationSecret: string;
+  config?: Record<string, unknown>;
+  externalSubscriptionId?: string | null;
+  lastEventAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface NexusEnterpriseDriveRepo {
@@ -1237,10 +1321,16 @@ export interface AdminStats {
   users: string;
   banned: string;
   plan_free: string;
-  plan_starter: string;
-  plan_team: string;
+  plan_office_starter?: string;
+  plan_office_team?: string;
+  plan_agents_starter?: string;
+  plan_agents_pro?: string;
+  plan_nexus_enterprise?: string;
+  plan_full?: string;
   plan_enterprise: string;
   plan_beta: string;
+  plan_starter?: string;
+  plan_team?: string;
   signups_7d: string;
   signups_30d: string;
 }

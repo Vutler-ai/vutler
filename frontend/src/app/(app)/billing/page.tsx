@@ -97,10 +97,26 @@ const FALLBACK_PLANS: PlansResponse = {
         "Deployments & templates",
         "Knowledge base",
         "Providers & dashboard",
-        "3 enterprise Nexus nodes",
+        "Nexus Local orchestration",
         "LLM: Bring Your Own Key",
       ],
       limits: { agents: 100, nexusNodes: 10, storage: "100 GB", socialPosts: 50 },
+    },
+    {
+      id: "nexus_enterprise",
+      label: "Nexus Enterprise",
+      price: { monthly: 149000, yearly: 1490000 },
+      features: [
+        "1 enterprise Nexus node included",
+        "5 Nexus Enterprise seats included",
+        "Specialized enterprise agent profiles",
+        "Governance, approvals, and audit",
+        "Drive repo provisioning",
+        "Webhook preparation and event ingestion",
+        "AV / IT runtime orchestration",
+        "LLM: Bring Your Own Key",
+      ],
+      limits: { agents: 100, nexusNodes: 1, storage: "100 GB", socialPosts: 100 },
     },
   ],
   full: [
@@ -115,7 +131,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "All integrations",
         "Priority support",
         "Unlimited features",
-        "5 enterprise Nexus nodes",
+        "Office + Agents in one workspace",
         "LLM: Bring Your Own Key",
       ],
       limits: { agents: 100, nexusNodes: 10, storage: "100 GB", socialPosts: 100 },
@@ -125,13 +141,13 @@ const FALLBACK_PLANS: PlansResponse = {
       label: "Enterprise",
       price: { monthly: 0, yearly: 0 },
       features: [
-        "Unlimited agents",
-        "Unlimited storage",
-        "Unlimited Nexus nodes",
+        "Custom pricing and packaging",
+        "Multi-node enterprise rollout",
+        "Custom SLAs and onboarding",
+        "Dedicated support and partner motion",
+        "Advanced governance and integrations",
         "Custom SLAs",
         "White-labelling",
-        "Dedicated support",
-        "Custom integrations",
         "LLM: Bring Your Own Key",
       ],
       limits: {},
@@ -460,10 +476,124 @@ function PlanCard({
 // ─── Social Media Post Packs ──────────────────────────────────────────────────
 
 const SOCIAL_PACKS = [
-  { id: "social_posts_100", label: "100 Posts", posts: 100, price: 500, perPost: "€0.05" },
-  { id: "social_posts_500", label: "500 Posts", posts: 500, price: 1900, perPost: "€0.038", popular: true },
-  { id: "social_posts_2000", label: "2,000 Posts", posts: 2000, price: 4900, perPost: "€0.025" },
+  { id: "social_posts_100", label: "100 Posts", posts: 100, price: 500, perPost: "$0.05" },
+  { id: "social_posts_500", label: "500 Posts", posts: 500, price: 1900, perPost: "$0.038", popular: true },
+  { id: "social_posts_2000", label: "2,000 Posts", posts: 2000, price: 4900, perPost: "$0.025" },
 ];
+
+const NEXUS_ENTERPRISE_ADDONS = [
+  {
+    id: "nexus_enterprise_seats_5",
+    label: "+5 Enterprise Seats",
+    description: "Add elastic or fixed helper capacity without changing the base deployment.",
+    price: 39000,
+  },
+  {
+    id: "nexus_enterprise_node",
+    label: "Extra Enterprise Node",
+    description: "Add another governed enterprise node for a new client site or environment.",
+    price: 50000,
+  },
+];
+
+async function startAddonCheckout(addonId: string): Promise<string> {
+  const res = await fetch("/api/v1/billing/addon-checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      addonId,
+      successUrl: window.location.href,
+      cancelUrl: window.location.href,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const url = data.url || data.data?.url;
+  if (!res.ok || !url) {
+    throw new Error(data.error || "Checkout failed");
+  }
+  return url;
+}
+
+function NexusEnterpriseAddons({
+  subscription,
+}: {
+  subscription: Subscription | null;
+}) {
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const addonSummary = subscription?.addons ?? null;
+
+  const handleAddonCheckout = async (addonId: string) => {
+    setLoadingId(addonId);
+    setError("");
+    try {
+      const url = await startAddonCheckout(addonId);
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start checkout");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+  return (
+    <Card className="bg-[#14151f] border-[rgba(255,255,255,0.07)]">
+      <CardHeader>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <CardTitle className="text-white">Nexus Enterprise Add-ons</CardTitle>
+            <p className="text-sm text-[#9ca3af] mt-1">
+              Extend the enterprise base plan with more seats or another governed node.
+            </p>
+          </div>
+          {addonSummary && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant="outline" className="border-orange-500/30 text-orange-300 bg-orange-500/10">
+                +{addonSummary.enterpriseSeats} seats
+              </Badge>
+              <Badge variant="outline" className="border-blue-500/30 text-blue-300 bg-blue-500/10">
+                +{addonSummary.enterpriseNodes} nodes
+              </Badge>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5 space-y-4">
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {NEXUS_ENTERPRISE_ADDONS.map((addon) => (
+            <div
+              key={addon.id}
+              className="rounded-xl border border-[rgba(255,255,255,0.07)] hover:border-[rgba(255,255,255,0.14)] p-5"
+            >
+              <p className="text-white font-semibold text-lg">{addon.label}</p>
+              <p className="text-sm text-[#9ca3af] mt-2">{addon.description}</p>
+              <div className="mt-4 flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-white">${formatPrice(addon.price)}</span>
+                <span className="text-[#6b7280] text-sm">/mo</span>
+              </div>
+              <Button
+                onClick={() => handleAddonCheckout(addon.id)}
+                disabled={loadingId === addon.id}
+                className="w-full mt-4 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-60"
+              >
+                {loadingId === addon.id ? "Redirecting…" : "Add to Subscription"}
+              </Button>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-[#6b7280]">
+          Additional seats are enforced at enterprise deployment time and can be allocated across governed Nexus Enterprise nodes.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 function SocialPostPacks() {
   const [loadingId, setLoadingId] = useState<string | null>(null);
@@ -473,24 +603,10 @@ function SocialPostPacks() {
     setLoadingId(addonId);
     setError("");
     try {
-      const res = await fetch("/api/v1/billing/addon-checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          addonId,
-          successUrl: window.location.href,
-          cancelUrl: window.location.href,
-        }),
-      });
-      const data = await res.json();
-      if (data.url || data.data?.url) {
-        window.location.href = data.url || data.data.url;
-      } else {
-        setError(data.error || "Checkout failed");
-      }
-    } catch {
-      setError("Failed to start checkout");
+      const url = await startAddonCheckout(addonId);
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start checkout");
     } finally {
       setLoadingId(null);
     }
@@ -539,7 +655,7 @@ function SocialPostPacks() {
               )}
               <p className="text-white font-semibold text-lg mt-1">{pack.label}</p>
               <div className="flex items-baseline gap-1 mt-2">
-                <span className="text-2xl font-bold text-white">€{formatPrice(pack.price)}</span>
+                <span className="text-2xl font-bold text-white">${formatPrice(pack.price)}</span>
                 <span className="text-[#6b7280] text-sm">/mo</span>
               </div>
               <p className="text-xs text-[#6b7280] mt-1">{pack.perPost}/post</p>
@@ -773,6 +889,8 @@ export default function BillingPage() {
       )}
 
       <CreditPacks />
+
+      <NexusEnterpriseAddons subscription={subscription ?? null} />
 
       {/* Social Media Post Packs */}
       <SocialPostPacks />

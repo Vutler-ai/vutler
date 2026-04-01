@@ -222,6 +222,10 @@ function DeployModal({
       setError('No enterprise Nexus quota remaining on the current billing plan.');
       return;
     }
+    if (mode === 'enterprise' && billing?.seats && billing.seats.total !== -1 && seats > billing.seats.available) {
+      setError(`Requested ${seats} seats, but only ${billing.seats.available} enterprise seat(s) are available on this workspace.`);
+      return;
+    }
     setLoading(true);
     try {
       let result: NexusTokenResponse;
@@ -283,10 +287,14 @@ function DeployModal({
   const modeQuota = mode === 'enterprise'
     ? { remaining: billing?.remaining.enterprise, limit: billing?.limits.enterprise, label: 'Enterprise' }
     : { remaining: billing?.remaining.local, limit: billing?.limits.local, label: 'Local' };
+  const enterpriseSeatSummary = billing?.seats ?? null;
   const quotaBlocked = billing
     ? mode === 'enterprise'
       ? (!billing.canProvision.enterprise || !billing.canProvision.total)
       : (!billing.canProvision.local || !billing.canProvision.total)
+    : false;
+  const seatQuotaBlocked = mode === 'enterprise' && enterpriseSeatSummary?.total !== undefined && enterpriseSeatSummary.total !== -1
+    ? enterpriseSeatSummary.available <= 0
     : false;
 
   const stepLabel: Record<DeployStep, string> = {
@@ -433,9 +441,10 @@ function DeployModal({
 
             {error && <p className="text-red-400 text-sm">{error}</p>}
             {quotaBlocked && <p className="text-amber-400 text-sm">This billing plan cannot provision another {modeQuota.label.toLowerCase()} node.</p>}
+            {seatQuotaBlocked && <p className="text-amber-400 text-sm">No enterprise seats are left to allocate on this workspace.</p>}
             <button
               onClick={handleGenerate}
-              disabled={loading || quotaBlocked}
+              disabled={loading || quotaBlocked || seatQuotaBlocked}
               className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
               {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
@@ -465,17 +474,25 @@ function DeployModal({
               <input
                 type="number"
                 min={1}
-                max={100}
+                max={enterpriseSeatSummary && enterpriseSeatSummary.available > 0 ? enterpriseSeatSummary.available : 100}
                 value={seats}
                 onChange={(e) => setSeats(Math.max(1, parseInt(e.target.value, 10) || 1))}
                 className={inputCls}
               />
-              <p className="text-xs text-[#6b7280]">How many agents can run concurrently on this node.</p>
+              <p className="text-xs text-[#6b7280]">
+                {enterpriseSeatSummary
+                  ? `How many agents can run concurrently on this node. ${formatQuotaValue(enterpriseSeatSummary.available)} seat(s) available to allocate on this workspace.`
+                  : 'How many agents can run concurrently on this node.'}
+              </p>
             </div>
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button
               onClick={() => {
                 if (!nodeName.trim() || !clientName.trim()) { setError('Node name and client name are required'); return; }
+                if (enterpriseSeatSummary && enterpriseSeatSummary.total !== -1 && seats > enterpriseSeatSummary.available) {
+                  setError(`Requested ${seats} seats, but only ${enterpriseSeatSummary.available} enterprise seat(s) are available on this workspace.`);
+                  return;
+                }
                 setError('');
                 setStep('ent-profile');
               }}
@@ -1188,6 +1205,27 @@ function BillingOverviewCard({ billing }: { billing: NexusBillingSnapshot }) {
           </div>
         ))}
       </div>
+
+      {billing.seats && (
+        <div className="pt-1 border-t border-[rgba(255,255,255,0.06)]">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <div>
+              <p className="text-white">Enterprise seats</p>
+              <p className="text-xs text-[#6b7280]">
+                {billing.seats.addOnSeats > 0
+                  ? `${billing.seats.included} included + ${billing.seats.addOnSeats} add-on`
+                  : `${billing.seats.included} included`}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-white font-medium">
+                {formatQuotaValue(billing.seats.available)} left / {formatQuotaValue(billing.seats.total)}
+              </p>
+              <p className="text-xs text-[#6b7280]">{billing.seats.allocated} allocated</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

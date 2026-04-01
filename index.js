@@ -1,7 +1,16 @@
 'use strict';
 
-// Load .env before anything else
-require('dotenv').config();
+// Load .env first, then let .env.local override it for local/dev secrets.
+const fs = require('fs');
+const path = require('path');
+const dotenv = require('dotenv');
+
+for (const [name, override] of [['.env', false], ['.env.local', true]]) {
+  const file = path.join(__dirname, name);
+  if (fs.existsSync(file)) {
+    dotenv.config({ path: file, override });
+  }
+}
 
 // ── Security boot checks ───────────────────────────────────────────────────
 const PLACEHOLDER_SECRETS = new Set(['secret', 'change-me', 'changeme', 'MISSING-SET-JWT_SECRET-ENV']);
@@ -26,8 +35,6 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
-const path = require('path');
-const fs = require('fs');
 
 const cookieParser = require('cookie-parser');
 
@@ -138,7 +145,7 @@ app.use(require('./api/middleware/auth'));
 // (global async middleware was silently hanging on DB pool exhaustion)
 
 const { createApiKey } = require('./services/apiKeys');
-const { assertNexusProvisionAllowed } = require('./services/nexusBilling');
+const { assertNexusProvisionAllowed, getWorkspaceEnterpriseSeatSummary } = require('./services/nexusBilling');
 
 // ---------------------------------------------------------------------------
 // 6. CORE ROUTES (shared across all plans)
@@ -540,6 +547,17 @@ app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
     await assertNexusProvisionAllowed({ pg, workspaceId, mode: 'enterprise' });
+    const requestedSeats = Number.isFinite(Number(seats)) ? Number(seats) : 1;
+    const seatSummary = await getWorkspaceEnterpriseSeatSummary(pg, workspaceId).catch(() => null);
+    if (seatSummary && seatSummary.total !== -1 && requestedSeats > seatSummary.available) {
+      const err = new Error(
+        `Requested ${requestedSeats} enterprise seats, but only ${seatSummary.available} seat${seatSummary.available === 1 ? '' : 's'} remain on the current billing plan.`
+      );
+      err.statusCode = 403;
+      err.code = 'NEXUS_ENTERPRISE_SEAT_LIMIT_REACHED';
+      err.details = { requestedSeats, seatSummary };
+      throw err;
+    }
     const normalizedAutoSpawnRules = await normalizeEnterpriseAutoSpawnRules(pg, workspaceId, autoSpawnRules, poolAgentIds);
     const runtimeKey = await createApiKey({
       workspaceId,
@@ -558,7 +576,7 @@ app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
       permissions,
       shellConfig,
       offlineConfig: offlineConfig || { enabled: !!offlineMode },
-      seatsCount: Number.isFinite(Number(seats)) ? Number(seats) : 1,
+      seatsCount: requestedSeats,
       primaryAgentId,
       poolAgentIds,
       autoSpawnRules: normalizedAutoSpawnRules,
