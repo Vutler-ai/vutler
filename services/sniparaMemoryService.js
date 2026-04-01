@@ -93,7 +93,7 @@ async function resolveAgentRecord(db, workspaceId, agentIdOrUsername, fallback =
        LIMIT 1`,
       [String(agentIdOrUsername), ws]
     );
-    if (result.rows[0]) return result.rows[0];
+    if (result.rows[0]) return { ...fallback, ...result.rows[0] };
   }
 
   return {

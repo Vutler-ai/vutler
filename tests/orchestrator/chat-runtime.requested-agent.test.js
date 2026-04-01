@@ -78,7 +78,6 @@ describe('chatRuntime requested agent resolution', () => {
             max_tokens: 512,
             workspace_id: 'ws-1',
             capabilities: ['workspace_drive_write', 'workspace_drive_search'],
-            snipara_instance_id: 'snip-jarvis',
           }],
         };
       }
@@ -203,7 +202,6 @@ describe('chatRuntime requested agent resolution', () => {
       agent: expect.objectContaining({
         id: 'agent-1',
         username: 'jarvis',
-        snipara_instance_id: 'snip-jarvis',
       }),
     }));
 
@@ -255,7 +253,6 @@ describe('chatRuntime requested agent resolution', () => {
             max_tokens: 512,
             workspace_id: 'ws-1',
             capabilities: ['workspace_drive_write'],
-            snipara_instance_id: 'snip-jarvis',
           }],
         };
       }

@@ -103,7 +103,7 @@ async function loadAgents(workspaceId = DEFAULT_WORKSPACE) {
   if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
 
   const result = await pool.query(
-    `SELECT id, name, username, email, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id, capabilities, snipara_instance_id
+    `SELECT id, name, username, email, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id, capabilities
      FROM ${SCHEMA}.agents
      WHERE workspace_id = $1 AND COALESCE(status, 'online') IN ('online', 'active')`,
     [ws]

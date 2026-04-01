@@ -33,7 +33,6 @@ describe('taskExecutor execution context', () => {
             max_tokens: 512,
             workspace_id: 'ws-1',
             capabilities: ['requirements_gathering'],
-            snipara_instance_id: 'snip-mike',
           }],
         };
       }
@@ -100,13 +99,12 @@ describe('taskExecutor execution context', () => {
     });
 
     expect(resolveAgentExecutionContext).toHaveBeenCalledWith(
-      expect.objectContaining({ username: 'mike', snipara_instance_id: 'snip-mike' }),
+      expect.objectContaining({ username: 'mike' }),
       'ws-1'
     );
     expect(preparePromptContext).toHaveBeenCalledWith(expect.objectContaining({
       agent: expect.objectContaining({
         username: 'mike',
-        snipara_instance_id: 'snip-mike',
       }),
     }));
     expect(llmChat).toHaveBeenCalledWith(
