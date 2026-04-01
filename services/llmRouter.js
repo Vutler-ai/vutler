@@ -39,17 +39,110 @@ function getToolCallId(toolCall = {}) {
   return toolCall.call_id || toolCall.id || null;
 }
 
-function mapResponsesTool(tool) {
-  if (!tool || tool.type !== 'function') return tool;
-  if (!tool.function) return tool;
+function getDefaultToolParameters() {
+  return {
+    type: 'object',
+    properties: {},
+    required: [],
+  };
+}
+
+function normalizeFunctionToolDefinition(tool) {
+  if (!tool || typeof tool !== 'object') return null;
+
+  if (tool.type === 'function' && tool.function?.name) {
+    return {
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: tool.function.parameters || getDefaultToolParameters(),
+    };
+  }
+
+  if (tool.type === 'function' && tool.name) {
+    return {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters || tool.input_schema || getDefaultToolParameters(),
+    };
+  }
+
+  if (tool.name) {
+    return {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters || tool.input_schema || getDefaultToolParameters(),
+    };
+  }
+
+  return null;
+}
+
+function mapOpenAITool(tool) {
+  const normalized = normalizeFunctionToolDefinition(tool);
+  if (!normalized) return null;
 
   return {
     type: 'function',
-    name: tool.function.name,
-    description: tool.function.description,
-    parameters: tool.function.parameters,
+    function: {
+      name: normalized.name,
+      description: normalized.description,
+      parameters: normalized.parameters,
+    },
+  };
+}
+
+function mapResponsesTool(tool) {
+  const normalized = normalizeFunctionToolDefinition(tool);
+  if (!normalized) return null;
+
+  return {
+    type: 'function',
+    name: normalized.name,
+    description: normalized.description,
+    parameters: normalized.parameters,
     strict: false,
   };
+}
+
+function mapAnthropicTool(tool) {
+  if (!tool || typeof tool !== 'object') return null;
+  if (!tool.type && tool.name && tool.input_schema) return tool;
+
+  const normalized = normalizeFunctionToolDefinition(tool);
+  if (!normalized) return null;
+
+  return {
+    name: normalized.name,
+    description: normalized.description,
+    input_schema: normalized.parameters,
+  };
+}
+
+function prepareToolsForProvider(provider, tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return null;
+
+  const mapper = provider === 'anthropic'
+    ? mapAnthropicTool
+    : provider === 'codex'
+      ? mapResponsesTool
+      : mapOpenAITool;
+
+  const preparedTools = tools
+    .map((tool, index) => {
+      const mapped = mapper(tool);
+      if (!mapped) {
+        console.warn(
+          `[LLM Router] Dropping invalid tool for provider ${provider} at index ${index}: ${JSON.stringify({
+            type: tool?.type || null,
+            name: tool?.name || tool?.function?.name || null,
+          })}`
+        );
+      }
+      return mapped;
+    })
+    .filter(Boolean);
+
+  return preparedTools.length > 0 ? preparedTools : null;
 }
 
 function mapResponsesInputItem(message) {
@@ -621,7 +714,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
   const baseURL = options.baseURL || cfg.baseURL;
   const { hostname, pathPrefix } = parseUrl(baseURL);
   const path = `${pathPrefix}${cfg.path}`;
-  const tools = options.tools || null;
+  const tools = prepareToolsForProvider(provider, options.tools || null);
 
   if (cfg.format === 'anthropic') {
     const sysMsg = systemPrompt || messages.find(m => m.role === 'system')?.content || '';
@@ -665,9 +758,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       store: false,
       stream: true,
     };
-    if (tools && tools.length > 0) {
-      body.tools = tools.map((tool) => mapResponsesTool(tool));
-    }
+    if (tools && tools.length > 0) body.tools = tools;
 
     return {
       hostname,
