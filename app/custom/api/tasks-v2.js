@@ -17,6 +17,13 @@ function wsId(req) {
   return req.workspaceId || DEFAULT_WORKSPACE;
 }
 
+function resolveSwarmCoordinator(req, capability = null) {
+  const candidate = req.app.locals.swarmCoordinator;
+  if (!candidate) return getSwarmCoordinator();
+  if (!capability || typeof candidate[capability] === 'function') return candidate;
+  return getSwarmCoordinator();
+}
+
 function parseTaskMetadata(task) {
   if (!task?.metadata) return {};
   if (typeof task.metadata === 'object') return task.metadata;
@@ -31,6 +38,11 @@ function normalizeHtaskLevel(level, fallback = 'N3_TASK') {
   const value = String(level || fallback).toUpperCase();
   if (value === 'N1_FEATURE' || value === 'N2_WORKSTREAM' || value === 'N3_TASK') return value;
   return fallback;
+}
+
+function normalizeWorkstreamType(value) {
+  if (!value) return undefined;
+  return String(value).toUpperCase();
 }
 
 async function ensureTaskColumns() {
@@ -211,7 +223,7 @@ async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoord
     description: body.description || '',
     owner,
     parentId: remoteParentId,
-    workstreamType: level === 'N2_WORKSTREAM' ? (body.workstream_type || 'GENERAL') : undefined,
+    workstreamType: level === 'N2_WORKSTREAM' ? normalizeWorkstreamType(body.workstream_type) : undefined,
   }, workspaceId);
 
   const sniparaTaskId = created?.task_id || created?.id || created?.task?.id;
@@ -252,7 +264,7 @@ async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator 
     title: body.title,
     description: body.description || '',
     owner,
-    workstreamType: level === 'N2_WORKSTREAM' ? (body.workstream_type || 'GENERAL') : undefined,
+    workstreamType: level === 'N2_WORKSTREAM' ? normalizeWorkstreamType(body.workstream_type) : undefined,
   }, workspaceId);
 
   const sniparaTaskId = created?.task_id || created?.id || created?.task?.id;
@@ -333,10 +345,10 @@ router.post('/tasks-v2', authenticateAgent, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Missing required field: title' });
     }
 
-    const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
     const shouldUseHierarchy = req.body?.hierarchical === true
       || req.body?.execution_mode === 'hierarchical_htask'
       || req.body?.workflow_mode === 'FULL';
+    const swarmCoordinator = resolveSwarmCoordinator(req, shouldUseHierarchy ? 'createHtask' : 'createTask');
 
     if (shouldUseHierarchy) {
       const created = await createHierarchicalRootTask({
@@ -383,11 +395,11 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
     if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
 
     const updates = req.body || {};
-    const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
     const assignee = updates.assignee || updates.assigned_agent || task.assignee || task.assigned_agent || req.agent.id;
 
     const meta = parseTaskMetadata(task);
     const isHtask = meta.snipara_task_kind === 'htask';
+    const swarmCoordinator = resolveSwarmCoordinator(req, isHtask ? 'completeHtask' : 'claimTask');
 
     if ((updates.status === 'in_progress' || updates.status === 'claimed') && task.snipara_task_id && !isHtask) {
       await swarmCoordinator.claimTask(task.snipara_task_id, assignee, workspaceId);
@@ -487,12 +499,12 @@ router.post('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
     const { title, description, assignee, priority, status } = req.body;
     if (!title) return res.status(400).json({ success: false, error: 'Missing required field: title' });
 
-    const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
     const parentMeta = parseTaskMetadata(parent);
     const shouldUseHierarchy = req.body?.hierarchical === true
       || parentMeta.snipara_task_kind === 'htask'
       || parentMeta.workflow_mode === 'FULL'
       || Boolean(parentMeta.snipara_hierarchy_root_id);
+    const swarmCoordinator = resolveSwarmCoordinator(req, shouldUseHierarchy ? 'createHtask' : 'createTask');
 
     if (shouldUseHierarchy) {
       const created = await createHierarchicalSubtask({
@@ -540,7 +552,7 @@ router.delete('/tasks-v2/:id', authenticateAgent, async (req, res) => {
 
 router.post('/tasks-v2/sync', authenticateAgent, async (req, res) => {
   try {
-    const swarmCoordinator = req.app.locals.swarmCoordinator || getSwarmCoordinator();
+    const swarmCoordinator = resolveSwarmCoordinator(req, 'syncFromSnipara');
     const result = await swarmCoordinator.syncFromSnipara(wsId(req));
     res.json({ success: true, data: result });
   } catch (error) {
