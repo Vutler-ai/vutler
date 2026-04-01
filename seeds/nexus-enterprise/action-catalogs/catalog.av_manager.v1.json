@@ -39,6 +39,14 @@
         "allowed_request_sources": ["event", "chat", "schedule"]
       },
       {
+        "action_key": "provision_room_event_subscription",
+        "category": "monitoring",
+        "tool_class": "workspace_tool",
+        "risk_level": "medium",
+        "default_mode": "approval_required",
+        "allowed_request_sources": ["chat", "schedule"]
+      },
+      {
         "action_key": "send_daily_report",
         "category": "reporting",
         "tool_class": "document_tool",

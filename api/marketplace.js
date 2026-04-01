@@ -36,6 +36,9 @@ function buildTemplateTags(tools, permissions) {
   if (permissions.browser_operator) tags.add("Browser Operator");
   if (permissions.browser_operator_template) tags.add("Specialized Template");
   if (permissions.requires_agent_mailbox) tags.add("Agent Mailbox");
+  if (permissions.launch_surface === '/nexus') tags.add("Nexus Enterprise");
+  if (permissions.launch_surface) tags.add("Dedicated Surface");
+  if (permissions.tooling_status === 'beta') tags.add("Beta");
 
   return Array.from(tags);
 }
@@ -73,10 +76,62 @@ function mapMarketplaceTemplate(row) {
   };
 }
 
+async function dedupeWorkspaceTemplatesByName(workspaceId, names) {
+  for (const name of names) {
+    const result = await pool.query(
+      `SELECT id, install_count, review_count, avg_rating, permissions
+         FROM ${SCHEMA}.marketplace_templates
+        WHERE workspace_id = $1 AND name = $2
+        ORDER BY id DESC`,
+      [workspaceId, name]
+    );
+
+    if (result.rows.length <= 1) continue;
+
+    const preferred =
+      result.rows.find((row) => parseJsonValue(row.permissions, {})?.launch_surface)
+      || result.rows[0];
+
+    const duplicateIds = result.rows
+      .filter((row) => row.id !== preferred.id)
+      .map((row) => row.id);
+
+    const totalInstallCount = result.rows.reduce((sum, row) => sum + Number(row.install_count || 0), 0);
+    const totalReviewCount = result.rows.reduce((sum, row) => sum + Number(row.review_count || 0), 0);
+    const weightedRatingTotal = result.rows.reduce(
+      (sum, row) => sum + (Number(row.avg_rating || 0) * Number(row.review_count || 0)),
+      0
+    );
+    const avgRating = totalReviewCount > 0
+      ? Number((weightedRatingTotal / totalReviewCount).toFixed(2))
+      : Number(preferred.avg_rating || 0);
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.marketplace_templates
+          SET install_count = $2,
+              review_count = $3,
+              avg_rating = $4,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [preferred.id, totalInstallCount, totalReviewCount, avgRating]
+    );
+
+    await pool.query(
+      `DELETE FROM ${SCHEMA}.marketplace_templates
+        WHERE id = ANY($1::int[])`,
+      [duplicateIds]
+    );
+  }
+}
+
 async function ensureMarketplaceTemplate(template) {
+  const workspaceId = template.workspace_id || 1;
   const existing = await pool.query(
-    `SELECT id FROM ${SCHEMA}.marketplace_templates WHERE name = $1 LIMIT 1`,
-    [template.name]
+    `SELECT id
+       FROM ${SCHEMA}.marketplace_templates
+      WHERE workspace_id = $1 AND name = $2
+      LIMIT 1`,
+    [workspaceId, template.name]
   );
 
   if (existing.rows.length > 0) {
@@ -116,7 +171,7 @@ async function ensureMarketplaceTemplate(template) {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, true)
      RETURNING id`,
     [
-      template.workspace_id || 1,
+      workspaceId,
       template.agent_id || 0,
       template.name,
       template.description,
@@ -210,26 +265,144 @@ async function ensureMarketplaceTemplate(template) {
       console.log("[MARKETPLACE] Seed templates inserted");
     }
 
-    await ensureMarketplaceTemplate({
-      workspace_id: 1,
-      agent_id: 0,
-      name: 'Synthetic User QA',
-      description: 'Browser-based testing agent with cloud browser runtime, agent mailbox for magic-link and email-code flows, and evidence-packed reports.',
-      category: 'technical',
-      pricing: 'free',
-      price: 0,
-      model: 'claude-sonnet-4-20250514',
-      system_prompt: 'You are Synthetic User QA, a browser testing agent. Run bounded browser flows, simulate users safely, use the agent mailbox for magic-link or email-code authentication, and produce evidence-rich reports with screenshots, logs, and findings.',
-      tools: ['browser_operator', 'agent_mailbox', 'reporting', 'synthetic_user_testing'],
-      permissions: {
-        browser_operator: true,
-        browser_operator_template: 'synthetic_user_qa',
-        requires_agent_mailbox: true,
-        launch_surface: '/browser-operator',
-        temperature: 0.2,
+    const specializedTemplates = [
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'Synthetic User QA',
+        description: 'Browser-based testing agent with cloud browser runtime, agent mailbox for magic-link and email-code flows, and evidence-packed reports.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are Synthetic User QA, a browser testing agent. Run bounded browser flows, simulate users safely, use the agent mailbox for magic-link or email-code authentication, and produce evidence-rich reports with screenshots, logs, and findings.',
+        tools: ['browser_operator', 'agent_mailbox', 'reporting', 'synthetic_user_testing'],
+        permissions: {
+          browser_operator: true,
+          browser_operator_template: 'synthetic_user_qa',
+          requires_agent_mailbox: true,
+          launch_surface: '/browser-operator',
+          launch_profile_key: 'synthetic_user_qa',
+          launch_label: 'Open Browser Operator',
+          temperature: 0.2,
+        },
+        verified: true,
       },
-      verified: true,
-    });
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'App Reviewer',
+        description: 'Specialized browser review agent for UX checks, friction reports, login-readiness tests, and evidence-packed app reviews.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are App Reviewer, a browser review agent. Inspect product flows, capture UX friction, validate login readiness, and produce structured reports with evidence, screenshots, and findings.',
+        tools: ['browser_operator', 'reporting', 'ui_review', 'synthetic_user_testing'],
+        permissions: {
+          browser_operator: true,
+          browser_operator_template: 'app_reviewer',
+          launch_surface: '/browser-operator',
+          launch_profile_key: 'app_reviewer',
+          launch_label: 'Open Browser Operator',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'AV Manager',
+        description: 'Nexus Enterprise AV operations agent for room monitoring, bounded remediation, ticketing, and event-driven diagnostics.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are AV Manager, an enterprise AV operations agent. Monitor AV rooms, handle bounded diagnostics and remediation, coordinate ticketing, and generate client-facing reports under policy control.',
+        tools: ['event_ingestion', 'ticketing', 'device_diagnostics', 'local_api_bridge', 'reporting'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'av_manager',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'IT Helpdesk',
+        description: 'Nexus Enterprise IT support agent for bounded triage, ticketing, local diagnostics, and governed helper delegation.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are IT Helpdesk, an enterprise support agent. Handle bounded IT triage, diagnostics, reporting, and ticketing under client-defined governance.',
+        tools: ['ticketing', 'reporting', 'local_api_bridge', 'event_ingestion', 'helper_delegation'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'it_helpdesk',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'Bid Manager',
+        description: 'Nexus Enterprise bid coordination agent for proposal drafting, workspace knowledge retrieval, and governed email dispatch.',
+        category: 'operations',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are Bid Manager, an enterprise proposal agent. Build draft responses, gather material from workspace knowledge, coordinate proposal inputs, and help assemble compliant bid packages.',
+        tools: ['document_generation', 'workspace_knowledge_access', 'email_dispatch', 'reporting'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'bid_manager',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'Report Writer',
+        description: 'Nexus Enterprise reporting agent for structured reports, workspace-backed drafts, and governed document generation.',
+        category: 'operations',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are Report Writer, an enterprise reporting agent. Draft structured reports from workspace inputs, operational signals, and reusable templates while staying inside governance and approval rules.',
+        tools: ['document_generation', 'workspace_knowledge_access', 'email_dispatch', 'reporting'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'report_writer',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+    ];
+
+    for (const template of specializedTemplates) {
+      await ensureMarketplaceTemplate(template);
+    }
+    await dedupeWorkspaceTemplatesByName(1, specializedTemplates.map((template) => template.name));
   } catch(e) { console.warn("[MARKETPLACE] Init:", e.message); }
 })();
 

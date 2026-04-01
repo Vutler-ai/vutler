@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { getTemplateLaunchHref, getTemplateLaunchLabel } from '@/lib/template-launch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -304,17 +305,9 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
   }, [templates, search, activeCategory]);
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
-    const launchSurface = typeof template.permissions?.launch_surface === 'string'
-      ? template.permissions.launch_surface
-      : null;
-    const isBrowserOperatorTemplate =
-      launchSurface === '/browser-operator' ||
-      template.permissions?.browser_operator === true ||
-      template.name === 'Synthetic User QA' ||
-      template.description.toLowerCase().includes('browser-based testing agent');
-
-    if (isBrowserOperatorTemplate) {
-      router.push(launchSurface || '/browser-operator');
+    const launchHref = getTemplateLaunchHref(template);
+    if (launchHref) {
+      router.push(launchHref);
       return;
     }
 
@@ -470,9 +463,7 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
                         Creating...
                       </span>
                     ) : (
-                      template.permissions?.browser_operator === true || template.name === 'Synthetic User QA'
-                        ? 'Open Browser Operator'
-                        : 'Use Template'
+                      getTemplateLaunchLabel(template) || 'Use Template'
                     )}
                   </Button>
                 </div>

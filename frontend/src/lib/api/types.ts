@@ -668,8 +668,33 @@ export interface DeployEnterprisePayload {
   selectedHelperProfiles?: string[];
 }
 
+export interface NexusEnterpriseDriveRepo {
+  rootPath: string;
+  clientSlug: string;
+  nodeSlug: string;
+  sharedPaths: {
+    context: string;
+    inventory: string;
+    reports: string;
+    playbooks: string;
+    policies: string;
+    eventSubscriptions: string;
+  };
+  nodePaths: {
+    root: string;
+    imports: string;
+    artifacts: string;
+    logs: string;
+  };
+}
+
 export interface NexusTokenResponse {
   token: string;
+  payload?: {
+    drive_repo?: NexusEnterpriseDriveRepo;
+    [key: string]: unknown;
+  };
+  message?: string;
 }
 
 // ── Nexus Dispatch Types ─────────────────────────────────────────────────────

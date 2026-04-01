@@ -94,6 +94,213 @@ async function copyObject(workspaceId, fromKey, toKey) {
   await s3.uploadFile(workspaceId, toKey, buffer, contentType, head?.metadata || undefined);
 }
 
+function isLikelyTextMimeType(mimeType = '', key = '') {
+  const normalized = String(mimeType || '').toLowerCase();
+  if (normalized.startsWith('text/')) return true;
+  if (normalized.includes('json') || normalized.includes('xml') || normalized.includes('yaml')) return true;
+  const ext = path.extname(String(key || '')).toLowerCase();
+  return ['.md', '.txt', '.json', '.csv', '.log', '.yaml', '.yml', '.xml'].includes(ext);
+}
+
+function buildSnippet(content, query) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const needle = String(query || '').toLowerCase();
+  const lowered = text.toLowerCase();
+  const index = lowered.indexOf(needle);
+  if (index === -1) return text.slice(0, 220);
+  const start = Math.max(0, index - 80);
+  const end = Math.min(text.length, index + needle.length + 140);
+  return text.slice(start, end);
+}
+
+function scoreSearchCandidate({ key, query, content }) {
+  const q = String(query || '').toLowerCase();
+  const fileName = getBaseName(key).toLowerCase();
+  const filePath = String(key || '').toLowerCase();
+  const body = String(content || '').toLowerCase();
+  let score = 0;
+  if (fileName === q) score += 120;
+  if (fileName.includes(q)) score += 80;
+  if (filePath.includes(q)) score += 40;
+  if (body.includes(q)) score += 20;
+  return score;
+}
+
+function parseCsvLine(line, delimiter) {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"') {
+      if (quoted && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+
+    if (char === delimiter && !quoted) {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current);
+  return cells.map((cell) => String(cell || '').trim());
+}
+
+function parseCsvDocument(buffer, fileName) {
+  const raw = buffer.toString('utf8').replace(/^\uFEFF/, '');
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const delimiter = path.extname(fileName).toLowerCase() === '.tsv' ? '\t' : ',';
+  const headers = lines.length > 0 ? parseCsvLine(lines[0], delimiter) : [];
+  const rows = lines.slice(1).map((line) => {
+    const values = parseCsvLine(line, delimiter);
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header || `column_${index + 1}`] = values[index] ?? '';
+    });
+    return row;
+  });
+
+  return {
+    type: 'csv',
+    tables: [{
+      name: 'Sheet1',
+      headers,
+      rows,
+      rowCount: rows.length,
+    }],
+    metadata: {
+      sheets: 1,
+      totalRows: rows.length,
+    },
+  };
+}
+
+function parseStructuredDocument(buffer, fileName) {
+  const ext = path.extname(fileName).toLowerCase();
+
+  if (ext === '.xlsx' || ext === '.xls') {
+    const XLSX = require('xlsx');
+    const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const tables = workbook.SheetNames.map((name) => {
+      const sheet = workbook.Sheets[name];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+      return { name, headers, rows, rowCount: rows.length };
+    });
+
+    return {
+      type: 'xlsx',
+      tables,
+      metadata: {
+        sheets: tables.length,
+        totalRows: tables.reduce((sum, table) => sum + table.rowCount, 0),
+      },
+    };
+  }
+
+  if (ext === '.csv' || ext === '.tsv') {
+    return parseCsvDocument(buffer, fileName);
+  }
+
+  if (ext === '.json') {
+    const parsed = JSON.parse(buffer.toString('utf8'));
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    const headers = rows.length > 0 && rows[0] && typeof rows[0] === 'object'
+      ? Object.keys(rows[0])
+      : [];
+    return {
+      type: 'json',
+      tables: [{
+        name: 'data',
+        headers,
+        rows,
+        rowCount: rows.length,
+      }],
+      metadata: {
+        sheets: 1,
+        totalRows: rows.length,
+      },
+    };
+  }
+
+  throw new Error(`Structured parsing is not supported for ${ext || 'this file type'}`);
+}
+
+async function searchDriveFallback(workspaceId, { q, pathPrefix, limit, includeContent }) {
+  const cleanPrefix = sanitizeKey(pathPrefix || '');
+  const objects = await s3.listFiles(workspaceId, cleanPrefix);
+  const needle = String(q || '').trim().toLowerCase();
+  const directMatches = [];
+  const textCandidates = [];
+
+  for (const object of objects) {
+    if (!object?.key || object.key.endsWith('/')) continue;
+    const fileName = getBaseName(object.key).toLowerCase();
+    const fullPath = `/${object.key}`;
+    const direct = fileName.includes(needle) || object.key.toLowerCase().includes(needle);
+
+    if (direct) {
+      directMatches.push({
+        id: hashId(object.key),
+        name: getBaseName(object.key),
+        path: fullPath,
+        type: 'file',
+        size: object.size,
+        modified: object.lastModified ? new Date(object.lastModified).toISOString() : undefined,
+        mime_type: guessMimeType(fileName),
+        score: scoreSearchCandidate({ key: object.key, query: needle }),
+      });
+      continue;
+    }
+
+    if (includeContent || textCandidates.length < Math.max(limit * 2, 20)) {
+      textCandidates.push(object);
+    }
+  }
+
+  const contentMatches = [];
+  for (const object of textCandidates) {
+    if (directMatches.length + contentMatches.length >= Math.max(limit * 2, 20)) break;
+    const head = await s3.headFile(workspaceId, object.key).catch(() => null);
+    const mimeType = head?.contentType || guessMimeType(object.key);
+    if (!isLikelyTextMimeType(mimeType, object.key)) continue;
+    const { buffer } = await s3.downloadFile(workspaceId, object.key).catch(() => ({ buffer: null }));
+    if (!buffer) continue;
+    const content = buffer.toString('utf8').slice(0, 250000);
+    if (!content.toLowerCase().includes(needle)) continue;
+
+    contentMatches.push({
+      id: hashId(object.key),
+      name: getBaseName(object.key),
+      path: `/${object.key}`,
+      type: 'file',
+      size: object.size,
+      modified: object.lastModified ? new Date(object.lastModified).toISOString() : undefined,
+      mime_type: mimeType,
+      score: scoreSearchCandidate({ key: object.key, query: needle, content }),
+      snippet: buildSnippet(content, needle),
+      content: includeContent ? content : undefined,
+    });
+  }
+
+  return [...directMatches, ...contentMatches]
+    .sort((left, right) => right.score - left.score || String(left.path).localeCompare(String(right.path)))
+    .slice(0, limit);
+}
+
 // ── GET /files — list files ──────────────────────────────────────────────────
 
 router.get('/files', async (req, res) => {
@@ -353,7 +560,10 @@ router.get('/search', async (req, res) => {
     const includeContent = String(req.query.includeContent || 'false').toLowerCase() === 'true';
     const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50));
 
-    const results = await driveIndex.search(req, { q, pathPrefix: `/${pathPrefix}`, limit, includeContent });
+    let results = await driveIndex.search(req, { q, pathPrefix: `/${pathPrefix}`, limit, includeContent });
+    if (!Array.isArray(results) || results.length === 0) {
+      results = await searchDriveFallback(req.workspaceId, { q, pathPrefix, limit, includeContent });
+    }
 
     return res.json({
       success: true,
@@ -417,6 +627,30 @@ router.get('/preview/:id', async (req, res) => {
     });
   } catch (err) {
     return res.status(404).json({ success: false, error: 'File not found' });
+  }
+});
+
+// ── GET /parsed/:id — parse structured spreadsheet/text content ──────────────
+
+router.get('/parsed/:id', async (req, res) => {
+  try {
+    const prefix = sanitizeKey(req.query.path || '');
+    const objects = await s3.listFiles(req.workspaceId, prefix);
+    const match = objects.find((obj) => hashId(obj.key) === req.params.id);
+    if (!match) return res.status(404).json({ success: false, error: 'File not found' });
+
+    const { buffer } = await s3.downloadFile(req.workspaceId, match.key);
+    const parsed = parseStructuredDocument(buffer, match.key);
+
+    return res.json({
+      success: true,
+      name: getBaseName(match.key),
+      path: `/${match.key}`,
+      parsed,
+    });
+  } catch (err) {
+    const status = /not supported|invalid|unexpected token/i.test(err.message) ? 400 : 404;
+    return res.status(status).json({ success: false, error: err.message || 'Failed to parse file' });
   }
 });
 

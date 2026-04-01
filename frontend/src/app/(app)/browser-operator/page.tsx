@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import PageHeader from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +49,7 @@ function statusClass(status: string) {
 }
 
 export default function BrowserOperatorPage() {
+  const searchParams = useSearchParams();
   const [profiles, setProfiles] = useState<BrowserOperatorProfile[]>([]);
   const [flows, setFlows] = useState<BrowserOperatorFlow[]>([]);
   const [runs, setRuns] = useState<BrowserOperatorRun[]>([]);
@@ -67,6 +69,8 @@ export default function BrowserOperatorPage() {
   const [sessionKey, setSessionKey] = useState('');
   const [agentEmail, setAgentEmail] = useState('');
   const [notes, setNotes] = useState('');
+  const preselectedProfileKey = searchParams.get('profile') || searchParams.get('profileKey') || '';
+  const prefilledTargetUrl = searchParams.get('targetUrl') || '';
 
   async function load() {
     setLoading(true);
@@ -81,7 +85,9 @@ export default function BrowserOperatorPage() {
       setFlows(nextFlows);
       setRuns(nextRuns);
 
-      if (!profileKey && nextProfiles[0]) {
+      if (preselectedProfileKey && nextProfiles.some((profile) => profile.key === preselectedProfileKey)) {
+        setProfileKey(preselectedProfileKey);
+      } else if (!profileKey && nextProfiles[0]) {
         setProfileKey(nextProfiles[0].key);
       }
     } catch (err) {
@@ -93,7 +99,13 @@ export default function BrowserOperatorPage() {
 
   useEffect(() => {
     load();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [preselectedProfileKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (prefilledTargetUrl) {
+      setTargetUrl(prefilledTargetUrl);
+    }
+  }, [prefilledTargetUrl]);
 
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.key === profileKey) || null,

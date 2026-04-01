@@ -10,6 +10,10 @@ const {
   getHelperRules,
 } = require('../services/nexusEnterpriseRegistry');
 const { validateProfileSelection } = require('../services/nexusEnterpriseProvisioning');
+const {
+  createEventSubscription,
+  listEventSubscriptions,
+} = require('../services/nexusEnterpriseEventSubscriptions');
 
 const router = express.Router();
 
@@ -124,6 +128,59 @@ router.post('/agents/validate-profile-selection', async (req, res) => {
     res.status(status).json({
       success: false,
       error: error?.message || 'Failed to validate profile selection',
+    });
+  }
+});
+
+router.get('/event-subscriptions', async (req, res) => {
+  try {
+    if (!req.workspaceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const subscriptions = await listEventSubscriptions(req.workspaceId, {
+      provider: req.query.provider,
+      status: req.query.status,
+    });
+    res.json({ success: true, data: { subscriptions } });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to list event subscriptions',
+    });
+  }
+});
+
+router.post('/event-subscriptions', async (req, res) => {
+  try {
+    if (!req.workspaceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const payload = req.body || {};
+    if (!payload.provider) {
+      return res.status(400).json({ success: false, error: 'provider is required' });
+    }
+
+    const subscription = await createEventSubscription({
+      workspaceId: req.workspaceId,
+      provider: payload.provider,
+      profileKey: payload.profileKey,
+      agentId: payload.agentId,
+      subscriptionType: payload.subscriptionType,
+      sourceResource: payload.sourceResource,
+      roomName: payload.roomName,
+      events: payload.events,
+      status: payload.status,
+      deliveryMode: payload.deliveryMode,
+      config: payload.config,
+    });
+
+    res.json({ success: true, data: { subscription } });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to create event subscription',
     });
   }
 });
