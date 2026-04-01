@@ -14,6 +14,10 @@ const {
   splitCapabilities,
 } = require('../../../services/agentConfigPolicy');
 const { resolveWorkspaceDriveRoot } = require('../../../services/drivePlacementPolicy');
+const {
+  buildAgentDrivePlacementInstruction,
+  resolveAgentDriveRoot,
+} = require('../../../services/agentDriveService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -97,9 +101,13 @@ function normalizeRemoteStatus(status, eventType = '') {
   return 'pending';
 }
 
-function buildWorkspacePlacementInstruction(driveRoot) {
-  const normalizedRoot = String(driveRoot || '/projects/Vutler').trim() || '/projects/Vutler';
-  return buildInternalPlacementInstruction().replaceAll('/projects/Vutler', normalizedRoot);
+function buildWorkspacePlacementInstruction(driveRoot, agentDriveRoot = null) {
+  const normalizedRoot = String(agentDriveRoot || driveRoot || '/projects/Vutler').trim() || '/projects/Vutler';
+  let instruction = buildInternalPlacementInstruction().replaceAll('/projects/Vutler', normalizedRoot);
+  if (agentDriveRoot) {
+    instruction += ` ${buildAgentDrivePlacementInstruction(agentDriveRoot)}`;
+  }
+  return instruction;
 }
 
 async function loadAgentDirectory(workspaceId) {
@@ -232,19 +240,23 @@ class SwarmCoordinator {
     return Boolean(swarmId && config?.configured && config?.apiKey && config?.apiUrl);
   }
 
-  async getWorkspaceToolPolicy(workspaceId = DEFAULT_WORKSPACE) {
+  async getWorkspaceToolPolicy(workspaceId = DEFAULT_WORKSPACE, agent = null) {
     const ws = normalizeWorkspaceId(workspaceId);
     const driveRoot = await resolveWorkspaceDriveRoot(ws).catch(() => '/projects/Vutler');
+    const agentDriveRoot = agent?.id
+      ? await resolveAgentDriveRoot(ws, agent).catch(() => null)
+      : null;
     return {
       workspaceId: ws,
       driveRoot,
-      placementInstruction: buildWorkspacePlacementInstruction(driveRoot),
+      agentDriveRoot,
+      placementInstruction: buildWorkspacePlacementInstruction(driveRoot, agentDriveRoot),
       defaultCapabilities: [...ALWAYS_ON_TOOL_SKILL_KEYS],
     };
   }
 
   async resolveAgentExecutionContext(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
-    const policy = await this.getWorkspaceToolPolicy(workspaceId || agent.workspace_id);
+    const policy = await this.getWorkspaceToolPolicy(workspaceId || agent.workspace_id, agent);
     const capabilities = normalizeCapabilities(agent.capabilities || policy.defaultCapabilities);
     return {
       ...agent,

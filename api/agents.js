@@ -3,6 +3,7 @@
  * Migrated from MongoDB/Rocket.Chat
  */
 const express = require("express");
+const crypto = require('crypto');
 const pool = require("../lib/vaultbrix");
 const { normalizeStoredAvatar, buildSpriteAvatar } = require("../lib/avatarPath");
 const {
@@ -16,6 +17,10 @@ const {
   listAgentIntegrationProviders,
   replaceAgentIntegrationProviders,
 } = require("../services/agentIntegrationService");
+const {
+  ensureAgentDriveProvisioned,
+  resolveAgentDriveRoot,
+} = require('../services/agentDriveService');
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
@@ -108,9 +113,13 @@ async function findAgentByRef(agentRef, workspaceId, columns = '*') {
 // GET /api/v1/agents — list all agents
 router.get("/", async (req, res) => {
   try {
+    const workspaceId = getWorkspaceId(req);
+    const driveRootBase = await resolveAgentDriveRoot(workspaceId, { id: 'agent-root-placeholder' })
+      .then((value) => value.replace(/\/agent-root-placeholder$/, ''))
+      .catch(() => null);
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE workspace_id = $1 ORDER BY name`,
-      [getWorkspaceId(req)]
+      [workspaceId]
     );
     const agents = result.rows.map(a => {
       const capabilities = normalizeCapabilities(a.capabilities || []);
@@ -134,6 +143,7 @@ router.get("/", async (req, res) => {
       capabilities,
       badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
       systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
+      drive_path: driveRootBase ? `${driveRootBase}/${a.id}` : null,
       createdAt: a.created_at,
       updatedAt: a.updated_at
     });
@@ -149,9 +159,10 @@ router.get("/", async (req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const workspaceId = getWorkspaceId(req);
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE (id::text = $1 OR username = $1) AND workspace_id = $2 LIMIT 1`,
-      [id, getWorkspaceId(req)]
+      [id, workspaceId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: "Agent not found", id });
@@ -159,6 +170,7 @@ router.get("/:id", async (req, res) => {
     const a = result.rows[0];
     const capabilities = normalizeCapabilities(a.capabilities || []);
     const { skills, tools } = splitCapabilities(capabilities);
+    const drivePath = await resolveAgentDriveRoot(workspaceId, a).catch(() => null);
     res.json({
       success: true,
       agent: {
@@ -172,6 +184,7 @@ router.get("/:id", async (req, res) => {
         capabilities,
         skills,
         tools,
+        drive_path: drivePath,
         badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
         systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
         createdAt: a.created_at, updatedAt: a.updated_at
@@ -185,16 +198,21 @@ router.get("/:id", async (req, res) => {
 
 // POST /api/v1/agents — create agent
 router.post("/", async (req, res) => {
+  let client = null;
   try {
     const { name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, template_id } = req.body;
     if (!name || !username) return res.status(400).json({ success: false, error: "name and username required" });
 
     const ws = getWorkspaceId(req);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const agentId = crypto.randomUUID();
 
-    const wsPlan = await pool.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
+    const wsPlan = await client.query(`SELECT plan FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`, [ws]);
     const plan = String(wsPlan.rows[0]?.plan || 'free').toLowerCase();
     const typeStr = Array.isArray(type) ? type.join(',') : String(type || 'bot');
     if (plan === 'free' && typeStr.toLowerCase() !== 'coordinator') {
+      await client.query('ROLLBACK');
       return res.status(403).json({ success: false, error: 'Free plan allows only the Coordinator. Upgrade to Pro to add specialized agents.' });
     }
 
@@ -202,11 +220,14 @@ router.post("/", async (req, res) => {
     let finalSystemPrompt = system_prompt || null;
 
     if (template_id) {
-      const tmpl = await pool.query(
+      const tmpl = await client.query(
         `SELECT model, system_prompt FROM ${SCHEMA}.marketplace_templates WHERE id = $1`,
         [template_id]
       );
-      if (tmpl.rows.length === 0) return res.status(404).json({ success: false, error: "Template not found" });
+      if (tmpl.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ success: false, error: "Template not found" });
+      }
       finalModel = finalModel || tmpl.rows[0].model || null;
       finalSystemPrompt = tmpl.rows[0].system_prompt || finalSystemPrompt || MINIMAL_PROMPT(name);
     } else if (!finalSystemPrompt) {
@@ -217,6 +238,7 @@ router.post("/", async (req, res) => {
     const capabilities = normalizeCapabilities(req.body.capabilities || []);
     const skillCount = countCountedSkills(capabilities);
     if (skillCount > MAX_SKILLS) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ success: false, error: `Maximum ${MAX_SKILLS} skills allowed (got ${skillCount})` });
     }
 
@@ -232,10 +254,10 @@ router.post("/", async (req, res) => {
 
     const normalizedAvatar = normalizeStoredAvatar(req.body.avatar, { username });
 
-    const result = await pool.query(
-      `INSERT INTO ${SCHEMA}.agents (name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-      [name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
+    const result = await client.query(
+      `INSERT INTO ${SCHEMA}.agents (id, name, username, email, type, role, mbti, model, provider, description, system_prompt, temperature, max_tokens, avatar, workspace_id, capabilities)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [agentId, name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
        normalizedAvatar || buildSpriteAvatar(username), ws, capabilities]
     );
@@ -243,8 +265,7 @@ router.post("/", async (req, res) => {
     // Register email route for inbound routing
     if (finalEmail) {
       try {
-        const agentId = result.rows[0].id;
-        await pool.query(
+        await client.query(
           `INSERT INTO ${SCHEMA}.email_routes (workspace_id, email_address, agent_id, auto_reply, approval_required)
            VALUES ($1, $2, $3, true, true)
            ON CONFLICT (email_address) DO NOTHING`,
@@ -255,10 +276,35 @@ router.post("/", async (req, res) => {
       }
     }
 
-    res.json({ success: true, agent: result.rows[0] });
+    await ensureAgentDriveProvisioned(client, ws, {
+      id: agentId,
+      name,
+      username,
+    }, {
+      uploadedBy: req.userId || null,
+    });
+
+    await client.query('COMMIT');
+
+    const createdAgent = result.rows[0];
+    const drivePath = await resolveAgentDriveRoot(ws, createdAgent).catch(() => null);
+    res.json({
+      success: true,
+      agent: {
+        ...createdAgent,
+        drive_path: drivePath,
+      },
+    });
   } catch (err) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {}
+    }
     console.error("[AGENTS] Create error:", err.message);
     res.status(500).json({ success: false, error: err.message });
+  } finally {
+    client?.release?.();
   }
 });
 

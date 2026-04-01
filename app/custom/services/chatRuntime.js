@@ -183,7 +183,7 @@ function appendPlacementInstruction(prompt, instruction) {
 async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEFAULT_WORKSPACE, limit = 10) {
   const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
-    `SELECT id, sender_id, sender_name, content
+    `SELECT id, sender_id, sender_name, content, attachments
      FROM ${SCHEMA}.chat_messages
      WHERE channel_id = $1 AND workspace_id = $2
      ORDER BY created_at DESC
@@ -195,12 +195,26 @@ async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEF
   const agentUsernames = new Set(channelAgents.map((agent) => String(agent.username || '').toLowerCase()).filter(Boolean));
 
   return result.rows.reverse().map((message) => {
+    let attachments = [];
+    if (Array.isArray(message.attachments)) {
+      attachments = message.attachments;
+    } else if (typeof message.attachments === 'string') {
+      try {
+        attachments = JSON.parse(message.attachments);
+      } catch (_) {
+        attachments = [];
+      }
+    }
+    const attachmentBlock = attachments.length > 0
+      ? `\nAttachments:\n${attachments.map((file) => `- ${file.filename || file.name || 'file'} (${file.mime || file.mimeType || 'application/octet-stream'}) at ${file.path || file.url || 'unknown path'}`).join('\n')}`
+      : '';
     const senderId = String(message.sender_id || '');
     const senderIdLower = senderId.toLowerCase();
     const isAssistant = agentIds.has(senderId) || agentUsernames.has(senderIdLower);
+    const baseContent = `${String(message.content || '')}${attachmentBlock}`.trim();
     return {
       role: isAssistant ? 'assistant' : 'user',
-      content: isAssistant ? String(message.content || '') : `${message.sender_name || 'User'}: ${message.content || ''}`
+      content: isAssistant ? baseContent : `${message.sender_name || 'User'}: ${baseContent}`
     };
   });
 }
@@ -491,6 +505,15 @@ async function handleMessage(message) {
     executionAgent.workspaceToolPolicy?.placementInstruction
   );
   const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
+  const effectiveHistory = !message.id
+    ? [
+      ...history,
+      {
+        role: 'user',
+        content: `${message.sender_name || 'User'}: ${String(message.content || '').trim()}`,
+      },
+    ]
+    : history;
 
   const response = await llmChat(
     {
@@ -503,7 +526,7 @@ async function handleMessage(message) {
       max_tokens: executionAgent.max_tokens || 4096,
       workspace_id: workspaceId || executionAgent.workspace_id
     },
-    history,
+    effectiveHistory,
     pool,
     {
       chatActionContext: {

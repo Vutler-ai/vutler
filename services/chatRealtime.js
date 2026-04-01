@@ -4,6 +4,14 @@ const { publishMessage } = require('../api/ws-chat');
 
 function normalizeRealtimeMessage(row) {
   if (!row) return null;
+  let attachments = row.attachments || [];
+  if (typeof attachments === 'string') {
+    try {
+      attachments = JSON.parse(attachments);
+    } catch (_) {
+      attachments = [];
+    }
+  }
   return {
     id: row.id,
     channel_id: row.channel_id,
@@ -13,7 +21,7 @@ function normalizeRealtimeMessage(row) {
     message_type: row.message_type || 'text',
     parent_id: row.parent_id || null,
     client_message_id: row.client_message_id || null,
-    attachments: row.attachments || [],
+    attachments,
     reply_to_message_id: row.reply_to_message_id || null,
     requested_agent_id: row.requested_agent_id || null,
     display_agent_id: row.display_agent_id || null,

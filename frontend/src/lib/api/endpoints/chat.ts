@@ -5,6 +5,7 @@ import type {
   ChannelMember,
   ChatContact,
   Message,
+  Attachment,
   ChatActionRun,
   CreateChannelPayload,
   SendMessagePayload,
@@ -171,7 +172,7 @@ export async function updateChannelPreferences(
 export async function uploadAttachment(
   channelId: string,
   formData: FormData
-): Promise<{ attachments: Array<{ id: string; url: string }> }> {
+): Promise<{ attachments: Attachment[] }> {
   const res = await authFetch(
     `/api/v1/chat/channels/${channelId}/attachments`,
     { method: 'POST', body: formData }

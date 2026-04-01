@@ -182,7 +182,7 @@ function inferFilename({ filename, fileName, name, title, subject, content = '',
 
 async function resolveWorkspaceDriveWritePath(context = {}) {
   const params = context.params || {};
-  const workspaceRoot = await resolveWorkspaceDriveRoot(context.workspaceId);
+  const workspaceRoot = normalizeDriveRoot(context.rootOverride || await resolveWorkspaceDriveRoot(context.workspaceId));
   const explicitPath = String(params.path || params.filePath || params.targetPath || '').trim();
 
   if (explicitPath) {
