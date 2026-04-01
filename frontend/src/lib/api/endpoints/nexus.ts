@@ -32,6 +32,12 @@ export async function getNode(id: string): Promise<NexusNode> {
   return apiFetch<NexusNode>(`/api/v1/nexus/nodes/${id}`);
 }
 
+export async function deleteNode(id: string): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(`/api/v1/nexus/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function deployLocal(
   payload: DeployLocalPayload
 ): Promise<NexusTokenResponse> {
