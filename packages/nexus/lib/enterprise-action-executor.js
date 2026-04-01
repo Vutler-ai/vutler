@@ -483,6 +483,10 @@ class EnterpriseActionExecutor {
 
     const room = await this._resolveAvRoom(args);
     const providerKey = String(args.provider || args.sourceProvider || args.subscriptionProvider || 'generic_http').trim().toLowerCase();
+    const requestedProvisioningMode = String(args.provisioningMode || args.provisioning_mode || '').trim().toLowerCase();
+    const provisioningMode = ['manual', 'assisted', 'automatic'].includes(requestedProvisioningMode)
+      ? requestedProvisioningMode
+      : (providerKey === 'microsoft_graph' ? 'assisted' : providerKey === 'generic_http' ? 'manual' : 'manual');
     const events = normalizeStringArray(args.events || args.eventTypes || args.event_types);
     const sourceResource = args.sourceResource || args.source_resource || room?.sourceResource || room?.roomName || room?.host || null;
     const config = {
@@ -509,6 +513,7 @@ class EnterpriseActionExecutor {
       events: events.length > 0 ? events : ['room.error', 'room.offline', 'room.device_disconnected'],
       status: args.status || 'active',
       deliveryMode: args.deliveryMode || (providerKey === 'microsoft_graph' ? 'hybrid' : 'manual'),
+      provisioningMode,
       config,
     });
 
@@ -529,6 +534,7 @@ class EnterpriseActionExecutor {
         },
       },
       room,
+      provisioningMode,
       registrationHint,
     });
   }

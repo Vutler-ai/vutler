@@ -14,6 +14,9 @@ const {
   createEventSubscription,
   listEventSubscriptions,
 } = require('../services/nexusEnterpriseEventSubscriptions');
+const {
+  provisionEventSubscription,
+} = require('../services/nexusEnterpriseSubscriptionProvisioner');
 
 const router = express.Router();
 
@@ -173,10 +176,13 @@ router.post('/event-subscriptions', async (req, res) => {
       events: payload.events,
       status: payload.status,
       deliveryMode: payload.deliveryMode,
+      provisioningMode: payload.provisioningMode,
       config: payload.config,
     });
 
-    res.json({ success: true, data: { subscription } });
+    const provisioned = await provisionEventSubscription(req.workspaceId, subscription);
+
+    res.json({ success: true, data: { subscription: provisioned } });
   } catch (error) {
     res.status(500).json({
       success: false,

@@ -207,6 +207,9 @@ Stored fields:
 - `events`
 - `status`
 - `delivery_mode`
+- `provisioning_mode`
+- `provisioning_status`
+- `provisioning_error`
 - `callback_path`
 - `verification_secret`
 - `config`
@@ -223,10 +226,12 @@ Implementation:
 Route:
 
 - `POST /api/v1/webhooks/enterprise/:token`
+- `GET /api/v1/webhooks/enterprise/:token`
 
 Behavior:
 
 - retrouve la subscription via `callback_path`
+- repond au `validationToken` en clair pour les providers qui exigent une verification `GET`
 - verifie le secret
 - log l'evenement dans `workspace_integration_logs`
 - marque la subscription comme ayant recu un evenement
@@ -249,6 +254,8 @@ Le resultat contient:
 - le `callbackUrl`
 - le `verificationSecret`
 - un `registrationHint` adapte au provider
+- le `provisioningMode`
+- le `provisioningStatus`
 
 Providers prepares:
 
@@ -262,6 +269,62 @@ Le `registrationHint` contient:
 - l'endpoint cible du provider
 - le payload a soumettre
 - les notes de gouvernance / renouvellement
+
+### 4.4 Provisioning Modes
+
+Le modele runtime supporte maintenant explicitement:
+
+- `manual`
+- `assisted`
+- `automatic`
+
+Current behavior:
+
+- `microsoft_graph`
+  - `manual` ou `assisted` possibles
+  - `automatic` implemente
+- `zoom`
+  - `manual` et `assisted`
+  - si `automatic` est demande, la subscription retombe en `assisted_required`
+- `google`
+  - `manual` et `assisted`
+  - si `automatic` est demande, la subscription retombe en `assisted_required`
+- `generic_http`
+  - `manual`
+
+Provisioning statuses currently used:
+
+- `pending`
+- `manual_required`
+- `assisted_required`
+- `provisioned`
+- `failed`
+
+### 4.5 Microsoft Graph Automatic Provisioning
+
+Le provisioning automatique `Microsoft Graph` est maintenant branche.
+
+Implementation:
+
+- [services/microsoft/graphApi.js](/Users/alopez/Devs/Vutler/services/microsoft/graphApi.js)
+- [services/nexusEnterpriseSubscriptionProvisioner.js](/Users/alopez/Devs/Vutler/services/nexusEnterpriseSubscriptionProvisioner.js)
+
+Behavior:
+
+- cree d'abord la subscription gouvernee cote Vutler
+- tente ensuite un `POST /v1.0/subscriptions` sur Graph
+- persiste:
+  - `external_subscription_id`
+  - `provisioning_status`
+  - `provisioning_error`
+  - `requestPayload`
+  - `response`
+
+Si Graph echoue:
+
+- la subscription Vutler reste creee
+- le statut passe a `failed`
+- l'erreur est conservee pour audit et reprise
 
 ---
 

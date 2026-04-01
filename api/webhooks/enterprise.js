@@ -10,6 +10,26 @@ const {
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
 
+router.get('/:token', async (req, res) => {
+  try {
+    const callbackPath = `/api/v1/webhooks/enterprise/${req.params.token}`;
+    const subscription = await getEventSubscriptionByCallback(callbackPath);
+    if (!subscription) {
+      return res.status(404).send('unknown webhook target');
+    }
+
+    const validationToken = req.query.validationToken;
+    if (typeof validationToken === 'string' && validationToken.length > 0) {
+      res.set('Content-Type', 'text/plain');
+      return res.status(200).send(validationToken);
+    }
+
+    return res.json({ success: true, subscriptionId: subscription.id, provider: subscription.provider });
+  } catch (error) {
+    return res.status(500).send(error.message || 'webhook validation failed');
+  }
+});
+
 async function logWorkspaceEvent(workspaceId, provider, action, payload) {
   await pool.query(
     `INSERT INTO ${SCHEMA}.workspace_integration_logs

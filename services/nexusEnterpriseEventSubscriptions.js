@@ -21,6 +21,28 @@ function normalizeStatus(value) {
   return ['active', 'paused', 'disabled'].includes(value) ? value : 'active';
 }
 
+function normalizeProvider(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'graph' || normalized === 'graphapi' || normalized === 'microsoft365') return 'microsoft_graph';
+  if (normalized === 'zoom_webhook') return 'zoom';
+  if (normalized === 'google_workspace') return 'google';
+  return normalized || 'generic_http';
+}
+
+function normalizeProvisioningMode(value, provider) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['manual', 'assisted', 'automatic'].includes(normalized)) return normalized;
+  if (provider === 'microsoft_graph') return 'assisted';
+  if (provider === 'zoom' || provider === 'google') return 'manual';
+  return 'manual';
+}
+
+function initialProvisioningStatus(mode) {
+  if (mode === 'automatic') return 'pending';
+  if (mode === 'assisted') return 'assisted_required';
+  return 'manual_required';
+}
+
 function mapSubscription(row) {
   if (!row) return null;
   return {
@@ -35,6 +57,9 @@ function mapSubscription(row) {
     events: row.events || [],
     status: row.status,
     deliveryMode: row.delivery_mode,
+    provisioningMode: row.provisioning_mode || 'manual',
+    provisioningStatus: row.provisioning_status || 'manual_required',
+    provisioningError: row.provisioning_error || null,
     callbackPath: row.callback_path,
     callbackUrl: `${getAppBaseUrl()}${row.callback_path}`,
     verificationSecret: row.verification_secret,
@@ -63,6 +88,9 @@ async function ensureEventSubscriptionTables() {
         events JSONB NOT NULL DEFAULT '[]'::jsonb,
         status TEXT NOT NULL DEFAULT 'active',
         delivery_mode TEXT NOT NULL DEFAULT 'manual',
+        provisioning_mode TEXT NOT NULL DEFAULT 'manual',
+        provisioning_status TEXT NOT NULL DEFAULT 'manual_required',
+        provisioning_error TEXT NULL,
         callback_path TEXT NOT NULL,
         verification_secret TEXT NOT NULL,
         config JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -76,6 +104,18 @@ async function ensureEventSubscriptionTables() {
       CREATE INDEX IF NOT EXISTS idx_nexus_ent_event_subscriptions_workspace
       ON ${SCHEMA}.nexus_enterprise_event_subscriptions (workspace_id, provider, status, created_at DESC)
     `);
+    await pool.query(`
+      ALTER TABLE ${SCHEMA}.nexus_enterprise_event_subscriptions
+      ADD COLUMN IF NOT EXISTS provisioning_mode TEXT NOT NULL DEFAULT 'manual'
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE ${SCHEMA}.nexus_enterprise_event_subscriptions
+      ADD COLUMN IF NOT EXISTS provisioning_status TEXT NOT NULL DEFAULT 'manual_required'
+    `).catch(() => {});
+    await pool.query(`
+      ALTER TABLE ${SCHEMA}.nexus_enterprise_event_subscriptions
+      ADD COLUMN IF NOT EXISTS provisioning_error TEXT NULL
+    `).catch(() => {});
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_nexus_ent_event_subscriptions_callback
       ON ${SCHEMA}.nexus_enterprise_event_subscriptions (callback_path)
@@ -93,6 +133,9 @@ async function createEventSubscription(input = {}) {
 
   const callbackPath = `/api/v1/webhooks/enterprise/${randomToken(12)}`;
   const verificationSecret = randomToken(24);
+  const provider = normalizeProvider(input.provider);
+  const provisioningMode = normalizeProvisioningMode(input.provisioningMode, provider);
+  const provisioningStatus = initialProvisioningStatus(provisioningMode);
   const result = await pool.query(
     `INSERT INTO ${SCHEMA}.nexus_enterprise_event_subscriptions (
        workspace_id,
@@ -105,15 +148,17 @@ async function createEventSubscription(input = {}) {
        events,
        status,
        delivery_mode,
-       callback_path,
-       verification_secret,
-       config
+       provisioning_mode,
+       provisioning_status,
+        callback_path,
+        verification_secret,
+        config
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb)
      RETURNING *`,
     [
       input.workspaceId,
-      input.provider,
+      provider,
       input.profileKey || null,
       input.agentId || null,
       input.subscriptionType || 'room_event',
@@ -122,6 +167,8 @@ async function createEventSubscription(input = {}) {
       JSON.stringify(Array.isArray(input.events) ? input.events : []),
       normalizeStatus(input.status),
       input.deliveryMode || 'manual',
+      provisioningMode,
+      provisioningStatus,
       callbackPath,
       verificationSecret,
       JSON.stringify(input.config || {}),
@@ -187,10 +234,35 @@ async function markSubscriptionDelivered(subscriptionId, payload = {}) {
   );
 }
 
+async function updateEventSubscriptionProvisioning(subscriptionId, input = {}) {
+  await ensureEventSubscriptionTables();
+  const result = await pool.query(
+    `UPDATE ${SCHEMA}.nexus_enterprise_event_subscriptions
+        SET provisioning_mode = COALESCE($2, provisioning_mode),
+            provisioning_status = COALESCE($3, provisioning_status),
+            provisioning_error = $4,
+            external_subscription_id = COALESCE($5, external_subscription_id),
+            config = config || $6::jsonb,
+            updated_at = NOW()
+      WHERE id = $1::uuid
+      RETURNING *`,
+    [
+      subscriptionId,
+      input.provisioningMode || null,
+      input.provisioningStatus || null,
+      input.provisioningError || null,
+      input.externalSubscriptionId || null,
+      JSON.stringify(input.configPatch || {}),
+    ]
+  );
+  return mapSubscription(result.rows[0]);
+}
+
 module.exports = {
   ensureEventSubscriptionTables,
   createEventSubscription,
   listEventSubscriptions,
   getEventSubscriptionByCallback,
   markSubscriptionDelivered,
+  updateEventSubscriptionProvisioning,
 };
