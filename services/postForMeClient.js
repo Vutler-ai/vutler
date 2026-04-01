@@ -1,6 +1,9 @@
 'use strict';
 
+const { fetchWithTimeout } = require('./fetchWithTimeout');
+
 const DEFAULT_POSTFORME_API_URL = 'https://api.postforme.dev/v1';
+const DEFAULT_POSTFORME_TIMEOUT_MS = 8000;
 
 function normalizePostForMeBaseUrl(rawUrl) {
   const candidate = String(rawUrl || '').trim();
@@ -25,6 +28,9 @@ function normalizePostForMeBaseUrl(rawUrl) {
 
 const POSTFORME_API_URL = normalizePostForMeBaseUrl(process.env.POSTFORME_API_URL);
 const POSTFORME_API_KEY = process.env.POSTFORME_API_KEY || '';
+const POSTFORME_TIMEOUT_MS = Number.parseInt(process.env.POSTFORME_TIMEOUT_MS || '', 10) > 0
+  ? Number.parseInt(process.env.POSTFORME_TIMEOUT_MS, 10)
+  : DEFAULT_POSTFORME_TIMEOUT_MS;
 
 function toExternalPlatform(platform) {
   const normalized = String(platform || '').trim().toLowerCase();
@@ -40,14 +46,22 @@ function toInternalPlatform(platform) {
 
 async function postForMeFetchJson(path, options = {}) {
   const url = `${POSTFORME_API_URL}${path}`;
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${POSTFORME_API_KEY}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
+  let response;
+  try {
+    response = await fetchWithTimeout(url, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${POSTFORME_API_KEY}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    }, POSTFORME_TIMEOUT_MS);
+  } catch (err) {
+    if (err && (err.code === 'ETIMEDOUT' || err.name === 'AbortError')) {
+      throw new Error(`Post for Me timed out after ${POSTFORME_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  }
 
   const rawText = await response.text();
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
@@ -122,6 +136,7 @@ async function disconnectSocialAccount(accountId) {
 module.exports = {
   POSTFORME_API_URL,
   POSTFORME_API_KEY,
+  POSTFORME_TIMEOUT_MS,
   normalizePostForMeBaseUrl,
   toExternalPlatform,
   toInternalPlatform,
