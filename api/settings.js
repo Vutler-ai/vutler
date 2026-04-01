@@ -13,6 +13,12 @@ try { pool = require('../lib/vaultbrix'); } catch(e) {
 
 const WS_ID = '00000000-0000-0000-0000-000000000001';
 const SCHEMA = 'tenant_vutler';
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  agent_error: true,
+  deployment_offline: true,
+  daily_digest: false,
+  security_alert: true,
+};
 
 async function ensureTables() {
   try {
@@ -97,6 +103,8 @@ async function readSettingsKV(wsId) {
     snipara_project_slug: get('snipara_project_slug', null) || null,
     snipara_client_id: get('snipara_client_id', null) || null,
     snipara_swarm_id: get('snipara_swarm_id', null) || null,
+    notification_email: get('notification_email', null) || null,
+    notification_settings: normalizeNotificationSettings(map['notification_settings']),
     updated_at: get('updated_at', null) || null,
   };
 }
@@ -197,6 +205,83 @@ async function syncDefaultProvider(wsId, providerRef) {
 function maskKey(key) {
   if (!key || key.length < 8) return '••••••••';
   return key.substring(0, 6) + '••••••••' + key.substring(key.length - 4);
+}
+
+function normalizeNotificationSettings(value) {
+  const input = (value && typeof value === 'object' && !Array.isArray(value))
+    ? value
+    : {};
+
+  return {
+    agent_error: input.agent_error !== undefined ? Boolean(input.agent_error) : DEFAULT_NOTIFICATION_SETTINGS.agent_error,
+    deployment_offline: input.deployment_offline !== undefined ? Boolean(input.deployment_offline) : DEFAULT_NOTIFICATION_SETTINGS.deployment_offline,
+    daily_digest: input.daily_digest !== undefined ? Boolean(input.daily_digest) : DEFAULT_NOTIFICATION_SETTINGS.daily_digest,
+    security_alert: input.security_alert !== undefined ? Boolean(input.security_alert) : DEFAULT_NOTIFICATION_SETTINGS.security_alert,
+  };
+}
+
+async function ensureFlatNotificationColumns() {
+  await pool.query(`
+    ALTER TABLE ${SCHEMA}.workspace_settings
+      ADD COLUMN IF NOT EXISTS notification_email TEXT,
+      ADD COLUMN IF NOT EXISTS notification_settings JSONB DEFAULT '{}'::jsonb
+  `).catch(() => {});
+}
+
+async function readWorkspaceNotifications(wsId, fallbackEmail) {
+  const layout = await detectSettingsLayout();
+
+  if (layout === 'kv') {
+    const row = await readSettingsKV(wsId);
+    return {
+      email: row.notification_email || fallbackEmail || '',
+      settings: normalizeNotificationSettings(row.notification_settings),
+    };
+  }
+
+  await ensureFlatNotificationColumns();
+  const result = await pool.query(
+    `SELECT notification_email, notification_settings
+       FROM ${SCHEMA}.workspace_settings
+      WHERE workspace_id = $1
+      LIMIT 1`,
+    [wsId]
+  );
+  const row = result.rows[0] || {};
+  return {
+    email: row.notification_email || fallbackEmail || '',
+    settings: normalizeNotificationSettings(row.notification_settings),
+  };
+}
+
+async function writeWorkspaceNotifications(wsId, email, settings) {
+  const layout = await detectSettingsLayout();
+  const normalizedSettings = normalizeNotificationSettings(settings);
+  const normalizedEmail = typeof email === 'string' ? email.trim() : '';
+
+  if (layout === 'kv') {
+    await writeSettingKV(wsId, 'notification_email', normalizedEmail);
+    await writeSettingKV(wsId, 'notification_settings', normalizedSettings);
+    return;
+  }
+
+  await ensureFlatNotificationColumns();
+  const updated = await pool.query(
+    `UPDATE ${SCHEMA}.workspace_settings
+        SET notification_email = $1,
+            notification_settings = $2::jsonb,
+            updated_at = NOW()
+      WHERE workspace_id = $3`,
+    [normalizedEmail, JSON.stringify(normalizedSettings), wsId]
+  ).catch(() => ({ rowCount: 0 }));
+
+  if (updated.rowCount > 0) return;
+
+  await pool.query(
+    `INSERT INTO ${SCHEMA}.workspace_settings (workspace_id, notification_email, notification_settings)
+     VALUES ($1, $2, $3::jsonb)`,
+    [wsId, normalizedEmail, JSON.stringify(normalizedSettings)]
+  );
 }
 
 // GET /api/v1/settings
@@ -355,6 +440,40 @@ router.put('/', async (req, res) => {
     res.json({ success: true, message: 'Settings saved' });
   } catch (err) {
     console.error('[SETTINGS] PUT error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/settings/notifications
+router.get('/notifications', async (req, res) => {
+  try {
+    if (!req.workspaceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const notifications = await readWorkspaceNotifications(req.workspaceId, req.user?.email || '');
+    res.json({ success: true, ...notifications });
+  } catch (err) {
+    console.error('[SETTINGS] GET notifications error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PUT /api/v1/settings/notifications
+router.put('/notifications', async (req, res) => {
+  try {
+    if (!req.workspaceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    await writeWorkspaceNotifications(
+      req.workspaceId,
+      req.body?.email || req.user?.email || '',
+      req.body?.settings
+    );
+    res.json({ success: true, message: 'Notification settings saved' });
+  } catch (err) {
+    console.error('[SETTINGS] PUT notifications error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -55,8 +55,6 @@ mount('/email/groups', 'email', '../../api/email-groups');
 // ── Tasks (full-path: /tasks-v2, /tasks-v2/:id) ────────────────────────────
 mountRoot('tasks', '../../app/custom/api/tasks-v2', 'tasks-v2');
 mount('/task-router', 'tasks', '../../api/tasks-router');
-mount('/task-router/sync', 'tasks', '../../api/task-router-sync');
-mount('/tasks/assignment', 'tasks', '../../api/task-assignment');
 
 // ── Calendar (relative: /, /events, /events/:id) ───────────────────────────
 mount('/calendar', 'calendar', '../../api/calendar');

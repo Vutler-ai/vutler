@@ -148,7 +148,7 @@ router.post('/:id/execute', authenticateAgent, async (req, res) => {
         break;
       }
       case 'email': {
-        result = { message: 'Use /api/v1/mail/send to send emails. Params: to, subject, plain_body, html_body.' };
+        result = { message: 'Use /api/v1/email/send to send emails. Params: to, subject, body, htmlBody.' };
         break;
       }
       case 'drive': {

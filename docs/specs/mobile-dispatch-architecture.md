@@ -1,5 +1,7 @@
 # Mobile Dispatch Architecture
 
+> Historical spec. The `sandbox-workspace` and `dispatchRouter` runtime described here is no longer present in the active codebase as of April 1, 2026.
+
 > **Status:** Draft — 2026-03-27
 > **Type:** Architecture Decision Record + Technical Spec
 > **Owner:** alopez

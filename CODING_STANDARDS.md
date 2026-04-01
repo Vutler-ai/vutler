@@ -129,7 +129,7 @@ Exemples :
 
 - `/api/v1/users`
 - `/api/v1/integrations`
-- `/api/v1/tasks/:id`
+- `/api/v1/tasks-v2/:id`
 
 ## Authentification
 

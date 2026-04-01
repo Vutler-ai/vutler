@@ -13,10 +13,26 @@ function getWorkspaceId(req) {
   return req.workspaceId || req.user?.workspaceId || null;
 }
 
+function requireWorkspace(req, res, next) {
+  if (!getWorkspaceId(req)) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+  }
+  return next();
+}
+
+function requireAdminRole(req, res, next) {
+  if (req.user?.role !== 'admin') {
+    return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+  return next();
+}
+
+router.use(requireWorkspace);
+router.use(requireAdminRole);
+
 router.get('/status', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
-    if (!workspaceId) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
     const [existing, resolved] = await Promise.all([
       readExistingProvisioning(pool, workspaceId),
@@ -55,7 +71,6 @@ router.get('/status', async (req, res) => {
 router.post('/provision', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
-    if (!workspaceId) return res.status(401).json({ success: false, error: 'Not authenticated' });
 
     const workspaceResult = await pool.query(
       `SELECT name, slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,

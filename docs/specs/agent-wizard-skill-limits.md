@@ -122,8 +122,8 @@ Dérivé de `seeds/agent-templates.json` :
 
 | Fichier | Changement |
 |---------|------------|
-| `frontend/src/app/(app)/agents/[id]/publish/page.tsx` | Supprimer ou masquer |
-| `api/marketplace.js` | Supprimer pricing/review endpoints |
+| `frontend/src/app/(app)/agents/[id]/publish/page.tsx` | Supprimé |
+| `api/marketplace.js` | Supprimé |
 | `frontend/src/app/(app)/agents/[id]/layout.tsx` | Retirer tab "Publish" |
 
 ---

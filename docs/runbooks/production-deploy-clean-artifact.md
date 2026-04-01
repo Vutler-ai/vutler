@@ -19,6 +19,14 @@ The VPS checkout at `/home/ubuntu/vutler` can drift from Git:
 
 If Docker builds from that tree directly, production may not match the pushed commit.
 
+The running container can also drift from `origin/main`:
+- tracked files present in Git but missing from the live container
+- tracked files that differ between the live container and the target commit
+
+This does not automatically block deployment. It means production is not an exact match of the commit you want to ship, so you must decide whether the drift is:
+- expected lag that will be replaced by the next clean deploy
+- a live-only hotfix that must be preserved first
+
 ## Rule
 
 Do not treat the VPS checkout as the source of truth for production builds.
@@ -32,6 +40,30 @@ Production build source:
 
 ## Standard Flow
 
+### Automated path
+
+You can run the full clean-artifact flow from your local machine:
+
+```bash
+./scripts/deploy-clean-artifact.sh --commit origin/main
+```
+
+Useful flags:
+- `--frontend` to rebuild and restart `vutler-frontend` too
+- `--audit-only` to run the live-container parity audit without deploying
+- `--skip-smoke` if you must defer the smoke test intentionally
+- `--keep-tmp` to keep the local audit artifacts for inspection
+
+The script:
+- compares the target commit to the live `vutler-api` container
+- exports the exact commit as a tarball
+- copies it to the VPS
+- rebuilds `vutler-api`
+- optionally rebuilds `vutler-frontend`
+- runs `./scripts/smoke-test.sh` unless told not to
+
+It still enforces the same rule: the target commit must already be contained in `origin/main`.
+
 ### 1. Push the exact commit first
 
 Local:
@@ -43,7 +75,64 @@ git rev-parse --short HEAD
 
 Record the commit you intend to deploy.
 
-### 2. Export a clean tarball locally
+If you work through feature branches, the same rule applies:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+git merge --ff-only <your-branch>
+git push origin main
+git rev-parse --short HEAD
+```
+
+Deploy only a pushed commit already present on `origin/main`.
+
+### 2. Optional parity audit before deploy
+
+Use this when:
+- the VPS was manually patched before
+- recent merges were messy
+- you suspect production contains code not present on `main`
+
+Compare the target commit to the live API container, not to `/home/ubuntu/vutler`.
+
+Local:
+
+```bash
+git fetch origin
+COMMIT=$(git rev-parse origin/main)
+git archive "$COMMIT" | tar -xf - -C /tmp/vutler-main
+```
+
+VPS:
+
+```bash
+docker cp vutler-api:/app/. /tmp/vutler-api-live
+```
+
+Then compare tracked files only.
+
+Interpretation:
+- a few missing/different files usually means production is simply behind `main`
+- if the differing files are exactly the files you are about to deploy, continue with clean artifact deploy
+- if the differing files look like emergency prod hotfixes not present in Git, stop and capture them first
+
+### 3. Decision rule for missing/different tracked files
+
+If parity audit shows drift, do not try to “merge from the VPS checkout”.
+
+Use this rule:
+- if the live container drift is understood and disposable, deploy the clean artifact from `origin/main`
+- if the live container drift contains unknown business logic, export those files, review them locally, and either commit them or intentionally discard them
+
+What the `13 missing` and `9 different` files mean in practice:
+- they are evidence that the current live container is not built from the exact `origin/main` tree
+- they are not something to reconcile on the VPS
+- the next clean deploy from `origin/main` will replace the live container filesystem with the target commit contents
+
+Only block deployment if one of the `different` files contains a prod-only fix you still need.
+
+### 4. Export a clean tarball locally
 
 Local:
 
@@ -51,7 +140,7 @@ Local:
 git archive --format=tar <commit> -o /tmp/vutler-deploy-<commit>.tar
 ```
 
-### 3. Copy the artifact to the VPS
+### 5. Copy the artifact to the VPS
 
 Local:
 
@@ -61,7 +150,7 @@ scp -i ~/.ssh/vps-ssh-key.pem -o StrictHostKeyChecking=no \
   ubuntu@83.228.222.180:/tmp/vutler-deploy-<commit>.tar
 ```
 
-### 4. Extract to a temporary release directory on the VPS
+### 6. Extract to a temporary release directory on the VPS
 
 VPS:
 
@@ -73,7 +162,7 @@ mkdir -p "$DEPLOY_DIR"
 tar -xf /tmp/vutler-deploy-$COMMIT.tar -C "$DEPLOY_DIR"
 ```
 
-### 5. Build and run the API from the extracted release
+### 7. Build and run the API from the extracted release
 
 VPS:
 
@@ -98,7 +187,7 @@ docker run -d \
   node index.js
 ```
 
-### 6. Build and run frontend only if needed
+### 8. Build and run frontend only if needed
 
 If the pushed commit changes frontend code:
 
@@ -116,7 +205,7 @@ docker run -d --name vutler-frontend --restart unless-stopped \
   vutler-frontend:latest
 ```
 
-### 7. Run smoke tests from the same release
+### 9. Run smoke tests from the same release
 
 VPS:
 
@@ -132,6 +221,7 @@ Expected:
 
 - Never rebuild production straight from `/home/ubuntu/vutler` if `git status` is dirty.
 - Never assume VPS `HEAD` matches `origin/main`.
+- Never try to reconcile missing/different container files by editing the VPS checkout in place.
 - Never debug production deploys against an unknown local patch state.
 - Prefer exact artifact deploys over `git pull && docker build` on the server.
 

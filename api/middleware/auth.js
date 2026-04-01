@@ -46,7 +46,6 @@ const PUBLIC_FULL_PATHS = [
   '/api/v1/task-router',
   '/api/v1/billing/webhook',
   '/api/v1/billing/plans',
-  '/api/v1/mail',
   '/downloads', // Nexus installer downloads (public, no auth)
   // SECURITY: sandbox, drive/download, nexus/register removed from public paths (audit 2026-03-28)
   // '/api/v1/sandbox',        — RCE without auth
@@ -172,6 +171,7 @@ function attachIdentity(req, identity) {
     email: identity.email,
     role: identity.role,
     workspaceId: identity.workspaceId,
+    avatarUrl: identity.avatarUrl || null,
   };
   req.rcUser = {
     _id: identity.id,
@@ -183,6 +183,45 @@ function attachIdentity(req, identity) {
   req.userId = identity.id;
   req.workspaceId = identity.workspaceId;
   if (identity.apiKeyId) req.apiKeyId = identity.apiKeyId;
+}
+
+async function resolveActiveJwtIdentity(req, decoded) {
+  const pg = req.app.locals.pg;
+  const fallback = {
+    id: decoded.userId,
+    name: decoded.name || decoded.email,
+    email: decoded.email,
+    role: decoded.role || 'user',
+    workspaceId: decoded.workspaceId || DEFAULT_WORKSPACE,
+  };
+
+  if (!pg || !decoded.userId) return fallback;
+
+  try {
+    const result = await pg.query(
+      `SELECT id, email, name, role, workspace_id, avatar_url
+         FROM tenant_vutler.users_auth
+        WHERE id = $1
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [decoded.userId]
+    );
+
+    if (!result.rows.length) return null;
+
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      name: row.name || row.email,
+      email: row.email,
+      role: row.role || fallback.role,
+      workspaceId: row.workspace_id || fallback.workspaceId,
+      avatarUrl: row.avatar_url || null,
+    };
+  } catch (err) {
+    console.warn('[AUTH] Active user lookup failed:', err.message);
+    return fallback;
+  }
 }
 
 async function authMiddleware(req, res, next) {
@@ -233,13 +272,9 @@ async function authMiddleware(req, res, next) {
       if (decoded.exp && decoded.exp < Math.floor(Date.now()/1000)) throw new Error("Token expired");
 
       req.jwtUser = decoded;
-      attachIdentity(req, {
-        id: decoded.userId,
-        name: decoded.name || decoded.email,
-        email: decoded.email,
-        role: decoded.role || 'user',
-        workspaceId: decoded.workspaceId || DEFAULT_WORKSPACE,
-      });
+      const identity = await resolveActiveJwtIdentity(req, decoded);
+      if (!identity) return res.status(401).json({ error: 'User account is no longer available' });
+      attachIdentity(req, identity);
       return next();
     } catch (err) {
       if (err.message === 'Token expired') {

@@ -99,22 +99,14 @@ class VPSProviderFactory {
       case 'infomaniak':
         const InfomaniakProvider = require('./providers/infomaniak');
         return new InfomaniakProvider(config);
-      
-      case 'hetzner':
-        const HetznerProvider = require('./providers/hetzner');
-        return new HetznerProvider(config);
-      
-      case 'vultr':
-        const VultrProvider = require('./providers/vultr');
-        return new VultrProvider(config);
-      
+
       default:
         throw new Error(`Unsupported VPS provider: ${providerName}`);
     }
   }
 
   static getSupportedProviders() {
-    return ['infomaniak', 'hetzner', 'vultr'];
+    return ['infomaniak'];
   }
 }
 

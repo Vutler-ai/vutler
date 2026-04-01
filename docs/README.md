@@ -5,6 +5,7 @@
 - [Chat and Task Orchestration Hardening](chat-orchestration-hardening.md) explains the production hardening shipped for chat, tasks, Snipara, and realtime delivery.
 - [Staging Deploy and Validation Runbook](runbooks/staging-deploy-validation.md) is the operational path for migrations, deploy, smoke, and e2e checks on the Vutler staging VPS.
 - [VUTLER_API_KEY Rotation Runbook](runbooks/vutler-api-key-rotation.md) covers runtime API key rotation without breaking smoke validation.
+- [Security Actions Required](runbooks/security-actions-required.md) tracks remediation items left open after security reviews.
 - [Workspace / Google Skills Refactor](workspace-google-skills-refactor.md) documents the explicit `workspace_drive`, `google_drive`, and `google_calendar` skill split, template sync, and validation coverage.
 
 ## Orchestrator Notes
@@ -35,8 +36,14 @@
 - `docs/nexus/` covers Nexus install, deployment, and security.
 - `docs/specs/` contains feature-specific implementation specs, including agent wizard limits and mobile dispatch plans.
 - `docs/planning-artifacts/` contains product and architecture planning inputs.
+- [Planning Roadmap](planning-artifacts/roadmap.md) keeps the active roadmap inside the docs tree.
+- [Repository Audit Report](archive/AUDIT-REPORT.md) archives the broad codebase audit outside the root.
 
 ## Recent updates
 
 - [March 2026 release snapshot](recent-2026-03.md) summarizes the last 20–30 commits, highlights drive/billing/session work, and notes documentation cleanup.
 - [Late March 2026 snapshot](recent-2026-04.md) lists the ten newest commits (avatars, docs, auth + billing wiring, Nexus/Sandbox fixes) so the “latest” perspective stays recorded.
+
+## Nexus
+
+- [Nexus Deployment Summary](nexus/DEPLOYMENT_SUMMARY.md) keeps the deployment summary with the rest of the Nexus documentation.

@@ -1019,15 +1019,8 @@ try { app.use('/api/v1', require('./packages/office/routes')); } catch (e) { con
 // Agents routes (agents, nexus, marketplace, sandbox, swarm, llm, tools)
 try { app.use('/api/v1', require('./packages/agents/routes')); } catch (e) { console.warn('[BOOT] Agents routes failed:', e.message); }
 
-// Direct mounts — api/ modules with relative paths (/, /:id)
-try { app.use('/api/v1/tasks', require('./api/tasks')); } catch (_) {}
+// Direct mounts — keep only routes that are not already bundled in packages/*
 try { app.use('/api/v1/schedules', require('./api/schedules')); } catch (_) {}
-try { app.use('/api/v1/snipara/admin', require('./api/sniparaAdmin')); } catch (_) {}
-try { app.use('/api/v1/agents', require('./api/agents')); } catch (_) {}
-try { app.use('/api/v1/calendar', require('./api/calendar')); } catch (_) {}
-try { app.use('/api/v1/clients', require('./api/clients')); } catch (_) {}
-try { app.use('/api/v1/goals', require('./api/goals')); } catch (_) {}
-try { app.use('/api/v1/automations', require('./api/automations')); } catch (_) {}
 try { app.use('/api/v1/analytics', require('./api/analytics-api')); } catch (_) {}
 try { app.use('/api/v1/social-media', require('./api/social-media')); } catch (_) {}
 // NOTE: email is served by packages/office/routes.js → app/custom/api/email.js
@@ -1097,15 +1090,6 @@ async function start() {
     // Template seeds
     const { loadTemplates } = require('./seeds/loadTemplates');
     loadTemplates().catch(err => console.warn('Template load failed:', err.message));
-
-    // Dispatch Router (mobile dispatch — cloud sandbox → local daemon)
-    try {
-      const { getDispatchRouter } = require('./services/dispatchRouter');
-      app.locals.dispatchRouter = getDispatchRouter(app);
-      console.log('Dispatch router initialized');
-    } catch (e) {
-      console.warn('[BOOT] Dispatch router skipped:', e.message);
-    }
 
     // WebSocket
     setupWebSocket(server, app);

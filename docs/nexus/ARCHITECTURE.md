@@ -634,7 +634,7 @@ The registry exposes `getSkillTools(skillKeys)` which generates OpenAI-compatibl
 
 | Execution path | Handler | When used |
 |----------------|---------|-----------|
-| Cloud (sandboxExecutor / taskRouter) | `llm_prompt`, `integration`, `composite` | `requires_nexus: false` skills |
+| Cloud (`taskRouter`) | `llm_prompt`, `integration`, `composite` | `requires_nexus: false` skills |
 | Nexus local node | `nexus_provider` | `requires_nexus: true` skills; dispatched via `NexusProviderHandler._wsConnections` WebSocket map |
 
 The `wsConnections` Map is injected at startup via `getSkillRegistry({ wsConnections })` or updated post-init via `setNexusWsConnections(map)`.
@@ -1007,20 +1007,9 @@ DLQ files live in `<queue_path>/../queue/dlq/` (configurable via `opts.dlq_path`
 
 `getDLQStatus()` returns the count, oldest, and newest task filenames. `retryDLQ(taskId?)` moves files back into the main queue with a fresh attempt counter.
 
-### In-Memory Metrics
+### Runtime Telemetry
 
-`nexusMetrics.js` provides process-local counters with no database dependency. Metrics are scoped by `workspaceId` and retained for 24 hours in hourly buckets. A cleanup interval runs every hour to purge stale buckets.
-
-**Tracked dimensions:**
-
-| Dimension | Fields |
-|-----------|--------|
-| Workspace | `totalTasks`, `successCount`, `failureCount`, `errorRate` |
-| Per-agent | `tasks`, `success`, `failures`, `errorRate`, `avgDurationMs` |
-| Per-task-type | `count`, `avgDurationMs` |
-| Hourly | `hour` (ISO), `tasks`, `errors` |
-
-Metrics are recorded by calling `recordTaskStart(workspaceId, agentId, taskType, taskId)` at dispatch time and `recordTaskEnd(taskId, success, durationMs?)` at completion. Both calls are no-ops if the workspace or taskId is missing.
+Nexus runtime telemetry is persisted through the API observability surface in [api/nexus.js](/Users/alopez/Devs/Vutler/api/nexus.js), notably deployment heartbeats, node status, command health, and governance audit events. There is no separate in-process `nexusMetrics.js` module anymore.
 
 ---
 

@@ -1,7 +1,6 @@
 /**
  * Nexus API — real deployment/runtime flow (API-key-first cloud)
  */
-const crypto = require('crypto');
 const express = require('express');
 const { requireApiKey } = require('../lib/auth');
 const pool = require('../lib/vaultbrix');
@@ -15,11 +14,9 @@ const {
 } = require('../services/apiKeys');
 const {
   getNodeMode,
-  getWorkspaceEnterpriseSeatSummary,
   getWorkspaceNexusBillingSummary,
   getWorkspaceNexusUsage,
 } = require('../services/nexusBilling');
-const { ensureEnterpriseDriveLayout } = require('../services/nexusEnterpriseDrive');
 const {
   ensureGovernanceTables,
   createApprovalRequest,
@@ -38,23 +35,9 @@ const router = express.Router();
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const HEARTBEAT_ONLINE_SECONDS = 90;
-const DEPLOY_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 const NODE_COMMAND_DEFAULT_TTL_MS = Number.parseInt(process.env.NEXUS_COMMAND_TTL_MS || '600000', 10);
 const NODE_COMMAND_DEFAULT_LEASE_MS = Number.parseInt(process.env.NEXUS_COMMAND_LEASE_MS || '45000', 10);
 const NODE_COMMAND_DEFAULT_MAX_ATTEMPTS = Number.parseInt(process.env.NEXUS_COMMAND_MAX_ATTEMPTS || '3', 10);
-
-function base64urlJson(value) {
-  return Buffer.from(JSON.stringify(value)).toString('base64url');
-}
-
-function signDeployToken(payload) {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const encodedHeader = base64urlJson(header);
-  const encodedPayload = base64urlJson(payload);
-  const secret = process.env.NEXUS_DEPLOY_TOKEN_SECRET || process.env.JWT_SECRET || 'vutler-nexus';
-  const signature = crypto.createHmac('sha256', secret).update(`${encodedHeader}.${encodedPayload}`).digest('base64url');
-  return `${encodedHeader}.${encodedPayload}.${signature}`;
-}
 
 function cleanObject(input = {}) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== ''));
@@ -66,137 +49,8 @@ function normalizeStringArray(value) {
     : [];
 }
 
-function slugify(value) {
-  return String(value || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48) || 'nexus';
-}
-
 function getApiBaseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;
-}
-
-function buildTokenPayload(base) {
-  const now = Math.floor(Date.now() / 1000);
-  return cleanObject({
-    iss: 'vutler',
-    aud: 'nexus',
-    iat: now,
-    exp: now + DEPLOY_TOKEN_TTL_SECONDS,
-    ...base,
-  });
-}
-
-function buildLocalDeployToken({ req, body = {} }) {
-  const apiBaseUrl = getApiBaseUrl(req);
-  const nodeName = body.nodeName || body.node_name || body.name || `nexus-${slugify(req.user?.name || req.workspaceId || 'local')}`;
-  const permissions = body.permissions || {};
-
-  const payload = buildTokenPayload({
-    mode: 'local',
-    server: apiBaseUrl,
-    node_name: nodeName,
-    permissions,
-    role: body.role || 'general',
-    snipara_instance_id: body.sniparaInstanceId || body.snipara_instance_id || null,
-  });
-
-  return {
-    token: signDeployToken(payload),
-    payload,
-    apiBaseUrl,
-    nodeName,
-  };
-}
-
-async function buildEnterpriseDeployToken({ req, body = {} }) {
-  const apiBaseUrl = getApiBaseUrl(req);
-  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
-  const nodeName = body.name || body.nodeName || body.node_name;
-  const clientName = body.clientName || body.client_name;
-  const primaryAgentId = body.primaryAgentId || body.primary_agent;
-  const poolAgentIds = Array.isArray(body.poolAgentIds) ? body.poolAgentIds : (Array.isArray(body.available_pool) ? body.available_pool : []);
-  const allowCreatingNewAgents = body.allowCreatingNewAgents ?? body.allow_create ?? false;
-  const autoSpawnRules = Array.isArray(body.autoSpawnRules) ? body.autoSpawnRules : (Array.isArray(body.auto_spawn_rules) ? body.auto_spawn_rules : []);
-  const routingRules = Array.isArray(body.routingRules) ? body.routingRules : (Array.isArray(body.routing_rules) ? body.routing_rules : []);
-  const profileKey = body.profileKey || body.profile_key || null;
-  const profileVersion = body.profileVersion || body.profile_version || null;
-  const deploymentMode = body.deploymentMode || body.deployment_mode || 'fixed';
-  const selectedCapabilities = normalizeStringArray(Array.isArray(body.selectedCapabilities) ? body.selectedCapabilities : body.selected_capabilities);
-  const selectedLocalIntegrations = normalizeStringArray(Array.isArray(body.selectedLocalIntegrations) ? body.selectedLocalIntegrations : body.selected_local_integrations);
-  const selectedHelperProfiles = normalizeStringArray(Array.isArray(body.selectedHelperProfiles) ? body.selectedHelperProfiles : body.selected_helper_profiles);
-  const seats = Number.isFinite(Number(body.seats)) ? Number(body.seats) : (Number.isFinite(Number(body.max_seats)) ? Number(body.max_seats) : 1);
-  const filesystemRoot = body.filesystemRoot || body.filesystem_root || `/opt/${slugify(clientName)}`;
-
-  if (!nodeName || !clientName || !primaryAgentId) {
-    const missing = [
-      !nodeName && 'name',
-      !clientName && 'clientName',
-      !primaryAgentId && 'primaryAgentId',
-    ].filter(Boolean);
-    const error = new Error(`${missing.join(', ')} is required`);
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const seatSummary = await getWorkspaceEnterpriseSeatSummary(pool, workspaceId).catch(() => null);
-  if (seatSummary && seatSummary.total !== -1 && seats > seatSummary.available) {
-    const error = new Error(
-      `Requested ${seats} enterprise seats, but only ${seatSummary.available} seat${seatSummary.available === 1 ? '' : 's'} remain on the current billing plan.`
-    );
-    error.statusCode = 403;
-    error.code = 'NEXUS_ENTERPRISE_SEAT_LIMIT_REACHED';
-    error.details = { requestedSeats: seats, seatSummary };
-    throw error;
-  }
-
-  const driveRepo = await ensureEnterpriseDriveLayout({
-    workspaceId,
-    clientName,
-    nodeName,
-  });
-
-  const payload = buildTokenPayload({
-    mode: 'enterprise',
-    server: apiBaseUrl,
-    node_name: nodeName,
-    client_name: clientName,
-    role: body.role || 'general',
-    seats,
-    max_seats: seats,
-    primary_agent: primaryAgentId,
-    available_pool: poolAgentIds,
-    allow_create: !!allowCreatingNewAgents,
-    routing_rules: routingRules,
-    auto_spawn_rules: autoSpawnRules,
-    enterprise_profile: profileKey ? {
-      profile_key: profileKey,
-      profile_version: profileVersion,
-      deployment_mode: deploymentMode,
-      selected_capabilities: selectedCapabilities,
-      selected_local_integrations: selectedLocalIntegrations,
-      selected_helper_profiles: selectedHelperProfiles,
-    } : null,
-    filesystem_root: filesystemRoot,
-    offline_config: {
-      enabled: !!(body.offlineMode ?? body.offline_mode),
-    },
-    permissions: body.permissions || {},
-    snipara_instance_id: body.sniparaInstanceId || body.snipara_instance_id || null,
-    drive_repo: driveRepo,
-  });
-
-  return {
-    token: signDeployToken(payload),
-    payload,
-    apiBaseUrl,
-    nodeName,
-    clientName,
-    seats,
-  };
 }
 
 async function ensureNexusTables() {
@@ -258,7 +112,7 @@ async function ensureNexusNodesTable() {
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           workspace_id UUID NOT NULL,
           name TEXT NOT NULL,
-          type TEXT DEFAULT 'vps',
+          type TEXT DEFAULT 'local',
           status TEXT DEFAULT 'offline',
           host TEXT,
           port INTEGER,
@@ -421,7 +275,7 @@ function mapNode(row) {
   return {
     id: row.id,
     name: row.name,
-    type: row.type || 'vps',
+    type: row.type || 'local',
     status: runtimeStatus,
     host: row.host || null,
     port: row.port || null,
@@ -851,72 +705,6 @@ async function getWorkspaceCommandStats(workspaceId, nodeId = null) {
   };
 }
 
-function buildCommands({ mode, apiKey, deploymentId, apiBaseUrl }) {
-  const baseEnv = [
-    `export NEXUS_API_BASE="${apiBaseUrl}"`,
-    `export NEXUS_API_KEY="${apiKey}"`,
-    `export NEXUS_DEPLOYMENT_ID="${deploymentId}"`,
-  ];
-
-  if (mode === 'local') {
-    return {
-      install: [
-        'npm i -g vutler-nexus',
-      ],
-      run: [
-        ...baseEnv,
-        'vutler-nexus start',
-      ],
-      heartbeatHint: 'vutler-nexus will call /api/v1/nexus/runtime/heartbeat using NEXUS_API_KEY + NEXUS_DEPLOYMENT_ID.',
-    };
-  }
-
-  return {
-    install: [
-      'docker pull starbox/vutler-nexus:latest || true',
-    ],
-    run: [
-      `docker run -d --name vutler-nexus-${deploymentId.slice(0, 8)} \\`,
-      `  -e NEXUS_API_BASE="${apiBaseUrl}" \\`,
-      `  -e NEXUS_API_KEY="${apiKey}" \\`,
-      `  -e NEXUS_DEPLOYMENT_ID="${deploymentId}" \\`,
-      '  --restart unless-stopped starbox/vutler-nexus:latest',
-    ],
-    heartbeatHint: 'Container runtime must post heartbeat to /api/v1/nexus/runtime/heartbeat.',
-  };
-}
-
-router.post('/tokens/local', async (req, res) => {
-  try {
-    const result = buildLocalDeployToken({ req, body: req.body || {} });
-    res.json({
-      success: true,
-      token: result.token,
-      payload: result.payload,
-      message: 'Deploy token created for local Nexus setup.',
-    });
-  } catch (err) {
-    const status = err.statusCode || 500;
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-router.post('/tokens/enterprise', async (req, res) => {
-  try {
-    const result = await buildEnterpriseDeployToken({ req, body: req.body || {} });
-    res.json({
-      success: true,
-      token: result.token,
-      payload: result.payload,
-      message: 'Deploy token created for enterprise Nexus setup.',
-    });
-  } catch (err) {
-    const status = err.statusCode || 500;
-    res.status(status).json({ success: false, error: err.message });
-  }
-});
-
-
 router.get('/', async (req, res) => {
   try {
     await ensureNexusNodesTable();
@@ -936,7 +724,7 @@ router.post('/', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
-    const { name, type = 'vps', host = null, port = null, api_key = null, config = {} } = req.body || {};
+    const { name, type = 'local', host = null, port = null, api_key = null, config = {} } = req.body || {};
     if (!name) return res.status(400).json({ success: false, error: 'name is required' });
 
     const insert = await pool.query(
@@ -1029,66 +817,11 @@ router.delete('/keys/:id', async (req, res) => {
 });
 
 router.post('/deploy/plan', async (req, res) => {
-  try {
-    await ensureNexusTables();
-
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
-    const createdBy = req.userId || req.user?.id || null;
-    const { agentIds, mode, apiKeyId, apiKey, clientCompany } = req.body || {};
-
-    if (!Array.isArray(agentIds) || !agentIds.length) {
-      return res.status(400).json({ success: false, error: 'agentIds[] is required' });
-    }
-    if (mode !== 'local' && mode !== 'docker') {
-      return res.status(400).json({ success: false, error: 'mode must be local or docker' });
-    }
-    if (!apiKey) {
-      return res.status(400).json({ success: false, error: 'apiKey is required (one-time secret from /nexus/keys)' });
-    }
-
-    const apiBaseUrl = `${req.protocol}://${req.get('host')}`;
-    const deployments = [];
-
-    for (const agentId of agentIds) {
-      const inserted = await pool.query(
-        `INSERT INTO ${SCHEMA}.nexus_deployments (
-          workspace_id,
-          created_by_user_id,
-          agent_id,
-          mode,
-          status,
-          api_key_id,
-          client_company,
-          command_context
-        ) VALUES ($1, $2, $3, $4, 'planned', $5, $6, $7::jsonb)
-        RETURNING id, agent_id, mode, status, created_at`,
-        [
-          workspaceId,
-          createdBy,
-          String(agentId),
-          mode,
-          apiKeyId || null,
-          clientCompany || null,
-          JSON.stringify({ apiBaseUrl }),
-        ]
-      );
-
-      const row = inserted.rows[0];
-      deployments.push({
-        id: row.id,
-        agentId: row.agent_id,
-        mode: row.mode,
-        status: row.status,
-        createdAt: row.created_at,
-        commands: buildCommands({ mode: row.mode, apiKey, deploymentId: row.id, apiBaseUrl }),
-      });
-    }
-
-    res.json({ success: true, deployments, apiBaseUrl });
-  } catch (err) {
-    console.error('[NEXUS] Deploy plan error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+  return res.status(410).json({
+    success: false,
+    error: 'Deprecated endpoint. Use /api/v1/nexus/tokens/local for desktop runtimes or /api/v1/nexus/tokens/enterprise for Docker runtimes.',
+    code: 'nexus_deploy_plan_deprecated',
+  });
 });
 
 // Runtime heartbeat requires API key auth (strict)
@@ -1131,6 +864,33 @@ router.post('/runtime/heartbeat', requireApiKey, async (req, res) => {
       ) VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)`,
       [deploymentId, workspaceId, runtimeId || null, runtimeVersion || null, safeStatus, JSON.stringify(payload || {})]
     );
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.vps_deployments
+          SET status = CASE WHEN $2 = 'error' THEN 'failed' ELSE 'completed' END,
+              runtime_online_at = CASE WHEN $2 = 'error' THEN runtime_online_at ELSE COALESCE(runtime_online_at, NOW()) END,
+              completed_at = CASE WHEN $2 = 'error' THEN NOW() ELSE COALESCE(completed_at, NOW()) END,
+              error_message = CASE
+                WHEN $2 = 'error' THEN COALESCE($3, error_message, 'Runtime reported an error')
+                ELSE NULL
+              END,
+              updated_at = NOW()
+        WHERE nexus_deployment_id::text = $1`,
+      [
+        deploymentId,
+        safeStatus,
+        payload?.error || payload?.message || null,
+      ]
+    ).catch(() => null);
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.agents AS a
+          SET vps_status = CASE WHEN $2 = 'error' THEN 'error' ELSE 'deployed' END
+         FROM ${SCHEMA}.vps_deployments AS vd
+        WHERE vd.nexus_deployment_id::text = $1
+          AND vd.agent_id = a.id`,
+      [deploymentId, safeStatus]
+    ).catch(() => null);
 
     res.json({ success: true, deploymentId, status: safeStatus, receivedAt: new Date().toISOString() });
   } catch (err) {

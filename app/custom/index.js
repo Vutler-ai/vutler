@@ -293,8 +293,8 @@ async function initializeVutler(app, httpServer) {
     console.log('   - POST   /api/v1/drive/folders');
     console.log('   - GET    /api/v1/drive/folders');
     console.log('   - GET    /api/v1/drive/folders/tree');
-    console.log('   - GET    /api/v1/tasks/kanban');
-    console.log('   - GET    /api/v1/tasks/:id');
+    console.log('   - GET    /api/v1/tasks-v2');
+    console.log('   - GET    /api/v1/tasks-v2/:id');
     console.log('   - POST   /api/v1/marketplace/templates/:templateId/deploy');
     console.log('   - GET    /api/v1/marketplace/deployments/:id');
     console.log('   - GET    /api/v1/vault');

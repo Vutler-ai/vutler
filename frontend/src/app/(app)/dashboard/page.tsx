@@ -561,7 +561,7 @@ export default function DashboardPage() {
   const {
     data: tasksData,
     isLoading: tasksLoading,
-  } = useApi<Task[]>('/api/v1/tasks', () => getTasks());
+  } = useApi<Task[]>('/api/v1/tasks-v2', () => getTasks());
 
   const {
     data: auditData,

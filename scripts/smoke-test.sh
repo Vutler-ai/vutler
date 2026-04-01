@@ -72,13 +72,12 @@ echo "🔍 Vutler Post-Deploy Smoke Test"
 echo "================================"
 echo "Auth mode: $AUTH_MODE"
 check "health"        "/api/v1/health"           200
-check "tasks"         "/api/v1/tasks"            200
 check "tasks-v2"      "/api/v1/tasks-v2"         200
 check "sandbox"       "/api/v1/sandbox/executions" 200
 check "chat"          "/api/v1/chat/channels"    200
 check "clients"       "/api/v1/clients"          200
 check "notifications" "/api/v1/notifications"    200
-check "deployments"   "/api/v1/deployments"      200
+check "deployments"   "/api/v1/nexus/deployments" 200
 check "nexus/status"  "/api/v1/nexus/status"     200
 check "nexus/routing" "/api/v1/nexus/routing"    200
 

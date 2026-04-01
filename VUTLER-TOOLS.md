@@ -66,12 +66,12 @@ curl -X PUT "https://app.vutler.ai/api/v1/auth/me" \
 
 ---
 
-### POST `/api/v1/auth/api-keys`
+### POST `/api/v1/settings/api-keys`
 Génère une nouvelle API key pour l’utilisateur courant.
 
 #### Exemple
 ```bash
-curl -X POST "https://app.vutler.ai/api/v1/auth/api-keys" \
+curl -X POST "https://app.vutler.ai/api/v1/settings/api-keys" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
@@ -111,22 +111,23 @@ API de gestion des tâches du workspace.
 
 ---
 
-### GET `/api/v1/tasks`
+### GET `/api/v1/tasks-v2`
 Liste les tâches.
 
 #### Filtres supportés
 - `status`
-- `assignee`
+- `parent_id`
+- `limit`
 
 #### Exemple
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/tasks?status=todo&assignee=jarvis" \
+curl -X GET "https://app.vutler.ai/api/v1/tasks-v2?status=pending&limit=25" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ---
 
-### POST `/api/v1/tasks`
+### POST `/api/v1/tasks-v2`
 Crée une tâche.
 
 #### Body
@@ -140,12 +141,12 @@ Crée une tâche.
 ```
 
 #### Important
-Le champ d’entrée public reste `assignee` côté API, avec une valeur correspondant au **username** de l’agent.  
-Le backend mappe automatiquement ce champ vers `assigned_agent`.
+Le champ d’entrée public reste `assignee` côté API.  
+La v2 accepte aussi les métadonnées de workflow hiérarchique (`hierarchical`, `workflow_mode`, `level`) quand nécessaire.
 
 #### Exemple
 ```bash
-curl -X POST "https://app.vutler.ai/api/v1/tasks" \
+curl -X POST "https://app.vutler.ai/api/v1/tasks-v2" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
@@ -158,23 +159,23 @@ curl -X POST "https://app.vutler.ai/api/v1/tasks" \
 
 ---
 
-### GET `/api/v1/tasks/:id`
+### GET `/api/v1/tasks-v2/:id`
 Retourne le détail d’une tâche.
 
 #### Exemple
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/tasks/123" \
+curl -X GET "https://app.vutler.ai/api/v1/tasks-v2/123" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ---
 
-### PUT `/api/v1/tasks/:id`
+### PATCH `/api/v1/tasks-v2/:id`
 Met à jour une tâche existante.
 
 #### Exemple
 ```bash
-curl -X PUT "https://app.vutler.ai/api/v1/tasks/123" \
+curl -X PATCH "https://app.vutler.ai/api/v1/tasks-v2/123" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
@@ -184,7 +185,7 @@ curl -X PUT "https://app.vutler.ai/api/v1/tasks/123" \
   }'
 ```
 
-> Comme pour la création, `assignee` est accepté côté API et mappé vers `assigned_agent` par le backend.
+> Comme pour la création, `assignee` reste accepté côté API.
 
 ---
 
@@ -294,27 +295,27 @@ Le chat temps réel s’appuie sur une connexion WS authentifiée au backend Vut
 
 ---
 
-## 6. Drive (VDrive)
+## 6. Drive
 
 Gestion des fichiers du workspace.
 
-### GET `/api/v1/vdrive/files`
+### GET `/api/v1/drive/files`
 Liste les fichiers disponibles.
 
 #### Exemple
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/vdrive/files" \
+curl -X GET "https://app.vutler.ai/api/v1/drive/files" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ---
 
-### POST `/api/v1/vdrive/upload`
-Upload un fichier dans VDrive.
+### POST `/api/v1/drive/upload`
+Upload un fichier dans le Drive workspace.
 
 #### Exemple
 ```bash
-curl -X POST "https://app.vutler.ai/api/v1/vdrive/upload" \
+curl -X POST "https://app.vutler.ai/api/v1/drive/upload" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -F "file=@./document.pdf"
 ```
@@ -328,12 +329,11 @@ VDrive s’appuie sur **Exoscale SOS (Swiss)** pour le stockage des fichiers.
 
 Configuration globale du workspace.
 
-### GET `/api/v1/config`
+### GET `/api/v1/settings`
 Retourne la configuration du workspace.
 
 #### Important
-La réponse retourne les champs **au top-level**.  
-Il ne faut plus supposer une ancienne structure imbriquée.
+La réponse retourne les paramètres du workspace sous `settings`.
 
 #### Peut inclure
 - configuration Snipara
@@ -343,29 +343,23 @@ Il ne faut plus supposer une ancienne structure imbriquée.
 
 #### Exemple
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/config" \
+curl -X GET "https://app.vutler.ai/api/v1/settings" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ---
 
-### PUT `/api/v1/config`
+### PUT `/api/v1/settings`
 Met à jour la configuration du workspace.
 
 #### Exemple
 ```bash
-curl -X PUT "https://app.vutler.ai/api/v1/config" \
+curl -X PUT "https://app.vutler.ai/api/v1/settings" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
-    "snipara": {
-      "enabled": true
-    },
-    "llmProviders": {
-      "anthropic": {
-        "enabled": true
-      }
-    }
+    "timezone": "Europe/Zurich",
+    "language": "fr"
   }'
 ```
 
@@ -511,25 +505,25 @@ curl -X PUT "https://app.vutler.ai/api/v1/auth/me" \
 
 ### Générer une API key
 ```bash
-curl -X POST "https://app.vutler.ai/api/v1/auth/api-keys" \
+curl -X POST "https://app.vutler.ai/api/v1/settings/api-keys" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ### Lister les tâches
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/tasks" \
+curl -X GET "https://app.vutler.ai/api/v1/tasks-v2" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
-### Filtrer les tâches par statut et assignee
+### Filtrer les tâches par statut
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/tasks?status=in_progress&assignee=marcus" \
+curl -X GET "https://app.vutler.ai/api/v1/tasks-v2?status=in_progress" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ### Créer une tâche
 ```bash
-curl -X POST "https://app.vutler.ai/api/v1/tasks" \
+curl -X POST "https://app.vutler.ai/api/v1/tasks-v2" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
@@ -542,7 +536,7 @@ curl -X POST "https://app.vutler.ai/api/v1/tasks" \
 
 ### Mettre à jour une tâche
 ```bash
-curl -X PUT "https://app.vutler.ai/api/v1/tasks/123" \
+curl -X PATCH "https://app.vutler.ai/api/v1/tasks-v2/123" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
@@ -575,13 +569,13 @@ curl -X PUT "https://app.vutler.ai/api/v1/agents/agent_123/config" \
 
 ### Lire la config du workspace
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/config" \
+curl -X GET "https://app.vutler.ai/api/v1/settings" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
 ### Mettre à jour la config du workspace
 ```bash
-curl -X PUT "https://app.vutler.ai/api/v1/config" \
+curl -X PUT "https://app.vutler.ai/api/v1/settings" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -d '{
@@ -629,15 +623,15 @@ curl -X POST "https://app.vutler.ai/api/v1/llm/providers" \
   }'
 ```
 
-### Lister les fichiers VDrive
+### Lister les fichiers Drive
 ```bash
-curl -X GET "https://app.vutler.ai/api/v1/vdrive/files" \
+curl -X GET "https://app.vutler.ai/api/v1/drive/files" \
   -H "X-API-Key: <VOTRE_API_KEY>"
 ```
 
-### Upload un fichier dans VDrive
+### Upload un fichier dans Drive
 ```bash
-curl -X POST "https://app.vutler.ai/api/v1/vdrive/upload" \
+curl -X POST "https://app.vutler.ai/api/v1/drive/upload" \
   -H "X-API-Key: <VOTRE_API_KEY>" \
   -F "file=@./rapport.pdf"
 ```
@@ -663,7 +657,9 @@ Cette version corrige les éléments obsolètes suivants :
 - ajout de `PUT /api/v1/auth/me`
 - documentation explicite du support `X-API-Key`
 - correction de la création de tâche : usage public de `assignee`, mappé côté backend vers `assigned_agent`
-- mise à jour de la forme de `GET /api/v1/config` et `PUT /api/v1/config`
+- mise à jour des références workspace config vers `GET /api/v1/settings` et `PUT /api/v1/settings`
+- migration des exemples tâches vers `/api/v1/tasks-v2`
+- suppression des références `VDrive` au profit de `/api/v1/drive/*`
 - mise à jour des modèles LLM dans les exemples
 - clarification sur le chat : WebSocket natif, pas Rocket.Chat
 - clarification sur la sandbox : endpoint désormais protégé par auth guard

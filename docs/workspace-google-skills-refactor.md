@@ -52,12 +52,7 @@ New explicit adapters:
 - [GoogleDriveAdapter.js](/Users/alopez/Devs/Vutler/services/skills/adapters/GoogleDriveAdapter.js)
 - [GoogleCalendarAdapter.js](/Users/alopez/Devs/Vutler/services/skills/adapters/GoogleCalendarAdapter.js)
 
-Compatibility wrappers remain in:
-
-- [DriveAdapter.js](/Users/alopez/Devs/Vutler/services/skills/adapters/DriveAdapter.js)
-- [CalendarAdapter.js](/Users/alopez/Devs/Vutler/services/skills/adapters/CalendarAdapter.js)
-
-Those wrappers keep older imports working while routing implementation through the explicit adapters.
+The temporary compatibility wrappers were removed after the migration. Runtime imports now target the explicit adapters directly.
 
 ## IntegrationHandler Changes
 

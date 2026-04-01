@@ -19,7 +19,7 @@ export interface UseApiResult<T> {
  * const { data: agents, isLoading } = useApi<Agent[]>('/api/v1/agents');
  *
  * @example
- * const { data, mutate } = useApi<Task[]>('/api/v1/tasks', () =>
+ * const { data, mutate } = useApi<Task[]>('/api/v1/tasks-v2', () =>
  *   getTasks()
  * );
  */

@@ -176,6 +176,9 @@ async function ensureSchema(pool) {
     ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS name TEXT;
     ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user';
     ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS workspace_id UUID DEFAULT '${DEFAULT_WORKSPACE}';
+    ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+    ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
   `).catch(() => {});
 }
 
@@ -272,7 +275,8 @@ router.get('/github/callback', async (req, res) => {
     const existingUser = await pool.query(
       `SELECT id, email, name, role, workspace_id 
        FROM ${SCHEMA}.users_auth 
-       WHERE email = $1 
+       WHERE email = $1
+         AND deleted_at IS NULL
        LIMIT 1`,
       [cleanEmail]
     );
@@ -424,7 +428,8 @@ router.get('/google/callback', async (req, res) => {
     const existingUser = await pool.query(
       `SELECT id, email, name, role, workspace_id 
        FROM ${SCHEMA}.users_auth 
-       WHERE email = $1 
+       WHERE email = $1
+         AND deleted_at IS NULL
        LIMIT 1`,
       [cleanEmail]
     );
@@ -473,7 +478,10 @@ router.post('/login', async (req, res) => {
 
     const result = await pool.query(
       `SELECT id, email, password_hash, salt, name, role, workspace_id
-       FROM ${SCHEMA}.users_auth WHERE email = $1 LIMIT 1`,
+       FROM ${SCHEMA}.users_auth
+       WHERE email = $1
+         AND deleted_at IS NULL
+       LIMIT 1`,
       [email.toLowerCase().trim()]
     );
 
@@ -545,7 +553,13 @@ async function registerHandler(req, res) {
     if (!schemaReady) { await ensureSchema(pool); schemaReady = true; }
 
     const cleanEmail = email.toLowerCase().trim();
-    const existing = await pool.query(`SELECT id FROM ${SCHEMA}.users_auth WHERE email = $1`, [cleanEmail]);
+    const existing = await pool.query(
+      `SELECT id
+         FROM ${SCHEMA}.users_auth
+        WHERE email = $1
+          AND deleted_at IS NULL`,
+      [cleanEmail]
+    );
     if (existing.rows.length) return res.status(409).json({ success: false, error: 'User already exists' });
 
     const { hash, salt } = await hashPassword(password);
@@ -789,14 +803,17 @@ router.put('/me/password', async (req, res) => {
     if (newPassword.length < 8) {
       return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
     }
-    if (!req.user?.userId) {
+    if (!req.user?.id) {
       return res.status(401).json({ success: false, error: 'Not authenticated' });
     }
 
     const pool = getPool();
     const result = await pool.query(
-      `SELECT id, password_hash, salt FROM ${SCHEMA}.users_auth WHERE id = $1`,
-      [req.user.userId]
+      `SELECT id, password_hash, salt
+         FROM ${SCHEMA}.users_auth
+        WHERE id = $1
+          AND deleted_at IS NULL`,
+      [req.user.id]
     );
     if (!result.rows.length) {
       return res.status(404).json({ success: false, error: 'User not found' });
@@ -820,6 +837,50 @@ router.put('/me/password', async (req, res) => {
   } catch (err) {
     console.error('[AUTH] Password update error:', err.message);
     res.status(500).json({ success: false, error: 'Password update failed' });
+  }
+});
+
+// DELETE /api/v1/auth/me — soft-delete current account
+router.delete('/me', async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
+    }
+
+    const pool = getPool();
+    if (!schemaReady) { await ensureSchema(pool); schemaReady = true; }
+
+    const deletedEmail = `deleted+${req.user.id}@deleted.vutler.ai`;
+    const result = await pool.query(
+      `UPDATE ${SCHEMA}.users_auth
+          SET email = $1,
+              password_hash = NULL,
+              salt = NULL,
+              name = COALESCE(NULLIF(name, ''), 'Deleted user'),
+              avatar_url = NULL,
+              deleted_at = NOW()
+        WHERE id = $2
+          AND deleted_at IS NULL
+        RETURNING id`,
+      [deletedEmail, req.user.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.workspace_api_keys
+          SET revoked_at = NOW()
+        WHERE created_by_user_id = $1
+          AND revoked_at IS NULL`,
+      [req.user.id]
+    ).catch(() => {});
+
+    res.json({ success: true, message: 'Account deleted' });
+  } catch (err) {
+    console.error('[AUTH] Account deletion error:', err.message);
+    res.status(500).json({ success: false, error: 'Account deletion failed' });
   }
 });
 
@@ -883,7 +944,11 @@ router.post('/forgot-password', async (req, res) => {
     const pool = require('../lib/vaultbrix');
     await ensureResetTokensTable(pool);
     const user = await pool.query(
-      `SELECT id, email, name FROM ${SCHEMA}.users_auth WHERE email = $1 LIMIT 1`,
+      `SELECT id, email, name
+         FROM ${SCHEMA}.users_auth
+        WHERE email = $1
+          AND deleted_at IS NULL
+        LIMIT 1`,
       [email.toLowerCase().trim()]
     );
     if (user.rows.length) {

@@ -65,10 +65,6 @@ mount('/templates',       'templates',   '../../api/templates');
 // ── Sandbox ─────────────────────────────────────────────────────────────────
 mount('/sandbox',         'sandbox',     '../../api/sandbox');
 
-// ── Deployments ─────────────────────────────────────────────────────────────
-mount('/deployments',     'deployments', '../../api/deployments');
-mount('/provisioning',    'deployments', '../../api/provisioning');
-
 // ── Automations ─────────────────────────────────────────────────────────────
 mount('/automations',     'automations', '../../api/automations');
 mount('/automation-logs', 'automations', '../../api/automation-logs-routes');
@@ -77,19 +73,18 @@ mount('/automation-logs', 'automations', '../../api/automation-logs-routes');
 mount('/knowledge',       'knowledge',   '../../api/knowledge');
 
 // ── Memory ──────────────────────────────────────────────────────────────────
-// api/memory.js handles /agents/:agentId/memories and /memory/promote
-mount('/',                'agents',      '../../api/memory');
-mount('/memory',          'agents',      '../../app/custom/api/memory');
+// Mounted centrally in index.js because the same router serves both:
+//   /api/v1/agents/:id/memories
+//   /api/v1/memory/*
 
 // ── Snipara ─────────────────────────────────────────────────────────────────
 mount('/snipara',         'agents',      '../../api/snipara');
 mount('/snipara/admin',   'agents',      '../../api/sniparaAdmin');
 mount('/snipara/webhook', 'agents',      '../../api/sniparaWebhook');
 
-// ── Local Agent ─────────────────────────────────────────────────────────────
-mount('/local-agent',     'agents',      '../../api/local-agent');
-
 // ── VPS ─────────────────────────────────────────────────────────────────────
-mount('/vps',             'agents',      '../../api/vps');
+if (String(process.env.VPS_MANAGED_ENABLED || '').toLowerCase() === 'true') {
+  mount('/vps', 'agents', '../../api/vps');
+}
 
 module.exports = router;

@@ -4,7 +4,7 @@
 
 Use this runbook after backend, frontend, migration, or orchestration changes that affect chat, tasks, Snipara, or realtime delivery.
 
-If the VPS checkout is dirty or if production must match one exact commit, use
+If the VPS checkout is dirty, if the live container differs from `origin/main`, or if production must match one exact commit, use
 [production-deploy-clean-artifact.md](production-deploy-clean-artifact.md)
 instead of rebuilding directly from `/home/ubuntu/vutler`.
 
@@ -33,6 +33,13 @@ ssh -i ~/.ssh/vps-ssh-key.pem -o StrictHostKeyChecking=no ubuntu@83.228.222.180
 - `DATABASE_URL`, `JWT_SECRET`, and `VUTLER_API_KEY` are available to the API runtime
 - migrations to be deployed are present in `scripts/migrations/`
 - Docker is healthy on the host
+
+If any of these are false:
+- VPS checkout is dirty
+- live API container has unexplained tracked-file drift against `origin/main`
+- you cannot prove which commit production is actually running
+
+stop here and switch to the clean artifact flow.
 
 ## 1. Apply database migrations
 

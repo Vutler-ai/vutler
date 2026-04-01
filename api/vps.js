@@ -5,7 +5,7 @@ const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const { VPSProviderFactory } = require('../services/vpsProvider');
 const { CryptoService } = require('../services/crypto');
-const { AgentDeploymentService } = require('../services/agentDeployment');
+const AgentDeploymentService = require('../services/agentDeployment');
 const { authenticateAgent } = require('../lib/auth');
 
 // Apply authentication to all routes
@@ -13,6 +13,72 @@ router.use(authenticateAgent);
 
 // Initialize crypto service
 const crypto = new CryptoService();
+const VPS_MANAGED_ENABLED = String(process.env.VPS_MANAGED_ENABLED || '').toLowerCase() === 'true';
+const VPS_DEPLOYMENTS_ENABLED = String(process.env.VPS_DEPLOYMENTS_ENABLED || '').toLowerCase() === 'true';
+const SUPPORTED_PROVIDERS = new Set(VPSProviderFactory.getSupportedProviders());
+
+function parseProviderCredentials(encryptedValue) {
+  const decrypted = crypto.decrypt(encryptedValue);
+  if (!decrypted) {
+    throw new Error('Provider credentials are missing');
+  }
+
+  if (typeof decrypted === 'object') {
+    return decrypted;
+  }
+
+  if (typeof decrypted !== 'string') {
+    throw new Error('Provider credentials have an unsupported format');
+  }
+
+  try {
+    const parsed = JSON.parse(decrypted);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Provider credentials must be a JSON object');
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Provider credentials are invalid JSON: ${error.message}`);
+  }
+}
+
+function requireWorkspace(req, res, next) {
+  if (!req.workspaceId) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+  }
+  return next();
+}
+
+function requireVpsDeploymentsEnabled(req, res, next) {
+  if (VPS_DEPLOYMENTS_ENABLED) return next();
+  return res.status(501).json({
+    success: false,
+    error: 'VPS agent deployments are disabled. Set VPS_DEPLOYMENTS_ENABLED=true to allow cloud-init bootstrap deployments.',
+    code: 'vps_deployments_disabled',
+  });
+}
+
+function requireManagedVpsEnabled(req, res, next) {
+  if (VPS_MANAGED_ENABLED) return next();
+  return res.status(410).json({
+    success: false,
+    error: 'Managed VPS provisioning is disabled. Supported Nexus deployment modes are local and enterprise/docker.',
+    code: 'managed_vps_disabled',
+  });
+}
+
+function assertProviderSupported(provider) {
+  if (!SUPPORTED_PROVIDERS.has(provider)) {
+    throw new Error(`Unsupported VPS provider: ${provider}. Supported providers: ${Array.from(SUPPORTED_PROVIDERS).join(', ')}`);
+  }
+}
+
+function getApiBaseUrl(req) {
+  return process.env.VUTLER_API_URL || `${req.protocol}://${req.get('host')}`;
+}
+
+router.use(requireWorkspace);
+router.use(requireManagedVpsEnabled);
 
 // ============================================================================
 // Provider Info Routes (public-ish, still needs auth)
@@ -30,10 +96,10 @@ router.get('/providers', async (req, res) => {
       WHERE is_active = true 
       ORDER BY display_name
     `);
-    
+
     res.json({ 
       success: true, 
-      data: result.rows 
+      data: result.rows.filter((row) => SUPPORTED_PROVIDERS.has(row.name))
     });
   } catch (err) {
     console.error('[VPS API] Error listing providers:', err);
@@ -52,6 +118,7 @@ router.get('/flavors/:provider', async (req, res) => {
   try {
     const { provider } = req.params;
     const { workspaceId } = req;
+    assertProviderSupported(provider);
 
     // Get provider config for this workspace
     const configResult = await pool.query(`
@@ -72,7 +139,7 @@ router.get('/flavors/:provider', async (req, res) => {
     const config = configResult.rows[0];
     
     // Decrypt credentials
-    const credentials = crypto.decrypt(config.credentials_encrypted);
+    const credentials = parseProviderCredentials(config.credentials_encrypted);
     
     // Create provider instance and fetch flavors
     const vpsProvider = VPSProviderFactory.create(provider, credentials);
@@ -100,6 +167,7 @@ router.get('/images/:provider', async (req, res) => {
   try {
     const { provider } = req.params;
     const { workspaceId } = req;
+    assertProviderSupported(provider);
 
     // Get provider config for this workspace
     const configResult = await pool.query(`
@@ -120,7 +188,7 @@ router.get('/images/:provider', async (req, res) => {
     const config = configResult.rows[0];
     
     // Decrypt credentials
-    const credentials = crypto.decrypt(config.credentials_encrypted);
+    const credentials = parseProviderCredentials(config.credentials_encrypted);
     
     // Create provider instance and fetch images
     const vpsProvider = VPSProviderFactory.create(provider, credentials);
@@ -159,6 +227,8 @@ router.post('/config', async (req, res) => {
         error: 'Provider and credentials are required'
       });
     }
+
+    assertProviderSupported(provider);
 
     // Get provider ID
     const providerResult = await pool.query(`
@@ -299,7 +369,7 @@ router.delete('/config/:id', async (req, res) => {
  */
 router.post('/instances', async (req, res) => {
   try {
-    const { provider, flavor, image, name, region } = req.body;
+    const { provider, flavor, image, name, region, agentId, deploymentConfig } = req.body;
     const { workspaceId } = req;
 
     if (!provider || !flavor || !image || !name) {
@@ -307,6 +377,31 @@ router.post('/instances', async (req, res) => {
         success: false,
         error: 'Provider, flavor, image, and name are required'
       });
+    }
+
+    assertProviderSupported(provider);
+    if (agentId && !VPS_DEPLOYMENTS_ENABLED) {
+      return res.status(501).json({
+        success: false,
+        error: 'Agent bootstrap during VPS creation is disabled. Set VPS_DEPLOYMENTS_ENABLED=true to enable cloud-init deployments.',
+        code: 'vps_deployments_disabled',
+      });
+    }
+
+    if (agentId) {
+      const agentCheck = await pool.query(`
+        SELECT id
+        FROM tenant_vutler.agents
+        WHERE id = $1 AND workspace_id = $2
+        LIMIT 1
+      `, [agentId, workspaceId]);
+
+      if (agentCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: 'Agent not found'
+        });
+      }
     }
 
     // Get provider config for this workspace
@@ -336,10 +431,26 @@ router.post('/instances', async (req, res) => {
     `, [workspaceId, config.provider_id, name, 'creating', flavor, image, region || config.region]);
 
     const instance = instanceResult.rows[0];
+    const deploymentService = new AgentDeploymentService(pool, crypto);
+    let bootstrapPlan = null;
 
     try {
+      if (agentId) {
+        bootstrapPlan = await deploymentService.prepareDeploymentForInstance(
+          agentId,
+          instance.id,
+          workspaceId,
+          {
+            ...(deploymentConfig || {}),
+            userId: req.userId || req.user?.id || null,
+            apiBaseUrl: getApiBaseUrl(req),
+            instanceName: name,
+          }
+        );
+      }
+
       // Decrypt credentials and create provider instance
-      const credentials = crypto.decrypt(config.credentials_encrypted);
+      const credentials = parseProviderCredentials(config.credentials_encrypted);
       const vpsProvider = VPSProviderFactory.create(provider, credentials);
       await vpsProvider.authenticate();
 
@@ -348,7 +459,14 @@ router.post('/instances', async (req, res) => {
         name,
         flavor,
         image,
-        region: region || config.region
+        region: region || config.region,
+        workspace_id: workspaceId,
+        metadata: bootstrapPlan ? {
+          nexus_deployment_id: bootstrapPlan.nexusDeployment.id,
+          vps_deployment_id: bootstrapPlan.deployment.id,
+          agent_id: agentId,
+        } : undefined,
+        userData: bootstrapPlan ? bootstrapPlan.cloudInitScript : undefined,
       });
 
       // Update instance with provider-specific details
@@ -362,13 +480,41 @@ router.post('/instances', async (req, res) => {
         providerInstance.id, 
         providerInstance.status || 'creating',
         providerInstance.ip_address,
-        JSON.stringify(providerInstance.metadata || {}),
+        JSON.stringify({
+          ...(providerInstance.metadata || {}),
+          ...(bootstrapPlan ? {
+            bootstrap: {
+              deploymentId: bootstrapPlan.deployment.id,
+              nexusDeploymentId: bootstrapPlan.nexusDeployment.id,
+              agentId,
+              mode: 'cloud_init',
+            },
+          } : {}),
+        }),
         instance.id
       ]);
 
+      if (bootstrapPlan) {
+        await deploymentService.markDeploymentProvisioned(bootstrapPlan.deployment.id, {
+          providerInstanceId: providerInstance.id,
+          ipAddress: providerInstance.ip_address || null,
+        });
+      }
+
       res.json({
         success: true,
-        data: updatedResult.rows[0]
+        data: {
+          ...updatedResult.rows[0],
+          ...(bootstrapPlan ? {
+            bootstrap: {
+              deploymentId: bootstrapPlan.deployment.id,
+              nexusDeploymentId: bootstrapPlan.nexusDeployment.id,
+              status: 'running',
+              runtimeStatus: 'planned',
+              waitingForHeartbeat: true,
+            },
+          } : {}),
+        }
       });
     } catch (providerErr) {
       // Update instance status to error
@@ -377,6 +523,13 @@ router.post('/instances', async (req, res) => {
         SET status = 'error', metadata = $1, updated_at = now()
         WHERE id = $2
       `, [JSON.stringify({ error: providerErr.message }), instance.id]);
+
+      if (bootstrapPlan) {
+        await deploymentService.markDeploymentFailed(
+          bootstrapPlan.deployment.id,
+          `Provider provisioning failed: ${providerErr.message}`
+        );
+      }
 
       console.error('[VPS API] Provider error creating instance:', providerErr);
       res.status(500).json({
@@ -456,7 +609,7 @@ router.get('/instances/:id', async (req, res) => {
       `, [workspaceId, instance.provider_id]);
 
       if (configResult.rows.length > 0 && instance.provider_instance_id) {
-        const credentials = crypto.decrypt(configResult.rows[0].credentials_encrypted);
+        const credentials = parseProviderCredentials(configResult.rows[0].credentials_encrypted);
         const vpsProvider = VPSProviderFactory.create(instance.provider_name, credentials);
         await vpsProvider.authenticate();
         
@@ -571,10 +724,10 @@ router.delete('/instances/:id', async (req, res) => {
  * POST /agents/:agentId/deploy
  * Deploy agent to a VPS instance
  */
-router.post('/agents/:agentId/deploy', async (req, res) => {
+router.post('/agents/:agentId/deploy', requireVpsDeploymentsEnabled, async (req, res) => {
   try {
     const { agentId } = req.params;
-    const { vpsInstanceId, deploymentConfig } = req.body;
+    const { vpsInstanceId } = req.body;
     const { workspaceId } = req;
 
     if (!vpsInstanceId) {
@@ -611,31 +764,25 @@ router.post('/agents/:agentId/deploy', async (req, res) => {
     }
 
     const vpsInstance = instanceResult.rows[0];
-    if (vpsInstance.status !== 'active') {
-      return res.status(400).json({
-        success: false,
-        error: `VPS instance must be active, current status: ${vpsInstance.status}`
-      });
-    }
-
-    // Deploy agent
-    const deploymentService = new AgentDeploymentService(pool, crypto);
-    const deployment = await deploymentService.deployAgent(
-      agentId, 
-      vpsInstanceId, 
-      workspaceId, 
-      deploymentConfig || {}
-    );
-
-    res.json({
-      success: true,
-      data: {
-        deploymentId: deployment.id,
-        status: deployment.status,
-        agentId,
-        vpsInstanceId
-      },
-      message: 'Agent deployment started successfully'
+    return res.status(409).json({
+      success: false,
+      error: 'Automatic deployment to an existing VPS is not supported without a provider-level rebuild or SSH executor.',
+      code: 'vps_existing_instance_deploy_not_supported',
+      recommendation: {
+        endpoint: 'POST /api/v1/vps/instances',
+        body: {
+          provider: vpsInstance.provider_name || 'infomaniak',
+          flavor: vpsInstance.flavor,
+          image: vpsInstance.image,
+          name: `${vpsInstance.name || 'vps'}-bootstrap`,
+          region: vpsInstance.region,
+          agentId,
+          deploymentConfig: {
+            nodeName: `${agentId}-vps`,
+          },
+        },
+        message: 'Create a fresh instance with agentId so cloud-init can bootstrap the Nexus runtime on first boot.',
+      }
     });
 
   } catch (err) {
@@ -662,10 +809,14 @@ router.get('/deployments', async (req, res) => {
         vi.status as vps_instance_status,
         vi.ip_address as vps_ip_address,
         a.name as agent_name,
-        a.vps_status as agent_vps_status
+        a.vps_status as agent_vps_status,
+        nd.status as runtime_status,
+        nd.last_heartbeat_at as runtime_last_heartbeat_at,
+        nd.runtime_version as runtime_version
       FROM tenant_vutler.vps_deployments vd
       JOIN tenant_vutler.vps_instances vi ON vd.vps_instance_id = vi.id
       LEFT JOIN tenant_vutler.agents a ON vd.agent_id = a.id
+      LEFT JOIN tenant_vutler.nexus_deployments nd ON nd.id = vd.nexus_deployment_id
       WHERE vi.workspace_id = $1
       ORDER BY vd.created_at DESC
     `, [workspaceId]);
@@ -701,11 +852,15 @@ router.get('/deployments/:deploymentId', async (req, res) => {
         vi.ip_address as vps_ip_address,
         a.name as agent_name,
         a.vps_status as agent_vps_status,
-        p.display_name as provider_name
+        p.display_name as provider_name,
+        nd.status as runtime_status,
+        nd.last_heartbeat_at as runtime_last_heartbeat_at,
+        nd.runtime_version as runtime_version
       FROM tenant_vutler.vps_deployments vd
       JOIN tenant_vutler.vps_instances vi ON vd.vps_instance_id = vi.id
       JOIN tenant_vutler.vps_providers p ON vi.provider_id = p.id
       LEFT JOIN tenant_vutler.agents a ON vd.agent_id = a.id
+      LEFT JOIN tenant_vutler.nexus_deployments nd ON nd.id = vd.nexus_deployment_id
       WHERE vd.id = $1 AND vi.workspace_id = $2
     `, [deploymentId, workspaceId]);
 
@@ -734,7 +889,7 @@ router.get('/deployments/:deploymentId', async (req, res) => {
  * DELETE /deployments/:deploymentId
  * Undeploy agent
  */
-router.delete('/deployments/:deploymentId', async (req, res) => {
+router.delete('/deployments/:deploymentId', requireVpsDeploymentsEnabled, async (req, res) => {
   try {
     const { deploymentId } = req.params;
     const { workspaceId } = req;
@@ -826,7 +981,7 @@ async function _performInstanceAction(instanceId, workspaceId, action) {
       };
     }
 
-    const credentials = crypto.decrypt(configResult.rows[0].credentials_encrypted);
+    const credentials = parseProviderCredentials(configResult.rows[0].credentials_encrypted);
     const vpsProvider = VPSProviderFactory.create(instance.provider_name, credentials);
     await vpsProvider.authenticate();
 

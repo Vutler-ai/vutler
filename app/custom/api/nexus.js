@@ -14,7 +14,7 @@ function mapNode(row) {
   return {
     id: row.id,
     name: row.name,
-    type: row.type || 'vps',
+    type: row.type || 'local',
     status: row.status || 'offline',
     host: row.host || null,
     port: row.port || null,
@@ -69,7 +69,7 @@ router.post('/nexus', authenticateAgent, async (req, res) => {
       return res.status(503).json({ success: false, error: 'Database not available' });
     }
 
-    const { name, type = 'vps', host = null, port = null, config = {} } = req.body || {};
+    const { name, type = 'local', host = null, port = null, config = {} } = req.body || {};
 
     if (!name) {
       return res.status(400).json({
