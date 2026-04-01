@@ -214,17 +214,21 @@ function buildProvisioningDraft(agent: Partial<Agent>): AgentProvisioning {
     agent.provisioning?.email?.email ||
     agent.email ||
     '';
+  const emailFacadeEnabled =
+    agent.provisioning?.email?.provisioned ??
+    agent.provisioning?.channels?.email ??
+    Boolean(emailAddress);
   const socialProvisioning = agent.provisioning?.social || {};
 
   return {
     channels: {
       chat: agent.provisioning?.channels?.chat ?? true,
-      email: agent.provisioning?.channels?.email ?? Boolean(emailAddress),
+      email: emailFacadeEnabled,
       tasks: agent.provisioning?.channels?.tasks ?? true,
     },
     email: {
       address: emailAddress,
-      provisioned: agent.provisioning?.email?.provisioned ?? Boolean(emailAddress),
+      provisioned: emailFacadeEnabled,
     },
     social: {
       allowed_platforms: Array.isArray(socialProvisioning.allowed_platforms)
@@ -239,6 +243,25 @@ function buildProvisioningDraft(agent: Partial<Agent>): AgentProvisioning {
       root: agent.provisioning?.drive?.root || agent.drive_path || '',
     },
   };
+}
+
+function syncEmailFacadeState(provisioning: AgentProvisioning, enabled: boolean): AgentProvisioning {
+  return {
+    ...provisioning,
+    channels: {
+      ...provisioning.channels,
+      email: enabled,
+    },
+    email: {
+      ...provisioning.email,
+      provisioned: enabled,
+    },
+  };
+}
+
+function normalizeProvisioningDraft(provisioning: AgentProvisioning): AgentProvisioning {
+  const emailEnabled = Boolean(provisioning.email?.provisioned ?? provisioning.channels?.email);
+  return syncEmailFacadeState(provisioning, emailEnabled);
 }
 
 function buildMemoryDraft(agent: Partial<Agent>): AgentMemoryPolicy {
@@ -691,7 +714,7 @@ export default function AgentConfigPage() {
       setBrainDraft(buildBrainDraft(mergedAgent));
       setSkillsDraft(extractPersistentSkills(mergedAgent));
       setAccessDraft(buildAccessDraft(mergedAgent, matrixResponse, sandboxEligible));
-      setProvisioningDraft(buildProvisioningDraft(mergedAgent));
+      setProvisioningDraft(normalizeProvisioningDraft(buildProvisioningDraft(mergedAgent)));
       setMemoryDraft(buildMemoryDraft(mergedAgent));
       setGovernanceDraft(buildGovernanceDraft(mergedAgent));
     } catch (error) {
@@ -859,18 +882,20 @@ export default function AgentConfigPage() {
     setBanner(null);
 
     try {
+      const normalizedProvisioning = normalizeProvisioningDraft(provisioningDraft);
       const response = await patchAgentProvisioning(agentId, {
-        provisioning: provisioningDraft,
+        provisioning: normalizedProvisioning,
       });
-      setProvisioningDraft(response.provisioning);
+      const nextProvisioning = normalizeProvisioningDraft(response.provisioning);
+      setProvisioningDraft(nextProvisioning);
       setMatrix(response.data);
       setAgent((previous) =>
         previous
           ? {
               ...previous,
-              provisioning: response.provisioning,
-              email: response.provisioning.email?.provisioned
-                ? response.provisioning.email?.address || previous.email
+              provisioning: nextProvisioning,
+              email: nextProvisioning.email?.provisioned
+                ? nextProvisioning.email?.address || previous.email
                 : null,
             }
           : previous
@@ -955,6 +980,12 @@ export default function AgentConfigPage() {
         [key]: !(previous.channels?.[key] ?? false),
       },
     }));
+  };
+
+  const toggleEmailFacade = () => {
+    setProvisioningDraft((previous) =>
+      syncEmailFacadeState(previous, !(previous.email?.provisioned ?? previous.channels?.email ?? false))
+    );
   };
 
   const toggleSocialPlatform = (platform: string) => {
@@ -1099,8 +1130,8 @@ export default function AgentConfigPage() {
           helper={effectiveCapabilities.length > 0 ? effectiveCapabilities.join(', ') : 'No runtime capability active'}
         />
         <StatCard
-          label="Email Identity"
-          value={provisioningDraft.email?.provisioned ? 'Provisioned' : 'Not provisioned'}
+          label="Email Facade"
+          value={provisioningDraft.email?.provisioned ? 'Enabled' : 'Disabled'}
           helper={provisioningDraft.email?.address || 'No sending identity configured'}
         />
       </div>
@@ -1435,41 +1466,37 @@ export default function AgentConfigPage() {
                         onClick={() => toggleChannel('chat')}
                       />
                       <TogglePill
-                        checked={Boolean(provisioningDraft.channels?.email)}
-                        label="Email"
-                        onClick={() => toggleChannel('email')}
-                      />
-                      <TogglePill
                         checked={Boolean(provisioningDraft.channels?.tasks)}
                         label="Tasks"
                         onClick={() => toggleChannel('tasks')}
                       />
                     </div>
-                    <FieldHint>Channels define where this agent can appear as a facade.</FieldHint>
+                    <FieldHint>
+                      Channels define where this agent can appear as a facade. Email is managed below as a single facade + identity flow.
+                    </FieldHint>
                   </div>
 
                   <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 md:col-span-2">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <div className="text-sm font-medium text-white">Email identity</div>
-                        <FieldHint>Postal and plan access must exist at workspace level before this becomes effective.</FieldHint>
+                        <div className="text-sm font-medium text-white">Email facade</div>
+                        <FieldHint>
+                          One control manages both the visible email channel and the provisioned sending identity. Leave the address blank to auto-generate one.
+                        </FieldHint>
                       </div>
                       <TogglePill
                         checked={Boolean(provisioningDraft.email?.provisioned)}
-                        label={provisioningDraft.email?.provisioned ? 'Provisioned' : 'Not provisioned'}
-                        onClick={() =>
-                          setProvisioningDraft((previous) => ({
-                            ...previous,
-                            email: {
-                              ...previous.email,
-                              provisioned: !(previous.email?.provisioned ?? false),
-                            },
-                          }))
-                        }
+                        label={provisioningDraft.email?.provisioned ? 'Enabled' : 'Disabled'}
+                        onClick={toggleEmailFacade}
                       />
                     </div>
+                    {!accessDraft.email?.allowed ? (
+                      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm text-amber-100">
+                        Email can be provisioned here in advance, but it will stay blocked at runtime until `Access` allows email for this agent.
+                      </div>
+                    ) : null}
                     <div className="space-y-2">
-                      <Label htmlFor="email-address">Sending address</Label>
+                      <Label htmlFor="email-address">Preferred address</Label>
                       <Input
                         id="email-address"
                         value={provisioningDraft.email?.address || ''}
