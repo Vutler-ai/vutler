@@ -366,7 +366,6 @@ export interface BrowserOperatorRunReport {
   flowKey: string;
   runtimeMode: string;
   runtimeEngine?: string;
-  target: Record<string, unknown>;
   evidenceCounts?: Record<string, unknown>;
   target: Record<string, unknown>;
   totals: {
