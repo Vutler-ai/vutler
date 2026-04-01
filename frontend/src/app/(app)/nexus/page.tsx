@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { getNodes, deployLocal, deployEnterprise } from '@/lib/api/endpoints/nexus';
+import { getNodes, deployLocal, deployEnterprise, deleteNode } from '@/lib/api/endpoints/nexus';
 import {
   getEnterpriseProfiles,
   validateEnterpriseProfileSelection,
@@ -1043,11 +1043,17 @@ function ClientFormModal({
 // ─── Delete Confirm Modal ─────────────────────────────────────────────────────
 
 function DeleteConfirmModal({
+  title,
   label,
+  description,
+  confirmLabel,
   onClose,
   onConfirm,
 }: {
+  title: string;
   label: string;
+  description?: ReactNode;
+  confirmLabel?: string;
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -1068,9 +1074,13 @@ function DeleteConfirmModal({
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl w-full max-w-sm mx-4 p-6 space-y-4">
-        <h2 className="text-white font-semibold text-lg">Delete Client</h2>
+        <h2 className="text-white font-semibold text-lg">{title}</h2>
         <p className="text-[#9ca3af] text-sm">
-          Are you sure you want to delete <span className="text-white font-medium">{label}</span>? This action cannot be undone.
+          {description ?? (
+            <>
+              Are you sure you want to delete <span className="text-white font-medium">{label}</span>? This action cannot be undone.
+            </>
+          )}
         </p>
         <div className="flex gap-2 pt-1">
           <button
@@ -1085,7 +1095,7 @@ function DeleteConfirmModal({
             className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
           >
             {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-            {loading ? 'Deleting…' : 'Delete'}
+            {loading ? 'Deleting…' : (confirmLabel ?? 'Delete')}
           </button>
         </div>
       </div>
@@ -1095,14 +1105,19 @@ function DeleteConfirmModal({
 
 // ─── Node Card ────────────────────────────────────────────────────────────────
 
-function NodeCard({ node }: { node: NexusNode }) {
+function NodeCard({
+  node,
+  onDelete,
+}: {
+  node: NexusNode;
+  onDelete: (node: NexusNode) => void;
+}) {
   const m = node.mode ?? 'standard';
   const workspaceProviders = ['mail', 'calendar', 'contacts']
     .map((key) => node.providerSources?.[key]?.active)
     .filter((value, index, list): value is string => !!value && list.indexOf(value) === index);
   return (
-    <Link
-      href={`/nexus/${node.id}`}
+    <div
       className={`group flex flex-col bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-5 hover:border-[rgba(255,255,255,0.14)] transition-all duration-200 ${STATUS_RING[node.status]}`}
     >
       <div className="flex items-center justify-between mb-4">
@@ -1110,35 +1125,47 @@ function NodeCard({ node }: { node: NexusNode }) {
           <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOT[node.status]} ${node.status === 'online' ? 'animate-pulse' : ''}`} />
           <span className="text-xs text-[#6b7280] capitalize">{node.status}</span>
         </div>
-        <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${MODE_BADGE[m] ?? MODE_BADGE.standard}`}>{m}</span>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${MODE_BADGE[m] ?? MODE_BADGE.standard}`}>{m}</span>
+          <button
+            type="button"
+            onClick={() => onDelete(node)}
+            className="px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
+            title={`Delete ${node.name}`}
+          >
+            Delete
+          </button>
+        </div>
       </div>
-      <p className="text-white font-semibold text-base leading-snug mb-0.5 group-hover:text-[#3b82f6] transition-colors">
-        {node.name}
-      </p>
-      {node.clientName && <p className="text-xs text-[#6b7280] mb-1">{node.clientName}</p>}
-      <div className="mt-auto pt-4 space-y-1 text-xs text-[#6b7280]">
-        <p>{node.agentCount === 0 ? 'No agents' : `${node.agentCount} agent${node.agentCount !== 1 ? 's' : ''}`}</p>
-        {node.seats && (
-          <p className="text-[#3b82f6]">{node.seats.used}/{node.seats.max} seats used</p>
-        )}
-        {workspaceProviders.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {workspaceProviders.map((provider) => (
-              <span
-                key={`${node.id}-${provider}`}
-                className="px-1.5 py-0.5 rounded-full bg-[#0a0b14] border border-[rgba(255,255,255,0.08)] text-[10px] text-[#9ca3af]"
-              >
-                {formatProviderLabel(provider)}
-              </span>
-            ))}
-          </div>
-        )}
-        <p>Last: {relativeTime(node.lastHeartbeat)}</p>
-      </div>
-      <div className="mt-4 pt-4 border-t border-[rgba(255,255,255,0.05)]">
-        <span className="text-xs text-[#3b82f6] group-hover:underline">Manage →</span>
-      </div>
-    </Link>
+      <Link href={`/nexus/${node.id}`} className="flex flex-1 flex-col">
+        <p className="text-white font-semibold text-base leading-snug mb-0.5 group-hover:text-[#3b82f6] transition-colors">
+          {node.name}
+        </p>
+        {node.clientName && <p className="text-xs text-[#6b7280] mb-1">{node.clientName}</p>}
+        <div className="mt-auto pt-4 space-y-1 text-xs text-[#6b7280]">
+          <p>{node.agentCount === 0 ? 'No agents' : `${node.agentCount} agent${node.agentCount !== 1 ? 's' : ''}`}</p>
+          {node.seats && (
+            <p className="text-[#3b82f6]">{node.seats.used}/{node.seats.max} seats used</p>
+          )}
+          {workspaceProviders.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {workspaceProviders.map((provider) => (
+                <span
+                  key={`${node.id}-${provider}`}
+                  className="px-1.5 py-0.5 rounded-full bg-[#0a0b14] border border-[rgba(255,255,255,0.08)] text-[10px] text-[#9ca3af]"
+                >
+                  {formatProviderLabel(provider)}
+                </span>
+              ))}
+            </div>
+          )}
+          <p>Last: {relativeTime(node.lastHeartbeat)}</p>
+        </div>
+        <div className="mt-4 pt-4 border-t border-[rgba(255,255,255,0.05)]">
+          <span className="text-xs text-[#3b82f6] group-hover:underline">Manage →</span>
+        </div>
+      </Link>
+    </div>
   );
 }
 
@@ -1273,6 +1300,7 @@ function MyNodesTab({
   error,
   onRetry,
   onDeploy,
+  onDeleteNode,
 }: {
   nodes: NexusNode[];
   stats: NexusStats | null;
@@ -1282,6 +1310,7 @@ function MyNodesTab({
   error: string;
   onRetry: () => void;
   onDeploy: () => void;
+  onDeleteNode: (node: NexusNode) => void;
 }) {
   const localNodes = nodes.filter((n) => n.mode !== 'enterprise');
 
@@ -1326,7 +1355,7 @@ function MyNodesTab({
 
       {!loading && localNodes.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {localNodes.map((node) => <NodeCard key={node.id} node={node} />)}
+          {localNodes.map((node) => <NodeCard key={node.id} node={node} onDelete={onDeleteNode} />)}
         </div>
       )}
     </div>
@@ -1579,6 +1608,7 @@ export default function NexusPage() {
   const [clientFormOpen, setClientFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | undefined>(undefined);
   const [deletingClient, setDeletingClient] = useState<Client | undefined>(undefined);
+  const [deletingNode, setDeletingNode] = useState<NexusNode | undefined>(undefined);
 
   const fetchNodes = useCallback(async () => {
     setNodesLoading(true);
@@ -1674,6 +1704,10 @@ export default function NexusPage() {
     setDeletingClient(client);
   };
 
+  const handleDeleteNode = (node: NexusNode) => {
+    setDeletingNode(node);
+  };
+
   const handleClientSaved = () => {
     setClientFormOpen(false);
     setEditingClient(undefined);
@@ -1685,6 +1719,18 @@ export default function NexusPage() {
     await deleteClient(deletingClient.id);
     setDeletingClient(undefined);
     fetchClients();
+  };
+
+  const handleNodeDeleted = async () => {
+    if (!deletingNode) return;
+    try {
+      await deleteNode(deletingNode.id);
+      setDeletingNode(undefined);
+      await fetchNodes();
+    } catch (err) {
+      setNodesError(err instanceof Error ? err.message : 'Failed to delete node.');
+      throw err;
+    }
   };
 
   const tabs: { id: ActiveTab; label: string }[] = [
@@ -1738,6 +1784,7 @@ export default function NexusPage() {
           error={nodesError}
           onRetry={fetchNodes}
           onDeploy={openDeployLocal}
+          onDeleteNode={handleDeleteNode}
         />
       )}
 
@@ -1777,9 +1824,25 @@ export default function NexusPage() {
 
       {deletingClient && (
         <DeleteConfirmModal
+          title="Delete Client"
           label={deletingClient.name}
           onClose={() => setDeletingClient(undefined)}
           onConfirm={handleClientDeleted}
+        />
+      )}
+
+      {deletingNode && (
+        <DeleteConfirmModal
+          title="Delete Local Node"
+          label={deletingNode.name}
+          description={(
+            <>
+              Delete <span className="text-white font-medium">{deletingNode.name}</span> from this workspace? This only removes the node record from Vutler and cannot be undone.
+            </>
+          )}
+          confirmLabel="Delete Node"
+          onClose={() => setDeletingNode(undefined)}
+          onConfirm={handleNodeDeleted}
         />
       )}
     </div>

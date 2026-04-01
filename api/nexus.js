@@ -408,6 +408,13 @@ async function refreshCommandState(workspaceId, filters = {}) {
 }
 
 function mapNode(row) {
+  const lastHeartbeat = row.last_heartbeat ? new Date(row.last_heartbeat).getTime() : 0;
+  const heartbeatFresh = !!lastHeartbeat && (Date.now() - lastHeartbeat <= HEARTBEAT_ONLINE_SECONDS * 1000);
+  const runtimeStatus = row.status === 'error'
+    ? 'error'
+    : heartbeatFresh
+      ? 'online'
+      : 'offline';
   const mode = getNodeMode(row);
   const agents = Array.isArray(row.agents_deployed) ? row.agents_deployed : [];
   const maxSeats = row.config?.max_seats ?? row.config?.seats ?? null;
@@ -415,7 +422,7 @@ function mapNode(row) {
     id: row.id,
     name: row.name,
     type: row.type || 'vps',
-    status: row.status || 'offline',
+    status: runtimeStatus,
     host: row.host || null,
     port: row.port || null,
     config: row.config || row.metadata || {},
@@ -440,7 +447,7 @@ function mapNodeListItem(row) {
   return {
     id: node.id,
     name: node.name,
-    status: node.status === 'online' ? 'online' : 'offline',
+    status: node.status === 'error' ? 'warning' : node.status,
     agentCount: node.agentCount,
     lastHeartbeat: node.lastHeartbeat,
     mode: node.mode,
