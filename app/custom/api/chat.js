@@ -323,21 +323,18 @@ router.post('/chat/channels', async (req, res) => {
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
   try {
-    const { name, description, type = 'channel', agentId } = req.body;
+    const { name, description, type = 'channel' } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'name is required' });
 
     const ws = wsId(req);
     const createdBy = actorId(req) || 'system';
     const dbType = type === 'direct' ? 'dm' : type;
 
-    if (dbType === 'dm' && agentId) {
-      const existing = await pg.query(
-        `SELECT * FROM ${SCHEMA}.chat_channels WHERE name = $1 AND workspace_id = $2 LIMIT 1`,
-        [name, ws]
-      );
-      if (existing.rows.length > 0) {
-        return res.json({ success: true, ...normaliseChannel(existing.rows[0]) });
-      }
+    if (dbType === 'dm') {
+      return res.status(400).json({
+        success: false,
+        error: 'Direct messages must be created via /api/v1/chat/dm',
+      });
     }
 
     const result = await pg.query(
@@ -348,15 +345,6 @@ router.post('/chat/channels', async (req, res) => {
     );
 
     const channel = result.rows[0];
-    if (dbType === 'dm' && agentId) {
-      await pg.query(
-        `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
-         VALUES ($1, $2, 'agent')
-         ON CONFLICT DO NOTHING`,
-        [channel.id, agentId.toString()]
-      );
-    }
-
     res.status(201).json({ success: true, ...normaliseChannel(channel) });
   } catch (err) {
     console.error('[Chat] POST /channels error:', err.message);
