@@ -72,13 +72,29 @@ async function checkWorkspaceLimits(workspaceId, plan) {
     ).catch(() => ({ rows: [{ cnt: 0 }] }));
 
     // Token usage for current month
-    const tokensRes = await pool.query(
+    let tokenCount = 0;
+    for (const query of [
+      `SELECT COALESCE(SUM(tokens_input + tokens_output), 0) AS cnt
+         FROM llm_usage_logs
+        WHERE workspace_id = $1
+          AND created_at >= date_trunc('month', NOW())`,
+      `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS cnt
+         FROM usage_logs
+        WHERE workspace_id = $1
+          AND created_at >= date_trunc('month', NOW())`,
       `SELECT COALESCE(SUM(tokens_used), 0) AS cnt
          FROM token_usage
         WHERE workspace_id = $1
           AND created_at >= date_trunc('month', NOW())`,
-      [workspaceId]
-    ).catch(() => ({ rows: [{ cnt: 0 }] }));
+    ]) {
+      try {
+        const result = await pool.query(query, [workspaceId]);
+        tokenCount = parseInt(result.rows[0]?.cnt || 0, 10);
+        if (tokenCount > 0) break;
+      } catch (_) {
+        continue;
+      }
+    }
 
     // Storage usage (bytes)
     const storageRes = await pool.query(
@@ -94,7 +110,6 @@ async function checkWorkspaceLimits(workspaceId, plan) {
     ).catch(() => ({ rows: [{ cnt: 0 }] }));
 
     const agentCount     = parseInt(agentsRes.rows[0].cnt, 10);
-    const tokenCount     = parseInt(tokensRes.rows[0].cnt, 10);
     const storageBytes   = parseInt(storageRes.rows[0].cnt, 10);
     const socialPosts    = parseInt(socialPostsRes.rows[0].cnt, 10);
 
