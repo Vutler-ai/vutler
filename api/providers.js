@@ -1,19 +1,15 @@
 const express = require('express');
 const pool = require('../lib/vaultbrix');
-const { CryptoService } = require('../services/crypto');
+const {
+  prettifyProvider,
+  syncLegacyWorkspaceProviders,
+} = require('../services/llmProviderCompat');
 
 const router = express.Router();
-const cryptoSvc = new CryptoService();
 const SCHEMA = 'tenant_vutler';
 
 function getDb(req) {
   return req.app.locals.pg || pool;
-}
-
-function prettifyProvider(provider) {
-  return String(provider || 'Provider')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function normalizeProviderResponse(row) {
@@ -35,64 +31,10 @@ function resolveProviderSecret(provider, apiKey) {
   return undefined;
 }
 
-async function syncLegacyProviders(db, workspaceId) {
-  try {
-    const legacyRows = await db.query(
-      `SELECT id, name, provider, api_key_encrypted, base_url, is_active, created_at, updated_at
-         FROM ${SCHEMA}.workspace_llm_providers
-        WHERE workspace_id = $1
-        ORDER BY created_at ASC`,
-      [workspaceId]
-    );
-
-    for (const row of legacyRows.rows) {
-      const existing = await db.query(
-        `SELECT 1
-           FROM ${SCHEMA}.llm_providers
-          WHERE id = $1 OR (workspace_id = $2 AND provider = $3 AND COALESCE(base_url, '') = COALESCE($4, ''))
-          LIMIT 1`,
-        [row.id, workspaceId, row.provider, row.base_url || null]
-      );
-      if (existing.rows.length > 0) continue;
-
-      let apiKey = null;
-      try {
-        apiKey = row.api_key_encrypted ? cryptoSvc.decrypt(row.api_key_encrypted) : null;
-      } catch (_) {
-        apiKey = null;
-      }
-
-      if (!apiKey && row.provider === 'codex') apiKey = 'oauth:chatgpt';
-      if (!apiKey && row.provider === 'vutler-trial') apiKey = process.env.VUTLER_TRIAL_OPENAI_KEY || null;
-      if (!apiKey && row.provider !== 'ollama') continue;
-
-      await db.query(
-        `INSERT INTO ${SCHEMA}.llm_providers
-          (id, workspace_id, provider, api_key, base_url, is_enabled, is_default, config, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7::jsonb, COALESCE($8, NOW()), COALESCE($9, NOW()))
-         ON CONFLICT (id) DO NOTHING`,
-        [
-          row.id,
-          workspaceId,
-          row.provider,
-          apiKey || '',
-          row.base_url || null,
-          row.is_active !== false,
-          JSON.stringify({ display_name: row.name || prettifyProvider(row.provider), source: 'workspace_llm_providers_legacy' }),
-          row.created_at || null,
-          row.updated_at || null,
-        ]
-      );
-    }
-  } catch (_) {
-    // Legacy table may not exist on all environments.
-  }
-}
-
 router.get('/', async (req, res) => {
   try {
     const db = getDb(req);
-    await syncLegacyProviders(db, req.workspaceId);
+    await syncLegacyWorkspaceProviders(db, req.workspaceId);
     const result = await db.query(
       `SELECT id, provider, api_key, base_url, is_enabled, config, created_at, updated_at
          FROM ${SCHEMA}.llm_providers
@@ -111,7 +53,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const db = getDb(req);
-    await syncLegacyProviders(db, req.workspaceId);
+    await syncLegacyWorkspaceProviders(db, req.workspaceId);
     const result = await db.query(
       `SELECT id, provider, api_key, base_url, is_enabled, config, created_at, updated_at
          FROM ${SCHEMA}.llm_providers

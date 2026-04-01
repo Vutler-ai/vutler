@@ -9,6 +9,10 @@ const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns')
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const { resolveAgentRuntimeIntegrations, getSkillKeysForIntegrationProviders } = require('./agentIntegrationService');
 const {
+  resolveLegacyWorkspaceProvider,
+  syncLegacyWorkspaceProviders,
+} = require('./llmProviderCompat');
+const {
   resolveWorkspaceCapabilityAvailability,
   filterAvailableProviders,
   getUnavailableProviders,
@@ -862,6 +866,8 @@ function readWorkspaceSettingValue(rawValue) {
 async function resolveWorkspaceProvider(db, workspaceId, providerName, options = {}) {
   if (!db || !workspaceId || (!providerName && !options.id)) return null;
   try {
+    await syncLegacyWorkspaceProviders(db, workspaceId).catch(() => {});
+
     let r;
     if (options.id) {
       r = await db.query(
@@ -871,22 +877,28 @@ async function resolveWorkspaceProvider(db, workspaceId, providerName, options =
           LIMIT 1`,
         [workspaceId, options.id]
       );
-      if (r.rows?.[0]) return r.rows[0];
+      if (r.rows?.[0]?.api_key) return r.rows[0];
     }
 
     if (!providerName) return null;
 
     r = await db.query(
-      `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
+        `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
          FROM tenant_vutler.llm_providers
         WHERE workspace_id = $1 AND provider = $2 AND is_enabled = true
         ORDER BY is_default DESC, created_at DESC
         LIMIT 1`,
       [workspaceId, providerName]
     );
-    return r.rows?.[0] || null;
+    if (r.rows?.[0]?.api_key) return r.rows[0];
   } catch (err) {
     console.warn('[LLM Router] resolveWorkspaceProvider failed:', err.message);
+  }
+
+  try {
+    return await resolveLegacyWorkspaceProvider(db, workspaceId, providerName, options);
+  } catch (err) {
+    console.warn('[LLM Router] resolveLegacyWorkspaceProvider failed:', err.message);
     return null;
   }
 }
