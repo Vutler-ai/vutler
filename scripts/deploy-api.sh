@@ -62,6 +62,18 @@ docker run -d \
 
 docker network connect postal2_postal-net vutler-api >/dev/null 2>&1 || true
 
+docker rm -f vutler-sandbox-worker >/dev/null 2>&1 || true
+docker run -d \
+  --name vutler-sandbox-worker \
+  --restart unless-stopped \
+  --network vutler_vutler-network \
+  --env-file "$ENV_FILE" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  vutler-api:latest \
+  node workers/sandbox-worker.js >/dev/null
+
+docker network connect postal2_postal-net vutler-sandbox-worker >/dev/null 2>&1 || true
+
 for i in $(seq 1 25); do
   s=$(docker inspect -f '{{.State.Health.Status}}' vutler-api 2>/dev/null || echo unknown)
   echo "$i $s"
