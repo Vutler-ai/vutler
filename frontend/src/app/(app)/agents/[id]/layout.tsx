@@ -12,10 +12,9 @@ import { getAvatarImageUrl, isEmojiAvatar } from '@/lib/avatar';
 // ─── Tab Config ───────────────────────────────────────────────────────────────
 
 const TABS = [
-  { label: 'Config', path: 'config' },
+  { label: 'Settings', path: 'config' },
   { label: 'Executions', path: 'executions' },
   { label: 'Memory', path: 'memory' },
-  { label: 'Integrations', path: 'integrations' },
 ] as const;
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────

@@ -25,8 +25,8 @@ pnpm start      # Production server
 frontend/src/
 ├── app/
 │   ├── (app)/                → Authenticated application (app.vutler.ai)
-│   │   ├── agents/           → Agent management (list, config, new)
-│   │   │   ├── [id]/config/  → Agent configuration (model, skills, provider)
+│   │   ├── agents/           → Agent management (list, settings, wizard)
+│   │   │   ├── [id]/config/  → Agent settings (overview, brain, skills, access, provisioning)
 │   │   │   └── new/          → Agent creation wizard
 │   │   ├── dashboard/        → Main dashboard
 │   │   ├── settings/         → Workspace settings
@@ -61,6 +61,9 @@ Routing is handled by Next.js route groups: `(landing)/` for public pages, `(app
 ### Agent Management
 - **Agent type wizard** for creating new agents with role-based provisioning
 - **Skill limits**: maximum 8 skills per agent
+- **Capability matrix**: every runtime domain is shown as `workspace available` / `agent allowed` / `provisioned` / `effective`
+- **Settings split**: agent settings separate `persistent skills`, `access policy`, and `channels & provisioning`
+- **Workspace integrations stay global**: connectors are configured under workspace settings, not owned by a single agent
 - **Model selector** with `codex/*` models (gpt-5.4, gpt-5.3-codex-spark, etc.)
 - **Provider configuration** per agent (Anthropic, Codex, OpenRouter, Mistral, Groq, Google)
 
@@ -73,6 +76,7 @@ Routing is handled by Next.js route groups: `(landing)/` for public pages, `(app
 - **ChatGPT OAuth** connect/poll flow for Codex provider
 - **Post for Me** social media integration with Stripe addon packs
 - **MCP Nexus Bridge** tab on landing page with Claude Code examples
+- **Agent-level provisioning** now scopes usage of connected providers instead of attaching integrations directly to the agent
 
 ### Pricing
 - 8 plan tiers with Stripe checkout
