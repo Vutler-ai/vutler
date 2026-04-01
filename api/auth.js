@@ -15,6 +15,11 @@ const coordinatorPrompt = require('../services/coordinatorPrompt');
 const { CryptoService } = require('../services/crypto');
 const { syncWorkspacePlan } = require('../services/workspacePlanService');
 const { buildSpriteAvatar } = require('../lib/avatarPath');
+const {
+  assertColumnsExist,
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../lib/schemaReadiness');
 const cryptoSvc = new CryptoService();
 
 const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
@@ -171,6 +176,17 @@ async function getGitHubUserEmails(accessToken) {
 
 // Ensure users_auth has required columns (simplified version)
 async function ensureSchema(pool) {
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertColumnsExist(
+      pool,
+      SCHEMA,
+      'users_auth',
+      ['salt', 'name', 'role', 'workspace_id', 'avatar_url', 'deleted_at', 'last_login_at'],
+      { label: 'Users auth table' }
+    );
+    return;
+  }
+
   await pool.query(`
     ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS salt TEXT;
     ALTER TABLE ${SCHEMA}.users_auth ADD COLUMN IF NOT EXISTS name TEXT;
@@ -922,6 +938,13 @@ const POSTAL_ENDPOINT = 'http://localhost:8082';
 const POSTAL_HOST = 'mail.vutler.ai';
 
 async function ensureResetTokensTable(pool) {
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertTableExists(pool, SCHEMA, 'password_reset_tokens', {
+      label: 'Password reset tokens table',
+    });
+    return;
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${SCHEMA}.password_reset_tokens (
       token       TEXT PRIMARY KEY,

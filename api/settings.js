@@ -5,14 +5,17 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { clearSniparaConfigCache } = require('../services/sniparaResolver');
-const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
+const {
+  assertColumnsExist,
+  runtimeSchemaMutationsAllowed,
+} = require('../lib/schemaReadiness');
+const { ensureApiKeysTable } = require('../services/apiKeys');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch(e) {
   try { pool = require('../lib/postgres').pool; } catch(e2) { console.error('[SETTINGS] No DB pool found'); }
 }
 
-const WS_ID = '00000000-0000-0000-0000-000000000001';
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_NOTIFICATION_SETTINGS = {
   agent_error: true,
@@ -23,35 +26,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
 
 async function ensureTables() {
   try {
-    if (!runtimeSchemaMutationsAllowed()) {
-      await assertTableExists(pool, SCHEMA, 'workspace_api_keys', {
-        label: 'Workspace API keys table',
-      });
-      return;
-    }
-
-    // Only create workspace_api_keys if it doesn't exist — don't touch workspace_settings schema
-    const check2 = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='workspace_api_keys'`
-    );
-    if (check2.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_api_keys (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID DEFAULT '${WS_ID}',
-          name TEXT NOT NULL,
-          key_hash TEXT NOT NULL,
-          key_prefix TEXT NOT NULL,
-          role TEXT NOT NULL DEFAULT 'developer',
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          last_used_at TIMESTAMPTZ,
-          revoked_at TIMESTAMPTZ
-        )
-      `);
-    } else {
-      pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'developer'`).catch(() => {});
-      pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ`).catch(() => {});
-    }
+    await ensureApiKeysTable();
   } catch (err) {
     console.warn('[SETTINGS] ensureTables warning (tables may already exist):', err.message);
   }
@@ -229,6 +204,17 @@ function normalizeNotificationSettings(value) {
 }
 
 async function ensureFlatNotificationColumns() {
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertColumnsExist(
+      pool,
+      SCHEMA,
+      'workspace_settings',
+      ['notification_email', 'notification_settings'],
+      { label: 'Workspace settings notification columns' }
+    );
+    return;
+  }
+
   await pool.query(`
     ALTER TABLE ${SCHEMA}.workspace_settings
       ADD COLUMN IF NOT EXISTS notification_email TEXT,
@@ -530,26 +516,15 @@ router.put('/llm-providers', async (req, res) => {
 // GET /api/v1/settings/api-keys
 router.get('/api-keys', async (req, res) => {
   try {
+    await ensureApiKeysTable();
     const wsId = req.workspaceId;
-    // Try with last_used_at and role columns (may not exist on older schemas)
-    let r;
-    try {
-      r = await pool.query(
-        `SELECT id, name, key_prefix, role, created_at, last_used_at, revoked_at
-         FROM ${SCHEMA}.workspace_api_keys
-         WHERE workspace_id=$1
-         ORDER BY created_at DESC`,
-        [wsId]
-      );
-    } catch (_) {
-      r = await pool.query(
-        `SELECT id, name, key_prefix, created_at, revoked_at
-         FROM ${SCHEMA}.workspace_api_keys
-         WHERE workspace_id=$1
-         ORDER BY created_at DESC`,
-        [wsId]
-      );
-    }
+    const r = await pool.query(
+      `SELECT id, name, key_prefix, role, created_at, last_used_at, revoked_at
+       FROM ${SCHEMA}.workspace_api_keys
+       WHERE workspace_id=$1
+       ORDER BY created_at DESC`,
+      [wsId]
+    );
     res.json({ success: true, keys: r.rows });
   } catch (err) {
     console.error('[SETTINGS] GET api-keys error:', err.message);
@@ -560,6 +535,7 @@ router.get('/api-keys', async (req, res) => {
 // POST /api/v1/settings/api-keys
 router.post('/api-keys', async (req, res) => {
   try {
+    await ensureApiKeysTable();
     const wsId = req.workspaceId;
     const { name, role } = req.body;
     if (!name) return res.status(400).json({ success: false, error: 'Name required' });
@@ -568,23 +544,12 @@ router.post('/api-keys', async (req, res) => {
     const raw = 'vt_' + crypto.randomBytes(24).toString('hex');
     const hash = crypto.createHash('sha256').update(raw).digest('hex');
     const prefix = raw.substring(0, 14) + '...';
-    // Try inserting with role column; fall back if column doesn't exist
-    let insertedId;
-    try {
-      const ins = await pool.query(
-        `INSERT INTO ${SCHEMA}.workspace_api_keys (workspace_id, name, key_hash, key_prefix, role)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [wsId, name, hash, prefix, keyRole]
-      );
-      insertedId = ins.rows[0]?.id;
-    } catch (_) {
-      const ins = await pool.query(
-        `INSERT INTO ${SCHEMA}.workspace_api_keys (workspace_id, name, key_hash, key_prefix)
-         VALUES ($1,$2,$3,$4) RETURNING id`,
-        [wsId, name, hash, prefix]
-      );
-      insertedId = ins.rows[0]?.id;
-    }
+    const ins = await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_api_keys (workspace_id, name, key_hash, key_prefix, role)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [wsId, name, hash, prefix, keyRole]
+    );
+    const insertedId = ins.rows[0]?.id;
     res.json({
       success: true,
       key: { id: insertedId, name, key_prefix: prefix, role: keyRole },
@@ -600,6 +565,7 @@ router.post('/api-keys', async (req, res) => {
 // DELETE /api/v1/settings/api-keys/:id
 router.delete('/api-keys/:id', async (req, res) => {
   try {
+    await ensureApiKeysTable();
     const wsId = req.workspaceId;
     await pool.query(`UPDATE ${SCHEMA}.workspace_api_keys SET revoked_at=NOW() WHERE id=$1 AND workspace_id=$2`, [req.params.id, wsId]);
     res.json({ success: true, message: 'Key revoked' });

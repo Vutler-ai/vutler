@@ -1,6 +1,10 @@
 'use strict';
 
 const pool = require('../../lib/vaultbrix');
+const {
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -25,24 +29,36 @@ function mapSession(row) {
 
 async function ensureSessionTable() {
   if (!ensurePromise) {
-    ensurePromise = pool.query(`
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_sessions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        workspace_id UUID NOT NULL,
-        app_key TEXT NOT NULL,
-        session_key TEXT NOT NULL,
-        runtime_mode TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        storage_state JSONB NULL,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        last_used_at TIMESTAMPTZ NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+    ensurePromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, SCHEMA, 'browser_operator_sessions', {
+          label: 'Browser operator sessions table',
+        });
+        return;
+      }
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_operator_sessions_workspace_key
-        ON ${SCHEMA}.browser_operator_sessions (workspace_id, app_key, session_key);
-    `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_sessions (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          app_key TEXT NOT NULL,
+          session_key TEXT NOT NULL,
+          runtime_mode TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          storage_state JSONB NULL,
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          last_used_at TIMESTAMPTZ NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_operator_sessions_workspace_key
+          ON ${SCHEMA}.browser_operator_sessions (workspace_id, app_key, session_key);
+      `);
+    })().catch((err) => {
+      ensurePromise = null;
+      throw err;
+    });
   }
   return ensurePromise;
 }

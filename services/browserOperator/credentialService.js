@@ -1,6 +1,10 @@
 'use strict';
 
 const pool = require('../../lib/vaultbrix');
+const {
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -24,26 +28,38 @@ function mapCredential(row) {
 
 async function ensureCredentialTable() {
   if (!ensurePromise) {
-    ensurePromise = pool.query(`
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_credentials (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        workspace_id UUID NOT NULL,
-        app_key TEXT NOT NULL,
-        credential_key TEXT NOT NULL,
-        credential_type TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_tested_at TIMESTAMPTZ NULL
-      );
+    ensurePromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, SCHEMA, 'browser_operator_credentials', {
+          label: 'Browser operator credentials table',
+        });
+        return;
+      }
 
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_operator_credentials_workspace_key
-        ON ${SCHEMA}.browser_operator_credentials (workspace_id, credential_key);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_credentials (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          app_key TEXT NOT NULL,
+          credential_key TEXT NOT NULL,
+          credential_type TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_tested_at TIMESTAMPTZ NULL
+        );
 
-      CREATE INDEX IF NOT EXISTS idx_browser_operator_credentials_workspace
-        ON ${SCHEMA}.browser_operator_credentials (workspace_id, created_at DESC);
-    `);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_operator_credentials_workspace_key
+          ON ${SCHEMA}.browser_operator_credentials (workspace_id, credential_key);
+
+        CREATE INDEX IF NOT EXISTS idx_browser_operator_credentials_workspace
+          ON ${SCHEMA}.browser_operator_credentials (workspace_id, created_at DESC);
+      `);
+    })().catch((err) => {
+      ensurePromise = null;
+      throw err;
+    });
   }
   return ensurePromise;
 }

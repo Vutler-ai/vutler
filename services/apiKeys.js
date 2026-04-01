@@ -2,10 +2,27 @@
 
 const crypto = require('crypto');
 const pool = require('../lib/vaultbrix');
+const {
+  assertColumnsExist,
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 const KEY_PREFIX = 'vutler_';
-let apiKeysTableEnsured = false;
+const REQUIRED_API_KEY_COLUMNS = [
+  'workspace_id',
+  'created_by_user_id',
+  'name',
+  'key_prefix',
+  'key_hash',
+  'created_at',
+  'updated_at',
+  'last_used_at',
+  'revoked_at',
+  'role',
+];
+let apiKeysTableEnsurePromise = null;
 
 function generateApiKeySecret() {
   return `${KEY_PREFIX}${crypto.randomBytes(24).toString('hex')}`;
@@ -20,17 +37,18 @@ function buildPrefix(secret) {
 }
 
 async function ensureApiKeysTable() {
-  if (apiKeysTableEnsured) return;
+  if (!apiKeysTableEnsurePromise) {
+    apiKeysTableEnsurePromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, SCHEMA, 'workspace_api_keys', {
+          label: 'Workspace API keys table',
+        });
+        await assertColumnsExist(pool, SCHEMA, 'workspace_api_keys', REQUIRED_API_KEY_COLUMNS, {
+          label: 'Workspace API keys table',
+        });
+        return;
+      }
 
-  try {
-    // Check if table exists first (SELECT is always allowed)
-    const check = await pool.query(`
-      SELECT 1 FROM information_schema.tables
-      WHERE table_schema = '${SCHEMA}' AND table_name = 'workspace_api_keys'
-    `);
-
-    if (check.rows.length === 0) {
-      // Table doesn't exist — try to create (may fail if no DDL rights)
       await pool.query(`
         CREATE TABLE IF NOT EXISTS ${SCHEMA}.workspace_api_keys (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,21 +57,26 @@ async function ensureApiKeysTable() {
           name TEXT NOT NULL,
           key_prefix TEXT NOT NULL,
           key_hash TEXT NOT NULL UNIQUE,
+          role TEXT NOT NULL DEFAULT 'developer',
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           last_used_at TIMESTAMPTZ NULL,
           revoked_at TIMESTAMPTZ NULL
         )
       `);
+      await pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'developer'`);
+      await pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS created_by_user_id UUID NULL`);
+      await pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
+      await pool.query(`ALTER TABLE ${SCHEMA}.workspace_api_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ NULL`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_workspace ON ${SCHEMA}.workspace_api_keys (workspace_id, created_at DESC)`);
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_workspace_api_keys_active ON ${SCHEMA}.workspace_api_keys (workspace_id) WHERE revoked_at IS NULL`);
-    }
-  } catch (e) {
-    // DDL permission denied — table likely already exists, continue
-    console.warn('[API-KEYS] ensureTable skipped:', e.message);
+    })().catch((err) => {
+      apiKeysTableEnsurePromise = null;
+      throw err;
+    });
   }
 
-  apiKeysTableEnsured = true;
+  return apiKeysTableEnsurePromise;
 }
 
 async function createApiKey({ workspaceId, userId, name }) {

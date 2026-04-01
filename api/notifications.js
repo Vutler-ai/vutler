@@ -4,6 +4,7 @@
  */
 const express = require("express");
 const router = express.Router();
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 let pool;
 try {
@@ -14,29 +15,44 @@ try {
 
 // ─── Ensure table exists (run once at startup, non-blocking) ────────────────
 
+let ensureTablePromise = null;
+
 async function ensureTable() {
-  if (!pool) return;
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS tenant_vutler.notifications (
-        id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id     TEXT,
-        workspace_id TEXT,
-        type        TEXT NOT NULL DEFAULT 'info',
-        title       TEXT,
-        message     TEXT,
-        read        BOOLEAN NOT NULL DEFAULT FALSE,
-        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        read_at     TIMESTAMPTZ
-      )
-    `);
-  } catch (err) {
-    // Non-fatal — table may already exist or schema may differ
-    console.warn("[NOTIFICATIONS] Table ensure failed (non-fatal):", err.message);
+  if (!pool) return null;
+  if (!ensureTablePromise) {
+    ensureTablePromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, 'tenant_vutler', 'notifications', {
+          label: 'Notifications table',
+        });
+        return;
+      }
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS tenant_vutler.notifications (
+          id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id     TEXT,
+          workspace_id TEXT,
+          type        TEXT NOT NULL DEFAULT 'info',
+          title       TEXT,
+          message     TEXT,
+          read        BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          read_at     TIMESTAMPTZ
+        )
+      `);
+    })().catch((err) => {
+      ensureTablePromise = null;
+      throw err;
+    });
   }
+
+  return ensureTablePromise;
 }
 
-ensureTable();
+ensureTable().catch((err) => {
+  console.warn("[NOTIFICATIONS] Table ensure failed (non-fatal):", err.message);
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -55,6 +71,7 @@ router.get("/", async (req, res) => {
     if (!pool) {
       return res.json({ success: true, notifications: [], unreadCount: 0 });
     }
+    await ensureTable();
 
     const userId = getUserId(req);
     const workspaceId = getWorkspaceId(req);
@@ -90,6 +107,7 @@ router.put("/:id/read", async (req, res) => {
     if (!pool) {
       return res.json({ success: true });
     }
+    await ensureTable();
 
     const userId = getUserId(req);
 
@@ -118,6 +136,7 @@ router.put("/read-all", async (req, res) => {
     if (!pool) {
       return res.json({ success: true });
     }
+    await ensureTable();
 
     const userId = getUserId(req);
     const workspaceId = getWorkspaceId(req);
@@ -148,6 +167,7 @@ router.post("/", async (req, res) => {
     if (!pool) {
       return res.json({ success: true, notification: null });
     }
+    await ensureTable();
 
     const { title, message, type = "info", userId: bodyUserId, workspace_id: bodyWorkspaceId } = req.body;
     const userId = bodyUserId || getUserId(req);

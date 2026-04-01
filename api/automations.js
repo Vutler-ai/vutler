@@ -5,6 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 function getPool() {
   try { return require('../lib/vaultbrix'); } catch(e) {}
@@ -15,6 +16,13 @@ function getPool() {
 const SCHEMA = 'tenant_vutler';
 
 async function ensureTable(pool) {
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertTableExists(pool, SCHEMA, 'automations', {
+      label: 'Automations table',
+    });
+    return;
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${SCHEMA}.automations (
       id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),

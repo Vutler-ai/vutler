@@ -5,6 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 function getPool() {
   try { return require('../lib/vaultbrix'); } catch(e) {}
@@ -17,20 +18,26 @@ let tableReady = false;
 
 async function ensureTable(pool) {
   if (tableReady) return;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.goals (
-      id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
-      title        TEXT NOT NULL,
-      description  TEXT,
-      status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','completed','cancelled')),
-      progress     INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
-      due_date     TIMESTAMPTZ,
-      assigned_to  UUID,
-      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  if (!runtimeSchemaMutationsAllowed()) {
+    await assertTableExists(pool, SCHEMA, 'goals', {
+      label: 'Goals table',
+    });
+  } else {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ${SCHEMA}.goals (
+        id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        workspace_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+        title        TEXT NOT NULL,
+        description  TEXT,
+        status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','completed','cancelled')),
+        progress     INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+        due_date     TIMESTAMPTZ,
+        assigned_to  UUID,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+  }
   tableReady = true;
 }
 

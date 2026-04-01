@@ -1,6 +1,11 @@
 'use strict';
 
 const pool = require('../../lib/vaultbrix');
+const {
+  assertColumnsExist,
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../../lib/schemaReadiness');
 const { fetchWithTimeout } = require('../fetchWithTimeout');
 const {
   resolveRunCatalog,
@@ -115,75 +120,99 @@ function mapEvidence(row) {
 
 async function ensureRunTables() {
   if (!ensurePromise) {
-    ensurePromise = pool.query(`
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_runs (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        workspace_id UUID NOT NULL,
-        requested_by_user_id UUID NULL,
-        runtime_mode TEXT NOT NULL,
-        profile_key TEXT NOT NULL,
-        profile_version TEXT NULL,
-        credentials_ref TEXT NULL,
-        session_mode TEXT NOT NULL DEFAULT 'ephemeral',
-        session_key TEXT NULL,
-        status TEXT NOT NULL,
-        target JSONB NOT NULL,
-        flow_key TEXT NULL,
-        flow_version TEXT NULL,
-        governance JSONB NOT NULL DEFAULT '{}'::jsonb,
-        summary JSONB NOT NULL DEFAULT '{}'::jsonb,
-        report_format TEXT NOT NULL DEFAULT 'full',
-        started_at TIMESTAMPTZ NULL,
-        completed_at TIMESTAMPTZ NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+    ensurePromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, SCHEMA, 'browser_operator_runs', {
+          label: 'Browser operator runs table',
+        });
+        await assertColumnsExist(
+          pool,
+          SCHEMA,
+          'browser_operator_runs',
+          ['credentials_ref', 'session_mode', 'session_key'],
+          { label: 'Browser operator runs table' }
+        );
+        await assertTableExists(pool, SCHEMA, 'browser_operator_run_steps', {
+          label: 'Browser operator run steps table',
+        });
+        await assertTableExists(pool, SCHEMA, 'browser_operator_evidence', {
+          label: 'Browser operator evidence table',
+        });
+      } else {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_runs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            workspace_id UUID NOT NULL,
+            requested_by_user_id UUID NULL,
+            runtime_mode TEXT NOT NULL,
+            profile_key TEXT NOT NULL,
+            profile_version TEXT NULL,
+            credentials_ref TEXT NULL,
+            session_mode TEXT NOT NULL DEFAULT 'ephemeral',
+            session_key TEXT NULL,
+            status TEXT NOT NULL,
+            target JSONB NOT NULL,
+            flow_key TEXT NULL,
+            flow_version TEXT NULL,
+            governance JSONB NOT NULL DEFAULT '{}'::jsonb,
+            summary JSONB NOT NULL DEFAULT '{}'::jsonb,
+            report_format TEXT NOT NULL DEFAULT 'full',
+            started_at TIMESTAMPTZ NULL,
+            completed_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
 
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_run_steps (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        run_id UUID NOT NULL REFERENCES ${SCHEMA}.browser_operator_runs(id) ON DELETE CASCADE,
-        step_index INTEGER NOT NULL,
-        action_key TEXT NOT NULL,
-        status TEXT NOT NULL,
-        input JSONB NOT NULL DEFAULT '{}'::jsonb,
-        output JSONB NULL,
-        error JSONB NULL,
-        started_at TIMESTAMPTZ NULL,
-        completed_at TIMESTAMPTZ NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+          CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_run_steps (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            run_id UUID NOT NULL REFERENCES ${SCHEMA}.browser_operator_runs(id) ON DELETE CASCADE,
+            step_index INTEGER NOT NULL,
+            action_key TEXT NOT NULL,
+            status TEXT NOT NULL,
+            input JSONB NOT NULL DEFAULT '{}'::jsonb,
+            output JSONB NULL,
+            error JSONB NULL,
+            started_at TIMESTAMPTZ NULL,
+            completed_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
 
-      CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_evidence (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        run_id UUID NOT NULL REFERENCES ${SCHEMA}.browser_operator_runs(id) ON DELETE CASCADE,
-        step_id UUID NULL REFERENCES ${SCHEMA}.browser_operator_run_steps(id) ON DELETE SET NULL,
-        artifact_kind TEXT NOT NULL,
-        storage_key TEXT NOT NULL,
-        mime_type TEXT NULL,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        inline_text TEXT NULL,
-        artifact_payload JSONB NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+          CREATE TABLE IF NOT EXISTS ${SCHEMA}.browser_operator_evidence (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            run_id UUID NOT NULL REFERENCES ${SCHEMA}.browser_operator_runs(id) ON DELETE CASCADE,
+            step_id UUID NULL REFERENCES ${SCHEMA}.browser_operator_run_steps(id) ON DELETE SET NULL,
+            artifact_kind TEXT NOT NULL,
+            storage_key TEXT NOT NULL,
+            mime_type TEXT NULL,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            inline_text TEXT NULL,
+            artifact_payload JSONB NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
 
-      CREATE INDEX IF NOT EXISTS idx_browser_operator_runs_workspace
-        ON ${SCHEMA}.browser_operator_runs (workspace_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_browser_operator_runs_workspace
+            ON ${SCHEMA}.browser_operator_runs (workspace_id, created_at DESC);
 
-      CREATE INDEX IF NOT EXISTS idx_browser_operator_steps_run
-        ON ${SCHEMA}.browser_operator_run_steps (run_id, step_index);
+          CREATE INDEX IF NOT EXISTS idx_browser_operator_steps_run
+            ON ${SCHEMA}.browser_operator_run_steps (run_id, step_index);
 
-      CREATE INDEX IF NOT EXISTS idx_browser_operator_evidence_run
-        ON ${SCHEMA}.browser_operator_evidence (run_id, created_at DESC);
+          CREATE INDEX IF NOT EXISTS idx_browser_operator_evidence_run
+            ON ${SCHEMA}.browser_operator_evidence (run_id, created_at DESC);
 
-      ALTER TABLE ${SCHEMA}.browser_operator_runs
-        ADD COLUMN IF NOT EXISTS credentials_ref TEXT NULL;
+          ALTER TABLE ${SCHEMA}.browser_operator_runs
+            ADD COLUMN IF NOT EXISTS credentials_ref TEXT NULL;
 
-      ALTER TABLE ${SCHEMA}.browser_operator_runs
-        ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'ephemeral';
+          ALTER TABLE ${SCHEMA}.browser_operator_runs
+            ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'ephemeral';
 
-      ALTER TABLE ${SCHEMA}.browser_operator_runs
-        ADD COLUMN IF NOT EXISTS session_key TEXT NULL;
-    `);
+          ALTER TABLE ${SCHEMA}.browser_operator_runs
+            ADD COLUMN IF NOT EXISTS session_key TEXT NULL;
+        `);
+      }
+    })().catch((err) => {
+      ensurePromise = null;
+      throw err;
+    });
   }
   await ensurePromise;
   await ensureCredentialTable();
