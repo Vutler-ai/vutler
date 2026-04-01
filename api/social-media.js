@@ -23,6 +23,7 @@ try { pool = require('../lib/vaultbrix'); } catch (e) {
 
 const SCHEMA = 'tenant_vutler';
 const SOCIAL_PROVIDERS = ['linkedin', 'twitter', 'instagram', 'facebook', 'tiktok', 'youtube', 'threads', 'bluesky', 'pinterest'];
+const APP_BASE = process.env.APP_BASE_URL || process.env.APP_URL || 'https://app.vutler.ai';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ router.get('/auth-url/:platform', async (req, res) => {
     const data = await createSocialAccountAuthUrl({
       platform,
       externalId: getExternalId(workspaceId),
+      redirectUrlOverride: `${APP_BASE}/settings/integrations/social-media/callback?provider=${encodeURIComponent(platform)}`,
       permissions: ['posts'],
     });
 
