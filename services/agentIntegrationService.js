@@ -2,10 +2,9 @@
 
 const pool = require('../lib/vaultbrix');
 const skillHandlers = require('../seeds/skill-handlers.json');
+const { listSocialAccounts, toInternalPlatform } = require('./postForMeClient');
 
 const SCHEMA = 'tenant_vutler';
-const POSTFORME_API_URL = process.env.POSTFORME_API_URL || 'https://app.postforme.dev/api/v1';
-const POSTFORME_API_KEY = process.env.POSTFORME_API_KEY || '';
 const SOCIAL_PROVIDERS = new Set([
   'linkedin',
   'twitter',
@@ -177,7 +176,7 @@ async function listConnectedWorkspaceIntegrationProviders(workspaceId, db = pool
       [workspaceId]
     );
     for (const row of integrationRows.rows) {
-      connected.add(normalizeProvider(row.provider));
+      connected.add(normalizeProvider(toInternalPlatform(row.provider)));
     }
   } catch (err) {
     if (err?.code !== '42P01') throw err;
@@ -218,38 +217,25 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
          AND provider = ANY($2::text[])`,
       [workspaceId, Array.from(SOCIAL_PROVIDERS)]
     );
-    for (const provider of normalizeAgentIntegrationProviders(integrationRows.rows.map((row) => row.provider))) {
+    for (const provider of normalizeAgentIntegrationProviders(integrationRows.rows.map((row) => toInternalPlatform(row.provider)))) {
       connectedPlatforms.add(provider);
     }
   } catch (err) {
     if (err?.code !== '42P01') throw err;
   }
 
-  if (connectedPlatforms.size > 0 || !POSTFORME_API_KEY) {
+  if (connectedPlatforms.size > 0) {
     return Array.from(connectedPlatforms);
   }
 
   try {
-    const externalId = `ws_${workspaceId}`;
-    const response = await fetch(`${POSTFORME_API_URL}/socials?external_id=${externalId}`, {
-      headers: { Authorization: `Bearer ${POSTFORME_API_KEY}` },
+    const accounts = await listSocialAccounts({
+      externalId: `ws_${workspaceId}`,
+      status: 'connected',
     });
-    if (!response.ok) {
-      return Array.from(connectedPlatforms);
-    }
-
-    const payload = await response.json();
-    const accounts = Array.isArray(payload?.data)
-      ? payload.data
-      : Array.isArray(payload?.accounts)
-        ? payload.accounts
-        : Array.isArray(payload)
-          ? payload
-          : [];
-
     for (const platform of normalizeAgentIntegrationProviders(
       accounts
-        .map((account) => account?.platform || account?.type)
+        .map((account) => toInternalPlatform(account?.platform || account?.type))
         .filter((platform) => SOCIAL_PROVIDERS.has(normalizeProvider(platform)))
     )) {
       connectedPlatforms.add(platform);

@@ -8,6 +8,7 @@ const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const { resolveAgentRuntimeIntegrations } = require('./agentIntegrationService');
+const { createSocialPost, listSocialAccounts, toInternalPlatform } = require('./postForMeClient');
 const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
@@ -1190,20 +1191,16 @@ async function chat(agent, messages, db, opts = {}) {
             const caption = args.caption || '';
             console.log(`[Social] Agent ${agentName} posting: "${caption.slice(0, 100)}"`);
             try {
-              const POSTFORME_API_URL = process.env.POSTFORME_API_URL || 'https://app.postforme.dev/api/v1';
-              const POSTFORME_API_KEY = process.env.POSTFORME_API_KEY || '';
-              // Get workspace social accounts
               const externalId = `ws_${workspaceId}`;
-              const accountsRes = await fetch(`${POSTFORME_API_URL}/socials?external_id=${externalId}`, {
-                headers: { 'Authorization': `Bearer ${POSTFORME_API_KEY}` },
+              const allAccounts = await listSocialAccounts({
+                externalId,
+                status: 'connected',
               });
-              const accountsData = await accountsRes.json();
-              const allAccounts = accountsData.data || accountsData.accounts || accountsData || [];
               const requestedPlatforms = Array.isArray(args.platforms)
-                ? args.platforms.map((platform) => String(platform || '').trim().toLowerCase()).filter(Boolean)
+                ? args.platforms.map((platform) => toInternalPlatform(platform)).filter(Boolean)
                 : [];
               const allowedPlatforms = allowedSocialPlatforms.length > 0
-                ? new Set(allowedSocialPlatforms.map((platform) => String(platform || '').trim().toLowerCase()))
+                ? new Set(allowedSocialPlatforms.map((platform) => toInternalPlatform(platform)))
                 : null;
               const unauthorizedPlatforms = allowedPlatforms
                 ? requestedPlatforms.filter((platform) => !allowedPlatforms.has(platform))
@@ -1214,7 +1211,7 @@ async function chat(agent, messages, db, opts = {}) {
 
               const filteredAccounts = Array.isArray(allAccounts)
                 ? allAccounts.filter((account) => {
-                  const platform = String(account.platform || account.type || '').trim().toLowerCase();
+                  const platform = toInternalPlatform(account.platform || account.type);
                   if (allowedPlatforms && !allowedPlatforms.has(platform)) return false;
                   if (requestedPlatforms.length > 0 && !requestedPlatforms.includes(platform)) return false;
                   return true;
@@ -1225,14 +1222,12 @@ async function chat(agent, messages, db, opts = {}) {
                 accounts = allAccounts.map((account) => account.id || account.social_account_id).filter(Boolean);
               }
               if (accounts.length === 0) throw new Error('No social accounts connected');
-              const postBody = { caption, social_accounts: accounts };
-              if (args.scheduled_at) postBody.scheduled_at = args.scheduled_at;
-              const postRes = await fetch(`${POSTFORME_API_URL}/posts`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${POSTFORME_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(postBody),
+              const postData = await createSocialPost({
+                caption,
+                socialAccounts: accounts,
+                scheduledAt: args.scheduled_at,
+                externalId,
               });
-              const postData = await postRes.json();
               // Track usage in DB
               if (db) {
                 try {
