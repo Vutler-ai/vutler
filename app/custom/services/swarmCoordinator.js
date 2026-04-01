@@ -284,6 +284,11 @@ class SwarmCoordinator {
     return lower.startsWith('cree une tache')
       || lower.startsWith('crée une tâche')
       || lower.startsWith('create task')
+      || lower.startsWith('envoie')
+      || lower.startsWith('envoye')
+      || lower.startsWith('send')
+      || lower.startsWith('share')
+      || lower.startsWith('forward')
       || lower.includes('@team');
   }
 
@@ -303,14 +308,52 @@ class SwarmCoordinator {
     };
   }
 
-  isWorkRequest(content) {
+  isShortApprovalResponse(content) {
+    const text = String(content || '').trim().toLowerCase();
+    if (!text || text.length > 40) return false;
+    return /^(oui|ok|okay|d['’]accord|c['’]est bon|vas-y|oui vas-y|go ahead|yes|yes please|faites-le|fais-le|lance|lance-le|envoie|envoie-le)[ !.]*$/.test(text);
+  }
+
+  hasRecentDeliverableCommitment(history = []) {
+    const commitmentPattern = /\b(je (?:vais|m['’]occupe|prepare|prépare|mets en place|reviens(?: vers toi)?|te partage|t['’]envoie)|i(?:'ll| will| can)|let me)\b/i;
+    const deliverablePattern = /\b(template|rapport|report|summary|synthese|synthèse|plan|draft|brouillon|analyse|analysis|livrable|email|task|tache|tâche|post|calendar|reporting)\b/i;
+    return history
+      .filter((entry) => entry?.role === 'assistant')
+      .slice(-4)
+      .some((entry) => commitmentPattern.test(String(entry.content || '')) && deliverablePattern.test(String(entry.content || '')));
+  }
+
+  isDeliveryFollowUp(content, history = [], availableAgents = []) {
+    const text = String(content || '').trim().toLowerCase();
+    if (!text) return false;
+
+    const recentAssistantAskedForChannel = history
+      .filter((entry) => entry?.role === 'assistant')
+      .slice(-3)
+      .some((entry) => /via quel canal|which channel|message interne|post\/message interne|email|adresse/i.test(String(entry.content || '')));
+
+    const containsEmail = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text);
+    const mentionsDeliveryMode = /(^|\b)(1\)|2\)|email|message interne|post interne|send|share|forward|envoie|transmets|partage)\b/i.test(text);
+    const mentionsKnownAgent = availableAgents.some((agent) => {
+      const username = String(agent?.username || '').toLowerCase();
+      const name = String(agent?.name || '').toLowerCase();
+      return Boolean((username && text.includes(username)) || (name && text.includes(name)));
+    });
+
+    return recentAssistantAskedForChannel && (containsEmail || mentionsDeliveryMode || mentionsKnownAgent);
+  }
+
+  isWorkRequest(content, options = {}) {
     const text = String(content || '').trim().toLowerCase();
     if (this.detectTaskIntent(text)) return true;
+    if (this.isShortApprovalResponse(text) && this.hasRecentDeliverableCommitment(options.history || [])) return true;
+    if (this.isDeliveryFollowUp(text, options.history || [], options.availableAgents || [])) return true;
     if (text.length < 50) return false;
-    const actionVerbs = ['build', 'create', 'implement', 'fix', 'deploy', 'analyze', 'prepare', 'cree', 'crée', 'fais', 'deploie', 'déploie', 'corrige', 'analyse'];
+    const actionVerbs = ['build', 'create', 'implement', 'fix', 'deploy', 'analyze', 'prepare', 'send', 'share', 'forward', 'delegate', 'assign', 'cree', 'crée', 'fais', 'deploie', 'déploie', 'corrige', 'analyse', 'envoie', 'transmets', 'partage', 'délègue', 'assigne'];
     const hits = actionVerbs.filter((verb) => text.includes(verb)).length;
     const multiTopic = /,|;|\bet\b|\band\b/.test(text);
-    return hits >= 1 && multiTopic;
+    const mentionsAssignment = /@|assigned|assign[eé]|pour luna|to luna|a luna|à luna|pour nora|to nora|email|adresse/i.test(text);
+    return hits >= 1 && (multiTopic || mentionsAssignment);
   }
 
   async rememberDecisionIfAny(messageText, workspaceId = DEFAULT_WORKSPACE) {
@@ -356,11 +399,29 @@ class SwarmCoordinator {
     }, workspaceId).catch(() => {});
   }
 
-  async decomposeWithLLM(messageText, channelAgents = [], workspaceId = DEFAULT_WORKSPACE) {
-    const available = channelAgents
+  resolveAvailableAgent(agentRef, availableAgents = []) {
+    if (!agentRef) return null;
+    const ref = String(agentRef).trim().toLowerCase();
+    if (!ref) return null;
+
+    const match = availableAgents.find((agent) => {
+      return String(agent?.id || '').toLowerCase() === ref
+        || String(agent?.username || '').toLowerCase() === ref
+        || String(agent?.name || '').toLowerCase() === ref;
+    });
+
+    return match ? (match.username || String(match.id)) : null;
+  }
+
+  async decomposeWithLLM(messageText, availableAgents = [], workspaceId = DEFAULT_WORKSPACE, options = {}) {
+    const available = availableAgents
       .map((agent) => (agent.username || agent.name || '').toLowerCase())
       .filter(Boolean);
-    const prompt = `Decompose la demande en 1-5 sous-taches JSON strict uniquement: {"tasks":[{"title":"...","description":"...","priority":"high|medium|low","agent":"username"}]}. Agents disponibles: ${available.join(', ') || 'mike'}. Demande: ${messageText}`;
+    const preferredAgent = this.resolveAvailableAgent(options.preferredAgentId, availableAgents);
+    const preferredInstruction = preferredAgent
+      ? ` Agent facade demandee: ${preferredAgent}. Utilise-la par defaut si aucun autre specialiste n'est clairement mieux place.`
+      : '';
+    const prompt = `Decompose la demande en 1-5 sous-taches JSON strict uniquement: {"tasks":[{"title":"...","description":"...","priority":"high|medium|low","agent":"username"}]}. Agents disponibles: ${available.join(', ') || 'mike'}.${preferredInstruction} Demande: ${messageText}`;
     try {
       const result = await llmChat(
         {
@@ -380,13 +441,17 @@ class SwarmCoordinator {
     return [{ title: String(messageText).slice(0, 120), description: messageText, priority: 'medium' }];
   }
 
-  resolveAgentForSubtask(task, channelAgents = []) {
-    const available = new Set(channelAgents.map((agent) => (agent.username || agent.name || '').toLowerCase()).filter(Boolean));
-    const preferred = String(task.agent || '').toLowerCase();
-    if (preferred && available.has(preferred)) return preferred;
+  resolveAgentForSubtask(task, availableAgents = [], preferredAgentId = null) {
+    const explicitAgent = this.resolveAvailableAgent(task.agent, availableAgents);
+    if (explicitAgent) return explicitAgent;
+
+    const preferredAgent = this.resolveAvailableAgent(preferredAgentId, availableAgents);
+    if (preferredAgent) return preferredAgent;
+
     const bySkills = this.pickBestAgent(task);
-    if (!available.size || available.has(bySkills)) return bySkills;
-    return [...available][0] || bySkills;
+    const routedBySkills = this.resolveAvailableAgent(bySkills, availableAgents);
+    if (routedBySkills) return routedBySkills;
+    return availableAgents[0]?.username || String(availableAgents[0]?.id || bySkills);
   }
 
   async postTaskMessageToAgentChannel(workspaceId, agentId, title, priority, contentOverride = null) {
@@ -785,19 +850,36 @@ class SwarmCoordinator {
     return this.createTask(this.extractTaskFromText(content), workspaceId);
   }
 
-  async analyzeAndRoute(message, channelAgents = [], workspaceId = DEFAULT_WORKSPACE) {
+  async analyzeAndRoute(message, availableAgents = [], workspaceId = DEFAULT_WORKSPACE, options = {}) {
     const ws = normalizeWorkspaceId(workspaceId || message?.workspace_id);
     const text = typeof message === 'string' ? message : (message?.content || '');
 
     await this.rememberDecisionIfAny(text, ws);
-    if (!this.isWorkRequest(text)) return { routed: false, reason: 'not_work_request' };
+    if (!this.isWorkRequest(text, { history: options.history || [], availableAgents })) {
+      return { routed: false, reason: 'not_work_request' };
+    }
 
     const recalled = await this.recallWorkspaceContext(text, ws);
-    const subtasks = await this.decomposeWithLLM(`${text}\n\nContexte workspace:\n${recalled || ''}`, channelAgents, ws);
+    const recentHistory = Array.isArray(options.history) && options.history.length > 0
+      ? options.history.slice(-4).map((entry) => `${entry.role === 'assistant' ? 'Assistant' : 'User'}: ${String(entry.content || '').slice(0, 500)}`).join('\n')
+      : '';
+    const routingInput = recentHistory
+      ? `Historique recent:\n${recentHistory}\n\nDernier message user:\n${text}`
+      : text;
+    const subtasks = await this.decomposeWithLLM(
+      `${routingInput}\n\nContexte workspace:\n${recalled || ''}`,
+      availableAgents,
+      ws,
+      { preferredAgentId: options.preferredAgentId || message?.requested_agent_id || null }
+    );
     const created = [];
 
     for (const subtask of subtasks) {
-      const agent = this.resolveAgentForSubtask(subtask, channelAgents);
+      const agent = this.resolveAgentForSubtask(
+        subtask,
+        availableAgents,
+        options.preferredAgentId || message?.requested_agent_id || null
+      );
       const enrichedDescription = `${subtask.description || ''}\n\n[Workspace context]\n${String(recalled || '').slice(0, 1200)}`;
       const taskRow = await this.createTask({
         title: subtask.title,
@@ -810,6 +892,7 @@ class SwarmCoordinator {
           origin_chat_message_id: message?.id || null,
           origin_chat_user_id: message?.sender_id || null,
           origin_chat_user_name: message?.sender_name || null,
+          requested_agent_id: options.preferredAgentId || message?.requested_agent_id || null,
           workspace_id: ws
         }
       }, ws);

@@ -10,6 +10,7 @@ const { insertChatMessage } = require('../../../services/chatMessages');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 const { createSniparaGateway } = require('../../../services/snipara/gateway');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
+const { resolveOrchestrationCapabilities } = require('../../../services/orchestrationCapabilityResolver');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
@@ -102,7 +103,7 @@ async function loadAgents(workspaceId = DEFAULT_WORKSPACE) {
   if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
 
   const result = await pool.query(
-    `SELECT id, name, username, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id, capabilities
+    `SELECT id, name, username, email, role, model, provider, system_prompt, temperature, max_tokens, status, workspace_id, capabilities, snipara_instance_id
      FROM ${SCHEMA}.agents
      WHERE workspace_id = $1 AND COALESCE(status, 'online') IN ('online', 'active')`,
     [ws]
@@ -116,7 +117,7 @@ async function getChannelAgents(channelId, workspaceId = DEFAULT_WORKSPACE) {
   const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
     `SELECT cm.user_id, cm.role AS channel_role,
-            a.id, a.name, a.username, a.role, a.model, a.provider, a.system_prompt,
+            a.id, a.name, a.username, a.email, a.role, a.model, a.provider, a.system_prompt,
             a.temperature, a.max_tokens, a.workspace_id, a.capabilities
      FROM ${SCHEMA}.chat_channel_members cm
      JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id OR a.username = cm.user_id
@@ -436,11 +437,12 @@ async function postTerminalFailure(message, failure) {
 
 async function handleMessage(message) {
   const workspaceId = normalizeWorkspaceId(message.workspace_id);
+  const allWorkspaceAgents = await loadAgents(workspaceId);
   let channelAgents = await getChannelAgents(message.channel_id, workspaceId);
   if (channelAgents.length === 0) {
-    channelAgents = await loadAgents(workspaceId);
+    channelAgents = allWorkspaceAgents;
   }
-  if (channelAgents.length === 0) {
+  if (channelAgents.length === 0 && allWorkspaceAgents.length === 0) {
     throw new Error('No agents available for this workspace');
   }
 
@@ -484,52 +486,102 @@ async function handleMessage(message) {
   }
 
   const resolution = resolveRequestedAgent(message, channelAgents);
-  const targetAgent = resolution?.agent;
+  const requestedAgentFromDirectory = resolution?.agent
+    ? allWorkspaceAgents.find((agent) => String(agent.id) === String(resolution.agent.id)
+      || String(agent.username || '').toLowerCase() === String(resolution.agent.username || '').toLowerCase())
+    : null;
+  const targetAgent = requestedAgentFromDirectory || resolution?.agent;
   if (!targetAgent) {
     throw new Error('Unable to resolve requested agent');
   }
 
   const swarmCoordinator = getSwarmCoordinator();
+  const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
+  const orchestration = await resolveOrchestrationCapabilities({
+    workspaceId,
+    messageText: message.content,
+    history,
+    requestedAgent: targetAgent,
+    availableAgents: allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+    db: pool,
+  }).catch(() => ({
+    domains: [],
+    overlayProviders: [],
+    overlaySkillKeys: [],
+    primaryDelegate: null,
+    delegatedAgents: [],
+    reasons: [],
+    availability: null,
+    unavailableDomains: [],
+    workspacePressure: null,
+    specializationProfile: null,
+    recommendations: [],
+  }));
 
-  if (!shouldBypassSwarmRouting(resolution)) {
-    try {
-      const routing = await swarmCoordinator.analyzeAndRoute(message, channelAgents, workspaceId);
-      if (routing?.routed) {
-        await insertChatMessage(pool, null, SCHEMA, {
-          channel_id: message.channel_id,
-          sender_id: 'jarvis',
-          sender_name: 'Jarvis',
-          content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
-          message_type: 'text',
-          workspace_id: workspaceId,
-          processed_at: new Date(),
-          processing_state: 'processed',
-          reply_to_message_id: message.id,
-          requested_agent_id: message.requested_agent_id || null,
-          display_agent_id: 'jarvis',
-          orchestrated_by: 'jarvis',
-          executed_by: 'jarvis',
-          metadata: {
-            orchestration_status: 'routed',
-            created_task_count: routing.created_count || 0,
-          }
-        });
-        return;
+  try {
+    const routing = await swarmCoordinator.analyzeAndRoute(
+      {
+        ...message,
+        requested_agent_id: String(targetAgent.id),
+      },
+      allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+      workspaceId,
+      {
+        history,
+        preferredAgentId: orchestration.primaryDelegate?.agentRef || String(targetAgent.id),
       }
-    } catch (err) {
-      console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
+    );
+    if (routing?.routed) {
+      await insertChatMessage(pool, null, SCHEMA, {
+        channel_id: message.channel_id,
+        sender_id: 'jarvis',
+        sender_name: 'Jarvis',
+        content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
+        message_type: 'text',
+        workspace_id: workspaceId,
+        processed_at: new Date(),
+        processing_state: 'processed',
+        reply_to_message_id: message.id,
+        requested_agent_id: String(targetAgent.id),
+        display_agent_id: 'jarvis',
+        orchestrated_by: 'jarvis',
+        executed_by: 'jarvis',
+        metadata: {
+          orchestration_status: 'routed',
+          created_task_count: routing.created_count || 0,
+          routed_domains: orchestration.domains || [],
+          delegated_agents: orchestration.delegatedAgents || [],
+          available_runtime_providers: orchestration.availability?.availableProviders || [],
+          unavailable_runtime_providers: orchestration.availability?.unavailableProviders || [],
+          unavailable_domains: orchestration.unavailableDomains || [],
+          workspace_agent_pressure: orchestration.workspacePressure || null,
+          specialization_profile: orchestration.specializationProfile || null,
+          agent_recommendations: orchestration.recommendations || [],
+        }
+      });
+      return;
     }
+  } catch (err) {
+    console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
   }
 
-  const hydratedTargetAgent = await hydrateAgent(targetAgent, workspaceId);
+  const delegatedAgent = orchestration.primaryDelegate?.agentId
+    ? (allWorkspaceAgents.find((agent) => String(agent.id) === String(orchestration.primaryDelegate.agentId))
+      || allWorkspaceAgents.find((agent) => String(agent.username || '') === String(orchestration.primaryDelegate.agentRef || '')))
+    : null;
+  const respondingAgent = delegatedAgent || targetAgent;
+  const hydratedTargetAgent = await hydrateAgent(respondingAgent, workspaceId);
   const executionAgent = typeof swarmCoordinator.resolveAgentExecutionContext === 'function'
     ? await swarmCoordinator.resolveAgentExecutionContext(hydratedTargetAgent, workspaceId)
     : hydratedTargetAgent;
+  executionAgent.execution_overlay = {
+    skillKeys: orchestration.overlaySkillKeys || [],
+    integrationProviders: orchestration.overlayProviders || [],
+  };
   const soul = appendPlacementInstruction(
     await getAgentSoul(executionAgent),
     executionAgent.workspaceToolPolicy?.placementInstruction
   );
-  const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
   const effectiveHistory = !message.id
     ? [
       ...history,
@@ -543,6 +595,7 @@ async function handleMessage(message) {
   const response = await llmChat(
     {
       id: executionAgent.id,
+      email: executionAgent.email || null,
       model: executionAgent.model,
       provider: executionAgent.provider,
       capabilities: Array.isArray(executionAgent.capabilities) ? executionAgent.capabilities : [],
@@ -559,7 +612,7 @@ async function handleMessage(message) {
         messageId: message.id,
         channelId: message.channel_id,
         requestedAgentId: String(targetAgent.id),
-        displayAgentId: String(targetAgent.id),
+        displayAgentId: String(executionAgent.id),
         orchestratedBy: 'jarvis',
       },
     }
@@ -575,14 +628,26 @@ async function handleMessage(message) {
     processed_at: new Date(),
     processing_state: 'processed',
     reply_to_message_id: message.id,
-    requested_agent_id: String(executionAgent.id),
+    requested_agent_id: String(targetAgent.id),
     display_agent_id: String(executionAgent.id),
     orchestrated_by: 'jarvis',
     executed_by: String(executionAgent.id),
     metadata: {
       orchestration_status: 'completed',
+      facade_agent_id: String(targetAgent.id),
+      facade_agent_username: targetAgent.username || null,
       requested_agent_username: executionAgent.username || null,
       requested_agent_reason: resolution?.reason || 'unknown',
+      orchestration_domains: orchestration.domains || [],
+      orchestration_overlay_skills: orchestration.overlaySkillKeys || [],
+      orchestration_overlay_providers: orchestration.overlayProviders || [],
+      orchestration_delegated_agents: orchestration.delegatedAgents || [],
+      available_runtime_providers: orchestration.availability?.availableProviders || [],
+      unavailable_runtime_providers: orchestration.availability?.unavailableProviders || [],
+      unavailable_domains: orchestration.unavailableDomains || [],
+      workspace_agent_pressure: orchestration.workspacePressure || null,
+      specialization_profile: orchestration.specializationProfile || null,
+      agent_recommendations: orchestration.recommendations || [],
       llm_provider: response.provider || null,
       llm_model: response.model || null,
       input_tokens: response.usage?.input_tokens || null,

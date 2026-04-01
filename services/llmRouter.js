@@ -7,8 +7,24 @@ const { createMemoryRuntimeService } = require('./memory/runtime');
 const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
-const { resolveAgentRuntimeIntegrations } = require('./agentIntegrationService');
-const { createSocialPost, listSocialAccounts, toInternalPlatform } = require('./postForMeClient');
+const { resolveAgentRuntimeIntegrations, getSkillKeysForIntegrationProviders } = require('./agentIntegrationService');
+const {
+  resolveWorkspaceCapabilityAvailability,
+  filterAvailableProviders,
+  getUnavailableProviders,
+  filterAvailableSkillKeys,
+  isProviderAvailable,
+  inferProviderForSkill,
+} = require('./runtimeCapabilityAvailability');
+const {
+  resolveAgentEmailProvisioning,
+  filterProvisionedSkillKeys,
+  getProvisioningReasonForSkill,
+  getUnavailableAgentProviders,
+} = require('./agentProvisioningService');
+const { orchestrateToolCall } = require('./orchestration/orchestrator');
+const { governOrchestrationDecision } = require('./orchestration/policy');
+const { executeOrchestrationDecision } = require('./orchestration/actionRouter');
 const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
@@ -410,10 +426,13 @@ async function finishToolActionRun(db, runId, agentId, result, err) {
   if (!db || !runId) return;
 
   const isError = Boolean(err) || result?.success === false;
+  const persistedOutput = isError
+    ? null
+    : (result?.persisted_output ?? result?.data ?? result ?? null);
   await updateChatActionRun(db, 'tenant_vutler', runId, {
     status: isError ? 'error' : 'success',
     executed_by: agentId || null,
-    output_json: isError ? null : (result?.data ?? result ?? null),
+    output_json: persistedOutput,
     error_json: isError ? { error: err?.message || result?.error || 'Tool execution failed' } : null,
   }).catch(() => {});
 }
@@ -432,26 +451,178 @@ async function storeToolObservation(db, workspaceId, agent, toolName, args, resu
   });
 }
 
-function extractMemoryText(response) {
-  if (!response) return '';
-  const result = response.result || response;
-  if (typeof result === 'string') return result;
-  if (result.content) {
-    if (Array.isArray(result.content)) return result.content.map((c) => c.text || '').join('\n');
-    if (typeof result.content === 'string') return result.content;
+function buildSandboxToolPayload(execution) {
+  return {
+    job_id: execution?.job_id || execution?.execution_id || execution?.id || null,
+    execution_id: execution?.execution_id || execution?.id || null,
+    language: execution?.language || null,
+    status: execution?.status || 'failed',
+    stdout: execution?.stdout || '',
+    stderr: execution?.stderr || '',
+    exit_code: execution?.exit_code ?? null,
+    duration_ms: execution?.duration_ms ?? null,
+    started_at: execution?.started_at || null,
+    finished_at: execution?.finished_at || null,
+  };
+}
+
+function buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults) {
+  return {
+    orchestration_decision: orchestrationDecision || null,
+    decision: governance?.decision || null,
+    reason: governance?.reason || null,
+    risk_level: governance?.risk_level || null,
+    governed_decision: governance?.decisionPayload || null,
+    action_results: Array.isArray(actionResults) ? actionResults : [],
+  };
+}
+
+function buildPersistedOrchestrationOutput(data, orchestrationPayload) {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return {
+      ...data,
+      orchestration: orchestrationPayload,
+    };
   }
-  if (Array.isArray(result.memories)) {
-    return result.memories.map((m) => m.text || m.content || '').join('\n');
+
+  return {
+    result: data ?? null,
+    orchestration: orchestrationPayload,
+  };
+}
+
+function buildOrchestratedToolResult(actionResult, orchestrationPayload) {
+  const data = actionResult?.output_json ?? (actionResult?.output_text ? { text: actionResult.output_text } : null);
+  return {
+    success: actionResult?.success !== false,
+    data,
+    persisted_output: buildPersistedOrchestrationOutput(data, orchestrationPayload),
+    orchestration: orchestrationPayload,
+  };
+}
+
+function buildOrchestratedTextToolResult(outputText, data, orchestrationPayload) {
+  const persistedData = data && typeof data === 'object'
+    ? data
+    : { text: outputText || null };
+  return {
+    success: true,
+    data: outputText || 'Tool completed successfully.',
+    persisted_output: buildPersistedOrchestrationOutput(persistedData, orchestrationPayload),
+    orchestration: orchestrationPayload,
+  };
+}
+
+function buildSocialToolResult(actionResult, orchestrationPayload) {
+  const data = actionResult?.output_json || {};
+  const accountCount = Number(data.account_count || 0);
+  const postId = data.post_id || 'pending';
+  return buildOrchestratedTextToolResult(
+    `Post published successfully to ${accountCount} account(s). Post ID: ${postId}`,
+    data,
+    orchestrationPayload
+  );
+}
+
+function buildMemoryToolResult(toolName, actionResult, orchestrationPayload) {
+  const data = actionResult?.output_json || null;
+  if (toolName === 'remember') {
+    return buildOrchestratedTextToolResult(
+      'Memory stored successfully.',
+      data || { stored: true },
+      orchestrationPayload
+    );
   }
-  if (Array.isArray(result)) {
-    return result.map((m) => m.text || m.content || '').join('\n');
+
+  const recalledText = typeof data?.text === 'string' && data.text.trim()
+    ? data.text
+    : (actionResult?.output_text || 'No relevant memories found.');
+  return buildOrchestratedTextToolResult(
+    recalledText,
+    data || { text: recalledText },
+    orchestrationPayload
+  );
+}
+
+async function executeToolThroughOrchestration({
+  toolName,
+  args,
+  adapter,
+  agent,
+  workspaceId,
+  db,
+  wsConnections,
+  chatActionContext,
+  chatActionRunId = null,
+  model = null,
+  provider = null,
+  nexusNodeId = null,
+  allowedSocialPlatforms = [],
+  allowedSocialAccountIds = [],
+  allowedSocialBrandIds = [],
+  memoryBindings = null,
+  memoryMode = null,
+} = {}) {
+  const orchestrationInput = {
+    toolName,
+    args,
+    adapter,
+    agent,
+    workspaceId,
+    chatActionContext,
+    nexusNodeId,
+  };
+  if (Array.isArray(allowedSocialPlatforms) && allowedSocialPlatforms.length > 0) {
+    orchestrationInput.allowedSocialPlatforms = allowedSocialPlatforms;
   }
-  if (result.text) return result.text;
-  try {
-    return JSON.stringify(result);
-  } catch (_) {
-    return '';
+  if (Array.isArray(allowedSocialAccountIds) && allowedSocialAccountIds.length > 0) {
+    orchestrationInput.allowedSocialAccountIds = allowedSocialAccountIds;
   }
+  if (Array.isArray(allowedSocialBrandIds) && allowedSocialBrandIds.length > 0) {
+    orchestrationInput.allowedSocialBrandIds = allowedSocialBrandIds;
+  }
+  if (memoryBindings) {
+    orchestrationInput.memoryBindings = memoryBindings;
+  }
+  if (memoryMode && (memoryMode.read || memoryMode.write || memoryMode.mode)) {
+    orchestrationInput.memoryMode = memoryMode;
+  }
+
+  const orchestrationDecision = orchestrateToolCall(orchestrationInput);
+  if (!orchestrationDecision) {
+    throw new Error(`Unsupported orchestration tool: ${toolName}`);
+  }
+
+  const governance = governOrchestrationDecision(orchestrationDecision, {
+    agent,
+    workspaceId,
+    db,
+    wsConnections,
+    chatActionContext,
+    nexusNodeId,
+    memoryMode,
+  });
+  if (!governance.allowed || !governance.decisionPayload) {
+    throw new Error(governance.reason || `${toolName} execution was denied.`);
+  }
+
+  const actionResults = await executeOrchestrationDecision(governance.decisionPayload, {
+    db,
+    wsConnections,
+    chatActionContext,
+    chatActionRunId,
+    model,
+    provider,
+    nexusNodeId,
+  });
+  const actionResult = Array.isArray(actionResults) ? actionResults[0] : null;
+
+  return {
+    orchestrationDecision,
+    governance,
+    actionResults,
+    actionResult,
+  };
 }
 
 // ── Memory tool definitions injected when an agent has a Snipara scope ────────
@@ -507,6 +678,35 @@ const SOCIAL_MEDIA_TOOL = {
         scheduled_at: { type: 'string', description: 'Optional: ISO 8601 datetime to schedule the post for later' },
       },
       required: ['caption'],
+    },
+  },
+};
+
+const SANDBOX_CODE_EXECUTION_TOOL = {
+  type: 'function',
+  function: {
+    name: 'run_code_in_sandbox',
+    description: 'Execute short JavaScript or Python code in the Vutler sandbox. Use for calculations, data transformation, parsing, validation, or lightweight technical checks. Shell access is not available.',
+    parameters: {
+      type: 'object',
+      properties: {
+        language: {
+          type: 'string',
+          enum: ['javascript', 'python'],
+          description: 'Programming language to execute.',
+        },
+        code: {
+          type: 'string',
+          description: 'The code snippet to execute.',
+        },
+        timeout_ms: {
+          type: 'integer',
+          minimum: 1000,
+          maximum: 30000,
+          description: 'Optional execution timeout in milliseconds. Defaults to 15000 and is capped at 30000.',
+        },
+      },
+      required: ['language', 'code'],
     },
   },
 };
@@ -1172,29 +1372,105 @@ async function chat(agent, messages, db, opts = {}) {
   const integrationAccess = await resolveAgentRuntimeIntegrations({
     workspaceId,
     agentId: agent?.id || null,
+    agent,
     integrations: agent?.integrations,
     db,
   });
+  const runtimeCapabilityAvailability = await resolveWorkspaceCapabilityAvailability({
+    workspaceId,
+    db,
+  }).catch(() => ({
+    planId: 'free',
+    planLabel: 'Free',
+    planFeatures: [],
+    planProducts: [],
+    planLimits: {},
+    connectedProviders: [],
+    providerStates: {},
+    availableProviders: [],
+    unavailableProviders: [],
+  }));
+  const emailProvisioning = await resolveAgentEmailProvisioning({
+    workspaceId,
+    agentId: agent?.id || null,
+    agent,
+    db,
+  }).catch(() => ({
+    provisioned: false,
+    email: null,
+    source: 'none',
+  }));
+  const executionOverlay = agent?.execution_overlay || {};
+  const overlaySkillKeys = Array.isArray(executionOverlay.skillKeys) ? executionOverlay.skillKeys : [];
+  const overlayProviders = Array.isArray(executionOverlay.integrationProviders) ? executionOverlay.integrationProviders : [];
+  const overlayToolCapabilities = Array.isArray(executionOverlay.toolCapabilities) ? executionOverlay.toolCapabilities : [];
+  const workspaceAvailableOverlayProviders = filterAvailableProviders(overlayProviders, runtimeCapabilityAvailability);
+  const availableOverlayProviders = workspaceAvailableOverlayProviders.filter((provider) =>
+    getUnavailableAgentProviders([provider], { agent, emailProvisioning }).length === 0
+  );
+  const unavailableOverlayProviders = [
+    ...getUnavailableProviders(overlayProviders, runtimeCapabilityAvailability),
+    ...getUnavailableAgentProviders(workspaceAvailableOverlayProviders, { agent, emailProvisioning }),
+  ];
+  const overlayDerivedSkillKeys = getSkillKeysForIntegrationProviders(availableOverlayProviders);
 
   // Inject tools from explicit capabilities plus agent-enabled integrations
-  const agentSkillKeys = normalizeCapabilities([
+  const rawAgentSkillKeys = normalizeCapabilities([
     ...(Array.isArray(agent?.skills) ? agent.skills : []),
     ...(Array.isArray(agent?.tools) ? agent.tools : []),
     ...(Array.isArray(agent?.capabilities) ? agent.capabilities : []),
+    ...overlayToolCapabilities,
+    ...overlaySkillKeys,
+    ...overlayDerivedSkillKeys,
     ...(Array.isArray(integrationAccess?.derivedSkillKeys) ? integrationAccess.derivedSkillKeys : []),
   ]);
+  const agentSkillKeys = normalizeCapabilities(
+    filterProvisionedSkillKeys(
+      filterAvailableSkillKeys(rawAgentSkillKeys, runtimeCapabilityAvailability),
+      { agent, emailProvisioning }
+    )
+  );
+  const blockedSkillReasonByKey = new Map();
+  for (const skillKey of rawAgentSkillKeys) {
+    if (agentSkillKeys.includes(skillKey)) continue;
+    const provisioningReason = getProvisioningReasonForSkill(skillKey, { agent, emailProvisioning });
+    const provider = inferProviderForSkill(skillKey);
+    const reason = provider
+      ? runtimeCapabilityAvailability?.providerStates?.[provider]?.reason
+      : null;
+    blockedSkillReasonByKey.set(skillKey, provisioningReason || reason || 'Skill is not available for this workspace run.');
+  }
+  const allowedSkillToolNames = new Set(
+    agentSkillKeys
+      .filter((skillKey) => typeof skillKey === 'string' && skillKey.length > 0)
+      .map((skillKey) => `skill_${skillKey}`)
+  );
   const hasSocialSkill = agentSkillKeys.some((skillKey) =>
     typeof skillKey === 'string' && (skillKey.includes('social') || skillKey.includes('posting') || skillKey.includes('content_scheduling') || skillKey.includes('multi_platform'))
   );
+  const hasCodeExecution = agentSkillKeys.includes('code_execution')
+    && isProviderAvailable(runtimeCapabilityAvailability, 'sandbox');
   const hasLegacySocialAccess = !integrationAccess?.hasSocialAccessOverrides
     && hasSocialSkill
+    && isProviderAvailable(runtimeCapabilityAvailability, 'social_media')
     && Array.isArray(integrationAccess?.connectedSocialPlatforms)
     && integrationAccess.connectedSocialPlatforms.length > 0;
-  const hasSocialMediaAccess = Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess;
+  const hasOverlaySocialAccess = availableOverlayProviders.includes('social_media')
+    && Array.isArray(integrationAccess?.connectedSocialPlatforms)
+    && integrationAccess.connectedSocialPlatforms.length > 0;
+  const hasSocialMediaAccess = isProviderAvailable(runtimeCapabilityAvailability, 'social_media')
+    && (Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess || hasOverlaySocialAccess);
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
-  const allowedSocialPlatforms = Array.isArray(integrationAccess?.allowedSocialPlatforms) && integrationAccess.allowedSocialPlatforms.length > 0
+  const allowedSocialPlatforms = hasSocialMediaAccess
+    && Array.isArray(integrationAccess?.allowedSocialPlatforms) && integrationAccess.allowedSocialPlatforms.length > 0
     ? integrationAccess.allowedSocialPlatforms
     : (hasLegacySocialAccess ? integrationAccess.connectedSocialPlatforms : []);
+  const allowedSocialAccountIds = hasSocialMediaAccess && Array.isArray(integrationAccess?.allowedSocialAccountIds)
+    ? integrationAccess.allowedSocialAccountIds
+    : [];
+  const allowedSocialBrandIds = hasSocialMediaAccess && Array.isArray(integrationAccess?.allowedSocialBrandIds)
+    ? integrationAccess.allowedSocialBrandIds
+    : [];
   const effectiveDriveRoot =
     agent?.workspaceToolPolicy?.agentDriveRoot
     || agent?.workspaceToolPolicy?.driveRoot
@@ -1213,10 +1489,20 @@ async function chat(agent, messages, db, opts = {}) {
     const platformHint = allowedSocialPlatforms.length > 0
       ? ` Limit social posting to these enabled platforms unless the user asks otherwise and you have access: ${allowedSocialPlatforms.join(', ')}.`
       : '';
-    effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}`;
+    const accountHint = allowedSocialAccountIds.length > 0 || allowedSocialBrandIds.length > 0
+      ? ' Posts are automatically restricted to the social accounts assigned to this agent.'
+      : '';
+    effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}${accountHint}`;
+  }
+  if (hasCodeExecution) {
+    effectiveSystemPrompt += '\n\nYou can execute short JavaScript or Python snippets with run_code_in_sandbox(). Use it when a result depends on actual code execution, computation, parsing, or validation. Prefer concise snippets, avoid unnecessary execution, and never assume shell or host access.';
   }
   if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += `\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is ${effectiveDriveRoot}. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under ${effectiveDriveRoot} instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.`;
+  }
+  if (unavailableOverlayProviders.length > 0) {
+    const providerNames = unavailableOverlayProviders.map((entry) => entry.key).join(', ');
+    effectiveSystemPrompt += `\n\nDo not assume access to unavailable workspace capabilities in this run. The following providers are unavailable: ${providerNames}.`;
   }
 
   const attempts = [
@@ -1311,7 +1597,8 @@ async function chat(agent, messages, db, opts = {}) {
             skillTools = getSkillRegistry().getSkillTools(agentSkillKeys);
           } catch (_) { /* skills not available — skip */ }
         }
-        const allTools = [...memoryTools, ...socialMediaTools, ...nexusTools, ...skillTools];
+        const sandboxTools = hasCodeExecution ? [SANDBOX_CODE_EXECUTION_TOOL] : [];
+        const allTools = [...memoryTools, ...socialMediaTools, ...sandboxTools, ...nexusTools, ...skillTools];
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
 
         // No tool calls → we have the final answer
@@ -1325,154 +1612,240 @@ async function chat(agent, messages, db, opts = {}) {
 
           if (toolCall.name === 'remember' && memoryScope && memoryMode.write && memoryGateway && memoryBindings) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'remember', 'memory', args);
-            const importance = args.importance || 5;
-            console.log(`[Memory] Agent ${agentName} remembered: "${(args.content || '').slice(0, 100)}" (importance: ${importance})`);
             try {
-              await memoryGateway.memory.remember({
-                text: args.content || '',
-                type: args.type || 'fact',
-                importance,
-                scope: memoryBindings.instance.scope,
-                category: memoryBindings.instance.category,
-                agentId: memoryBindings.agentId || memoryBindings.sniparaInstanceId || memoryBindings.agentRef,
-                metadata: {
-                  visibility: 'internal',
-                  source: 'llm-tool',
-                  created_at: new Date().toISOString(),
-                },
+              const {
+                orchestrationDecision,
+                governance,
+                actionResults,
+                actionResult,
+              } = await executeToolThroughOrchestration({
+                toolName: toolCall.name,
+                args,
+                adapter: 'memory',
+                agent,
+                workspaceId,
+                db,
+                wsConnections: opts.wsConnections,
+                chatActionContext,
+                chatActionRunId: actionRun?.id || null,
+                model: attempt.model,
+                provider: attempt.provider,
+                memoryBindings,
+                memoryMode,
               });
-              await finishToolActionRun(db, actionRun?.id, agent?.id || null, { success: true, data: { stored: true } }, null);
-            } catch (rememberErr) {
-              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, rememberErr);
-              throw rememberErr;
-            }
-            // remember doesn't need a re-call — inject a confirmation as tool result
+              if (actionResult && actionResult.success === false) {
+                throw new Error(actionResult.error || 'Memory remember failed.');
+              }
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const memoryResult = buildMemoryToolResult(toolCall.name, actionResult, orchestrationPayload);
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, memoryResult, null);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: 'Memory stored successfully.' },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: formatToolResultContent(memoryResult) },
               ];
+            } catch (rememberErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, rememberErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: `Error: ${rememberErr.message}` },
+              ];
+            }
             continueLoop = true;
 
           } else if (toolCall.name === 'recall' && memoryScope && memoryMode.read && memoryGateway && memoryBindings) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'recall', 'memory', args);
-            const query = args.query || '';
-            console.log(`[Memory] Agent ${agentName} recalling: "${query.slice(0, 80)}"`);
-            let recalledText = 'No relevant memories found.';
             try {
-              const recallResult = await memoryGateway.memory.recall({
-                query,
-                scope: memoryBindings.instance.scope,
-                category: memoryBindings.instance.category,
-                agentId: memoryBindings.agentId || memoryBindings.sniparaInstanceId || memoryBindings.agentRef,
+              const {
+                orchestrationDecision,
+                governance,
+                actionResults,
+                actionResult,
+              } = await executeToolThroughOrchestration({
+                toolName: toolCall.name,
+                args,
+                adapter: 'memory',
+                agent,
+                workspaceId,
+                db,
+                wsConnections: opts.wsConnections,
+                chatActionContext,
+                chatActionRunId: actionRun?.id || null,
+                model: attempt.model,
+                provider: attempt.provider,
+                memoryBindings,
+                memoryMode,
               });
-              recalledText = extractMemoryText(recallResult) || 'No relevant memories found.';
-              await finishToolActionRun(db, actionRun?.id, agent?.id || null, { success: true, data: { result: recalledText } }, null);
-            } catch (recallErr) {
-              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, recallErr);
-              throw recallErr;
-            }
-            // Inject recall result and let LLM continue
+              if (actionResult && actionResult.success === false) {
+                throw new Error(actionResult.error || 'Memory recall failed.');
+              }
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const memoryResult = buildMemoryToolResult(toolCall.name, actionResult, orchestrationPayload);
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, memoryResult, null);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: recalledText },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: formatToolResultContent(memoryResult) },
               ];
+            } catch (recallErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, recallErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: `Error: ${recallErr.message}` },
+              ];
+            }
             continueLoop = true;
 
           } else if (toolCall.name === 'vutler_post_social_media' && hasSocialMediaAccess) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_post_social_media', 'social', args);
-            const caption = args.caption || '';
-            console.log(`[Social] Agent ${agentName} posting: "${caption.slice(0, 100)}"`);
             try {
-              const externalId = `ws_${workspaceId}`;
-              const allAccounts = await listSocialAccounts({
-                externalId,
-                status: 'connected',
+              const {
+                orchestrationDecision,
+                governance,
+                actionResults,
+                actionResult,
+              } = await executeToolThroughOrchestration({
+                toolName: toolCall.name,
+                args,
+                adapter: 'social',
+                agent,
+                workspaceId,
+                db,
+                wsConnections: opts.wsConnections,
+                chatActionContext,
+                chatActionRunId: actionRun?.id || null,
+                model: attempt.model,
+                provider: attempt.provider,
+                allowedSocialPlatforms,
+                allowedSocialAccountIds,
+                allowedSocialBrandIds,
               });
-              const requestedPlatforms = Array.isArray(args.platforms)
-                ? args.platforms.map((platform) => toInternalPlatform(platform)).filter(Boolean)
-                : [];
-              const allowedPlatforms = allowedSocialPlatforms.length > 0
-                ? new Set(allowedSocialPlatforms.map((platform) => toInternalPlatform(platform)))
-                : null;
-              const unauthorizedPlatforms = allowedPlatforms
-                ? requestedPlatforms.filter((platform) => !allowedPlatforms.has(platform))
-                : [];
-              if (unauthorizedPlatforms.length > 0) {
-                throw new Error(`Agent does not have access to: ${unauthorizedPlatforms.join(', ')}`);
+              if (actionResult && actionResult.success === false) {
+                throw new Error(actionResult.error || 'Social execution failed.');
               }
-
-              const filteredAccounts = Array.isArray(allAccounts)
-                ? allAccounts.filter((account) => {
-                  const platform = toInternalPlatform(account.platform || account.type);
-                  if (allowedPlatforms && !allowedPlatforms.has(platform)) return false;
-                  if (requestedPlatforms.length > 0 && !requestedPlatforms.includes(platform)) return false;
-                  return true;
-                })
-                : [];
-              let accounts = filteredAccounts.map((account) => account.id || account.social_account_id).filter(Boolean);
-              if (accounts.length === 0 && requestedPlatforms.length === 0 && Array.isArray(allAccounts) && allowedPlatforms === null) {
-                accounts = allAccounts.map((account) => account.id || account.social_account_id).filter(Boolean);
-              }
-              if (accounts.length === 0) throw new Error('No social accounts connected');
-              const postData = await createSocialPost({
-                caption,
-                socialAccounts: accounts,
-                scheduledAt: args.scheduled_at,
-                externalId,
-              });
-              // Track usage in DB
-              if (db) {
-                try {
-                  await db.query(
-                    `INSERT INTO tenant_vutler.social_posts_usage (workspace_id, agent_id, platform, post_id, caption, status)
-                     VALUES ($1, $2, 'multi', $3, $4, 'processing')`,
-                    [workspaceId, agent?.id || null, postData.id || null, caption.slice(0, 500)]
-                  );
-                } catch (_) {
-                  void 0;
-                }
-              }
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const socialResult = buildSocialToolResult(actionResult, orchestrationPayload);
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, socialResult, null);
+              await storeToolObservation(db, workspaceId, agent, 'vutler_post_social_media', args, socialResult);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Post published successfully to ${accounts.length} account(s). Post ID: ${postData.id || 'pending'}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: formatToolResultContent(socialResult) },
               ];
-              const socialResult = {
-                success: true,
-                data: {
-                  account_count: accounts.length,
-                  post_id: postData.id || null,
-                },
-              };
-              await finishToolActionRun(db, actionRun?.id, agent?.id || null, socialResult, null);
-              await storeToolObservation(db, workspaceId, agent, 'vutler_post_social_media', args, socialResult);
             } catch (socialErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, socialErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Error posting: ${socialErr.message}` },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Error: ${socialErr.message}` },
+              ];
+            }
+            continueLoop = true;
+
+          } else if (toolCall.name === 'run_code_in_sandbox' && hasCodeExecution) {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'run_code_in_sandbox', 'sandbox', args);
+            try {
+              const {
+                orchestrationDecision,
+                governance,
+                actionResults,
+                actionResult,
+              } = await executeToolThroughOrchestration({
+                toolName: toolCall.name,
+                args,
+                adapter: 'sandbox',
+                agent,
+                workspaceId,
+                db,
+                wsConnections: opts.wsConnections,
+                chatActionContext,
+                chatActionRunId: actionRun?.id || null,
+                model: attempt.model,
+                provider: attempt.provider,
+              });
+              if (actionResult && actionResult.success === false) {
+                throw new Error(actionResult.error || 'Sandbox execution failed.');
+              }
+              const sandboxToolPayload = actionResult?.status === 'completed'
+                ? buildSandboxToolPayload(actionResult.output_json || {})
+                : {
+                  status: actionResult?.status || 'awaiting_approval',
+                  language: governance.decisionPayload.actions?.[0]?.params?.language || null,
+                  executor: governance.decisionPayload.actions?.[0]?.executor || null,
+                  requires_approval: actionResult?.status === 'awaiting_approval',
+                  timeout_ms: governance.decisionPayload.actions?.[0]?.timeout_ms ?? null,
+                  reason: governance.reason || null,
+                };
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const sandboxResult = {
+                success: true,
+                data: sandboxToolPayload,
+                persisted_output: {
+                  ...sandboxToolPayload,
+                  orchestration: orchestrationPayload,
+                },
+                orchestration: orchestrationPayload,
+              };
+
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, sandboxResult, null);
+              await storeToolObservation(db, workspaceId, agent, 'run_code_in_sandbox', args, sandboxResult);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'run_code_in_sandbox', content: formatToolResultContent(sandboxResult) },
+              ];
+            } catch (sandboxErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, sandboxErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'run_code_in_sandbox', content: `Error: ${sandboxErr.message}` },
               ];
             }
             continueLoop = true;
 
           } else if (toolCall.name && toolCall.name.startsWith('skill_')) {
             const skillKey = toolCall.name.slice('skill_'.length);
+            if (!allowedSkillToolNames.has(toolCall.name)) {
+              const deniedReason = blockedSkillReasonByKey.get(skillKey) || 'Skill is not available for this workspace run.';
+              const actionRun = await startToolActionRun(db, chatActionContext, agent, skillKey, 'skill', args);
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, new Error(deniedReason));
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${deniedReason}` },
+              ];
+              continueLoop = true;
+              continue;
+            }
             console.log(`[Skills] Agent ${agentName} calling skill: ${skillKey}(${JSON.stringify(args).slice(0, 100)})`);
             const actionRun = await startToolActionRun(db, chatActionContext, agent, skillKey, 'skill', args);
             try {
-              const { getSkillRegistry } = require('./skills');
-              const skillResult = await getSkillRegistry({ wsConnections: opts.wsConnections }).execute(skillKey, {
+              const {
+                orchestrationDecision,
+                governance,
+                actionResults,
+                actionResult,
+              } = await executeToolThroughOrchestration({
+                toolName: toolCall.name,
+                args,
+                adapter: 'skill',
+                agent,
                 workspaceId,
-                agentId: agent?.id || null,
-                params: args,
+                db,
+                wsConnections: opts.wsConnections,
+                chatActionContext,
+                chatActionRunId: actionRun?.id || null,
                 model: attempt.model,
                 provider: attempt.provider,
-                chatActionRunId: actionRun?.id || null,
-                chatActionContext,
               });
+              if (actionResult && actionResult.success === false) {
+                throw new Error(actionResult.error || 'Skill execution failed.');
+              }
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const skillResult = buildOrchestratedToolResult(actionResult, orchestrationPayload);
 
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, skillResult, null);
               await storeToolObservation(db, workspaceId, agent, toolCall.name, args, skillResult);
@@ -1495,16 +1868,37 @@ async function chat(agent, messages, db, opts = {}) {
 
           // ── Nexus tool execution (local node bridge) ──────────────────
           } else if (nexusNodeId && opts.wsConnections) {
-            const { NEXUS_TOOL_NAMES, executeNexusTool } = require('./nexusTools');
+            const { NEXUS_TOOL_NAMES } = require('./nexusTools');
             if (NEXUS_TOOL_NAMES.has(toolCall.name)) {
               const agentName = agent?.name || agent?.username || 'agent';
               console.log(`[Nexus] Agent ${agentName} calling tool: ${toolCall.name}(${JSON.stringify(args).slice(0, 100)})`);
               const actionRun = await startToolActionRun(db, chatActionContext, agent, toolCall.name, 'nexus', args);
               try {
-                const toolResult = await executeNexusTool(nexusNodeId, toolCall.name, args, opts.wsConnections);
-                const content = toolResult.success
-                  ? JSON.stringify(toolResult.data)
-                  : `Error: ${toolResult.error || 'Tool execution failed'}`;
+                const {
+                  orchestrationDecision,
+                  governance,
+                  actionResults,
+                  actionResult,
+                } = await executeToolThroughOrchestration({
+                  toolName: toolCall.name,
+                  args,
+                  adapter: 'nexus',
+                  agent,
+                  workspaceId,
+                  db,
+                  wsConnections: opts.wsConnections,
+                  chatActionContext,
+                  chatActionRunId: actionRun?.id || null,
+                  model: attempt.model,
+                  provider: attempt.provider,
+                  nexusNodeId,
+                });
+                if (actionResult && actionResult.success === false) {
+                  throw new Error(actionResult.error || 'Nexus execution failed.');
+                }
+                const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+                const toolResult = buildOrchestratedToolResult(actionResult, orchestrationPayload);
+                const content = formatToolResultContent(toolResult);
                 await finishToolActionRun(db, actionRun?.id, agent?.id || null, toolResult, null);
                 await storeToolObservation(db, workspaceId, agent, toolCall.name, args, toolResult);
                 currentMessages = [

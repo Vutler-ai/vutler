@@ -101,6 +101,16 @@ describe('IntegrationHandler', () => {
       isGoogleConnected: jest.fn().mockResolvedValue(false),
       agentHasGoogleAccess: jest.fn().mockResolvedValue(false),
     }));
+    jest.doMock('../../services/agentIntegrationService', () => ({
+      hasAgentIntegrationAccess: jest.fn().mockResolvedValue(true),
+    }));
+    jest.doMock('../../services/agentProvisioningService', () => ({
+      resolveAgentEmailProvisioning: jest.fn().mockResolvedValue({
+        provisioned: false,
+        email: null,
+        source: 'none',
+      }),
+    }));
     jest.doMock('../../services/skills/handlers/LLMPromptHandler', () => ({
       LLMPromptHandler: jest.fn().mockImplementation(() => ({ execute: fallbackExecute })),
     }));
@@ -129,7 +139,58 @@ describe('IntegrationHandler', () => {
     );
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('workspace_integration_logs'),
-      expect.arrayContaining(['ws-1', 'google', 'email_outreach', 'fallback', expect.anything(), null, expect.any(String), 'run-2'])
+      expect.arrayContaining(['ws-1', 'email', 'email_outreach', 'fallback', expect.anything(), null, expect.any(String), 'run-2'])
+    );
+  });
+
+  test('executes the native email adapter when the agent has a provisioned mailbox', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    const executeEmail = jest.fn().mockResolvedValue({
+      success: true,
+      data: { draftId: 'draft-1', status: 'pending_approval' },
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../../services/google/tokenManager', () => ({
+      isGoogleConnected: jest.fn(),
+      agentHasGoogleAccess: jest.fn(),
+    }));
+    jest.doMock('../../services/agentIntegrationService', () => ({
+      hasAgentIntegrationAccess: jest.fn().mockResolvedValue(true),
+    }));
+    jest.doMock('../../services/agentProvisioningService', () => ({
+      resolveAgentEmailProvisioning: jest.fn().mockResolvedValue({
+        provisioned: true,
+        email: 'andrea@workspace.vutler.ai',
+        source: 'agent',
+      }),
+    }));
+    jest.doMock('../../services/skills/adapters/EmailAdapter', () => ({
+      EmailAdapter: jest.fn().mockImplementation(() => ({ execute: executeEmail })),
+    }));
+
+    const { IntegrationHandler } = require('../../services/skills/handlers/IntegrationHandler');
+    const handler = new IntegrationHandler();
+
+    const result = await handler.execute({
+      skillKey: 'email_outreach',
+      workspaceId: 'ws-1',
+      agentId: 'agent-1',
+      chatActionRunId: 'run-4',
+      params: { recipient_email: 'client@example.com', subject: 'Hello' },
+      config: { integration_provider: 'email' },
+    });
+
+    expect(result.success).toBe(true);
+    expect(executeEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'ws-1',
+        agentId: 'agent-1',
+      })
+    );
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('workspace_integration_logs'),
+      expect.arrayContaining(['ws-1', 'email', 'email_outreach', 'success', expect.anything(), null, expect.any(String), 'run-4'])
     );
   });
 });

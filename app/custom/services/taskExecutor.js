@@ -55,7 +55,7 @@ async function loadAgents(workspaceId) {
   if (cached && (now - cached.time) < AGENT_CACHE_TTL) return cached.rows;
 
   const result = await pool.query(
-    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role, workspace_id, capabilities
+    `SELECT id, name, username, model, provider, system_prompt, temperature, max_tokens, role, workspace_id, capabilities, snipara_instance_id
      FROM ${SCHEMA}.agents
      WHERE workspace_id = $1`,
     [ws]

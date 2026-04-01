@@ -165,6 +165,14 @@ export const SKILL_LIMITS = {
 /** Maximum number of agent types that can be combined */
 export const MAX_AGENT_TYPES = 3;
 
+export const SANDBOX_ELIGIBLE_AGENT_TYPES = new Set([
+  'technical',
+  'security',
+  'qa',
+  'devops',
+  'engineering',
+]);
+
 export const ALWAYS_ON_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
   {
     key: 'workspace_drive_list',
@@ -227,7 +235,7 @@ export const OPTIONAL_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
   { key: 'google_drive', label: 'Google Drive (Legacy)', description: 'Legacy Google Drive tool flag kept for compatibility.' },
   { key: 'google_calendar', label: 'Google Calendar (Legacy)', description: 'Legacy Google Calendar tool flag kept for compatibility.' },
   { key: 'network_access', label: 'Network Access', description: 'Make HTTP requests to external services.' },
-  { key: 'code_execution', label: 'Code Execution', description: 'Execute code in the sandbox.' },
+  { key: 'code_execution', label: 'Code Execution (Sandbox)', description: 'Execute JavaScript or Python in the sandbox for technical, security, QA, and devops agents.' },
   { key: 'web_search', label: 'Web Search', description: 'Search the internet.' },
   { key: 'tool_use', label: 'Tool Use', description: 'Use external tools and APIs.' },
   { key: 'calendar_management', label: 'Calendar Management', description: 'Coordinate calendars and meeting hygiene rules.' },
@@ -240,6 +248,18 @@ export const OPTIONAL_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = [
   { key: 'google_calendar_delete', label: 'Google Calendar Delete', description: 'Delete Google Calendar events.' },
   { key: 'google_calendar_check_availability', label: 'Google Calendar Availability', description: 'Check free/busy availability in Google Calendar.' },
 ];
+
+const WIZARD_PERSISTENT_TOOL_KEYS = new Set([
+  'network_access',
+  'code_execution',
+  'web_search',
+  'tool_use',
+  'calendar_management',
+]);
+
+export const WIZARD_OPTIONAL_TOOL_CAPABILITIES: ToolCapabilityDefinition[] = OPTIONAL_TOOL_CAPABILITIES.filter((tool) =>
+  WIZARD_PERSISTENT_TOOL_KEYS.has(tool.key)
+);
 
 export const NON_COUNTED_CAPABILITY_KEYS = new Set([
   ...ALWAYS_ON_TOOL_CAPABILITIES.map((tool) => tool.key),
@@ -286,4 +306,9 @@ export function getRecommendedSkills(typeKeys: string | string[]): string[] {
 
 export function isNonCountedCapabilityKey(key: string): boolean {
   return NON_COUNTED_CAPABILITY_KEYS.has(key);
+}
+
+export function isSandboxEligibleAgentType(typeKeys: string | string[]): boolean {
+  const keys = Array.isArray(typeKeys) ? typeKeys : [typeKeys];
+  return keys.some((key) => SANDBOX_ELIGIBLE_AGENT_TYPES.has(key));
 }

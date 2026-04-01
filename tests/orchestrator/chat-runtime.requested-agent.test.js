@@ -64,7 +64,7 @@ describe('chatRuntime requested agent resolution', () => {
         return { rows: [] };
       }
 
-      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $2')) {
+      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $1')) {
         return {
           rows: [{
             id: 'agent-1',
@@ -149,6 +149,16 @@ describe('chatRuntime requested agent resolution', () => {
     }));
     jest.doMock('../../services/chatMessages', () => ({ insertChatMessage }));
     jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+      }),
+    }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
         preparePromptContext,
@@ -231,7 +241,7 @@ describe('chatRuntime requested agent resolution', () => {
     let currentContent = 'Please remember that I prefer concise French replies for project updates.';
 
     const poolQuery = jest.fn(async (sql) => {
-      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $2')) {
+      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $1')) {
         return {
           rows: [{
             id: 'agent-1',
@@ -305,6 +315,16 @@ describe('chatRuntime requested agent resolution', () => {
       insertChatMessage: jest.fn(async () => ({ id: 'reply-1' })),
     }));
     jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+      }),
+    }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
         preparePromptContext,

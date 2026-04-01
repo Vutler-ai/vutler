@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useFeatures } from '@/hooks/useFeatures';
 import { useAuth } from '@/lib/auth/auth-context';
+import { getAgents } from '@/lib/api/endpoints/agents';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,8 +179,9 @@ export default function AppSidebar({
   const touchCurrentX = useRef(0);
   const pathname = usePathname();
   const router = useRouter();
-  const { hasFeature, loading } = useFeatures();
+  const { features, hasFeature, loading } = useFeatures();
   const { user: authUser, logout } = useAuth();
+  const [hasSandboxAgent, setHasSandboxAgent] = useState(false);
 
   // Resolve user from auth context or prop fallback
   const resolvedUser = authUser
@@ -188,6 +190,7 @@ export default function AppSidebar({
         email: authUser.email || '',
       }
     : userProp ?? { name: 'User', email: '' };
+  const sandboxFeatureEnabled = features.includes('*') || features.includes('sandbox');
 
   // Persist collapsed state
   useEffect(() => {
@@ -211,6 +214,40 @@ export default function AppSidebar({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [menuOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (loading || !sandboxFeatureEnabled) {
+      setHasSandboxAgent(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const role = String(authUser?.role || '').toLowerCase();
+    if (role === 'admin' || role === 'developer') {
+      setHasSandboxAgent(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    getAgents()
+      .then((agents) => {
+        if (cancelled) return;
+        setHasSandboxAgent(
+          agents.some((agent) => Array.isArray(agent.capabilities) && agent.capabilities.includes('code_execution'))
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setHasSandboxAgent(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.role, loading, sandboxFeatureEnabled]);
 
   // Close sidebar on navigation (mobile)
   useEffect(() => {
@@ -277,7 +314,10 @@ export default function AppSidebar({
 
   // Filter items based on feature flags
   const getVisibleItems = (items: NavItem[]) =>
-    items.filter((item) => !item.feature || (!loading && hasFeature(item.feature)));
+    items.filter((item) => {
+      if (item.href === '/sandbox' && !hasSandboxAgent) return false;
+      return !item.feature || (!loading && hasFeature(item.feature));
+    });
 
   const sidebarContent = (
     <aside

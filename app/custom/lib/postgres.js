@@ -3,9 +3,10 @@
  */
 
 const { Pool } = require('pg');
+const { getDatabaseUrl } = require('../../../lib/database-env');
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || process.env.POSTGRES_URL,
+  connectionString: getDatabaseUrl(),
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,

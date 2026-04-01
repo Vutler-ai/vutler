@@ -31,6 +31,7 @@ describe('llmRouter codex legacy tool normalization', () => {
     }));
 
     jest.doMock('../services/agentIntegrationService', () => ({
+      getSkillKeysForIntegrationProviders: jest.fn(() => []),
       resolveAgentRuntimeIntegrations: jest.fn().mockResolvedValue({
         derivedSkillKeys: [],
         hasSocialMediaAccess: false,

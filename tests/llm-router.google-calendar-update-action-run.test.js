@@ -126,6 +126,24 @@ describe('llmRouter google calendar update action runs', () => {
         execute,
       })),
     }));
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue({
+        planId: 'agents_pro',
+        providerStates: {
+          google: { key: 'google', available: true, reason: null },
+        },
+        availableProviders: ['google'],
+        unavailableProviders: [],
+      }),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn(() => true),
+      inferProviderForSkill: jest.fn((skillKey) => (
+        String(skillKey).startsWith('email_') ? 'email'
+          : (String(skillKey).startsWith('google_') ? 'google' : null)
+      )),
+    }));
 
     db = {
       query: jest.fn(async (sql, params) => {
@@ -203,10 +221,23 @@ describe('llmRouter google calendar update action runs', () => {
       adapter: 'skill',
       status: 'success',
     });
-    expect(JSON.parse(actionRuns[0].output_json)).toEqual({
+    expect(JSON.parse(actionRuns[0].output_json)).toEqual(expect.objectContaining({
       id: 'evt-1',
       summary: 'Kickoff (updated)',
-    });
+      orchestration: expect.objectContaining({
+        decision: 'sync',
+        governed_decision: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              executor: 'skill-executor',
+              params: expect.objectContaining({
+                skill_key: 'google_calendar_update',
+              }),
+            }),
+          ],
+        }),
+      }),
+    }));
     expect(recordedBodies[1].messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -46,7 +46,19 @@ import {
 } from "@/lib/api/endpoints/chat";
 import { ChatWebSocket } from "@/lib/websocket";
 import { useApi } from "@/hooks/use-api";
-import type { Channel, Message, ChannelMember, ChatActionRun, ChatContact } from "@/lib/api/types";
+import type {
+  AgentRecommendation,
+  Channel,
+  Message,
+  ChannelMember,
+  ChatActionRun,
+  ChatContact,
+  ChatResourceArtifact,
+  OrchestrationDelegatedAgent,
+  OrchestrationUnavailableDomain,
+  OrchestrationUnavailableProvider,
+  WorkspaceAgentPressure,
+} from "@/lib/api/types";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -67,7 +79,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { ChatResourceArtifact } from "@/lib/api/types";
 import { getAvatarImageUrl } from "@/lib/avatar";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -92,6 +103,41 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatActorLabel(value: string | null | undefined): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  return raw
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getMetadataString(message: Message, key: string): string | null {
+  const value = message.metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getMetadataArray<T>(message: Message, key: string): T[] {
+  const value = message.metadata?.[key];
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function getMetadataObject<T extends object>(message: Message, key: string): T | null {
+  const value = message.metadata?.[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as T) : null;
+}
+
+function humanizeSlug(value: string | null | undefined): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  return raw
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 function isImageMime(mime: string): boolean {
@@ -302,6 +348,128 @@ function getMessageArtifacts(message: Message): ChatResourceArtifact[] {
   ]);
 
   return parsed;
+}
+
+function getMessageOrchestrationBadges(message: Message) {
+  const badges: Array<{ key: string; label: string }> = [];
+  const senderId = String(message.sender_id || "");
+  const requestedAgentId = String(message.requested_agent_id || "");
+  const facadeUsername = getMetadataString(message, "facade_agent_username");
+  const orchestrationStatus = getMetadataString(message, "orchestration_status");
+  const requestedAgentReason = getMetadataString(message, "requested_agent_reason");
+  const orchestratedBy = formatActorLabel(message.orchestrated_by);
+  const delegatedAgents = [
+    ...getMetadataArray<OrchestrationDelegatedAgent>(message, "delegated_agents"),
+    ...getMetadataArray<OrchestrationDelegatedAgent>(message, "orchestration_delegated_agents"),
+  ];
+  const unavailableDomains = getMetadataArray<OrchestrationUnavailableDomain>(message, "unavailable_domains");
+  const unavailableProviders = getMetadataArray<OrchestrationUnavailableProvider>(message, "unavailable_runtime_providers");
+  const recommendations = getMetadataArray<AgentRecommendation>(message, "agent_recommendations");
+  const workspacePressure = getMetadataObject<WorkspaceAgentPressure>(message, "workspace_agent_pressure");
+  const specializationProfile = getMetadataObject<Record<string, unknown>>(message, "specialization_profile");
+
+  if (facadeUsername && requestedAgentId && senderId && senderId !== requestedAgentId) {
+    badges.push({ key: "facade", label: `Via @${facadeUsername}` });
+  }
+
+  if (orchestratedBy) {
+    badges.push({ key: "orchestrated", label: `Orchestrated by ${orchestratedBy}` });
+  }
+
+  if (orchestrationStatus && orchestrationStatus !== "completed") {
+    badges.push({
+      key: "status",
+      label: `Status: ${orchestrationStatus.replace(/_/g, " ")}`,
+    });
+  }
+
+  if (requestedAgentReason && requestedAgentReason !== "unknown") {
+    badges.push({ key: "reason", label: requestedAgentReason });
+  }
+
+  if (delegatedAgents.length > 0) {
+    const delegated = delegatedAgents[0];
+    const delegatedRef = delegated?.agentRef || delegated?.agentId || null;
+    badges.push({
+      key: "delegated",
+      label: delegatedAgents.length > 1
+        ? `Delegated to ${delegatedAgents.length} agents`
+        : `Delegated to @${delegatedRef || "agent"}`,
+    });
+  }
+
+  if (unavailableDomains.length > 0) {
+    badges.push({
+      key: "blocked-domains",
+      label: `Blocked: ${unavailableDomains.map((entry) => humanizeSlug(entry.domain) || entry.domain).join(", ")}`,
+    });
+  } else if (unavailableProviders.length > 0) {
+    badges.push({
+      key: "blocked-providers",
+      label: `Unavailable: ${unavailableProviders.map((entry) => humanizeSlug(entry.key) || entry.key).join(", ")}`,
+    });
+  }
+
+  if (workspacePressure?.atLimit) {
+    badges.push({ key: "limit", label: "Agent limit reached" });
+  } else if (workspacePressure?.nearLimit) {
+    badges.push({ key: "pressure", label: "Agent lane pressure" });
+  }
+
+  if (String(specializationProfile?.status || "") === "super_agent_risk") {
+    badges.push({ key: "super-agent", label: "Super-agent risk" });
+  }
+
+  if (recommendations.some((entry) => entry.type === "create_specialist_agent")) {
+    badges.push({ key: "recommend-create", label: "Recommend specialist agent" });
+  }
+
+  return badges;
+}
+
+function getMessageOrchestrationDetails(message: Message) {
+  const details: string[] = [];
+  const delegatedAgents = [
+    ...getMetadataArray<OrchestrationDelegatedAgent>(message, "delegated_agents"),
+    ...getMetadataArray<OrchestrationDelegatedAgent>(message, "orchestration_delegated_agents"),
+  ];
+  const unavailableDomains = getMetadataArray<OrchestrationUnavailableDomain>(message, "unavailable_domains");
+  const unavailableProviders = getMetadataArray<OrchestrationUnavailableProvider>(message, "unavailable_runtime_providers");
+  const recommendations = getMetadataArray<AgentRecommendation>(message, "agent_recommendations");
+  const workspacePressure = getMetadataObject<WorkspaceAgentPressure>(message, "workspace_agent_pressure");
+
+  if (delegatedAgents.length > 0) {
+    const delegated = delegatedAgents
+      .map((entry) => entry.agentRef || entry.agentId || humanizeSlug(entry.domain) || "agent")
+      .filter(Boolean)
+      .join(", ");
+    details.push(`Delegation: ${delegated}`);
+  }
+
+  for (const entry of unavailableDomains.slice(0, 2)) {
+    const label = humanizeSlug(entry.domain) || entry.domain;
+    const reason = Array.isArray(entry.reasons) ? entry.reasons.find(Boolean) : null;
+    details.push(reason ? `${label}: ${reason}` : `${label}: unavailable for this run.`);
+  }
+
+  if (details.length === 0) {
+    for (const entry of unavailableProviders.slice(0, 2)) {
+      details.push(`${humanizeSlug(entry.key) || entry.key}: ${entry.reason || "Unavailable for this run."}`);
+    }
+  }
+
+  if (workspacePressure?.agentLimit && workspacePressure.agentLimit > 0) {
+    details.push(`Plan pressure: ${workspacePressure.currentAgentCount || 0}/${workspacePressure.agentLimit} agent lanes used.`);
+  }
+
+  const primaryRecommendation = recommendations[0];
+  if (primaryRecommendation?.title) {
+    details.push(primaryRecommendation.reason
+      ? `Recommendation: ${primaryRecommendation.title}. ${primaryRecommendation.reason}`
+      : `Recommendation: ${primaryRecommendation.title}.`);
+  }
+
+  return details.slice(0, 3);
 }
 
 function isOptimisticMessage(message: Message): boolean {
@@ -1510,9 +1678,18 @@ export default function ChatPage() {
                       {messages.map((msg, idx) => {
                         const isOwn = msg.sender_id === "user";
                         const prevMsg = messages[idx - 1];
-                        const isGrouped = prevMsg && prevMsg.sender_id === msg.sender_id;
+                        const currentFacade = getMetadataString(msg, "facade_agent_username");
+                        const prevFacade = prevMsg ? getMetadataString(prevMsg, "facade_agent_username") : null;
+                        const isGrouped = Boolean(
+                          prevMsg
+                          && prevMsg.sender_id === msg.sender_id
+                          && prevMsg.orchestrated_by === msg.orchestrated_by
+                          && prevFacade === currentFacade
+                        );
                         const artifacts = getMessageArtifacts(msg);
                         const bodyContent = stripResourceBlock(msg.content);
+                        const orchestrationBadges = isOwn ? [] : getMessageOrchestrationBadges(msg);
+                        const orchestrationDetails = isOwn ? [] : getMessageOrchestrationDetails(msg);
 
                         return (
                           <div
@@ -1543,28 +1720,43 @@ export default function ChatPage() {
                               }`}
                             >
                               {!isGrouped && (
-                                <div
-                                  className={`flex items-center gap-2 ${
-                                    isOwn ? "flex-row-reverse" : "flex-row"
-                                  }`}
-                                >
-                                  <span
-                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                                      isOwn
-                                        ? "bg-blue-500/15 text-blue-200"
-                                        : "bg-white/10 text-gray-200"
+                                <div className={`flex flex-col gap-1 ${isOwn ? "items-end" : "items-start"}`}>
+                                  <div
+                                    className={`flex items-center gap-2 ${
+                                      isOwn ? "flex-row-reverse" : "flex-row"
                                     }`}
                                   >
-                                    {isOwn ? (
-                                      <CheckBadgeIcon className="w-3 h-3" />
-                                    ) : (
-                                      <SparklesIcon className="w-3 h-3" />
-                                    )}
-                                    {isOwn ? "You" : msg.sender_name}
-                                  </span>
-                                  <span className="rounded-full bg-black/20 px-2 py-0.5 text-[11px] text-gray-500">
-                                    {formatTime(msg.created_at)}
-                                  </span>
+                                    <span
+                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                        isOwn
+                                          ? "bg-blue-500/15 text-blue-200"
+                                          : "bg-white/10 text-gray-200"
+                                      }`}
+                                    >
+                                      {isOwn ? (
+                                        <CheckBadgeIcon className="w-3 h-3" />
+                                      ) : (
+                                        <SparklesIcon className="w-3 h-3" />
+                                      )}
+                                      {isOwn ? "You" : msg.sender_name}
+                                    </span>
+                                    <span className="rounded-full bg-black/20 px-2 py-0.5 text-[11px] text-gray-500">
+                                      {formatTime(msg.created_at)}
+                                    </span>
+                                  </div>
+
+                                  {orchestrationBadges.length > 0 && (
+                                    <div className={`flex flex-wrap gap-1 ${isOwn ? "justify-end" : "justify-start"}`}>
+                                      {orchestrationBadges.map((badge) => (
+                                        <span
+                                          key={`${msg.id}-${badge.key}`}
+                                          className="inline-flex items-center rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-100"
+                                        >
+                                          {badge.label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
@@ -1588,6 +1780,14 @@ export default function ChatPage() {
                                     : "hover:border-white/15 hover:bg-white/[0.07]"
                                 }`}
                               >
+                                {orchestrationDetails.length > 0 && (
+                                  <div className="mb-3 space-y-1 rounded-2xl border border-cyan-400/10 bg-cyan-400/5 px-3 py-2 text-xs text-gray-200">
+                                    {orchestrationDetails.map((detail, detailIndex) => (
+                                      <p key={`${msg.id}-detail-${detailIndex}`}>{detail}</p>
+                                    ))}
+                                  </div>
+                                )}
+
                                 {bodyContent && (
                                   <div className="whitespace-pre-wrap break-words">
                                     {renderMessageBody(bodyContent)}

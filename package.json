@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "sandbox:worker": "node workers/sandbox-worker.js",
     "test": "jest --testPathPattern='tests/' --forceExit 2>/dev/null || bash tests/run-all.sh",
     "test:unit": "jest tests/llm-router.test.js --forceExit",
     "test:llm": "jest tests/llm-router.test.js tests/llm-api.test.js --forceExit",

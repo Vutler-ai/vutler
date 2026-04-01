@@ -300,6 +300,19 @@ docker run -d \
 
 docker network connect postal2_postal-net vutler-api >/dev/null 2>&1 || true
 
+log "Restarting vutler-sandbox-worker"
+docker rm -f vutler-sandbox-worker >/dev/null 2>&1 || true
+docker run -d \
+  --name vutler-sandbox-worker \
+  --restart unless-stopped \
+  --network vutler_vutler-network \
+  --env-file "$API_ENV_FILE" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  vutler-api:latest \
+  node workers/sandbox-worker.js >/dev/null
+
+docker network connect postal2_postal-net vutler-sandbox-worker >/dev/null 2>&1 || true
+
 if ! wait_for_health vutler-api 30 2; then
   fail "vutler-api did not become healthy"
 fi

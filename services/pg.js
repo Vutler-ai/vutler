@@ -10,7 +10,7 @@ function getPool() {
   if (_pool) return _pool;
   try { _pool = require('../lib/postgres').pool; return _pool; } catch (e) {}
   try { _pool = require('../lib/vaultbrix'); return _pool; } catch (e) {}
-  throw new Error('[services/pg] No database pool available. Set DATABASE_URL env var.');
+  throw new Error('[services/pg] No database pool available. Set DATABASE_URL or VUTLER_DB_URL.');
 }
 
 /**

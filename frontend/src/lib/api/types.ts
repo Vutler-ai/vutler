@@ -37,7 +37,7 @@ export interface Agent {
   lastActive?: string;
   model?: string;
   provider?: string;
-  type?: string;
+  type?: string | string[];
   role?: string;
   autoApproveEmail?: boolean;
   auto_approve_email?: boolean;
@@ -47,12 +47,203 @@ export interface Agent {
   tools?: string[];
   avatar?: string;
   username?: string;
+  email?: string | null;
+  description?: string;
+  integrations?: string[];
+  access_policy?: AgentAccessPolicy;
+  provisioning?: AgentProvisioning;
+  memory_policy?: AgentMemoryPolicy;
+  governance?: AgentGovernance;
+  drive_path?: string | null;
+  system_prompt?: string | null;
+  temperature?: number;
+  max_tokens?: number;
+  mbti?: string | null;
+  badge?: string | null;
+  systemAgent?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-export interface CreateAgentPayload {
+export type AgentCapabilityKey =
+  | 'email'
+  | 'social'
+  | 'drive'
+  | 'calendar'
+  | 'tasks'
+  | 'memory'
+  | 'sandbox';
+
+export interface AgentAccessEntry {
+  allowed?: boolean;
+  source?: string | null;
+  platforms?: string[];
+  eligible?: boolean;
+  invalid?: boolean;
+}
+
+export interface AgentAccessPolicy {
+  email?: AgentAccessEntry;
+  social?: AgentAccessEntry;
+  drive?: AgentAccessEntry;
+  calendar?: AgentAccessEntry;
+  tasks?: AgentAccessEntry;
+  memory?: AgentAccessEntry;
+  sandbox?: AgentAccessEntry;
+}
+
+export interface AgentProvisioningChannels {
+  chat?: boolean;
+  email?: boolean;
+  tasks?: boolean;
+}
+
+export interface AgentEmailProvisioning {
+  address?: string | null;
+  email?: string | null;
+  provisioned?: boolean;
+}
+
+export interface AgentSocialProvisioning {
+  allowed_platforms?: string[];
+  platforms?: string[];
+  brand_ids?: string[];
+  account_ids?: string[];
+}
+
+export interface AgentDriveProvisioning {
+  root?: string | null;
+}
+
+export interface AgentProvisioning {
+  channels?: AgentProvisioningChannels;
+  email?: AgentEmailProvisioning;
+  social?: AgentSocialProvisioning;
+  drive?: AgentDriveProvisioning;
+}
+
+export interface AgentMemoryPolicy {
+  mode?: 'disabled' | 'passive' | 'active' | string;
+}
+
+export interface AgentGovernance {
+  approvals?: 'default' | 'strict' | string;
+  max_risk_level?: 'low' | 'medium' | 'high' | string;
+}
+
+export interface AgentCapabilityState {
+  workspace_available: boolean;
+  agent_allowed: boolean;
+  provisioned: boolean;
+  effective: boolean;
+  reason: string | null;
+  scope?: Record<string, unknown> | null;
+}
+
+export interface AgentCapabilityMatrixWarning {
+  key: string;
+  message: string;
+}
+
+export interface AgentCapabilityMatrixMetadata {
+  plan_id?: string;
+  available_runtime_providers?: string[];
+  unavailable_runtime_providers?: OrchestrationUnavailableProvider[];
+}
+
+export interface AgentCapabilityMatrix {
+  agent_id: string;
+  agent_types: string[];
+  capabilities: Record<AgentCapabilityKey, AgentCapabilityState>;
+  warnings: AgentCapabilityMatrixWarning[];
+  metadata?: AgentCapabilityMatrixMetadata;
+}
+
+export interface AgentIdentityPayload {
   name: string;
-  platform: string;
+  username: string;
+  avatar?: string | null;
+  description?: string;
+}
+
+export interface AgentProfilePayload {
+  types?: string[];
+  role?: string | null;
+  mbti?: string | null;
+}
+
+export interface AgentBrainPayload {
+  provider?: string | null;
+  model?: string | null;
+  system_prompt?: string | null;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface LegacyCreateAgentPayload {
+  name: string;
+  username?: string;
+  email?: string;
+  role?: string;
+  description?: string;
+  model?: string;
+  provider?: string;
+  system_prompt?: string;
+  avatar?: string | null;
+  type?: string[];
+  capabilities?: string[];
+  template_id?: string;
+  platform?: string;
   config?: Record<string, unknown>;
+}
+
+export interface AgentContractPayload {
+  identity: AgentIdentityPayload;
+  profile?: AgentProfilePayload;
+  brain?: AgentBrainPayload;
+  persistent_skills?: string[];
+  access_policy?: AgentAccessPolicy;
+  provisioning?: AgentProvisioning;
+  memory_policy?: AgentMemoryPolicy;
+  governance?: AgentGovernance;
+  template_id?: string;
+  platform?: string;
+}
+
+export type CreateAgentPayload = LegacyCreateAgentPayload | AgentContractPayload;
+
+export type UpdateAgentPayload = Partial<LegacyCreateAgentPayload> &
+  Partial<AgentContractPayload> & {
+    auto_approve_email?: boolean;
+  };
+
+export interface PatchAgentAccessPayload {
+  access_policy: AgentAccessPolicy;
+}
+
+export interface PatchAgentProvisioningPayload {
+  provisioning?: AgentProvisioning;
+  memory_policy?: AgentMemoryPolicy;
+  governance?: AgentGovernance;
+}
+
+export interface AgentCapabilityMatrixResponse {
+  success: boolean;
+  data: AgentCapabilityMatrix;
+}
+
+export interface AgentAccessPatchResponse {
+  success: boolean;
+  access_policy: AgentAccessPolicy;
+  data: AgentCapabilityMatrix;
+}
+
+export interface AgentProvisioningPatchResponse {
+  success: boolean;
+  provisioning: AgentProvisioning;
+  memory_policy: AgentMemoryPolicy;
+  governance: AgentGovernance;
+  data: AgentCapabilityMatrix;
 }
 
 export interface AgentExecution {
@@ -127,6 +318,53 @@ export interface Attachment {
   uploaded_at?: string;
 }
 
+export interface OrchestrationDelegatedAgent {
+  domain?: string | null;
+  agentId?: string | null;
+  agentRef?: string | null;
+  reason?: string | null;
+}
+
+export interface OrchestrationUnavailableProvider {
+  key: string;
+  available?: boolean;
+  reason?: string | null;
+  requires_connection?: boolean | null;
+  connected?: boolean | null;
+  source?: string | null;
+}
+
+export interface OrchestrationUnavailableDomain {
+  domain: string;
+  missingProviders?: string[];
+  reasons?: string[];
+}
+
+export interface WorkspaceAgentPressure {
+  planId?: string;
+  planLabel?: string;
+  currentAgentCount?: number;
+  agentLimit?: number;
+  supportsAgents?: boolean;
+  canAddAgents?: boolean;
+  nearLimit?: boolean;
+  atLimit?: boolean;
+  usagePercent?: number;
+}
+
+export interface AgentRecommendation {
+  type: string;
+  priority?: string | null;
+  title?: string | null;
+  reason?: string | null;
+  domain?: string | null;
+  suggested_agent_type?: string | null;
+  suggested_name?: string | null;
+  suggested_role?: string | null;
+  upgrade_required?: boolean;
+  recommended_plan?: string | null;
+}
+
 export interface Message {
   id: string;
   content: string;
@@ -141,6 +379,27 @@ export interface Message {
   executed_by?: string | null;
   metadata?: {
     resource_artifacts?: ChatResourceArtifact[];
+    orchestration_status?: string | null;
+    facade_agent_id?: string | null;
+    facade_agent_username?: string | null;
+    requested_agent_reason?: string | null;
+    delegated_agents?: OrchestrationDelegatedAgent[];
+    orchestration_delegated_agents?: OrchestrationDelegatedAgent[];
+    available_runtime_providers?: string[];
+    unavailable_runtime_providers?: OrchestrationUnavailableProvider[];
+    unavailable_domains?: OrchestrationUnavailableDomain[];
+    workspace_agent_pressure?: WorkspaceAgentPressure | null;
+    specialization_profile?: {
+      status?: string | null;
+      persistentSkillCount?: number;
+      agentTypes?: string[];
+      detectedDomains?: string[];
+      delegatedDomainCount?: number;
+      availableAgentCount?: number;
+    } | null;
+    agent_recommendations?: AgentRecommendation[];
+    llm_provider?: string | null;
+    llm_model?: string | null;
     [key: string]: unknown;
   } | null;
   attachments?: Attachment[];

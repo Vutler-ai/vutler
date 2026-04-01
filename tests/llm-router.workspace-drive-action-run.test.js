@@ -123,6 +123,23 @@ describe('llmRouter workspace drive action runs', () => {
         execute,
       })),
     }));
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue({
+        planId: 'agents_pro',
+        providerStates: {
+          workspace_drive: { key: 'workspace_drive', available: true, reason: null },
+        },
+        availableProviders: ['workspace_drive'],
+        unavailableProviders: [],
+      }),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn(() => true),
+      inferProviderForSkill: jest.fn((skillKey) => (
+        String(skillKey).startsWith('workspace_drive') ? 'workspace_drive' : null
+      )),
+    }));
 
     db = {
       query: jest.fn(async (sql, params) => {
@@ -200,10 +217,23 @@ describe('llmRouter workspace drive action runs', () => {
       adapter: 'skill',
       status: 'success',
     });
-    expect(JSON.parse(actionRuns[0].output_json)).toEqual({
+    expect(JSON.parse(actionRuns[0].output_json)).toEqual(expect.objectContaining({
       path: '/Projects/kickoff-notes.md',
       mimeType: 'text/plain; charset=utf-8',
-    });
+      orchestration: expect.objectContaining({
+        decision: 'sync',
+        governed_decision: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              executor: 'skill-executor',
+              params: expect.objectContaining({
+                skill_key: 'workspace_drive_write',
+              }),
+            }),
+          ],
+        }),
+      }),
+    }));
     expect(recordedBodies[1].messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

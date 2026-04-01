@@ -122,6 +122,24 @@ describe('llmRouter google drive action runs', () => {
         execute,
       })),
     }));
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue({
+        planId: 'agents_pro',
+        providerStates: {
+          google: { key: 'google', available: true, reason: null },
+        },
+        availableProviders: ['google'],
+        unavailableProviders: [],
+      }),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn(() => true),
+      inferProviderForSkill: jest.fn((skillKey) => (
+        String(skillKey).startsWith('email_') ? 'email'
+          : (String(skillKey).startsWith('google_') ? 'google' : null)
+      )),
+    }));
 
     db = {
       query: jest.fn(async (sql, params) => {
@@ -199,12 +217,25 @@ describe('llmRouter google drive action runs', () => {
       adapter: 'skill',
       status: 'success',
     });
-    expect(JSON.parse(actionRuns[0].output_json)).toEqual({
+    expect(JSON.parse(actionRuns[0].output_json)).toEqual(expect.objectContaining({
       id: 'gdrv-123',
       name: 'Brief.pdf',
       mimeType: 'application/pdf',
       webViewLink: 'https://drive.google.com/file/d/gdrv-123/view',
-    });
+      orchestration: expect.objectContaining({
+        decision: 'sync',
+        governed_decision: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              executor: 'skill-executor',
+              params: expect.objectContaining({
+                skill_key: 'google_drive_read',
+              }),
+            }),
+          ],
+        }),
+      }),
+    }));
     expect(recordedBodies[1].messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

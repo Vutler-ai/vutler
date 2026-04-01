@@ -122,6 +122,23 @@ describe('llmRouter skill tool execution', () => {
     jest.doMock('../services/skills', () => ({
       getSkillRegistry: getSkillRegistryMock,
     }));
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue({
+        planId: 'agents_pro',
+        providerStates: {
+          email: { key: 'email', available: true, reason: null },
+        },
+        availableProviders: ['email'],
+        unavailableProviders: [],
+      }),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn(() => true),
+      inferProviderForSkill: jest.fn((skillKey) => (
+        String(skillKey).startsWith('email_') ? 'email' : null
+      )),
+    }));
 
     db = {
       query: jest.fn(async (sql, params) => {
@@ -171,6 +188,7 @@ describe('llmRouter skill tool execution', () => {
       {
         id: 'agent-1',
         workspace_id: 'ws-1',
+        email: 'agent@ws.vutler.ai',
         provider: 'openai',
         model: 'gpt-5.4',
         skills: ['email_outreach'],
@@ -212,6 +230,23 @@ describe('llmRouter skill tool execution', () => {
       adapter: 'skill',
       status: 'success',
     });
+    expect(JSON.parse(actionRuns[0].output_json)).toEqual(expect.objectContaining({
+      draftId: 'draft-123',
+      status: 'pending_approval',
+      orchestration: expect.objectContaining({
+        decision: 'sync',
+        governed_decision: expect.objectContaining({
+          actions: [
+            expect.objectContaining({
+              executor: 'skill-executor',
+              params: expect.objectContaining({
+                skill_key: 'email_outreach',
+              }),
+            }),
+          ],
+        }),
+      }),
+    }));
     expect(recordedBodies[1].messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -224,5 +259,41 @@ describe('llmRouter skill tool execution', () => {
         }),
       ])
     );
+  });
+
+  test('denies email skills when the agent has no provisioned email', async () => {
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        skills: ['email_outreach'],
+        system_prompt: 'You are an outreach agent.',
+      },
+      [{ role: 'user', content: 'Draft an outreach email for client@example.com' }],
+      db,
+      {
+        chatActionContext: {
+          workspaceId: 'ws-1',
+          messageId: 'msg-2',
+          channelId: 'chan-1',
+          requestedAgentId: 'agent-1',
+          displayAgentId: 'agent-1',
+          orchestratedBy: 'jarvis',
+        },
+      }
+    );
+
+    expect(result.content).toContain('Draft created and ready for approval.');
+    expect(skillExecuteMock).not.toHaveBeenCalled();
+    expect(actionRuns[0]).toMatchObject({
+      action_key: 'email_outreach',
+      adapter: 'skill',
+      status: 'error',
+    });
+    expect(JSON.parse(actionRuns[0].error_json)).toEqual(expect.objectContaining({
+      error: 'Email is not provisioned for this agent.',
+    }));
   });
 });

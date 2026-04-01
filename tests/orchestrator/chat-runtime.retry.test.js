@@ -66,6 +66,22 @@ describe('chatRuntime retry flow', () => {
         };
       }
 
+      if (sql.includes(`FROM tenant_vutler.agents`) && sql.includes('WHERE workspace_id = $1')) {
+        return {
+          rows: [{
+            id: 'agent-1',
+            name: 'Mike',
+            username: 'mike',
+            model: 'claude-sonnet-4',
+            provider: 'anthropic',
+            system_prompt: 'You are Mike.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+          }],
+        };
+      }
+
       if (sql.includes(`FROM tenant_vutler.chat_messages`) && sql.includes('ORDER BY created_at DESC')) {
         return {
           rows: [{
@@ -123,6 +139,16 @@ describe('chatRuntime retry flow', () => {
       }),
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+      }),
+    }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
         preparePromptContext: jest.fn().mockResolvedValue({
@@ -144,7 +170,7 @@ describe('chatRuntime retry flow', () => {
     expect(state.message.processing_state).toBe('processed');
     expect(llmChat).toHaveBeenCalledTimes(2);
     expect(state.inserts).toHaveLength(1);
-    expect(analyzeAndRoute).not.toHaveBeenCalled();
+    expect(analyzeAndRoute).toHaveBeenCalledTimes(2);
   });
 
   test('falls back when chat_messages.attachments column is missing', async () => {
@@ -177,6 +203,22 @@ describe('chatRuntime retry flow', () => {
       }
 
       if (sql.includes(`FROM tenant_vutler.chat_channel_members`)) {
+        return {
+          rows: [{
+            id: 'agent-legal',
+            name: 'Andrea',
+            username: 'andrea',
+            model: 'claude-sonnet-4',
+            provider: 'anthropic',
+            system_prompt: 'You are Andrea.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+          }],
+        };
+      }
+
+      if (sql.includes(`FROM tenant_vutler.agents`) && sql.includes('WHERE workspace_id = $1')) {
         return {
           rows: [{
             id: 'agent-legal',
@@ -250,6 +292,16 @@ describe('chatRuntime retry flow', () => {
       }),
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+      }),
+    }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
         preparePromptContext: jest.fn().mockResolvedValue({ prompt: '', stats: null }),
@@ -287,6 +339,16 @@ describe('chatRuntime retry flow', () => {
       }),
     }));
     jest.doMock('../../api/ws-chat', () => ({ publishMessage: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+      }),
+    }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
         preparePromptContext: jest.fn().mockResolvedValue({ prompt: '', stats: null }),

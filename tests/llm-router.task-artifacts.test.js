@@ -122,6 +122,23 @@ describe('llmRouter task resource artifacts', () => {
     jest.doMock('../services/skills', () => ({
       getSkillRegistry: getSkillRegistryMock,
     }));
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue({
+        planId: 'agents_pro',
+        providerStates: {
+          project_management: { key: 'project_management', available: true, reason: null },
+        },
+        availableProviders: ['project_management'],
+        unavailableProviders: [],
+      }),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn(() => true),
+      inferProviderForSkill: jest.fn((skillKey) => (
+        String(skillKey).startsWith('task_') ? 'project_management' : null
+      )),
+    }));
 
     process.env.OPENAI_API_KEY = 'test-openai-key';
     chat = require('../services/llmRouter').chat;

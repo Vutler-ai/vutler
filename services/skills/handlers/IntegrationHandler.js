@@ -4,6 +4,7 @@ const pool = require('../../../lib/vaultbrix');
 const { LLMPromptHandler } = require('./LLMPromptHandler');
 const { isGoogleConnected } = require('../../google/tokenManager');
 const { hasAgentIntegrationAccess } = require('../../agentIntegrationService');
+const { resolveAgentEmailProvisioning } = require('../../agentProvisioningService');
 
 const SCHEMA = 'tenant_vutler';
 const LEGACY_PROVIDER_MAP = {
@@ -11,13 +12,12 @@ const LEGACY_PROVIDER_MAP = {
   drive: 'workspace_drive',
 };
 const CONNECTION_PROVIDER_ALIASES = {
-  email: 'google',
   google_calendar: 'google',
   google_drive: 'google',
   workspace_drive: 'workspace',
 };
 const ADAPTERS = {
-  email: require('../adapters/GmailAdapter').GmailAdapter,
+  email: require('../adapters/EmailAdapter').EmailAdapter,
   google_calendar: require('../adapters/GoogleCalendarAdapter').GoogleCalendarAdapter,
   google_drive: require('../adapters/GoogleDriveAdapter').GoogleDriveAdapter,
   workspace_drive: require('../adapters/WorkspaceDriveAdapter').WorkspaceDriveAdapter,
@@ -152,6 +152,18 @@ class IntegrationHandler {
     if (integrationProvider === 'workspace_drive') return true;
     if (integrationProvider === 'vutler_calendar') return true;
     if (integrationProvider === 'project_management') return true;
+    if (integrationProvider === 'email') {
+      const provisioning = await resolveAgentEmailProvisioning({
+        workspaceId,
+        agentId,
+        db: pool,
+      }).catch(() => ({
+        provisioned: false,
+        email: null,
+      }));
+      if (!provisioning.provisioned) return false;
+      return hasAgentIntegrationAccess(workspaceId, agentId, 'email').catch(() => false);
+    }
 
     const provider = CONNECTION_PROVIDER_ALIASES[integrationProvider] || integrationProvider;
 

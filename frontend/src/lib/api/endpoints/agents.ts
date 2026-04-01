@@ -3,7 +3,14 @@ import type {
   Agent,
   CreateAgentPayload,
   AgentExecution,
+  AgentCapabilityMatrix,
+  AgentCapabilityMatrixResponse,
+  AgentAccessPatchResponse,
+  AgentProvisioningPatchResponse,
+  PatchAgentAccessPayload,
+  PatchAgentProvisioningPayload,
   SuccessResponse,
+  UpdateAgentPayload,
 } from '../types';
 
 export async function getAgents(): Promise<Agent[]> {
@@ -17,20 +24,22 @@ export async function getAgent(id: string): Promise<Agent> {
 }
 
 export async function createAgent(payload: CreateAgentPayload): Promise<Agent> {
-  return apiFetch<Agent>('/api/v1/agents', {
+  const data = await apiFetch<{ agent?: Agent } & Agent>('/api/v1/agents', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  return data.agent ?? data;
 }
 
 export async function updateAgent(
   id: string,
-  payload: Partial<CreateAgentPayload> & { auto_approve_email?: boolean }
+  payload: UpdateAgentPayload
 ): Promise<Agent> {
-  return apiFetch<Agent>(`/api/v1/agents/${id}`, {
+  const data = await apiFetch<{ agent?: Agent } & Agent>(`/api/v1/agents/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+  return data.agent ?? data;
 }
 
 export async function deleteAgent(id: string): Promise<SuccessResponse> {
@@ -46,6 +55,31 @@ export async function getAgentExecutions(
     `/api/v1/agents/${agentId}/executions`
   );
   return data.executions ?? [];
+}
+
+export async function getAgentCapabilityMatrix(agentId: string): Promise<AgentCapabilityMatrix> {
+  const data = await apiFetch<AgentCapabilityMatrixResponse>(`/api/v1/agents/${agentId}/capability-matrix`);
+  return data.data;
+}
+
+export async function patchAgentAccess(
+  agentId: string,
+  payload: PatchAgentAccessPayload
+): Promise<AgentAccessPatchResponse> {
+  return apiFetch<AgentAccessPatchResponse>(`/api/v1/agents/${agentId}/access`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function patchAgentProvisioning(
+  agentId: string,
+  payload: PatchAgentProvisioningPayload
+): Promise<AgentProvisioningPatchResponse> {
+  return apiFetch<AgentProvisioningPatchResponse>(`/api/v1/agents/${agentId}/provisioning`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 }
 
 /**
