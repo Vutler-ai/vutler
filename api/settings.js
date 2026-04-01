@@ -114,6 +114,86 @@ async function writeSettingKV(wsId, key, value) {
   });
 }
 
+async function findProviderByRef(wsId, providerRef) {
+  const ref = typeof providerRef === 'string' ? providerRef.trim() : '';
+  if (!ref) return null;
+
+  try {
+    let result = await pool.query(
+      `SELECT id, provider, is_enabled
+         FROM ${SCHEMA}.llm_providers
+        WHERE workspace_id = $1 AND id = $2
+        LIMIT 1`,
+      [wsId, ref]
+    );
+    if (result.rows[0]) return result.rows[0];
+
+    result = await pool.query(
+      `SELECT id, provider, is_enabled
+         FROM ${SCHEMA}.llm_providers
+        WHERE workspace_id = $1 AND provider = $2
+        ORDER BY is_enabled DESC, is_default DESC, created_at DESC
+        LIMIT 1`,
+      [wsId, ref]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    console.warn('[SETTINGS] findProviderByRef warning:', err.message);
+    return null;
+  }
+}
+
+async function resolveWorkspaceDefaultProvider(wsId, storedRef) {
+  const explicit = await findProviderByRef(wsId, storedRef);
+  if (explicit) return explicit;
+
+  try {
+    const result = await pool.query(
+      `SELECT id, provider, is_enabled
+         FROM ${SCHEMA}.llm_providers
+        WHERE workspace_id = $1 AND is_default = TRUE
+        ORDER BY is_enabled DESC, created_at DESC
+        LIMIT 1`,
+      [wsId]
+    );
+    return result.rows[0] || null;
+  } catch (err) {
+    console.warn('[SETTINGS] resolveWorkspaceDefaultProvider warning:', err.message);
+    return null;
+  }
+}
+
+async function syncDefaultProvider(wsId, providerRef) {
+  try {
+    await pool.query(
+      `UPDATE ${SCHEMA}.llm_providers
+          SET is_default = FALSE,
+              updated_at = NOW()
+        WHERE workspace_id = $1`,
+      [wsId]
+    );
+  } catch (err) {
+    console.warn('[SETTINGS] syncDefaultProvider reset warning:', err.message);
+  }
+
+  const target = await findProviderByRef(wsId, providerRef);
+  if (!target) return null;
+
+  try {
+    await pool.query(
+      `UPDATE ${SCHEMA}.llm_providers
+          SET is_default = TRUE,
+              updated_at = NOW()
+        WHERE workspace_id = $1 AND id = $2`,
+      [wsId, target.id]
+    );
+    return target;
+  } catch (err) {
+    console.warn('[SETTINGS] syncDefaultProvider assign warning:', err.message);
+    return null;
+  }
+}
+
 function maskKey(key) {
   if (!key || key.length < 8) return '••••••••';
   return key.substring(0, 6) + '••••••••' + key.substring(key.length - 4);
@@ -160,6 +240,8 @@ router.get('/', async (req, res) => {
       }
     }
 
+    const defaultProvider = await resolveWorkspaceDefaultProvider(wsId, row.default_provider || null);
+
     const settings = {
       workspace_id: wsId,
       name: row.name || 'My Workspace',
@@ -177,7 +259,8 @@ router.get('/', async (req, res) => {
       updated_at: row.updated_at || null,
       workspace_name: row.name || 'My Workspace',
       workspace_description: row.description || '',
-      default_provider: row.default_provider || '',
+      default_provider: defaultProvider?.id || row.default_provider || '',
+      default_provider_type: defaultProvider?.provider || null,
     };
     res.json({ success: true, settings });
   } catch (err) {
@@ -193,28 +276,35 @@ router.put('/', async (req, res) => {
     // Support both flat { name, timezone } and nested { settings: { workspace_name: { value } } }
     const body = req.body || {};
     const s = body.settings || {};
+    const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
     const extract = (key) => {
       const v = s[key];
-      if (!v) return undefined;
+      if (v === undefined) return undefined;
       if (typeof v === 'string') return v;
       if (typeof v === 'object' && 'value' in v) return v.value;
       return undefined;
     };
-    const name = body.name || extract('workspace_name');
-    const description = body.description || extract('workspace_description');
-    const timezone = body.timezone || extract('timezone');
-    const language = body.language || extract('language');
-    const logo_url = body.logo_url || extract('logo_url');
-    const default_provider = body.default_provider || extract('default_provider');
-    const drive_root = body.drive_root || extract('drive_root');
-    const snipara_api_key = body.snipara_api_key || extract('snipara_api_key');
-    const snipara_api_url = body.snipara_api_url || extract('snipara_api_url');
-    const snipara_project_id = body.snipara_project_id || extract('snipara_project_id');
-    const snipara_project_slug = body.snipara_project_slug || extract('snipara_project_slug');
-    const snipara_client_id = body.snipara_client_id || extract('snipara_client_id');
-    const snipara_swarm_id = body.snipara_swarm_id || extract('snipara_swarm_id');
+    const name = hasOwn(body, 'name') ? body.name : extract('workspace_name');
+    const description = hasOwn(body, 'description') ? body.description : extract('workspace_description');
+    const timezone = hasOwn(body, 'timezone') ? body.timezone : extract('timezone');
+    const language = hasOwn(body, 'language') ? body.language : extract('language');
+    const logo_url = hasOwn(body, 'logo_url') ? body.logo_url : extract('logo_url');
+    const default_provider = hasOwn(body, 'default_provider') ? body.default_provider : extract('default_provider');
+    const drive_root = hasOwn(body, 'drive_root') ? body.drive_root : extract('drive_root');
+    const snipara_api_key = hasOwn(body, 'snipara_api_key') ? body.snipara_api_key : extract('snipara_api_key');
+    const snipara_api_url = hasOwn(body, 'snipara_api_url') ? body.snipara_api_url : extract('snipara_api_url');
+    const snipara_project_id = hasOwn(body, 'snipara_project_id') ? body.snipara_project_id : extract('snipara_project_id');
+    const snipara_project_slug = hasOwn(body, 'snipara_project_slug') ? body.snipara_project_slug : extract('snipara_project_slug');
+    const snipara_client_id = hasOwn(body, 'snipara_client_id') ? body.snipara_client_id : extract('snipara_client_id');
+    const snipara_swarm_id = hasOwn(body, 'snipara_swarm_id') ? body.snipara_swarm_id : extract('snipara_swarm_id');
 
     const layout = await detectSettingsLayout();
+    const syncedDefaultProvider = default_provider !== undefined
+      ? await syncDefaultProvider(wsId, default_provider)
+      : null;
+    const normalizedDefaultProvider = default_provider !== undefined
+      ? (syncedDefaultProvider?.id || (typeof default_provider === 'string' ? default_provider.trim() : default_provider))
+      : undefined;
 
     if (layout === 'kv') {
       const updates = {
@@ -223,7 +313,7 @@ router.put('/', async (req, res) => {
         timezone,
         language,
         logo_url,
-        default_provider,
+        default_provider: normalizedDefaultProvider,
         drive_root,
         snipara_api_key,
         snipara_api_url,
@@ -249,7 +339,16 @@ router.put('/', async (req, res) => {
              drive_root=COALESCE($7,drive_root),
              updated_at=NOW()
          WHERE workspace_id=$8`,
-        [name || null, description || null, timezone || null, language || null, logo_url || null, default_provider || null, drive_root || null, wsId]
+        [
+          name !== undefined ? name : null,
+          description !== undefined ? description : null,
+          timezone !== undefined ? timezone : null,
+          language !== undefined ? language : null,
+          logo_url !== undefined ? logo_url : null,
+          normalizedDefaultProvider !== undefined ? normalizedDefaultProvider : null,
+          drive_root !== undefined ? drive_root : null,
+          wsId
+        ]
       );
     }
     clearSniparaConfigCache(wsId);
