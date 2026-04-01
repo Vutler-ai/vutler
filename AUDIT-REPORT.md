@@ -8,9 +8,16 @@
 
 ## Executive Summary
 
-Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~60+ backend API routes. The platform is **largely functional** with real PostgreSQL-backed APIs, real WebSocket chat, and a legitimate authentication system. However, there are several **schema prefix bugs** that will cause 500 errors in production, **in-memory-only implementations** for some features, and a few frontend pages calling endpoints that may not exist or return unexpected formats.
+Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~60+ backend API routes. The platform is **largely functional** with real PostgreSQL-backed APIs, real WebSocket chat, and a legitimate authentication system. Production readiness is still gated by a handful of high-priority issues: several secrets and credentials remain hardcoded, authentication still leans on SHA-256 rather than bcrypt/argon2, sandbox code runs without containerization, provider API keys are stored in the clear, and a few integrations are still stubs rather than OAuth flows.
 
-**Overall Health**: **70/100** -- Solid architecture, most features DB-backed, but needs bug fixes before production.
+**Overall Health**: **72/100** -- Architecture is solid, recent schema/hardening work paid off, but security polish is still required before we can call the surface fully production-ready.
+
+## Addendum — 2026-03-31
+
+- `api/notifications.js` now ensures `tenant_vutler.notifications` exists and serves notifications directly from PostgreSQL instead of an in-memory cache, while `services/pushService.js` persists subscriptions in a new `tenant_vutler.push_subscriptions` table for durable web-push delivery.
+- Manual WhatsApp mirroring artifacts (chunk-002, the mirror flag, and the inbound/outbound live checks) have been retired; the seeding scripts no longer copy the chunk documentation and the live-cutover checklist no longer toggles `VUTLER_WHATSAPP_MIRROR_ENABLED`, so the mirror endpoint is no longer part of the product surface.
+- The VPS deployment audit now points to `scripts/vps-retention.sh` (documented in `docs/runbooks/vps-retention.md`) to keep disk pressure under control, and `docs/recent-2026-04.md` keeps the release snapshot aligned with the latest commits.
+- Despite these wins, encrypted provider keys, rotation of hardcoded Postal/Stripe secrets, bcrypt-style password hashing, real OAuth for integrations, and a sandbox isolation plan are still outstanding before the product can be called fully production-ready.
 
 ---
 
@@ -37,13 +44,12 @@ Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~
 ## 2. Dashboard
 
 ### Dashboard Page
-- **Status**: ⚠️ Partial (schema bug)
+- **Status**: ⚠️ Partial (workspace scoping)
 - **Frontend**: `(app)/dashboard/page.tsx` — Calls `/api/v1/dashboard`, `/api/v1/agents`, `/api/v1/marketplace/templates`, `/api/v1/tasks`, `/api/v1/audit-logs`.
-- **Backend**: `api/dashboard.js` — **BUG: Queries `agents`, `chat_messages`, `token_usage` WITHOUT `tenant_vutler.` schema prefix**. Will fail if `search_path` doesn't include the schema.
+- **Backend**: `api/dashboard.js` — Queries the schema-qualified `tenant_vutler` tables, but the current implementation aggregates across every tenant and workspace.
 - **Issues**:
-  - Dashboard queries missing schema prefix (`FROM agents` should be `FROM tenant_vutler.agents`).
-  - Same for `chat_messages` and `token_usage`.
-- **Fix needed**: Add `tenant_vutler.` prefix to all table references in `api/dashboard.js`.
+  - The dashboard response is not scoped by `workspace_id`, so tenants see platform-wide statistics unless the route is gated to admins. This can leak usage metrics across workspaces.
+- **Fix needed**: Apply `workspace_id` filters or guard the endpoint with a tenant-scoped admin check before shipping to production.
 
 ---
 
@@ -56,10 +62,8 @@ Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~
 - **WebSocket**: Two WS servers:
   - `websocket.js` at `/ws/chat` — API-key-authenticated (for agents)
   - `api/ws-chat.js` at `/ws/chat-pro` — JWT-authenticated (for browser UI)
-- **Issues**:
-  - Frontend `ChatWebSocket` connects to `/ws/chat` with `token=`, but `/ws/chat` expects `agent_id` + `api_key` (not JWT). The `/ws/chat-pro` path is the correct one for browser.
-  - Frontend WS constructor: `${wsProto}//${window.location.host}/ws/chat?token=...` — should probably be `/ws/chat-pro?token=...`.
-- **Fix needed**: Fix WebSocket URL in `frontend/src/lib/websocket.ts` to use `/ws/chat-pro`.
+- **Notes**:
+  - Browser clients already connect to `/ws/chat-pro`, so no current WebSocket mismatches are outstanding.
 
 ---
 
@@ -288,23 +292,24 @@ Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~
 
 ## 16. Providers Page
 
-- **Status**: ⚠️ Partial (schema bug)
+- **Status**: ⚠️ Partial (key encryption)
 - **Frontend**: `(app)/providers/page.tsx` — LLM provider management (add, edit, delete, toggle active). Supports OpenAI, Anthropic, Groq, Mistral, OpenRouter, Ollama.
-- **Backend**: `api/providers.js` — **BUG: Queries `workspace_llm_providers` WITHOUT `tenant_vutler.` schema prefix**. Will fail if Postgres `search_path` doesn't include the schema.
+- **Backend**: `api/providers.js` — Reads and writes `tenant_vutler.llm_providers` with schema-qualified queries, but new rows inherit `api_key` in the clear since encryption is only triggered when decrypting the legacy `workspace_llm_providers` table.
 - **Issues**:
-  - All queries in `api/providers.js` missing schema prefix.
-  - API keys stored as `api_key_encrypted` but are just plain text with prefix masking.
-- **Fix needed**: Add `tenant_vutler.` schema prefix. Implement actual encryption for API keys.
+  - `api_key` is stored in the clear and replayed into provider requests; `CryptoService` is only used when migrating legacy rows.
+  - Any database user with read privileges can retrieve working provider secrets.
+- **Fix needed**: Encrypt provider API keys on write, enforce `ENCRYPTION_KEY`, and rotate existing credentials before declaring this component production-ready.
 
 ---
 
 ## 17. Notifications
 
-- **Status**: ❌ Broken (in-memory only)
+- **Status**: ✅ Working (PostgreSQL)
 - **Frontend**: `(app)/notifications/page.tsx` exists.
-- **Backend**: `api/notifications.js` — **IN-MEMORY ONLY**. Uses a plain JavaScript array. Loses all data on server restart.
-- **Issues**: Zero persistence. Not production-ready.
-- **Fix needed**: Migrate to PostgreSQL storage.
+- **Backend**: `api/notifications.js` — Ensures `tenant_vutler.notifications` table exists, returns rows scoped by user/workspace, and emits updates through `services/pushService.js` when VAPID keys are configured.
+- **Notes**:
+  - `services/pushService.js` now persists subscriptions in `tenant_vutler.push_subscriptions`, so web-push tokens survive restarts and the table/indexes are created on startup.
+- **Fix needed**: None; monitor push-delivery errors and keep VAPID keys current.
 
 ---
 
@@ -337,14 +342,7 @@ Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~
 
 ## Bug Summary
 
-### CRITICAL (Schema Prefix Bugs — Will Cause 500 Errors)
-
-| File | Tables Missing Schema | Impact |
-|------|----------------------|--------|
-| `api/dashboard.js` | `agents`, `token_usage`, `chat_messages` | Dashboard page crashes |
-| `api/providers.js` | `workspace_llm_providers` (all queries) | Providers page crashes |
-
-### HIGH (Security Issues)
+### HIGH (Security & Stability)
 
 | Issue | File | Impact |
 |-------|------|--------|
@@ -353,55 +351,48 @@ Vutler is a comprehensive AI agent office platform with ~20 frontend pages and ~
 | SHA-256 password hashing | `api/auth.js` | Weak against rainbow tables |
 | Unsandboxed code execution | `api/sandbox.js` | RCE vulnerability in multi-tenant |
 | LLM API keys stored as plain text | `api/providers.js` | Keys readable from DB |
+| Missing JWT_SECRET guard | `api/auth.js` | Defaults to placeholder when env var is absent |
 
-### MEDIUM (Functionality Issues)
+### MEDIUM (Functionality & Reliability)
 
 | Issue | File | Impact |
 |-------|------|--------|
-| WebSocket URL mismatch | `frontend/src/lib/websocket.ts` | Chat WS connects to wrong endpoint |
-| Notifications in-memory only | `api/notifications.js` | Data lost on restart |
-| Memory depends on external Snipara | `api/memory.js` | Memory features fail when Snipara is down |
-| Hardcoded agent names in tasks | `frontend tasks/page.tsx` | Assignee list doesn't reflect real agents |
-| Integrations are stubs | `api/integrations.js` | No actual OAuth token management |
-
----
+| Hardcoded agent names in tasks | `frontend/src/app/(app)/tasks/page.tsx` | Assignee list doesn't reflect real agents |
+| Integrations page is stubbed | `api/integrations.js` | OAuth flow only flips a DB flag |
+| Drive storage tied to local filesystem | `api/drive.js` | Hard to scale across nodes |
+| Memory depends solely on Snipara | `api/memory.js` | Features fail when Snipara is down |
+| Dashboard response is platform-wide | `api/dashboard.js` | Workspace metrics leak across tenants |
+| Legacy routes linger | `api/email.js`, `api/usage.js` | Extra surface area to maintain |
 
 ## Prioritized TODO List
 
-### 1. CRITICAL (Blocking Usage)
+### 1. HIGH (Security & Data Integrity)
 
-- [ ] **Fix schema prefix in `api/dashboard.js`**: Add `tenant_vutler.` to all table queries (`agents`, `token_usage`, `chat_messages`)
-- [ ] **Fix schema prefix in `api/providers.js`**: Add `tenant_vutler.` to all `workspace_llm_providers` queries
-- [ ] **Fix WebSocket URL**: Change `frontend/src/lib/websocket.ts` from `/ws/chat` to `/ws/chat-pro` for JWT auth
-
-### 2. HIGH (Important — Security & Data Integrity)
-
-- [ ] **Remove hardcoded Postal API key** from `api/email-vaultbrix.js` — use env var only
-- [ ] **Remove hardcoded Stripe account ID** from `api/billing.js` — use env var only
+- [ ] **Remove hardcoded Postal API key** from `api/email-vaultbrix.js` — keep secrets in env vars only
+- [ ] **Remove hardcoded Stripe account ID** from `api/billing.js` — read via env var and rotate
 - [ ] **Migrate password hashing** from SHA-256 to bcrypt/argon2 in `api/auth.js`
-- [ ] **Sandbox code execution in containers**: `api/sandbox.js` currently uses bare `child_process`
-- [ ] **Encrypt LLM API keys** in `api/providers.js` — currently stored as plain text
-- [ ] **Fail hard on missing JWT_SECRET**: Don't default to a placeholder string
+- [ ] **Sandbox code execution** in `api/sandbox.js` (containers/firejail) to avoid RCE
+- [ ] **Encrypt LLM API keys** in `api/providers.js` and require `ENCRYPTION_KEY`
+- [ ] **Fail hard on missing JWT_SECRET** — do not default to `MISSING-SET-JWT_SECRET-ENV`
 
-### 3. MEDIUM (Nice to Have)
+### 2. MEDIUM (Functionality & Reliability)
 
-- [ ] **Migrate notifications to PostgreSQL**: `api/notifications.js` uses in-memory array
-- [ ] **Add Snipara fallback**: Store basic memory in PostgreSQL when Snipara is unavailable
-- [ ] **Fetch agent names dynamically** in tasks page instead of hardcoded list
-- [ ] **Clean up legacy routes**: Remove `api/email.js` (MongoDB redirect) and `api/usage.js`
-- [ ] **Implement real OAuth token management** for integrations (Slack, Google, GitHub)
-- [ ] **Migrate Drive to S3/R2** for multi-node deployments
+- [ ] **Replace the hardcoded assignee list** in `frontend/src/app/(app)/tasks/page.tsx` with a call to `/api/v1/agents`
+- [ ] **Implement real OAuth/token management** for integrations (Slack, Google, GitHub)
+- [ ] **Add a PostgreSQL fallback or degrade gracefully** when Snipara memory is unavailable
+- [ ] **Scope dashboard queries** to `workspace_id` (or gate the endpoint) before exposing to tenants
+- [ ] **Migrate drive storage** to S3/R2 or another shared layer for multi-node deployments
+- [ ] **Clean up legacy routes** such as `api/email.js` and `api/usage.js`
 
-### 4. LOW (Polish)
+### 3. LOW (Polish)
 
-- [ ] **Add input validation** on all API routes (many accept any body shape)
-- [ ] **Add workspace scoping** to dashboard queries (currently queries all data)
-- [ ] **Standardize API response format** (some return `{ success, data }`, others `{ success, agents }`, etc.)
-- [ ] **Remove duplicate route mounts** (some routes mounted both in packages/ and directly in index.js)
-- [ ] **Add rate limiting** to sandbox execution endpoint
-- [ ] **Add CSRF protection** for state-changing operations
+- [ ] **Add input validation** on all API routes (Joi/Zod) instead of ad-hoc checks
+- [ ] **Standardize API response format** to `{ success, data, error? }`
+- [ ] **Remove duplicate route mounts** (some routes registered multiple times)
+- [ ] **Add rate limiting** to sandbox execution endpoints
+- [ ] **Add CSRF protection** for state-changing operations when cookies are used
+- [ ] **Document production deployment checklist updates** (retention script, mirror removal, new smoke tests)
 
----
 
 ## Architecture Notes
 

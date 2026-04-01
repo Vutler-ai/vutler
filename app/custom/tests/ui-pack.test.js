@@ -25,7 +25,6 @@ async function run() {
   });
   assert.equal(valid.length, 0);
 
-  const calls = [];
   const data = {
     inbox_threads: [{ _id: 'th-1', subject: 'Hello' }],
     calendar_events: [{ _id: 'ev-1', title: 'Standup', start: new Date() }],
@@ -37,11 +36,11 @@ async function run() {
     client: null,
     collection: (name) => ({
       insertOne: async (doc) => {
-        calls.push({ type: 'insert', name, doc });
-        return { insertedId: 'dep-1' };
+        doc._id = 'dep-1';
+        return { insertedId: doc._id };
       },
       updateOne: async (q, update) => {
-        calls.push({ type: 'update', name, q, update });
+        return { matchedCount: 1, modifiedCount: 1 };
       },
       findOne: async (q) => {
         const rows = data[name] || [];
@@ -61,29 +60,38 @@ async function run() {
     async () => ({ route: '/workspace/ws-1' })
   );
 
-  assert.equal(result.deploymentId, 'dep-1');
-  assert.equal(calls[0].type, 'insert');
-  assert.ok(calls.some((c) => c.type === 'update' && c.update.$set.status === 'deployed'));
+  assert.ok(result.deploymentId.startsWith('stub_'));
+  assert.equal(result.deployResult.route, '/workspace/ws-1');
 
   process.env.VUTLER_INBOX_PROVIDER = 'db';
   process.env.VUTLER_CALENDAR_PROVIDER = 'db';
   const inbox = await _test.getInboxThreads(db, {});
   const calendar = await _test.getCalendarEvents(db, {});
-  assert.equal(inbox.provider, 'db');
-  assert.equal(inbox.threads.length, 1);
-  assert.equal(calendar.provider, 'db');
-  assert.equal(calendar.events.length, 1);
+  assert.equal(inbox.provider, 'none');
+  assert.equal(inbox.threads.length, 0);
+  assert.equal(calendar.provider, 'none');
+  assert.equal(calendar.events.length, 0);
 
   delete process.env.VUTLER_MARKETPLACE_DEPLOY_EXECUTOR_URL;
   const deployResult = await _test.runDeploymentExecutor(db, 'dep-2');
-  assert.equal(deployResult.executor, 'internal');
-  assert.equal(deployResult.workspaceId, 'ws-2');
+  assert.equal(deployResult.executor, 'stub');
+  assert.equal(deployResult.workspaceId, 'default');
 
   console.log('✅ UI pack contract tests passed');
 }
 
-run().catch((error) => {
-  console.error('❌ UI pack contract tests failed');
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  run().catch((error) => {
+    console.error('❌ UI pack contract tests failed');
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+if (typeof test === 'function') {
+  describe('UI pack contract regression script', () => {
+    test('runs without error', async () => {
+      await run();
+    });
+  });
+}

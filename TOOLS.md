@@ -8,6 +8,15 @@ Ce document décrit les principaux outils internes utilisés par Vutler, ainsi q
 
 ---
 
+## Production readiness workstreams
+
+The following workstreams align the documentation runway with the production instrumentation that just landed:
+
+- **Runtime telemetry & usage analytics:** `/api/v1/runtime/status` now reports workspace agent statuses, uptime, and the last restart record written under `workspace_settings.runtime_last_restart`, while `/api/v1/runtime/restart` captures who requested the restart. `/api/v1/usage` (via `api/usage-pg.js`) normalizes `usage_logs`, `agent_executions`, and `credit_transactions` so the Usage dashboard queries real workspace activity.
+- **LLM provider catalog:** `/api/v1/llm/providers` now reflects `tenant_vutler.llm_providers` for the workspace (masked API key, workspace scope, and display name), so the provider picker and marketplace publish flow stay synchronized with the actual DB entries.
+- **Skill execution logging:** `services/skills/SkillRegistry.js` still only logs to the console, so plan to persist each run in `tenant_vutler.skill_executions` once the table is available.
+- **Observability & SSE health:** Codex streaming (SSE) happens in `services/llmRouter.js`. Build the observability dashboard described in the roadmap ("Observability dashboard: streaming SSE + provider health") before large workspaces rely on continuous streaming.
+
 ## 1. Snipara MCP (Context & Memory)
 
 Snipara est utilisé comme couche de **context retrieval** et de **mémoire persistante** pour les agents.

@@ -84,6 +84,7 @@ describe('llmRouter skill tool execution', () => {
       }),
     ];
 
+    const realHttps = jest.requireActual('https');
     jest.doMock('https', () => ({
       request: jest.fn((options, callback) => {
         const req = new EventEmitter();
@@ -115,6 +116,7 @@ describe('llmRouter skill tool execution', () => {
 
         return req;
       }),
+      Agent: realHttps.Agent,
     }));
 
     jest.doMock('../services/skills', () => ({

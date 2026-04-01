@@ -98,7 +98,8 @@ function HeroSection() {
 
             <p className="text-lg sm:text-xl text-white/60 leading-relaxed mb-8 max-w-xl">
               Deploy autonomous AI agents in minutes. Handle emails, chats, files, and tasks 24/7.
-              No per-seat pricing. Bring Your Own Key. Swiss hosted.
+              Transparent USD pricing. Bring Your Own Key. Swiss hosted. Nexus Enterprise is available
+              for dedicated client-site deployments.
             </p>
 
             <div className="flex flex-wrap gap-4 mb-12">
@@ -268,10 +269,11 @@ function ProductsSection() {
             <Badge className="mb-4 bg-purple-600/20 text-purple-400 border-purple-500/30 border">Vutler Agents</Badge>
             <h3 className="text-2xl font-bold mb-3">Deploy anywhere, own everything</h3>
             <p className="text-white/50 mb-6 leading-relaxed">
-              The open-source agent runtime. 39 templates, 119 skills, multi-agent swarms, and the Nexus CLI.
+              The open-source agent runtime. 39 templates, 119 skills, multi-agent swarms, the Nexus CLI,
+              and a dedicated Nexus Enterprise runtime for governed customer deployments.
             </p>
             <ul className="space-y-2 mb-8">
-              {['39 agent templates ready to deploy', '119 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Multi-agent swarms', 'Automations & scheduling', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
+              {['39 agent templates ready to deploy', '119 skills & tools built-in', 'Nexus CLI — deploy anywhere', 'Nexus Enterprise for client-site runtimes', 'Multi-agent swarms', 'Automations & scheduling', 'Sandbox for safe testing', 'Builder for custom workflows'].map((f) => (
                 <li key={f} className="flex items-center gap-2 text-sm text-white/60">
                   <CheckIcon className="w-4 h-4 text-purple-400 shrink-0" />
                   {f}
@@ -318,8 +320,8 @@ const FEATURES = [
   {
     icon: <ServerStackIcon className="w-6 h-6" />,
     color: 'blue',
-    title: 'Nexus: Deploy anywhere',
-    description: 'CLI tool for deploying Vutler agents to any infrastructure — local, cloud, or enterprise. Full control over runtime.',
+    title: 'Nexus + Nexus Enterprise',
+    description: 'Deploy Vutler agents locally, in the cloud, or on dedicated enterprise nodes with seat controls, governance, approvals, and audit.',
   },
   {
     icon: <AcademicCapIcon className="w-6 h-6" />,
@@ -650,6 +652,65 @@ function IntegrationsSection() {
   );
 }
 
+function NexusEnterpriseSection() {
+  return (
+    <Section id="nexus-enterprise" className="bg-[#08090f]">
+      <div className="rounded-3xl border border-orange-500/20 bg-gradient-to-br from-orange-600/10 via-[#14151f] to-transparent p-8 sm:p-10">
+        <div className="grid lg:grid-cols-[1.2fr_0.8fr] gap-8 items-start">
+          <div>
+            <Badge className="mb-4 bg-orange-600/20 text-orange-300 border-orange-500/30 border">
+              Nexus Enterprise
+            </Badge>
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4">Dedicated runtime for customer environments</h2>
+            <p className="text-white/55 text-lg leading-relaxed max-w-2xl">
+              Run governed multi-agent deployments at a client site or inside a protected network, while
+              keeping provisioning, approvals, audit, and seat allocation under control from Vutler.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3 mt-6">
+              {[
+                '1 enterprise node included',
+                '5 seats included in the base plan',
+                'Governance, approvals, and audit trail',
+                'Webhook and event orchestration for enterprise workflows',
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-2 rounded-xl border border-white/8 bg-white/4 px-4 py-3 text-sm text-white/70">
+                  <CheckIcon className="w-4 h-4 text-orange-300 shrink-0" />
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/8 bg-[#0e0f1a] p-6">
+            <div className="text-xs uppercase tracking-[0.18em] text-orange-300/80 mb-3">Public pricing</div>
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm text-white/40">Base deployment</div>
+                <div className="text-3xl font-bold text-orange-300">$1,490<span className="text-sm text-white/35 font-medium">/mo</span></div>
+              </div>
+              <div className="pt-4 border-t border-white/8 space-y-3 text-sm text-white/65">
+                <div className="flex items-center justify-between gap-4">
+                  <span>+5 enterprise seats</span>
+                  <span className="font-semibold text-white">$390/mo</span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span>Extra governed client node</span>
+                  <span className="font-semibold text-white">$500/mo</span>
+                </div>
+              </div>
+              <div className="pt-4">
+                <Button className="w-full bg-orange-500 hover:bg-orange-400 text-black font-semibold" asChild>
+                  <Link href="/pricing">See Pricing</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 // ─── Pricing preview ──────────────────────────────────────────────────────────
 
 function PricingPreview() {
@@ -672,6 +733,14 @@ function PricingPreview() {
       features: ['10–50 agents included', 'BYOK — no token limits', 'Nexus CLI · Sandbox · Automations', 'Builder & multi-agent swarms'],
     },
     {
+      name: 'Nexus Enterprise',
+      price: '$1,490',
+      period: '/mo',
+      description: 'For dedicated on-site or customer-network agent deployments.',
+      color: 'orange',
+      features: ['1 enterprise node included', '5 seats included', 'Add +5 seats for $390/mo', 'Add a governed client node for $500/mo'],
+    },
+    {
       name: 'Full Platform',
       price: '$129',
       period: '/mo',
@@ -686,15 +755,36 @@ function PricingPreview() {
       <div className="text-center mb-12">
         <h2 className="text-3xl sm:text-4xl font-bold mb-4">Simple, transparent pricing</h2>
         <p className="text-white/50 text-lg max-w-xl mx-auto">
-          No per-seat fees. No hidden costs. Pay for what you use.
+          Straightforward pricing for workspace, agent, and dedicated enterprise runtime deployments.
         </p>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-6 mb-8">
+      <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         {plans.map((plan) => {
-          const borderColor = plan.color === 'blue' ? 'border-blue-500/20' : plan.color === 'purple' ? 'border-purple-500/30' : 'border-green-500/20';
-          const bgColor = plan.color === 'blue' ? 'from-blue-600/5' : plan.color === 'purple' ? 'from-purple-600/10' : 'from-green-600/5';
-          const textColor = plan.color === 'blue' ? 'text-blue-400' : plan.color === 'purple' ? 'text-purple-400' : 'text-green-400';
+          const borderColor =
+            plan.color === 'blue'
+              ? 'border-blue-500/20'
+              : plan.color === 'purple'
+                ? 'border-purple-500/30'
+                : plan.color === 'orange'
+                  ? 'border-orange-500/25'
+                  : 'border-green-500/20';
+          const bgColor =
+            plan.color === 'blue'
+              ? 'from-blue-600/5'
+              : plan.color === 'purple'
+                ? 'from-purple-600/10'
+                : plan.color === 'orange'
+                  ? 'from-orange-600/8'
+                  : 'from-green-600/5';
+          const textColor =
+            plan.color === 'blue'
+              ? 'text-blue-400'
+              : plan.color === 'purple'
+                ? 'text-purple-400'
+                : plan.color === 'orange'
+                  ? 'text-orange-400'
+                  : 'text-green-400';
 
           return (
             <div
@@ -768,7 +858,7 @@ function CTASection() {
           </Button>
         </div>
         <p className="mt-6 text-sm text-white/30">
-          Open Beta · No per-seat pricing · Swiss hosted · AGPL-3.0
+          Open Beta · USD pricing live · Swiss hosted · AGPL-3.0
         </p>
       </div>
     </section>
@@ -787,6 +877,7 @@ export default function LandingPage() {
       <FeaturesSection />
       <MCPSection />
       <IntegrationsSection />
+      <NexusEnterpriseSection />
       <PricingPreview />
       <CTASection />
     </>

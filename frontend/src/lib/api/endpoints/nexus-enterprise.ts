@@ -1,5 +1,11 @@
 import { apiFetch } from '../client';
-import type { EnterpriseProfileSelectionValidation } from '../types';
+import type {
+  EnterpriseProfileSelectionValidation,
+  NexusEnterpriseEventSubscription,
+  NexusEnterpriseEventSubscriptionProvider,
+  NexusEnterpriseEventSubscriptionStatus,
+  NexusEnterpriseProvisioningMode,
+} from '../types';
 
 export interface NexusEnterpriseRegistryRecord<T = Record<string, unknown>> {
   key: string;
@@ -115,4 +121,88 @@ export async function validateEnterpriseProfileSelection(
     }
   );
   return response.data.validation;
+}
+
+export interface ListEnterpriseEventSubscriptionsParams {
+  provider?: NexusEnterpriseEventSubscriptionProvider;
+  status?: NexusEnterpriseEventSubscriptionStatus;
+}
+
+export async function listEnterpriseEventSubscriptions(
+  params: ListEnterpriseEventSubscriptionsParams = {}
+): Promise<NexusEnterpriseEventSubscription[]> {
+  const search = new URLSearchParams();
+  if (params.provider) search.set('provider', params.provider);
+  if (params.status) search.set('status', params.status);
+  const suffix = search.toString() ? `?${search.toString()}` : '';
+  const response = await apiFetch<ApiEnvelope<{ subscriptions: NexusEnterpriseEventSubscription[] }>>(
+    `/api/v1/nexus-enterprise/event-subscriptions${suffix}`
+  );
+  return response.data?.subscriptions ?? [];
+}
+
+export interface CreateEnterpriseEventSubscriptionPayload {
+  provider: NexusEnterpriseEventSubscriptionProvider;
+  profileKey?: string;
+  agentId?: string;
+  subscriptionType?: string;
+  sourceResource?: string;
+  roomName?: string;
+  events?: string[];
+  status?: NexusEnterpriseEventSubscriptionStatus;
+  deliveryMode?: string;
+  provisioningMode?: NexusEnterpriseProvisioningMode;
+  config?: Record<string, unknown>;
+}
+
+export async function createEnterpriseEventSubscription(
+  payload: CreateEnterpriseEventSubscriptionPayload
+): Promise<NexusEnterpriseEventSubscription> {
+  const response = await apiFetch<ApiEnvelope<{ subscription: NexusEnterpriseEventSubscription }>>(
+    '/api/v1/nexus-enterprise/event-subscriptions',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data.subscription;
+}
+
+export interface UpdateEnterpriseEventSubscriptionPayload {
+  status?: NexusEnterpriseEventSubscriptionStatus;
+  provisioningMode?: NexusEnterpriseProvisioningMode;
+  provisioningStatus?: string;
+  provisioningError?: string | null;
+  sourceResource?: string;
+  roomName?: string;
+  events?: string[];
+  configPatch?: Record<string, unknown>;
+}
+
+export async function updateEnterpriseEventSubscription(
+  subscriptionId: string,
+  payload: UpdateEnterpriseEventSubscriptionPayload
+): Promise<NexusEnterpriseEventSubscription> {
+  const response = await apiFetch<ApiEnvelope<{ subscription: NexusEnterpriseEventSubscription }>>(
+    `/api/v1/nexus-enterprise/event-subscriptions/${subscriptionId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data.subscription;
+}
+
+export async function retryEnterpriseEventSubscription(
+  subscriptionId: string,
+  payload: { provisioningMode?: NexusEnterpriseProvisioningMode } = {}
+): Promise<NexusEnterpriseEventSubscription> {
+  const response = await apiFetch<ApiEnvelope<{ subscription: NexusEnterpriseEventSubscription }>>(
+    `/api/v1/nexus-enterprise/event-subscriptions/${subscriptionId}/retry`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data.subscription;
 }

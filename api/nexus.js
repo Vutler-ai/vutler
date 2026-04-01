@@ -15,9 +15,11 @@ const {
 } = require('../services/apiKeys');
 const {
   getNodeMode,
+  getWorkspaceEnterpriseSeatSummary,
   getWorkspaceNexusBillingSummary,
   getWorkspaceNexusUsage,
 } = require('../services/nexusBilling');
+const { ensureEnterpriseDriveLayout } = require('../services/nexusEnterpriseDrive');
 const {
   ensureGovernanceTables,
   createApprovalRequest,
@@ -110,8 +112,9 @@ function buildLocalDeployToken({ req, body = {} }) {
   };
 }
 
-function buildEnterpriseDeployToken({ req, body = {} }) {
+async function buildEnterpriseDeployToken({ req, body = {} }) {
   const apiBaseUrl = getApiBaseUrl(req);
+  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
   const nodeName = body.name || body.nodeName || body.node_name;
   const clientName = body.clientName || body.client_name;
   const primaryAgentId = body.primaryAgentId || body.primary_agent;
@@ -138,6 +141,23 @@ function buildEnterpriseDeployToken({ req, body = {} }) {
     error.statusCode = 400;
     throw error;
   }
+
+  const seatSummary = await getWorkspaceEnterpriseSeatSummary(pool, workspaceId).catch(() => null);
+  if (seatSummary && seatSummary.total !== -1 && seats > seatSummary.available) {
+    const error = new Error(
+      `Requested ${seats} enterprise seats, but only ${seatSummary.available} seat${seatSummary.available === 1 ? '' : 's'} remain on the current billing plan.`
+    );
+    error.statusCode = 403;
+    error.code = 'NEXUS_ENTERPRISE_SEAT_LIMIT_REACHED';
+    error.details = { requestedSeats: seats, seatSummary };
+    throw error;
+  }
+
+  const driveRepo = await ensureEnterpriseDriveLayout({
+    workspaceId,
+    clientName,
+    nodeName,
+  });
 
   const payload = buildTokenPayload({
     mode: 'enterprise',
@@ -166,6 +186,7 @@ function buildEnterpriseDeployToken({ req, body = {} }) {
     },
     permissions: body.permissions || {},
     snipara_instance_id: body.sniparaInstanceId || body.snipara_instance_id || null,
+    drive_repo: driveRepo,
   });
 
   return {
@@ -875,7 +896,7 @@ router.post('/tokens/local', async (req, res) => {
 
 router.post('/tokens/enterprise', async (req, res) => {
   try {
-    const result = buildEnterpriseDeployToken({ req, body: req.body || {} });
+    const result = await buildEnterpriseDeployToken({ req, body: req.body || {} });
     res.json({
       success: true,
       token: result.token,

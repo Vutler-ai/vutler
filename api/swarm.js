@@ -7,6 +7,19 @@ const router = express.Router();
 
 const svc = (req) => req.app.locals.swarmCoordinator || getSwarmCoordinator();
 
+async function projectCreatedHtask(req, input, created) {
+  const taskId = created?.task_id || created?.id || created?.task?.id || null;
+  if (!taskId) return null;
+  return svc(req).projectWebhookEvent('htask.created', {
+    task_id: taskId,
+    title: input.title,
+    description: input.description || '',
+    owner: input.owner || null,
+    parent_id: input.parentId || null,
+    level: input.level || 'N1_FEATURE',
+  }, req.workspaceId);
+}
+
 router.post("/task", async (req, res) => {
   try {
     const { title, description, priority } = req.body || {};
@@ -20,15 +33,17 @@ router.post("/task", async (req, res) => {
 router.post("/htasks", async (req, res) => {
   try {
     const { level, title, description, owner, parent_id, workstream_type } = req.body || {};
-    const data = await svc(req).createHtask({
+    const input = {
       level,
       title,
       description,
       owner,
       parentId: parent_id,
       workstreamType: workstream_type,
-    }, req.workspaceId);
-    res.status(201).json({ success: true, data });
+    };
+    const data = await svc(req).createHtask(input, req.workspaceId);
+    const projection = await projectCreatedHtask(req, input, data).catch(() => null);
+    res.status(201).json({ success: true, data, projection });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }

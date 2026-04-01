@@ -8,6 +8,7 @@ const { getPermissionEngine } = require('./lib/permission-engine');
 const { ProfileRegistry } = require('./lib/profile-registry');
 const { EnterprisePolicyEngine } = require('./lib/enterprise-policy-engine');
 const { LocalIntegrationBridge } = require('./lib/local-integration-bridge');
+const { EnterpriseActionExecutor } = require('./lib/enterprise-action-executor');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -54,9 +55,19 @@ class NexusNode {
         const { WorkspaceMailProvider } = require('./lib/providers/workspace-mail');
         const { WorkspaceCalendarProvider } = require('./lib/providers/workspace-calendar');
         const { WorkspaceContactsProvider } = require('./lib/providers/workspace-contacts');
+        const { WorkspaceDriveProvider } = require('./lib/providers/workspace-drive');
+        const { WorkspaceKnowledgeProvider } = require('./lib/providers/workspace-knowledge');
+        const { WorkspaceEmailProvider } = require('./lib/providers/workspace-email');
+        const { WorkspaceJiraProvider } = require('./lib/providers/workspace-jira');
+        const { WorkspaceEventSubscriptionsProvider } = require('./lib/providers/workspace-event-subscriptions');
         this.providers.mail = new WorkspaceMailProvider(sharedConfig);
         this.providers.calendar = new WorkspaceCalendarProvider(sharedConfig);
         this.providers.contacts = new WorkspaceContactsProvider(sharedConfig);
+        this.providers.workspaceDrive = new WorkspaceDriveProvider(sharedConfig);
+        this.providers.workspaceKnowledge = new WorkspaceKnowledgeProvider(sharedConfig);
+        this.providers.workspaceEmail = new WorkspaceEmailProvider(sharedConfig);
+        this.providers.workspaceJira = new WorkspaceJiraProvider(sharedConfig);
+        this.providers.workspaceEventSubscriptions = new WorkspaceEventSubscriptionsProvider(sharedConfig);
       }
     }
 
@@ -81,6 +92,7 @@ class NexusNode {
     this.profileRegistry = new ProfileRegistry({ server: this.server, apiKey: this.key });
     this.enterprisePolicyEngine = new EnterprisePolicyEngine(this.profileRegistry);
     this.localIntegrationBridge = new LocalIntegrationBridge(this.providers);
+    this.enterpriseActionExecutor = new EnterpriseActionExecutor(this.providers);
     this._syncPermissionSnapshot();
 
     // Offline monitor (enterprise only)
@@ -639,13 +651,48 @@ class NexusNode {
 
     const execution = args.execution || {};
     if (!execution.action) {
-      await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Enterprise action ${governance.actionKey} completed without bound runtime execution`);
-      if (governance.approvalId) {
-        await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
-      }
-      return this._buildGovernedOutcome(command.id, 'completed', governance, {
-        message: `Enterprise action ${governance.actionKey} approved with no bound runtime execution`,
+      const enterpriseExecution = await this.enterpriseActionExecutor.execute({
+        actionKey: governance.actionKey,
+        args,
+        governance,
+        commandId: command.id,
+        nodeId: this.nodeId,
+      }, {
+        onProgress: (progress) => this._reportCommandProgress(command.id, progress),
       });
+
+      if (!enterpriseExecution.handled) {
+        await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Enterprise action ${governance.actionKey} completed without bound runtime execution`);
+        if (governance.approvalId) {
+          await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
+        }
+        return this._buildGovernedOutcome(command.id, 'completed', governance, {
+          message: `Enterprise action ${governance.actionKey} approved with no bound runtime execution`,
+        });
+      }
+
+      const actionResult = {
+        taskId: command.id,
+        status: enterpriseExecution.result.status || 'completed',
+        data: enterpriseExecution.result.data || {},
+        metadata: {
+          ...(enterpriseExecution.result.metadata || {}),
+          governance,
+          action: 'enterprise_action',
+          enterpriseActionKey: governance.actionKey,
+        },
+      };
+
+      if (actionResult.status === 'completed') {
+        await this._auditGovernance(command, args, governance, 'execution_completed', 'completed', `Enterprise action ${governance.actionKey} executed successfully`, { result: actionResult });
+        if (governance.approvalId) {
+          await this._markGovernanceApprovalRuntimeStatus(governance.approvalId, 'executed', command.id);
+        }
+      } else {
+        await this._auditGovernance(command, args, governance, 'execution_failed', actionResult.status, `Enterprise action ${governance.actionKey} execution failed`, { result: actionResult });
+      }
+
+      return actionResult;
     }
 
     const result = await this.taskOrchestrator.execute({

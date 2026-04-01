@@ -7,6 +7,10 @@ describe('taskExecutor execution context', () => {
 
   test('uses swarm coordinator execution policy for direct LLM tasks', async () => {
     const updates = [];
+    const preparePromptContext = jest.fn().mockResolvedValue({
+      prompt: '## Agent Memory\n- [fact] Delivery standards apply.',
+      stats: { runtime: 'task', selected: { total: 1, instance: 1, template: 0, global: 0 } },
+    });
     const llmChat = jest.fn().mockResolvedValue({
       content: 'Task completed.',
       model: 'claude-sonnet-4',
@@ -15,6 +19,25 @@ describe('taskExecutor execution context', () => {
     });
 
     const poolQuery = jest.fn(async (sql, params) => {
+      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $2')) {
+        return {
+          rows: [{
+            id: 'agent-1',
+            name: 'Mike',
+            username: 'mike',
+            role: 'engineer',
+            model: 'claude-sonnet-4',
+            provider: 'anthropic',
+            system_prompt: 'You are Mike.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+            capabilities: ['requirements_gathering'],
+            snipara_instance_id: 'snip-mike',
+          }],
+        };
+      }
+
       if (sql.includes('FROM tenant_vutler.agents')) {
         return {
           rows: [{
@@ -60,10 +83,7 @@ describe('taskExecutor execution context', () => {
     jest.doMock('../../services/chatMessages', () => ({ insertChatMessage: jest.fn() }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
-        preparePromptContext: jest.fn().mockResolvedValue({
-          prompt: '## Agent Memory\n- [fact] Delivery standards apply.',
-          stats: { runtime: 'task', selected: { total: 1, instance: 1, template: 0, global: 0 } },
-        }),
+        preparePromptContext,
         recordTaskEpisode: jest.fn().mockResolvedValue([]),
       }),
     }));
@@ -80,9 +100,15 @@ describe('taskExecutor execution context', () => {
     });
 
     expect(resolveAgentExecutionContext).toHaveBeenCalledWith(
-      expect.objectContaining({ username: 'mike' }),
+      expect.objectContaining({ username: 'mike', snipara_instance_id: 'snip-mike' }),
       'ws-1'
     );
+    expect(preparePromptContext).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({
+        username: 'mike',
+        snipara_instance_id: 'snip-mike',
+      }),
+    }));
     expect(llmChat).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'agent-1',

@@ -1,0 +1,28 @@
+{
+  "key": "login_readiness_probe_v1",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "flow_key": "login_readiness_probe_v1",
+    "name": "Login Readiness Probe",
+    "steps": [
+      {
+        "action_key": "browser.open",
+        "input": {}
+      },
+      {
+        "action_key": "browser.assert_status",
+        "input": {
+          "expectedStatus": 200
+        }
+      },
+      {
+        "action_key": "browser.assert_text",
+        "input": {
+          "text": "login"
+        }
+      }
+    ]
+  }
+}

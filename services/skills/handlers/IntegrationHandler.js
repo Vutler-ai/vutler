@@ -2,7 +2,8 @@
 
 const pool = require('../../../lib/vaultbrix');
 const { LLMPromptHandler } = require('./LLMPromptHandler');
-const { isGoogleConnected, agentHasGoogleAccess } = require('../../google/tokenManager');
+const { isGoogleConnected } = require('../../google/tokenManager');
+const { hasAgentIntegrationAccess } = require('../../agentIntegrationService');
 
 const SCHEMA = 'tenant_vutler';
 const LEGACY_PROVIDER_MAP = {
@@ -20,6 +21,7 @@ const ADAPTERS = {
   google_calendar: require('../adapters/GoogleCalendarAdapter').GoogleCalendarAdapter,
   google_drive: require('../adapters/GoogleDriveAdapter').GoogleDriveAdapter,
   workspace_drive: require('../adapters/WorkspaceDriveAdapter').WorkspaceDriveAdapter,
+  vutler_calendar: require('../adapters/VutlerCalendarAdapter').VutlerCalendarAdapter,
   project_management: require('../adapters/ProjectManagementAdapter').ProjectManagementAdapter,
 };
 
@@ -148,6 +150,7 @@ class IntegrationHandler {
   async _isIntegrationConnected(workspaceId, integrationProvider, agentId) {
     if (!workspaceId || !integrationProvider) return false;
     if (integrationProvider === 'workspace_drive') return true;
+    if (integrationProvider === 'vutler_calendar') return true;
     if (integrationProvider === 'project_management') return true;
 
     const provider = CONNECTION_PROVIDER_ALIASES[integrationProvider] || integrationProvider;
@@ -155,8 +158,7 @@ class IntegrationHandler {
     if (provider === 'google') {
       const connected = await isGoogleConnected(workspaceId);
       if (!connected) return false;
-      if (!agentId) return true;
-      return agentHasGoogleAccess(workspaceId, agentId).catch(() => false);
+      return hasAgentIntegrationAccess(workspaceId, agentId, provider).catch(() => false);
     }
 
     const result = await pool.query(
@@ -168,7 +170,8 @@ class IntegrationHandler {
        LIMIT 1`,
       [workspaceId, provider]
     );
-    return result.rows.length > 0;
+    if (result.rows.length === 0) return false;
+    return hasAgentIntegrationAccess(workspaceId, agentId, provider).catch(() => false);
   }
 
   /**

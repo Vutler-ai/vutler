@@ -179,12 +179,35 @@ export interface Channel {
   description?: string;
   type: 'channel' | 'direct';
   members: string[];
+  raw_name?: string;
+  contact_id?: string | null;
+  contact_type?: 'user' | 'agent' | null;
+  avatar?: string | null;
+  username?: string | null;
+  contact_role?: string | null;
+  contact_provider?: string | null;
+  contact_model?: string | null;
+  pinned?: boolean;
+  muted?: boolean;
+  archived?: boolean;
 }
 
 export interface ChannelMember {
   id: string;
   type: 'user' | 'agent';
   name: string;
+}
+
+export interface ChatContact {
+  id: string;
+  name: string;
+  type: 'user' | 'agent';
+  subtitle?: string;
+  avatar?: string | null;
+  username?: string | null;
+  role?: string | null;
+  provider?: string | null;
+  model?: string | null;
 }
 
 export interface CreateChannelPayload {
@@ -196,6 +219,7 @@ export interface CreateChannelPayload {
 export interface SendMessagePayload {
   content: string;
   client_message_id?: string;
+  attachments?: Attachment[];
 }
 
 // ─── Email ────────────────────────────────────────────────────────────────────
@@ -231,6 +255,171 @@ export interface DriveFile {
   modified?: string;
   mime_type?: string;
   path: string;
+}
+
+// ─── Browser Operator ────────────────────────────────────────────────────────
+
+export interface BrowserOperatorRegistryRecord<T = Record<string, unknown>> {
+  key: string;
+  version: string;
+  status: string;
+  managed_by: string;
+  definition: T;
+}
+
+export interface BrowserOperatorProfileDefinition {
+  profile_key: string;
+  name: string;
+  default_runtime_mode: string;
+  governance_mode: string;
+  risk_level: string;
+  action_catalog_ref: string;
+  supported_flows: string[];
+  [key: string]: unknown;
+}
+
+export type BrowserOperatorProfile = BrowserOperatorRegistryRecord<BrowserOperatorProfileDefinition>;
+
+export interface BrowserOperatorFlowStep {
+  action_key: string;
+  input?: Record<string, unknown>;
+}
+
+export interface BrowserOperatorFlowDefinition {
+  flow_key: string;
+  name: string;
+  steps: BrowserOperatorFlowStep[];
+  [key: string]: unknown;
+}
+
+export type BrowserOperatorFlow = BrowserOperatorRegistryRecord<BrowserOperatorFlowDefinition>;
+
+export interface BrowserOperatorActionDefinition {
+  action_key: string;
+  risk_level: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface BrowserOperatorActionCatalogDefinition {
+  catalog_key: string;
+  name: string;
+  actions: BrowserOperatorActionDefinition[];
+  [key: string]: unknown;
+}
+
+export type BrowserOperatorActionCatalog = BrowserOperatorRegistryRecord<BrowserOperatorActionCatalogDefinition>;
+
+export interface BrowserOperatorRun {
+  id: string;
+  workspace_id: string;
+  requested_by_user_id?: string | null;
+  runtime_mode: string;
+  profile_key: string;
+  profile_version?: string | null;
+  credentials_ref?: string | null;
+  session_mode?: 'ephemeral' | 'named' | string;
+  session_key?: string | null;
+  flow_key?: string | null;
+  flow_version?: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | string;
+  target: Record<string, unknown>;
+  governance: Record<string, unknown>;
+  summary: Record<string, unknown>;
+  report_format: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BrowserOperatorRunStep {
+  id: string;
+  run_id: string;
+  step_index: number;
+  action_key: string;
+  status: string;
+  input: Record<string, unknown>;
+  output?: Record<string, unknown> | null;
+  error?: Record<string, unknown> | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface BrowserOperatorRunEvidence {
+  id: string;
+  run_id: string;
+  step_id?: string | null;
+  artifact_kind: string;
+  storage_key: string;
+  mime_type?: string | null;
+  metadata: Record<string, unknown>;
+  inline_text?: string | null;
+  artifact_payload?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface BrowserOperatorRunReport {
+  status: string;
+  profileKey: string;
+  flowKey: string;
+  runtimeMode: string;
+  runtimeEngine?: string;
+  target: Record<string, unknown>;
+  evidenceCounts?: Record<string, unknown>;
+  totals: {
+    steps: number;
+    passed: number;
+    failed: number;
+  };
+  checks: Array<Record<string, unknown>>;
+  unsupportedActions: string[];
+  warnings?: Array<Record<string, unknown>>;
+  generatedAt: string;
+}
+
+export interface BrowserOperatorCredential {
+  id: string;
+  workspace_id: string;
+  app_key: string;
+  credential_key: string;
+  credential_type: string;
+  status: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  last_tested_at?: string | null;
+}
+
+export interface CreateBrowserOperatorRunPayload {
+  runtimeMode?: 'cloud-browser' | 'nexus-browser' | string;
+  profileKey: string;
+  profileVersion?: string;
+  credentialsRef?: string;
+  sessionMode?: 'ephemeral' | 'named';
+  sessionKey?: string;
+  flowKey: string;
+  flowVersion?: string;
+  target: {
+    appKey?: string;
+    baseUrl: string;
+    path?: string;
+  };
+  governance?: Record<string, unknown>;
+  reportFormat?: 'summary' | 'full' | string;
+}
+
+export interface CreateBrowserOperatorCredentialPayload {
+  appKey: string;
+  credentialKey: string;
+  credentialType?: string;
+  status?: string;
+  username?: string;
+  loginHint?: string;
+  vaultSecretId?: string;
+  credentialRef?: string;
+  allowedDomains?: string[];
 }
 
 export interface CreateFolderPayload {
@@ -277,6 +466,7 @@ export interface PlanLimits {
   storage_gb?: number;
   nexusNodes?: number;
   nexus_nodes?: number;
+  nexus_enterprise_seats?: number;
   socialPosts?: number;
   social_posts_month?: number;
 }
@@ -289,10 +479,22 @@ export interface Plan {
   limits: PlanLimits;
 }
 
+export interface BillingAddon {
+  id: string;
+  label: string;
+  price: number;
+  unit: string;
+  addonType?: string;
+  enterpriseSeats?: number;
+  enterpriseNodes?: number;
+  posts?: number;
+}
+
 export interface PlansResponse {
   office: Plan[];
   agents: Plan[];
   full: Plan[];
+  addons?: BillingAddon[];
 }
 
 export interface Subscription {
@@ -302,6 +504,20 @@ export interface Subscription {
   status?: string;
   current_period_end?: string | null;
   usage?: SubscriptionUsage | null;
+  addons?: {
+    enterpriseSeats: number;
+    enterpriseNodes: number;
+    socialPosts: number;
+    active: Array<{
+      id: string;
+      addonId: string;
+      addonType: string;
+      quantity: number;
+      status: string;
+      config?: Record<string, unknown>;
+      currentPeriodEnd?: string | null;
+    }>;
+  } | null;
 }
 
 export interface SubscriptionUsage {
@@ -387,6 +603,14 @@ export interface NexusBillingSnapshot {
     total: boolean;
     local: boolean;
     enterprise: boolean;
+  };
+  seats?: {
+    planId: string;
+    included: number;
+    addOnSeats: number;
+    total: number;
+    allocated: number;
+    available: number;
   };
 }
 
@@ -480,8 +704,81 @@ export interface DeployEnterprisePayload {
   selectedHelperProfiles?: string[];
 }
 
+export type NexusEnterpriseEventSubscriptionProvider =
+  | 'microsoft_graph'
+  | 'zoom'
+  | 'google'
+  | 'generic_http';
+
+export type NexusEnterpriseEventSubscriptionStatus =
+  | 'active'
+  | 'paused'
+  | 'disabled';
+
+export type NexusEnterpriseProvisioningMode =
+  | 'manual'
+  | 'assisted'
+  | 'automatic';
+
+export type NexusEnterpriseProvisioningStatus =
+  | 'manual_required'
+  | 'assisted_required'
+  | 'pending'
+  | 'provisioned'
+  | 'failed';
+
+export interface NexusEnterpriseEventSubscription {
+  id: string;
+  workspaceId: string;
+  provider: NexusEnterpriseEventSubscriptionProvider | string;
+  profileKey?: string | null;
+  agentId?: string | null;
+  subscriptionType: string;
+  sourceResource?: string | null;
+  roomName?: string | null;
+  events: string[];
+  status: NexusEnterpriseEventSubscriptionStatus | string;
+  deliveryMode: string;
+  provisioningMode: NexusEnterpriseProvisioningMode;
+  provisioningStatus: NexusEnterpriseProvisioningStatus | string;
+  provisioningError?: string | null;
+  callbackPath: string;
+  callbackUrl: string;
+  verificationSecret: string;
+  config?: Record<string, unknown>;
+  externalSubscriptionId?: string | null;
+  lastEventAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NexusEnterpriseDriveRepo {
+  rootPath: string;
+  clientSlug: string;
+  nodeSlug: string;
+  sharedPaths: {
+    context: string;
+    inventory: string;
+    reports: string;
+    playbooks: string;
+    policies: string;
+    eventSubscriptions: string;
+  };
+  nodePaths: {
+    root: string;
+    imports: string;
+    artifacts: string;
+    logs: string;
+  };
+}
+
 export interface NexusTokenResponse {
   token: string;
+  payload?: {
+    drive_repo?: NexusEnterpriseDriveRepo;
+    [key: string]: unknown;
+  };
+  message?: string;
 }
 
 // ── Nexus Dispatch Types ─────────────────────────────────────────────────────
@@ -694,6 +991,7 @@ export interface MarketplaceTemplate {
   avatar?: string | null;
   skills?: string[];
   tags?: string[];
+  permissions?: Record<string, unknown>;
   author?: string;
   rating?: number;
   avg_rating?: number;
@@ -1023,10 +1321,16 @@ export interface AdminStats {
   users: string;
   banned: string;
   plan_free: string;
-  plan_starter: string;
-  plan_team: string;
+  plan_office_starter?: string;
+  plan_office_team?: string;
+  plan_agents_starter?: string;
+  plan_agents_pro?: string;
+  plan_nexus_enterprise?: string;
+  plan_full?: string;
   plan_enterprise: string;
   plan_beta: string;
+  plan_starter?: string;
+  plan_team?: string;
   signups_7d: string;
   signups_30d: string;
 }
@@ -1128,4 +1432,41 @@ export interface VpsHealthResponse {
   };
   vps: VpsHealth | null;
   timestamp: string;
+}
+
+export interface AdminChatMaintenanceResult {
+  legacy_count?: number;
+  technical_count?: number;
+  legacy_channels?: Array<{
+    id: string;
+    current_name: string;
+    canonical_name: string | null;
+    contact_type: string;
+    channel_type?: string;
+  }>;
+  technical_channels?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+  }>;
+  technical_workspace_channel_count?: number;
+  technical_workspace_channels?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    channel_type?: string;
+  }>;
+  normalized_count?: number;
+  normalized?: Array<{
+    id: string;
+    previous_name: string;
+    canonical_name: string;
+  }>;
+  archived_channel_count?: number;
+  archived_preference_count?: number;
+  channels?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+  }>;
 }

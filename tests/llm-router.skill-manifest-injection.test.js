@@ -20,6 +20,7 @@ describe('llmRouter manifest-backed skill tool injection', () => {
       deleteFile: jest.fn().mockResolvedValue(undefined),
     }));
 
+    const realHttps = jest.requireActual('https');
     jest.doMock('https', () => ({
       request: jest.fn((options, callback) => {
         const req = new EventEmitter();
@@ -63,6 +64,7 @@ describe('llmRouter manifest-backed skill tool injection', () => {
 
         return req;
       }),
+      Agent: realHttps.Agent,
     }));
 
     process.env.OPENAI_API_KEY = 'test-openai-key';

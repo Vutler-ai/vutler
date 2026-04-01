@@ -86,6 +86,15 @@ Routing is handled by Next.js route groups: `(landing)/` for public pages, `(app
 - Config endpoint returns fields at top-level for frontend compatibility
 - Static assets proxied via `/static/` to Express backend
 
+## Production Readiness Notes
+
+The frontend now depends on backend telemetry that is production-ready but should be monitored for correctness:
+
+- **Runtime control:** `/api/v1/runtime/status` aggregates workspace agent statuses, uptime, and the last restart entry stored under `workspace_settings.runtime_last_restart`, while `/api/v1/runtime/restart` records the requesting user, reason, and timestamp so the UI can show restart history and actions.
+- **Usage analytics:** `/api/v1/usage` (via `api/usage-pg.js`) normalizes `usage_logs`, `agent_executions`, and `credit_transactions` for tokens, requests, and cost, so the Usage page now reflects real workspace activity plus summary endpoints (`/usage/summary`, `/usage/tiers`).
+- **Task assignees:** The Tasks page fetches `/api/v1/agents` for the assignee dropdown and subtask defaults, keeping worker lists aligned with the workspace catalog instead of hard-coded names.
+- **LLM provider catalog:** `/api/v1/llm/providers` now reads the workspace `tenant_vutler.llm_providers` table (DB-backed, masked API key, workspace-scoped) so the provider picker and publish flows always mirror the marketplace data.
+
 ## Environment Variables
 
 ```env

@@ -88,6 +88,7 @@ const FEATURE_COPY: Record<string, {
     planOptions: [
       { id: 'agents_starter', label: 'Agents Starter', summary: 'Nexus local et surface d’orchestration agent.' },
       { id: 'agents_pro', label: 'Agents Pro', summary: 'Plus de noeuds et de capacite enterprise Nexus.' },
+      { id: 'nexus_enterprise', label: 'Nexus Enterprise', summary: 'Node enterprise dedie, governance et agents specialises sur site.' },
     ],
   },
   sandbox: {

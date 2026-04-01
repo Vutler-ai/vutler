@@ -42,7 +42,7 @@ describe('workspacePlanService', () => {
     expect(query.mock.calls[1][0]).toContain('UPDATE tenant_vutler.workspace_settings');
     expect(query.mock.calls[2][0]).toContain('INSERT INTO tenant_vutler.workspace_settings');
     expect(query.mock.calls[2][1][0]).toBe('ws-1');
-    expect(JSON.parse(query.mock.calls[2][1][1])).toMatchObject({
+    expect(JSON.parse(query.mock.calls[2][1][2])).toMatchObject({
       plan: 'agents_pro',
       source: 'billing.change_plan',
       status: 'active',
@@ -50,6 +50,24 @@ describe('workspacePlanService', () => {
       stripe_customer_id: 'cus_123',
       stripe_subscription_id: 'sub_123',
     });
+    expect(query.mock.calls[3][0]).toContain('UPDATE tenant_vutler.workspace_settings');
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO tenant_vutler.workspace_settings');
+    expect(query.mock.calls[4][1]).toEqual(['ws-1', 'memory_mode', JSON.stringify('active')]);
+    expect(query.mock.calls[5][0]).toContain('UPDATE tenant_vutler.workspace_settings');
+    expect(query.mock.calls[6][0]).toContain('INSERT INTO tenant_vutler.workspace_settings');
+    expect(query.mock.calls[6][1]).toEqual(['ws-1', 'snipara_memory_mode', JSON.stringify('active')]);
+  });
+
+  test('reads workspace plan from billing_plan settings before falling back to workspaces.plan', async () => {
+    const query = jest.fn(async (sql) => {
+      if (sql.includes(`FROM tenant_vutler.workspace_settings`) && sql.includes(`key = 'billing_plan'`)) {
+        return { rows: [{ value: { plan: 'agents_pro' } }] };
+      }
+      return { rows: [] };
+    });
+
+    const { getWorkspacePlanId } = require('../services/workspacePlanService');
+    await expect(getWorkspacePlanId({ query }, 'ws-1')).resolves.toBe('agents_pro');
   });
 
   test('falls back to free for unknown plans', () => {

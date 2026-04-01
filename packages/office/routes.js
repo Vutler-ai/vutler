@@ -71,9 +71,6 @@ mount('/jira', 'integrations', '../../api/jira');
 // ── Dashboard ───────────────────────────────────────────────────────────────
 mount('/dashboard', 'dashboard', '../../api/dashboard');
 
-// ── WhatsApp ────────────────────────────────────────────────────────────────
-mount('/whatsapp', 'whatsapp', '../../app/custom/api/whatsapp-mirror');
-
 // ── Goals ───────────────────────────────────────────────────────────────────
 mount('/goals', 'goals', '../../api/goals');
 

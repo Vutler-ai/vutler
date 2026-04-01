@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, Plus, MapPin, Clock, Target, CreditCard, Bot
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -504,6 +505,13 @@ export default function CalendarPage() {
               ) : editingEvent ? "Edit Event" : "New Event"}
               {editingEvent && <SourceBadge source={editingEvent.source} />}
             </DialogTitle>
+            <DialogDescription className="text-[#9ca3af]">
+              {isReadOnly
+                ? "Review the event details synced into your calendar."
+                : editingEvent
+                  ? "Update the event details, timing and location."
+                  : "Create a new calendar event for this workspace."}
+            </DialogDescription>
           </DialogHeader>
 
           {/* Read-only banner for virtual events */}

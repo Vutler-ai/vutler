@@ -8,6 +8,13 @@
 const express = require('express');
 const router = express.Router();
 const { getPlan, normalizePlanId } = require('../packages/core/middleware/featureGate');
+const {
+  createSocialAccountAuthUrl,
+  createSocialPost,
+  disconnectSocialAccount,
+  listSocialAccounts,
+  toInternalPlatform,
+} = require('../services/postForMeClient');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -15,28 +22,23 @@ try { pool = require('../lib/vaultbrix'); } catch (e) {
 }
 
 const SCHEMA = 'tenant_vutler';
-const POSTFORME_API_URL = process.env.POSTFORME_API_URL || 'https://app.postforme.dev/api/v1';
-const POSTFORME_API_KEY = process.env.POSTFORME_API_KEY || '';
-
+const SOCIAL_PROVIDERS = ['linkedin', 'twitter', 'instagram', 'facebook', 'tiktok', 'youtube', 'threads', 'bluesky', 'pinterest'];
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-async function postForMeFetch(path, options = {}) {
-  const url = `${POSTFORME_API_URL}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${POSTFORME_API_KEY}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.message || data.error || `Post for Me API error: ${res.status}`);
-  return data;
-}
 
 function getExternalId(workspaceId) {
   return `ws_${workspaceId}`;
+}
+
+function getPlatformData(platform) {
+  if (platform === 'linkedin') {
+    return {
+      linkedin: {
+        connection_type: 'organization',
+      },
+    };
+  }
+
+  return undefined;
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -50,14 +52,15 @@ router.get('/auth-url/:platform', async (req, res) => {
     const workspaceId = req.workspaceId;
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
-    const VALID_PLATFORMS = ['linkedin', 'twitter', 'instagram', 'tiktok', 'facebook', 'threads', 'bluesky', 'youtube', 'pinterest'];
-    if (!VALID_PLATFORMS.includes(platform)) {
-      return res.status(400).json({ success: false, error: `Invalid platform. Must be one of: ${VALID_PLATFORMS.join(', ')}` });
+    if (!SOCIAL_PROVIDERS.includes(platform)) {
+      return res.status(400).json({ success: false, error: `Invalid platform. Must be one of: ${SOCIAL_PROVIDERS.join(', ')}` });
     }
 
-    const data = await postForMeFetch(`/socials/${platform}/auth-url`, {
-      method: 'POST',
-      body: JSON.stringify({ external_id: getExternalId(workspaceId) }),
+    const data = await createSocialAccountAuthUrl({
+      platform,
+      externalId: getExternalId(workspaceId),
+      platformData: getPlatformData(platform),
+      permissions: ['posts'],
     });
 
     res.json({ success: true, data: { url: data.url || data.auth_url } });
@@ -93,17 +96,18 @@ router.get('/accounts', async (req, res) => {
     const workspaceId = req.workspaceId;
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
-    // Sync from Post for Me first
-    await syncAccounts(workspaceId);
+    let syncWarning = null;
+    try {
+      await syncAccounts(workspaceId);
+    } catch (err) {
+      syncWarning = err?.message || 'social_sync_failed';
+      console.warn('[SocialMedia] accounts sync warning:', syncWarning);
+    }
 
-    // Return from DB
-    const { rows } = await pool.query(
-      `SELECT id, platform, account_name, account_type, platform_account_id, connected_at
-       FROM ${SCHEMA}.social_accounts WHERE workspace_id = $1 ORDER BY connected_at DESC`,
-      [workspaceId]
-    );
-
-    res.json({ success: true, data: rows });
+    const rows = await loadWorkspaceAccounts(workspaceId);
+    res.json(syncWarning
+      ? { success: true, data: rows, warning: syncWarning }
+      : { success: true, data: rows });
   } catch (err) {
     console.error('[SocialMedia] list accounts error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -119,9 +123,23 @@ router.delete('/accounts/:id', async (req, res) => {
     const { id } = req.params;
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
-    await pool.query(
-      `DELETE FROM ${SCHEMA}.social_accounts WHERE id = $1 AND workspace_id = $2`,
+    const existing = await pool.query(
+      `SELECT platform_account_id FROM ${SCHEMA}.social_accounts WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
       [id, workspaceId]
+    );
+
+    const remoteAccountId = existing.rows[0]?.platform_account_id;
+    if (remoteAccountId) {
+      await disconnectSocialAccount(remoteAccountId).catch((err) => {
+        console.warn('[SocialMedia] remote disconnect error:', err.message);
+      });
+    }
+
+    await pool.query(
+      remoteAccountId
+        ? `DELETE FROM ${SCHEMA}.social_accounts WHERE workspace_id = $1 AND platform_account_id = $2`
+        : `DELETE FROM ${SCHEMA}.social_accounts WHERE id = $2 AND workspace_id = $1`,
+      [workspaceId, remoteAccountId || id]
     );
 
     res.json({ success: true });
@@ -197,12 +215,11 @@ router.post('/post', async (req, res) => {
     }
 
     // Call Post for Me API
-    const body = { caption, social_accounts: accounts };
-    if (scheduled_at) body.scheduled_at = scheduled_at;
-
-    const data = await postForMeFetch('/posts', {
-      method: 'POST',
-      body: JSON.stringify(body),
+    const data = await createSocialPost({
+      caption,
+      socialAccounts: accounts,
+      scheduledAt: scheduled_at,
+      externalId: getExternalId(workspaceId),
     });
 
     // Track usage
@@ -267,52 +284,100 @@ router.get('/usage', async (req, res) => {
  * Sync social accounts from Post for Me to local DB
  */
 async function syncAccounts(workspaceId) {
-  try {
-    const externalId = getExternalId(workspaceId);
-    const data = await postForMeFetch(`/socials?external_id=${externalId}`);
-    const accounts = data.data || data.accounts || data || [];
+  const externalId = getExternalId(workspaceId);
+  const accounts = await listSocialAccounts({ externalId, status: 'connected' });
 
-    if (!Array.isArray(accounts)) return;
+  if (!Array.isArray(accounts)) return;
 
-    for (const acct of accounts) {
+  const connectedPlatforms = new Set();
+  for (const acct of accounts) {
+    const platform = toInternalPlatform(acct.platform || acct.type || 'unknown');
+    connectedPlatforms.add(platform);
+    const remoteAccountId = acct.id || acct.social_account_id;
+    const accountName = acct.name || acct.username || acct.display_name || '';
+    const accountType = acct.account_type || 'personal';
+    const metadata = JSON.stringify(acct);
+
+    const updateResult = await pool.query(
+      `UPDATE ${SCHEMA}.social_accounts
+          SET platform = $3,
+              account_name = $4,
+              account_type = $5,
+              external_id = $6,
+              metadata = $7,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND platform_account_id = $2`,
+      [workspaceId, remoteAccountId, platform, accountName, accountType, externalId, metadata]
+    );
+
+    if (updateResult.rowCount === 0) {
       await pool.query(
         `INSERT INTO ${SCHEMA}.social_accounts
           (workspace_id, platform, platform_account_id, account_name, account_type, external_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (workspace_id, platform_account_id)
-           WHERE workspace_id = $1 AND platform_account_id = $3
-           DO UPDATE SET account_name = $4, metadata = $7, updated_at = NOW()`,
-        [
-          workspaceId,
-          acct.platform || acct.type || 'unknown',
-          acct.id || acct.social_account_id,
-          acct.name || acct.username || acct.display_name || '',
-          acct.account_type || 'personal',
-          externalId,
-          JSON.stringify(acct),
-        ]
-      ).catch(() => {
-        // ON CONFLICT may fail without unique constraint — try upsert by platform_account_id
-        return pool.query(
-          `INSERT INTO ${SCHEMA}.social_accounts
-            (workspace_id, platform, platform_account_id, account_name, account_type, external_id, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT DO NOTHING`,
-          [
-            workspaceId,
-            acct.platform || acct.type || 'unknown',
-            acct.id || acct.social_account_id,
-            acct.name || acct.username || acct.display_name || '',
-            acct.account_type || 'personal',
-            externalId,
-            JSON.stringify(acct),
-          ]
-        );
-      });
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [workspaceId, platform, remoteAccountId, accountName, accountType, externalId, metadata]
+      ).catch(() => {});
     }
-  } catch (err) {
-    console.warn('[SocialMedia] syncAccounts error:', err.message);
   }
+
+  // Keep only the most recent local row per remote account id.
+  await pool.query(
+    `DELETE FROM ${SCHEMA}.social_accounts a
+     USING ${SCHEMA}.social_accounts b
+     WHERE a.workspace_id = $1
+       AND b.workspace_id = $1
+       AND a.platform_account_id IS NOT NULL
+       AND a.platform_account_id = b.platform_account_id
+       AND a.id <> b.id
+       AND COALESCE(a.updated_at, a.connected_at, a.created_at) < COALESCE(b.updated_at, b.connected_at, b.created_at)`,
+    [workspaceId]
+  ).catch(() => {});
+
+  for (const provider of connectedPlatforms) {
+    if (!SOCIAL_PROVIDERS.includes(provider)) continue;
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, connected, status, connected_at, updated_at)
+       VALUES ($1, $2, TRUE, 'connected', NOW(), NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         connected = TRUE,
+         status = 'connected',
+         connected_at = COALESCE(${SCHEMA}.workspace_integrations.connected_at, NOW()),
+         updated_at = NOW()`,
+      [workspaceId, provider]
+    ).catch(() => {});
+  }
+
+  if (connectedPlatforms.size > 0) {
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, connected, status, connected_at, updated_at)
+       VALUES ($1, 'social_media', TRUE, 'connected', NOW(), NOW())
+       ON CONFLICT (workspace_id, provider) DO UPDATE SET
+         connected = TRUE,
+         status = 'connected',
+         connected_at = COALESCE(${SCHEMA}.workspace_integrations.connected_at, NOW()),
+         updated_at = NOW()`,
+      [workspaceId]
+    ).catch(() => {});
+  }
+}
+
+async function loadWorkspaceAccounts(workspaceId) {
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM (
+       SELECT DISTINCT ON (COALESCE(platform_account_id, id::text))
+          id, platform, account_name, account_type, platform_account_id, connected_at, updated_at, created_at
+       FROM ${SCHEMA}.social_accounts
+       WHERE workspace_id = $1
+       ORDER BY COALESCE(platform_account_id, id::text), connected_at DESC, updated_at DESC, created_at DESC
+     ) accounts
+     ORDER BY connected_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC NULLS LAST`,
+    [workspaceId]
+  );
+  return rows;
 }
 
 /**

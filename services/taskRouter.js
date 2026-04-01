@@ -226,9 +226,10 @@ async function updateTask(taskId, updates, workspaceId) {
     );
 
     const task = result.rows[0];
+    const shouldSyncRemote = updates.sync_remote !== false;
 
-    // 🔵 SNIPARA SYNC: Complete task in swarm when status is 'completed' or 'done'
-    if (task && (updates.status === 'in_progress' || updates.status === 'claimed') && (task.snipara_task_id || task.swarm_task_id)) {
+    // Legacy path: newer tasks-v2 / webhook flows already sync through SwarmCoordinator.
+    if (shouldSyncRemote && task && (updates.status === 'in_progress' || updates.status === 'claimed') && (task.snipara_task_id || task.swarm_task_id)) {
       const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
       await getSwarmCoordinator().claimTask(
         task.snipara_task_id || task.swarm_task_id,
@@ -237,7 +238,7 @@ async function updateTask(taskId, updates, workspaceId) {
       );
     }
 
-    if (task && (updates.status === 'done' || updates.status === 'completed') && (task.snipara_task_id || task.swarm_task_id)) {
+    if (shouldSyncRemote && task && (updates.status === 'done' || updates.status === 'completed') && (task.snipara_task_id || task.swarm_task_id)) {
       const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
       await getSwarmCoordinator().completeTask(
         task.snipara_task_id || task.swarm_task_id,

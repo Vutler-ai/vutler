@@ -1,0 +1,82 @@
+{
+  "key": "default_browser_actions",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "catalog_key": "default_browser_actions",
+    "name": "Default Browser Actions",
+    "actions": [
+      {
+        "action_key": "browser.open",
+        "risk_level": "low",
+        "description": "Open a target URL and capture the HTML snapshot."
+      },
+      {
+        "action_key": "browser.click",
+        "risk_level": "medium",
+        "description": "Click a bounded selector in the current page."
+      },
+      {
+        "action_key": "browser.fill",
+        "risk_level": "medium",
+        "description": "Fill a bounded input field in the current page."
+      },
+      {
+        "action_key": "browser.login",
+        "risk_level": "medium",
+        "description": "Authenticate a bounded browser session with vault-backed credentials."
+      },
+      {
+        "action_key": "browser.signup",
+        "risk_level": "high",
+        "description": "Create a bounded test account or synthetic user."
+      },
+      {
+        "action_key": "browser.wait_for",
+        "risk_level": "low",
+        "description": "Wait for a selector or a bounded timeout."
+      },
+      {
+        "action_key": "browser.assert_status",
+        "risk_level": "low",
+        "description": "Validate the last HTTP status code."
+      },
+      {
+        "action_key": "browser.assert_text",
+        "risk_level": "low",
+        "description": "Validate that expected text exists in the current HTML snapshot."
+      },
+      {
+        "action_key": "browser.assert_url",
+        "risk_level": "low",
+        "description": "Validate that the current URL contains an expected fragment."
+      },
+      {
+        "action_key": "browser.extract_title",
+        "risk_level": "low",
+        "description": "Extract the current page title from the last HTML snapshot."
+      },
+      {
+        "action_key": "browser.capture",
+        "risk_level": "low",
+        "description": "Capture a full-page screenshot for the current state."
+      },
+      {
+        "action_key": "browser.consume_magic_link",
+        "risk_level": "high",
+        "description": "Read the agent mailbox and consume a magic link email."
+      },
+      {
+        "action_key": "browser.consume_email_code",
+        "risk_level": "high",
+        "description": "Read the agent mailbox and consume a one-time email code."
+      },
+      {
+        "action_key": "browser.consume_reset_password",
+        "risk_level": "high",
+        "description": "Read the agent mailbox, open a reset link and complete a bounded password reset flow."
+      }
+    ]
+  }
+}

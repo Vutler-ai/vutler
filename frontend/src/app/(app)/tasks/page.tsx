@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
@@ -13,6 +13,7 @@ import {
   syncTasks,
 } from "@/lib/api/endpoints/tasks";
 import type { Task, CreateTaskPayload } from "@/lib/api/types";
+import type { Agent } from "@/lib/api/types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -52,10 +54,11 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const AGENTS = [
+const FALLBACK_AGENT_NAMES = [
   "Mike", "Philip", "Luna", "Max", "Victor",
   "Oscar", "Nora", "Andrea", "Stephen", "Jarvis",
 ];
+const DEFAULT_ASSIGNEE = FALLBACK_AGENT_NAMES[0];
 
 const KANBAN_COLUMNS: { status: NormalizedStatus; label: string }[] = [
   { status: "todo", label: "To Do" },
@@ -184,7 +187,7 @@ const EMPTY_FORM: TaskFormData = {
   description: "",
   status: "todo",
   priority: "medium",
-  assignee: AGENTS[0],
+  assignee: DEFAULT_ASSIGNEE,
   due_date: "",
 };
 
@@ -196,6 +199,7 @@ interface TaskDialogProps {
   onFormChange: (form: TaskFormData) => void;
   onSubmit: () => void;
   onClose: () => void;
+  assignees: string[];
 }
 
 function TaskDialog({
@@ -206,6 +210,7 @@ function TaskDialog({
   onFormChange,
   onSubmit,
   onClose,
+  assignees,
 }: TaskDialogProps) {
   const set = (patch: Partial<TaskFormData>) => onFormChange({ ...form, ...patch });
 
@@ -216,6 +221,9 @@ function TaskDialog({
           <DialogTitle className="text-white">
             {editingTask ? "Edit Task" : "New Task"}
           </DialogTitle>
+          <DialogDescription className="text-[#9ca3af]">
+            {editingTask ? "Update the task details and assignment." : "Create a new task for your workspace."}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -276,7 +284,7 @@ function TaskDialog({
                 onChange={(e) => set({ assignee: e.target.value })}
                 className="w-full px-3 py-2 bg-[#08090f] border border-[rgba(255,255,255,0.07)] rounded-md text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
               >
-                {AGENTS.map((a) => (
+                {assignees.map((a) => (
                   <option key={a} value={a}>{a}</option>
                 ))}
               </select>
@@ -322,9 +330,10 @@ interface TaskDetailSheetProps {
   open: boolean;
   onClose: () => void;
   onTaskUpdated: () => void;
+  assignees: string[];
 }
 
-function TaskDetailSheet({ task, open, onClose, onTaskUpdated }: TaskDetailSheetProps) {
+function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: TaskDetailSheetProps) {
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [loadingSubtasks, setLoadingSubtasks] = useState(false);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
@@ -358,12 +367,15 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated }: TaskDetailSheet
     if (!newSubtaskTitle.trim() || !task) return;
     setAddingSubtask(true);
     try {
+      const defaultAssignee = task && task.assignee && assignees.includes(task.assignee)
+        ? task.assignee
+        : assignees[0] || DEFAULT_ASSIGNEE;
       const payload: CreateTaskPayload = {
         title: newSubtaskTitle.trim(),
         description: "",
         status: "todo",
         priority: "medium",
-        assignee: task.assignee || AGENTS[0],
+        assignee: defaultAssignee,
         due_date: "",
       };
       await createSubtask(task.id, payload);
@@ -1049,6 +1061,10 @@ export default function TasksPage() {
     () => getTasks()
   );
 
+  const { data: agentData } = useApi<{ agents: Agent[]; count: number }>("/api/v1/agents");
+  const agentNames = agentData?.agents?.map((agent) => agent.name).filter(Boolean) ?? [];
+  const assigneeOptions = agentNames.length > 0 ? agentNames : FALLBACK_AGENT_NAMES;
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [form, setForm] = useState<TaskFormData>(EMPTY_FORM);
@@ -1059,6 +1075,14 @@ export default function TasksPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!agentNames.length) return;
+    setForm((current) => {
+      if (agentNames.includes(current.assignee)) return current;
+      return { ...current, assignee: agentNames[0] };
+    });
+  }, [agentNames]);
 
   useEffect(() => {
     if (!taskQuery || !tasks || tasks.length === 0) return;
@@ -1306,6 +1330,7 @@ export default function TasksPage() {
         open={!!detailTask}
         onClose={() => setDetailTask(null)}
         onTaskUpdated={() => mutate()}
+        assignees={assigneeOptions}
       />
 
       {/* Create / Edit Dialog */}
@@ -1317,6 +1342,7 @@ export default function TasksPage() {
         onFormChange={setForm}
         onSubmit={handleSubmit}
         onClose={closeDialog}
+        assignees={assigneeOptions}
       />
 
       {/* Delete Confirmation */}

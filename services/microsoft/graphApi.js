@@ -3,7 +3,7 @@
 const https = require('https');
 const { getMicrosoftToken, clearTokenCache } = require('./tokenManager');
 
-function httpsRequest(options) {
+function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       const chunks = [];
@@ -26,11 +26,12 @@ function httpsRequest(options) {
       });
     });
     req.on('error', reject);
+    if (body) req.write(body);
     req.end();
   });
 }
 
-async function graphRequest(workspaceId, { path, query }) {
+async function graphRequest(workspaceId, { path, query, method = 'GET', body = null, headers = {} }) {
   const token = await getMicrosoftToken(workspaceId);
   if (!token) throw new Error('Microsoft 365 integration not connected or token unavailable');
 
@@ -38,16 +39,22 @@ async function graphRequest(workspaceId, { path, query }) {
     ? `${path}?${new URLSearchParams(query).toString()}`
     : path;
 
+  const payload = body == null ? null : JSON.stringify(body);
   const doRequest = async (accessToken) => httpsRequest({
     hostname: 'graph.microsoft.com',
     path: `/v1.0${requestPath}`,
-    method: 'GET',
+    method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
       Prefer: 'outlook.body-content-type="text"',
+      ...(payload ? {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      } : {}),
+      ...headers,
     },
-  });
+  }, payload);
 
   let response = await doRequest(token);
   if (response.status === 401) {
@@ -102,8 +109,18 @@ async function listContacts(workspaceId, { search, top = 50 } = {}) {
   });
 }
 
+async function createSubscription(workspaceId, payload = {}) {
+  return graphRequest(workspaceId, {
+    path: '/subscriptions',
+    method: 'POST',
+    body: payload,
+  });
+}
+
 module.exports = {
+  graphRequest,
   listMailMessages,
   listCalendarEvents,
   listContacts,
+  createSubscription,
 };

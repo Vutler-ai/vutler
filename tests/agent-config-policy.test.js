@@ -23,6 +23,7 @@ describe('agentConfigPolicy', () => {
       'workspace_drive_search',
       'workspace_drive_read',
       'workspace_drive_write',
+      'workspace_drive_create_folder',
       'workspace_drive',
       'google_calendar',
     ]);

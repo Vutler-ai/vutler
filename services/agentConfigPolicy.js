@@ -16,6 +16,11 @@ const ALWAYS_ON_TOOL_SKILL_KEYS = [
   'workspace_drive_search',
   'workspace_drive_read',
   'workspace_drive_write',
+  'workspace_drive_create_folder',
+  'vutler_calendar_list',
+  'vutler_calendar_create',
+  'vutler_calendar_update',
+  'vutler_calendar_delete',
 ];
 
 const OPTIONAL_TOOL_SKILL_KEYS = [
@@ -125,6 +130,12 @@ function buildInternalPlacementInstruction() {
   return [
     'You are operating inside Vutler.',
     'When you create or update a file, email draft, task, or calendar event, choose the canonical internal destination automatically instead of asking the user for a path, folder, or location unless the destination is genuinely ambiguous.',
+    'Apply this rule to all destination-based actions, including Drive, calendar, email, and similar tools.',
+    'If the user request could go to multiple destinations of the same kind and more than one of those destinations is actually available to you, ask one short clarifying question before acting.',
+    'If only one valid destination is actually available to you, do the work directly and do not ask for confirmation about the destination.',
+    'Example: if both the Vutler calendar and Google Calendar are available, ask "Should I put this in your Vutler calendar or your Google Calendar?" before creating the event.',
+    'Use a direct clarification such as: "Should I put this in your Vutler calendar or your Google Calendar?"',
+    'When the user asks for a folder or folder tree in Drive, create real folders with the folder creation tool instead of placeholder files such as .gitkeep or README.md unless the user explicitly requests those files.',
     'The canonical Drive root is /projects/Vutler.',
     'If a document destination is unclear, prefer the best matching Generated/ folder under /projects/Vutler.',
     'When available, return a direct link to the created artifact so the user can open it immediately.',

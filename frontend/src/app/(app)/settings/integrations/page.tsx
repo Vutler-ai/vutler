@@ -4,6 +4,7 @@ import { authFetch } from "@/lib/authFetch";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { getSocialPlatformMeta, normalizeIntegrationKey } from "@/lib/integrations/catalog";
 
 interface Integration {
   provider: string;
@@ -32,15 +33,18 @@ const OAUTH_PROVIDERS = new Set(["google", "github", "microsoft365"]);
 
 export default function IntegrationsPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [socialPlatforms, setSocialPlatforms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    authFetch("/api/v1/integrations")
-      .then((r) => r.json())
-      .then((data) => {
+    Promise.all([
+      authFetch("/api/v1/integrations").then((r) => r.json()),
+      authFetch("/api/v1/social-media/accounts").then((r) => r.json()).catch(() => ({ data: [] })),
+    ])
+      .then(([data, socialData]) => {
         const connected: Record<string, Integration> = {};
         (data.integrations || []).forEach((i: Integration) => {
           connected[i.provider] = i;
@@ -54,6 +58,11 @@ export default function IntegrationsPage() {
           connected_at: connected[key]?.connected_at,
         }));
         setIntegrations(all);
+        setSocialPlatforms(Array.from(new Set(
+          (Array.isArray(socialData?.data) ? socialData.data : [])
+            .map((account: { platform?: string }) => normalizeIntegrationKey(account?.platform))
+            .filter(Boolean)
+        )));
         setLoading(false);
       })
       .catch(() => {
@@ -138,7 +147,7 @@ export default function IntegrationsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-white">🔌 Integrations</h1>
-          <p className="text-[#9ca3af] mt-1">Internal integrations catalog · {connectedCount} connected</p>
+          <p className="text-[#9ca3af] mt-1">Workspace connectors · {connectedCount} connected</p>
         </div>
         <Link
           href="/settings/integrations/activity"
@@ -191,6 +200,22 @@ export default function IntegrationsPage() {
               </div>
               <h3 className="text-white font-semibold mb-1">{integration.name}</h3>
               <p className="text-[#9ca3af] text-sm mb-4 line-clamp-2">{integration.description}</p>
+              {integration.provider === "social_media" && socialPlatforms.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {socialPlatforms.map((platform) => {
+                    const meta = getSocialPlatformMeta(platform);
+                    return (
+                      <span
+                        key={platform}
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-[rgba(255,255,255,0.05)] text-[#9ca3af]"
+                      >
+                        <span>{meta.icon}</span>
+                        {meta.name}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
               <div className="flex gap-2">
                 {integration.status === "connected" && (
                   <>

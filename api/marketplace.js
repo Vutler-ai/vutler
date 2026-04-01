@@ -6,6 +6,188 @@ const pool = require("../lib/vaultbrix");
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 
+function parseJsonValue(value, fallback) {
+  if (value == null) return fallback;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      return fallback;
+    }
+  }
+  return value;
+}
+
+function titleizeCapability(capability) {
+  return String(capability || "")
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function buildTemplateTags(tools, permissions) {
+  const tags = new Set();
+
+  for (const tool of tools.slice(0, 8)) {
+    tags.add(titleizeCapability(tool));
+  }
+
+  if (permissions.browser_operator) tags.add("Browser Operator");
+  if (permissions.browser_operator_template) tags.add("Specialized Template");
+  if (permissions.requires_agent_mailbox) tags.add("Agent Mailbox");
+  if (permissions.launch_surface === '/nexus') tags.add("Nexus Enterprise");
+  if (permissions.launch_surface) tags.add("Dedicated Surface");
+  if (permissions.tooling_status === 'beta') tags.add("Beta");
+
+  return Array.from(tags);
+}
+
+function mapMarketplaceTemplate(row) {
+  const tools = Array.isArray(row.tools) ? row.tools : parseJsonValue(row.tools, []);
+  const permissions = parseJsonValue(row.permissions, {});
+  const inferredSkills = tools.map((tool) => String(tool)).filter(Boolean);
+
+  return {
+    id: String(row.id),
+    name: row.name,
+    description: row.description || "",
+    category: row.category || "custom",
+    avatar: row.avatar || permissions.avatar || null,
+    skills: inferredSkills,
+    tags: buildTemplateTags(inferredSkills, permissions),
+    author: row.workspace_id === 1 ? "Vutler" : "Workspace",
+    rating: Number(row.avg_rating || 0),
+    avg_rating: Number(row.avg_rating || 0),
+    review_count: Number(row.review_count || 0),
+    install_count: Number(row.install_count || 0),
+    installs: Number(row.install_count || 0),
+    price: Number(row.price || 0),
+    created_at: row.created_at,
+    config: {
+      icon: permissions.avatar || null,
+      tags: buildTemplateTags(inferredSkills, permissions),
+      model: row.model || "",
+      temperature: Number(permissions.temperature || 0.7),
+      max_tokens: permissions.max_tokens ? Number(permissions.max_tokens) : undefined,
+      system_prompt: row.system_prompt || row.system_prompt_preview || "",
+    },
+    permissions,
+  };
+}
+
+async function dedupeWorkspaceTemplatesByName(workspaceId, names) {
+  for (const name of names) {
+    const result = await pool.query(
+      `SELECT id, install_count, review_count, avg_rating, permissions
+         FROM ${SCHEMA}.marketplace_templates
+        WHERE workspace_id = $1 AND name = $2
+        ORDER BY id DESC`,
+      [workspaceId, name]
+    );
+
+    if (result.rows.length <= 1) continue;
+
+    const preferred =
+      result.rows.find((row) => parseJsonValue(row.permissions, {})?.launch_surface)
+      || result.rows[0];
+
+    const duplicateIds = result.rows
+      .filter((row) => row.id !== preferred.id)
+      .map((row) => row.id);
+
+    const totalInstallCount = result.rows.reduce((sum, row) => sum + Number(row.install_count || 0), 0);
+    const totalReviewCount = result.rows.reduce((sum, row) => sum + Number(row.review_count || 0), 0);
+    const weightedRatingTotal = result.rows.reduce(
+      (sum, row) => sum + (Number(row.avg_rating || 0) * Number(row.review_count || 0)),
+      0
+    );
+    const avgRating = totalReviewCount > 0
+      ? Number((weightedRatingTotal / totalReviewCount).toFixed(2))
+      : Number(preferred.avg_rating || 0);
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.marketplace_templates
+          SET install_count = $2,
+              review_count = $3,
+              avg_rating = $4,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [preferred.id, totalInstallCount, totalReviewCount, avgRating]
+    );
+
+    await pool.query(
+      `DELETE FROM ${SCHEMA}.marketplace_templates
+        WHERE id = ANY($1::int[])`,
+      [duplicateIds]
+    );
+  }
+}
+
+async function ensureMarketplaceTemplate(template) {
+  const workspaceId = template.workspace_id || 1;
+  const existing = await pool.query(
+    `SELECT id
+       FROM ${SCHEMA}.marketplace_templates
+      WHERE workspace_id = $1 AND name = $2
+      LIMIT 1`,
+    [workspaceId, template.name]
+  );
+
+  if (existing.rows.length > 0) {
+    await pool.query(
+      `UPDATE ${SCHEMA}.marketplace_templates
+          SET description = $2,
+              category = $3,
+              pricing = $4,
+              price = $5,
+              model = $6,
+              system_prompt = $7,
+              tools = $8::jsonb,
+              permissions = $9::jsonb,
+              verified = $10,
+              published = true,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [
+        existing.rows[0].id,
+        template.description,
+        template.category,
+        template.pricing,
+        template.price,
+        template.model,
+        template.system_prompt,
+        JSON.stringify(template.tools || []),
+        JSON.stringify(template.permissions || {}),
+        Boolean(template.verified),
+      ]
+    );
+    return existing.rows[0].id;
+  }
+
+  const result = await pool.query(
+    `INSERT INTO ${SCHEMA}.marketplace_templates
+       (workspace_id, agent_id, name, description, category, pricing, price, model, system_prompt, tools, permissions, verified, published)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, true)
+     RETURNING id`,
+    [
+      workspaceId,
+      template.agent_id || 0,
+      template.name,
+      template.description,
+      template.category,
+      template.pricing || 'free',
+      template.price || 0,
+      template.model || null,
+      template.system_prompt || null,
+      JSON.stringify(template.tools || []),
+      JSON.stringify(template.permissions || {}),
+      Boolean(template.verified),
+    ]
+  );
+  return result.rows[0]?.id || null;
+}
+
 // Auto-init tables
 (async () => {
   try {
@@ -81,8 +263,146 @@ const SCHEMA = "tenant_vutler";
         (1, 0, 'Email Triager', '📬 Inbox triage, auto-replies, prioritization, routing to right person', 'automation', 'claude-haiku', 'You are an Email Triager agent. Analyze incoming emails, prioritize by urgency and importance, draft auto-replies for routine messages, and route complex emails to the appropriate person. Maintain inbox zero with smart categorization.', '["email_reader","auto_reply","routing","priority_classifier"]'::jsonb, '{}'::jsonb, 'free', 0, false)
       `);
       console.log("[MARKETPLACE] Seed templates inserted");
-console.log("[MARKETPLACE] Seed templates inserted");
     }
+
+    const specializedTemplates = [
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'Synthetic User QA',
+        description: 'Browser-based testing agent with cloud browser runtime, agent mailbox for magic-link and email-code flows, and evidence-packed reports.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are Synthetic User QA, a browser testing agent. Run bounded browser flows, simulate users safely, use the agent mailbox for magic-link or email-code authentication, and produce evidence-rich reports with screenshots, logs, and findings.',
+        tools: ['browser_operator', 'agent_mailbox', 'reporting', 'synthetic_user_testing'],
+        permissions: {
+          browser_operator: true,
+          browser_operator_template: 'synthetic_user_qa',
+          requires_agent_mailbox: true,
+          launch_surface: '/browser-operator',
+          launch_profile_key: 'synthetic_user_qa',
+          launch_label: 'Open Browser Operator',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'App Reviewer',
+        description: 'Specialized browser review agent for UX checks, friction reports, login-readiness tests, and evidence-packed app reviews.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are App Reviewer, a browser review agent. Inspect product flows, capture UX friction, validate login readiness, and produce structured reports with evidence, screenshots, and findings.',
+        tools: ['browser_operator', 'reporting', 'ui_review', 'synthetic_user_testing'],
+        permissions: {
+          browser_operator: true,
+          browser_operator_template: 'app_reviewer',
+          launch_surface: '/browser-operator',
+          launch_profile_key: 'app_reviewer',
+          launch_label: 'Open Browser Operator',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'AV Manager',
+        description: 'Nexus Enterprise AV operations agent for room monitoring, bounded remediation, ticketing, and event-driven diagnostics.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are AV Manager, an enterprise AV operations agent. Monitor AV rooms, handle bounded diagnostics and remediation, coordinate ticketing, and generate client-facing reports under policy control.',
+        tools: ['event_ingestion', 'ticketing', 'device_diagnostics', 'local_api_bridge', 'reporting'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'av_manager',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'IT Helpdesk',
+        description: 'Nexus Enterprise IT support agent for bounded triage, ticketing, local diagnostics, and governed helper delegation.',
+        category: 'technical',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are IT Helpdesk, an enterprise support agent. Handle bounded IT triage, diagnostics, reporting, and ticketing under client-defined governance.',
+        tools: ['ticketing', 'reporting', 'local_api_bridge', 'event_ingestion', 'helper_delegation'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'it_helpdesk',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'Bid Manager',
+        description: 'Nexus Enterprise bid coordination agent for proposal drafting, workspace knowledge retrieval, and governed email dispatch.',
+        category: 'operations',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are Bid Manager, an enterprise proposal agent. Build draft responses, gather material from workspace knowledge, coordinate proposal inputs, and help assemble compliant bid packages.',
+        tools: ['document_generation', 'workspace_knowledge_access', 'email_dispatch', 'reporting'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'bid_manager',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+      {
+        workspace_id: 1,
+        agent_id: 0,
+        name: 'Report Writer',
+        description: 'Nexus Enterprise reporting agent for structured reports, workspace-backed drafts, and governed document generation.',
+        category: 'operations',
+        pricing: 'free',
+        price: 0,
+        model: 'claude-sonnet-4-20250514',
+        system_prompt: 'You are Report Writer, an enterprise reporting agent. Draft structured reports from workspace inputs, operational signals, and reusable templates while staying inside governance and approval rules.',
+        tools: ['document_generation', 'workspace_knowledge_access', 'email_dispatch', 'reporting'],
+        permissions: {
+          nexus_enterprise: true,
+          launch_surface: '/nexus',
+          launch_mode: 'enterprise',
+          launch_profile_key: 'report_writer',
+          launch_label: 'Open Nexus Deploy',
+          tooling_status: 'beta',
+          temperature: 0.2,
+        },
+        verified: true,
+      },
+    ];
+
+    for (const template of specializedTemplates) {
+      await ensureMarketplaceTemplate(template);
+    }
+    await dedupeWorkspaceTemplatesByName(1, specializedTemplates.map((template) => template.name));
   } catch(e) { console.warn("[MARKETPLACE] Init:", e.message); }
 })();
 
@@ -153,7 +473,13 @@ router.get("/templates", async (req, res) => {
       params
     );
 
-    res.json({ success: true, templates: result.rows, total, page: pageNum, limit: limitNum });
+    res.json({
+      success: true,
+      templates: result.rows.map(mapMarketplaceTemplate),
+      total,
+      page: pageNum,
+      limit: limitNum,
+    });
   } catch(err) {
     console.error("[MARKETPLACE] List error:", err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -167,7 +493,7 @@ router.get("/my-templates", async (req, res) => {
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.marketplace_templates WHERE workspace_id = $1 ORDER BY created_at DESC`, [ws]
     );
-    res.json({ success: true, templates: result.rows });
+    res.json({ success: true, templates: result.rows.map(mapMarketplaceTemplate) });
   } catch(err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -184,7 +510,7 @@ router.get("/templates/:id", async (req, res) => {
       `SELECT * FROM ${SCHEMA}.marketplace_reviews WHERE template_id = $1 ORDER BY created_at DESC LIMIT 10`, [id]
     );
 
-    res.json({ success: true, template: tmpl.rows[0], reviews: reviews.rows });
+    res.json({ success: true, template: mapMarketplaceTemplate(tmpl.rows[0]), reviews: reviews.rows });
   } catch(err) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -19,6 +19,27 @@
         "tool_class": "bounded_local_api",
         "required_level": 2,
         "operations": ["get_room_status", "get_room_diagnostics"]
+      },
+      {
+        "integration_key": "microsoft_graph_room_events",
+        "name": "Microsoft Graph Room Events",
+        "tool_class": "workspace_tool",
+        "required_level": 2,
+        "operations": ["provision_subscription", "receive_room_events"]
+      },
+      {
+        "integration_key": "zoom_room_events",
+        "name": "Zoom Room Events",
+        "tool_class": "workspace_tool",
+        "required_level": 2,
+        "operations": ["provision_subscription", "receive_room_events"]
+      },
+      {
+        "integration_key": "google_room_events",
+        "name": "Google Room Events",
+        "tool_class": "workspace_tool",
+        "required_level": 2,
+        "operations": ["provision_subscription", "receive_room_events"]
       }
     ]
   }

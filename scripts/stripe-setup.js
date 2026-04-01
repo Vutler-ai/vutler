@@ -5,6 +5,7 @@
  *
  * Usage:
  *   STRIPE_SECRET_KEY=sk_... node scripts/stripe-setup.js
+ *   STRIPE_MODE=test node scripts/stripe-setup.js
  *
  * What it does:
  *   1. For each billable plan, checks if a Stripe product already exists
@@ -13,31 +14,46 @@
  *   3. Prints the env vars to set (STRIPE_PRICE_<PLAN>_MONTHLY/YEARLY).
  *   4. Optionally writes them to .env.stripe (never overwrites existing values).
  *
- * Plans created:
- *   office_starter  $29/mo  $290/yr
- *   office_team     $79/mo  $790/yr  (Office Pro)
- *   agents_starter  $29/mo  $290/yr
- *   agents_pro      $79/mo  $790/yr
- *   full           $129/mo $1290/yr
- *   enterprise     $199/mo  (annual is custom)
+ * The script also supports local Stripe CLI config resolution when
+ * STRIPE_SECRET_KEY is not exported, and writes the generated price IDs
+ * to .env.stripe for copy/paste into runtime env vars.
  */
 
 const Stripe = require('stripe');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-const STRIPE_ACCOUNT_ID = process.env.STRIPE_ACCOUNT_ID || 'acct_1T2tqGDj0FRggNOE';
+function resolveStripeSecretKey() {
+  if (process.env.STRIPE_SECRET_KEY) return process.env.STRIPE_SECRET_KEY;
+
+  try {
+    const configPath = path.join(os.homedir(), '.config', 'stripe', 'config.toml');
+    const config = fs.readFileSync(configPath, 'utf8');
+    const profile = process.env.STRIPE_PROFILE || 'default';
+    const mode = (process.env.STRIPE_MODE || 'test').toLowerCase();
+    const keyName = mode === 'live' ? 'live_mode_api_key' : 'test_mode_api_key';
+    const sectionMatch = config.match(new RegExp(`\\[${profile}\\]([\\s\\S]*?)(?:\\n\\[[^\\]]+\\]|$)`));
+    const keyMatch = sectionMatch?.[1]?.match(new RegExp(`${keyName} = '([^']+)'`));
+    const value = keyMatch?.[1] || null;
+    return value && !value.includes('*') ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+const STRIPE_SECRET_KEY = resolveStripeSecretKey();
+const STRIPE_ACCOUNT_ID = process.env.STRIPE_ACCOUNT_ID || process.env.STRIPE_ACCOUNT || null;
 
 if (!STRIPE_SECRET_KEY) {
-  console.error('ERROR: STRIPE_SECRET_KEY env var is required.');
+  console.error('ERROR: STRIPE_SECRET_KEY is required (env or local Stripe CLI test key).');
   process.exit(1);
 }
 
 const stripe = new Stripe(STRIPE_SECRET_KEY);
 
-// When using an Organization API key the Stripe-Context header (stripeAccount) is required.
-const ACCOUNT_OPTS = { stripeAccount: STRIPE_ACCOUNT_ID };
+// Organization API keys require Stripe-Context. Account-level keys should omit it.
+const ACCOUNT_OPTS = STRIPE_ACCOUNT_ID ? { stripeAccount: STRIPE_ACCOUNT_ID } : undefined;
 
 // Plans to create (free, beta have no paid prices)
 const PLANS_TO_CREATE = [
@@ -46,7 +62,7 @@ const PLANS_TO_CREATE = [
   { id: 'agents_starter',  label: 'Agents Starter',   monthly: 2900,  yearly: 29000  },
   { id: 'agents_pro',      label: 'Agents Pro',        monthly: 7900,  yearly: 79000  },
   { id: 'full',            label: 'Full Platform',     monthly: 12900, yearly: 129000 },
-  { id: 'enterprise',      label: 'Enterprise',        monthly: 19900, yearly: 0      },
+  { id: 'nexus_enterprise', label: 'Nexus Enterprise', monthly: 149000, yearly: 1490000 },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -63,7 +79,9 @@ async function findProductByPlanId(planId) {
     const params = { limit: 100, active: true };
     if (startingAfter) params.starting_after = startingAfter;
 
-    const page = await stripe.products.list(params, ACCOUNT_OPTS);
+    const page = ACCOUNT_OPTS
+      ? await stripe.products.list(params, ACCOUNT_OPTS)
+      : await stripe.products.list(params);
     for (const product of page.data) {
       if (product.metadata && product.metadata.plan_id === planId) {
         return product;
@@ -81,10 +99,15 @@ async function findProductByPlanId(planId) {
  * Find an existing price for a product with the given interval.
  * Returns the price object or null.
  */
-async function findPrice(productId, interval, intervalCount) {
-  const prices = await stripe.prices.list({ product: productId, active: true, limit: 100 }, ACCOUNT_OPTS);
+async function findPrice(productId, interval, intervalCount, amountCents) {
+  const prices = ACCOUNT_OPTS
+    ? await stripe.prices.list({ product: productId, active: true, limit: 100 }, ACCOUNT_OPTS)
+    : await stripe.prices.list({ product: productId, active: true, limit: 100 });
   return prices.data.find(
-    (p) => p.recurring?.interval === interval && p.recurring?.interval_count === intervalCount
+    (p) =>
+      p.recurring?.interval === interval &&
+      p.recurring?.interval_count === intervalCount &&
+      p.unit_amount === amountCents
   ) || null;
 }
 
@@ -112,7 +135,7 @@ async function getOrCreateProduct(plan) {
  * intervalCount: 1
  */
 async function getOrCreatePrice(productId, planId, amountCents, interval) {
-  const existing = await findPrice(productId, interval, 1);
+  const existing = await findPrice(productId, interval, 1, amountCents);
   if (existing) {
     console.log(`  [price]   Found existing ${interval}ly price: ${existing.id} ($${amountCents / 100})`);
     return existing;
@@ -167,6 +190,8 @@ async function main() {
 
   // ── Social Media Addon Packs ────────────────────────────────────────────────
   const ADDON_PACKS = [
+    { id: 'nexus_enterprise_seats_5', label: 'Nexus Enterprise +5 Seats', monthly: 39000 },
+    { id: 'nexus_enterprise_node', label: 'Nexus Enterprise Extra Node', monthly: 50000 },
     { id: 'social_posts_100',  label: '100 Social Posts/month',  monthly: 500 },
     { id: 'social_posts_500',  label: '500 Social Posts/month',  monthly: 1900 },
     { id: 'social_posts_2000', label: '2000 Social Posts/month', monthly: 4900 },

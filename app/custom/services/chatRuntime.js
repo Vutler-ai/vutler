@@ -9,6 +9,7 @@ const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 const { createSniparaGateway } = require('../../../services/snipara/gateway');
+const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
@@ -34,6 +35,25 @@ const memoryRuntime = createMemoryRuntimeService();
 
 function normalizeWorkspaceId(workspaceId) {
   return workspaceId || DEFAULT_WORKSPACE;
+}
+
+function getSoulCacheKey(agent, workspaceId = DEFAULT_WORKSPACE) {
+  const ws = normalizeWorkspaceId(workspaceId || agent?.workspace_id);
+  const agentName = agent?.username || String(agent?.name || '').toLowerCase() || String(agent?.id || 'unknown-agent');
+  return `${ws}:${agentName}`;
+}
+
+async function hydrateAgent(agent, workspaceId = DEFAULT_WORKSPACE) {
+  if (!agent) return agent;
+  const ws = normalizeWorkspaceId(workspaceId || agent.workspace_id);
+  const agentRef = agent.id || agent.username || agent.agent_id;
+  if (!agentRef) return { ...agent, workspace_id: ws };
+
+  try {
+    return await resolveAgentRecord(pool, ws, agentRef, { ...agent, workspace_id: ws });
+  } catch (_) {
+    return { ...agent, workspace_id: ws };
+  }
 }
 
 function getRetryDelayMs(attempts) {
@@ -186,9 +206,10 @@ async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEF
 }
 
 async function getAgentSoul(agent) {
-  const workspaceId = normalizeWorkspaceId(agent.workspace_id);
-  const agentName = agent.username || String(agent.name || '').toLowerCase();
-  const cacheKey = `${workspaceId}:${agentName}`;
+  const hydratedAgent = await hydrateAgent(agent, agent?.workspace_id);
+  const workspaceId = normalizeWorkspaceId(hydratedAgent.workspace_id);
+  const agentName = hydratedAgent.username || String(hydratedAgent.name || '').toLowerCase();
+  const cacheKey = getSoulCacheKey(hydratedAgent, workspaceId);
   const now = Date.now();
   const cached = soulCache.get(cacheKey);
 
@@ -200,7 +221,7 @@ async function getAgentSoul(agent) {
     memoryRuntime.preparePromptContext({
       db: pool,
       workspaceId,
-      agent,
+      agent: hydratedAgent,
       query: `${agentName} personality soul role instructions behavior preferences`,
       runtime: 'chat',
       includeSummaries: true,
@@ -214,12 +235,12 @@ async function getAgentSoul(agent) {
   let soul = '';
   if (memoryBundle.prompt && memoryBundle.prompt.trim()) soul += `${memoryBundle.prompt}\n\n`;
   if (context && String(context).trim()) soul += `## Context\n${context}\n\n`;
-  soul += `## Identity\nYou are ${agent.name}, an AI agent at Starbox Group.\n`;
+  soul += `## Identity\nYou are ${hydratedAgent.name}, an AI agent at Starbox Group.\n`;
   soul += `Your username in the swarm is "${agentName}".\n`;
   soul += 'You work as part of a multi-agent team coordinated by Jarvis.\n';
   soul += 'Respond in the same language as the user (French or English).\n';
   soul += 'Be concise, helpful, and stay in character.\n';
-  if (agent.system_prompt) soul += `\n## Additional Instructions\n${agent.system_prompt}\n`;
+  if (hydratedAgent.system_prompt) soul += `\n## Additional Instructions\n${hydratedAgent.system_prompt}\n`;
 
   if (memoryBundle.stats) {
     console.info('[ChatRuntime] memory bundle', {
@@ -239,6 +260,7 @@ async function getAgentSoul(agent) {
 
 function rememberInteraction(agent, workspaceId, userMessage, agentResponse, userName) {
   if (String(userMessage || '').length < 20 && String(agentResponse || '').length < 50) return;
+  soulCache.delete(getSoulCacheKey(agent, workspaceId));
   memoryRuntime.recordConversation({
     db: pool,
     workspaceId,
@@ -460,9 +482,10 @@ async function handleMessage(message) {
     }
   }
 
+  const hydratedTargetAgent = await hydrateAgent(targetAgent, workspaceId);
   const executionAgent = typeof swarmCoordinator.resolveAgentExecutionContext === 'function'
-    ? await swarmCoordinator.resolveAgentExecutionContext(targetAgent, workspaceId)
-    : targetAgent;
+    ? await swarmCoordinator.resolveAgentExecutionContext(hydratedTargetAgent, workspaceId)
+    : hydratedTargetAgent;
   const soul = appendPlacementInstruction(
     await getAgentSoul(executionAgent),
     executionAgent.workspaceToolPolicy?.placementInstruction

@@ -1,0 +1,42 @@
+{
+  "status": "failed",
+  "profileKey": "synthetic_user_qa",
+  "flowKey": "local_magic_link_smoke_v1",
+  "runtimeMode": "cloud-browser",
+  "target": {
+    "path": null,
+    "appKey": "magic_link_app",
+    "baseUrl": "http://127.0.0.1:51210/login"
+  },
+  "evidenceCounts": {},
+  "totals": {
+    "steps": 2,
+    "passed": 1,
+    "failed": 1
+  },
+  "checks": [
+    {
+      "stepIndex": 0,
+      "actionKey": "browser.open",
+      "status": "passed",
+      "output": {
+        "url": "http://127.0.0.1:51210/login",
+        "statusCode": 200,
+        "title": "",
+        "contentLength": 91,
+        "runtime": "playwright"
+      }
+    },
+    {
+      "stepIndex": 1,
+      "actionKey": "browser.consume_magic_link",
+      "status": "failed",
+      "error": {
+        "message": "page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:51064/magic?token=abc123\nCall log:\n\u001b[2m  - navigating to \"http://127.0.0.1:51064/magic?token=abc123\", waiting until \"domcontentloaded\"\u001b[22m\n",
+        "code": "STEP_FAILED"
+      }
+    }
+  ],
+  "unsupportedActions": [],
+  "generatedAt": "2026-04-01T07:39:37.326Z"
+}

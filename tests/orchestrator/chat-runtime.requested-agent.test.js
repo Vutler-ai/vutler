@@ -12,6 +12,11 @@ describe('chatRuntime requested agent resolution', () => {
 
   test('falls back to Jarvis deterministically and persists orchestration metadata', async () => {
     const inserts = [];
+    const preparePromptContext = jest.fn().mockResolvedValue({
+      prompt: '## Agent Memory\n- [fact] Team standards apply.',
+      stats: { runtime: 'chat', selected: { total: 1, instance: 1, template: 0, global: 0 } },
+    });
+    const recordConversation = jest.fn().mockResolvedValue([]);
     const llmChat = jest.fn().mockResolvedValue({
       content: 'Jarvis handled it.',
       provider: 'anthropic',
@@ -57,6 +62,25 @@ describe('chatRuntime requested agent resolution', () => {
       if (sql.includes('UPDATE tenant_vutler.chat_messages SET processed_at = NOW() WHERE id = $1 AND workspace_id = $2')) {
         messageState.processed_at = new Date();
         return { rows: [] };
+      }
+
+      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $2')) {
+        return {
+          rows: [{
+            id: 'agent-1',
+            name: 'Jarvis',
+            username: 'jarvis',
+            role: 'coordinator',
+            model: 'claude-sonnet-4',
+            provider: 'anthropic',
+            system_prompt: 'You are Jarvis.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+            capabilities: ['workspace_drive_write', 'workspace_drive_search'],
+            snipara_instance_id: 'snip-jarvis',
+          }],
+        };
       }
 
       if (sql.includes('FROM tenant_vutler.chat_channel_members')) {
@@ -127,11 +151,8 @@ describe('chatRuntime requested agent resolution', () => {
     jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
     jest.doMock('../../services/memory/runtime', () => ({
       createMemoryRuntimeService: () => ({
-        preparePromptContext: jest.fn().mockResolvedValue({
-          prompt: '## Agent Memory\n- [fact] Team standards apply.',
-          stats: { runtime: 'chat', selected: { total: 1, instance: 1, template: 0, global: 0 } },
-        }),
-        recordConversation: jest.fn().mockResolvedValue([]),
+        preparePromptContext,
+        recordConversation,
       }),
     }));
 
@@ -168,6 +189,13 @@ describe('chatRuntime requested agent resolution', () => {
         }),
       })
     );
+    expect(preparePromptContext).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({
+        id: 'agent-1',
+        username: 'jarvis',
+        snipara_instance_id: 'snip-jarvis',
+      }),
+    }));
 
     expect(inserts).toHaveLength(1);
     expect(inserts[0]).toMatchObject({
@@ -186,5 +214,125 @@ describe('chatRuntime requested agent resolution', () => {
       llm_provider: 'anthropic',
       llm_model: 'claude-sonnet-4-20250514',
     });
+    expect(recordConversation).toHaveBeenCalledWith(expect.objectContaining({
+      agent: expect.objectContaining({
+        id: 'agent-1',
+        username: 'jarvis',
+      }),
+    }));
+  });
+
+  test('invalidates cached soul after remembering a conversation', async () => {
+    const preparePromptContext = jest.fn().mockResolvedValue({
+      prompt: '## Agent Memory\n- [fact] Team standards apply.',
+      stats: { runtime: 'chat', selected: { total: 1, instance: 1, template: 0, global: 0 } },
+    });
+    const recordConversation = jest.fn().mockResolvedValue([]);
+    let currentContent = 'Please remember that I prefer concise French replies for project updates.';
+
+    const poolQuery = jest.fn(async (sql) => {
+      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $2')) {
+        return {
+          rows: [{
+            id: 'agent-1',
+            name: 'Jarvis',
+            username: 'jarvis',
+            role: 'coordinator',
+            model: 'claude-sonnet-4',
+            provider: 'anthropic',
+            system_prompt: 'You are Jarvis.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+            capabilities: ['workspace_drive_write'],
+            snipara_instance_id: 'snip-jarvis',
+          }],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.chat_channel_members')) {
+        return {
+          rows: [{
+            id: 'agent-1',
+            name: 'Jarvis',
+            username: 'jarvis',
+            role: 'coordinator',
+            capabilities: ['workspace_drive_write'],
+            model: 'claude-sonnet-4',
+            provider: 'anthropic',
+            system_prompt: 'You are Jarvis.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+          }],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.chat_messages') && sql.includes('ORDER BY created_at DESC')) {
+        return {
+          rows: [{
+            id: 'msg-history',
+            sender_id: 'user-1',
+            sender_name: 'User',
+            content: currentContent,
+          }],
+        };
+      }
+
+      throw new Error(`Unexpected SQL in test: ${sql}`);
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
+    jest.doMock('../../services/llmRouter', () => ({
+      chat: jest.fn().mockResolvedValue({
+        content: 'Noted, I will keep replies concise in French.',
+        provider: 'anthropic',
+        model: 'claude-sonnet-4-20250514',
+        usage: { input_tokens: 12, output_tokens: 10 },
+      }),
+    }));
+    jest.doMock('../../services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        analyzeAndRoute: jest.fn().mockResolvedValue({ routed: false }),
+        resolveAgentExecutionContext: jest.fn(async (agent, workspaceId) => ({
+          ...agent,
+          workspace_id: workspaceId,
+          capabilities: agent.capabilities || [],
+        })),
+      }),
+    }));
+    jest.doMock('../../services/chatMessages', () => ({
+      insertChatMessage: jest.fn(async () => ({ id: 'reply-1' })),
+    }));
+    jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
+    jest.doMock('../../services/memory/runtime', () => ({
+      createMemoryRuntimeService: () => ({
+        preparePromptContext,
+        recordConversation,
+      }),
+    }));
+
+    const chatRuntime = require('../../app/custom/services/chatRuntime');
+
+    await chatRuntime.processMessage({
+      channel_id: 'chan-1',
+      workspace_id: 'ws-1',
+      sender_id: 'user-1',
+      sender_name: 'User',
+      content: currentContent,
+    });
+
+    currentContent = 'Second request with the same preference, please answer in concise French again.';
+
+    await chatRuntime.processMessage({
+      channel_id: 'chan-1',
+      workspace_id: 'ws-1',
+      sender_id: 'user-1',
+      sender_name: 'User',
+      content: currentContent,
+    });
+
+    expect(preparePromptContext).toHaveBeenCalledTimes(2);
+    expect(recordConversation).toHaveBeenCalledTimes(2);
   });
 });

@@ -38,7 +38,6 @@ run_test "Configuration Tests" "tests/config.test.js"
 run_test "Anthropic System Messages Fix" "tests/anthropic-fix.test.js"
 run_test "UI Pack Contract Tests" "tests/ui-pack.test.js"
 run_test "Core Permissions Tests" "tests/core-permissions.test.js"
-run_test "WhatsApp Mirror Tests" "tests/whatsapp-mirror.test.js"
 
 # Token usage aggregation (requires MongoDB)
 if [ -n "$MONGO_URL" ]; then

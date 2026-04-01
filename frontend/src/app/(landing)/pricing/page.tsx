@@ -7,7 +7,7 @@ import { CheckIcon, XMarkIcon, StarIcon } from '@heroicons/react/24/solid';
 
 // ─── Plan data from featureGate.js ────────────────────────────────────────────
 
-type PlanId = 'free' | 'office_starter' | 'office_team' | 'agents_starter' | 'agents_pro' | 'full' | 'enterprise' | 'beta';
+type PlanId = 'free' | 'office_starter' | 'office_team' | 'agents_starter' | 'agents_pro' | 'nexus_enterprise' | 'full' | 'enterprise' | 'beta';
 
 interface Plan {
   id: PlanId;
@@ -46,7 +46,7 @@ const PLANS: Plan[] = [
     tier: 'office',
     price: { monthly: 7900, yearly: 79000 },
     limits: { agents: 0, storage_gb: 50 },
-    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'whatsapp', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'goals', 'crm', 'pixel-office'],
   },
   {
     id: 'agents_starter',
@@ -67,6 +67,15 @@ const PLANS: Plan[] = [
     badge: 'Most Popular',
   },
   {
+    id: 'nexus_enterprise',
+    label: 'Nexus Enterprise',
+    tier: 'enterprise',
+    price: { monthly: 149000, yearly: 1490000 },
+    limits: { agents: 100, storage_gb: 100 },
+    features: ['agents', 'nexus', 'builder', 'sandbox', 'swarm', 'automations', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard', 'enterprise-node', 'enterprise-seats', 'governance'],
+    badge: 'Dedicated Runtime',
+  },
+  {
     id: 'full',
     label: 'Full Platform',
     tier: 'full',
@@ -79,8 +88,8 @@ const PLANS: Plan[] = [
     id: 'enterprise',
     label: 'Enterprise',
     tier: 'enterprise',
-    price: { monthly: 19900, yearly: 0 },
-    limits: { agents: 100, storage_gb: 250 },
+    price: { monthly: 0, yearly: 0 },
+    limits: { agents: -1, storage_gb: -1 },
     features: ['*'],
   },
   {
@@ -108,6 +117,16 @@ function fmtLimit(n: number): string {
   return String(n);
 }
 
+function planFootnote(plan: Plan): string | null {
+  if (plan.id === 'nexus_enterprise') {
+    return 'Includes 1 governed enterprise node and 5 seats. Add +5 seats for $390/mo or another governed node for $500/mo.';
+  }
+  if (plan.id === 'enterprise') {
+    return 'Custom packaging for multi-node rollouts, SLAs, and partner-led deployments.';
+  }
+  return null;
+}
+
 // ─── Feature comparison data ──────────────────────────────────────────────────
 
 interface ComparisonRow {
@@ -129,7 +148,6 @@ const COMPARISON_ROWS: ComparisonRow[] = [
   { label: 'CRM', key: 'crm', type: 'feature' },
   { label: 'Goals', key: 'goals', type: 'feature' },
   { label: 'Integrations', key: 'integrations', type: 'feature' },
-  { label: 'WhatsApp', key: 'whatsapp', type: 'feature' },
   { label: 'Agents', key: 'agents_feature', type: 'feature', getValue: (p) => p.features.includes('*') || p.features.includes('agents') },
   { label: 'Nexus CLI', key: 'nexus', type: 'feature' },
   { label: 'Builder', key: 'builder', type: 'feature' },
@@ -176,7 +194,7 @@ function tierColor(tier: string) {
 
 // ─── Card plans (main grid) ───────────────────────────────────────────────────
 
-const DISPLAY_PLANS: PlanId[] = ['free', 'office_starter', 'office_team', 'agents_starter', 'agents_pro', 'full', 'enterprise', 'beta'];
+const DISPLAY_PLANS: PlanId[] = ['free', 'office_starter', 'office_team', 'agents_starter', 'agents_pro', 'nexus_enterprise', 'full', 'enterprise', 'beta'];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -196,7 +214,7 @@ export default function PricingPage() {
             Pay for what you use
           </h1>
           <p className="text-xl text-white/50 max-w-2xl mx-auto mb-8">
-            No per-seat fees. No surprise bills. Full access to all features during Open Beta.
+            Clear pricing for office, agent, and dedicated Nexus Enterprise deployments. Enterprise packaging stays custom above that.
           </p>
 
           {/* Toggle */}
@@ -247,8 +265,7 @@ export default function PricingPage() {
 
                   {isCustom ? (
                     <div className="flex items-baseline gap-1">
-                      <span className={`text-2xl font-bold ${colors.text}`}>$199+</span>
-                      <span className="text-white/30 text-sm">/mo</span>
+                      <span className={`text-2xl font-bold ${colors.text}`}>Custom</span>
                     </div>
                   ) : isBeta ? (
                     <div className="flex items-baseline gap-1">
@@ -289,6 +306,12 @@ export default function PricingPage() {
                     <span className={`font-medium ${colors.text}`}>{plan.limits.storage_gb < 1 ? `${plan.limits.storage_gb * 1000}MB` : `${plan.limits.storage_gb}GB`}</span>
                   </div>
                 </div>
+
+                {planFootnote(plan) && (
+                  <p className="mb-5 rounded-xl border border-white/8 bg-[#0b0c14] px-3 py-2 text-xs leading-relaxed text-white/45">
+                    {planFootnote(plan)}
+                  </p>
+                )}
 
                 {/* CTA */}
                 {isCustom ? (
@@ -384,8 +407,8 @@ export default function PricingPage() {
             },
             {
               icon: '🧩',
-              title: 'Nexus add-on',
-              desc: 'Deploy agents on-premise with Nexus Clone ($19/node/mo) or Nexus Runtime ($39/node/mo). Extra agents: +$12/pack of 10.',
+              title: 'Nexus Enterprise scaling',
+              desc: 'Nexus Enterprise starts at $1,490/mo with 1 governed node and 5 seats included. Add +5 seats for $390/mo or an extra governed client node for $500/mo.',
             },
             {
               icon: '📦',

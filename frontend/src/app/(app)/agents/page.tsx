@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { getTemplateLaunchHref, getTemplateLaunchLabel } from '@/lib/template-launch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -266,6 +267,7 @@ function CategoryBadge({ category }: { category: string }) {
 // ─── Templates Tab ────────────────────────────────────────────────────────────
 
 function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<TemplateCategory>('All');
   const [installing, setInstalling] = useState<string | null>(null);
@@ -303,6 +305,12 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
   }, [templates, search, activeCategory]);
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
+    const launchHref = getTemplateLaunchHref(template);
+    if (launchHref) {
+      router.push(launchHref);
+      return;
+    }
+
     setInstalling(template.id);
     setInstallError(null);
     try {
@@ -455,7 +463,7 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
                         Creating...
                       </span>
                     ) : (
-                      'Use Template'
+                      getTemplateLaunchLabel(template) || 'Use Template'
                     )}
                   </Button>
                 </div>
@@ -509,6 +517,13 @@ export default function AgentsPage() {
   return (
     <>
       <PageHeader title="Agents" description="Manage your AI agents">
+        <Button
+          variant="outline"
+          className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]"
+          onClick={() => router.push('/browser-operator')}
+        >
+          Browser Operator
+        </Button>
         <Button
           className="bg-blue-600 hover:bg-blue-700 text-white"
           onClick={() => router.push('/agents/new')}

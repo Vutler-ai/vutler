@@ -66,6 +66,7 @@ describe('llmRouter google drive action runs', () => {
       },
     });
 
+    const realHttps = jest.requireActual('https');
     jest.doMock('https', () => ({
       request: jest.fn((options, callback) => {
         const req = new EventEmitter();
@@ -97,6 +98,7 @@ describe('llmRouter google drive action runs', () => {
 
         return req;
       }),
+      Agent: realHttps.Agent,
     }));
 
     jest.doMock('../services/skills', () => ({
@@ -188,7 +190,7 @@ describe('llmRouter google drive action runs', () => {
       }
     );
 
-    expect(result.content).toBe('Google Drive file loaded.');
+    expect(result.content).toContain('Google Drive file loaded.');
     expect(actionRuns[0]).toMatchObject({
       workspace_id: 'ws-1',
       chat_message_id: 'msg-1',

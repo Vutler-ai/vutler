@@ -725,6 +725,36 @@
     "category": "operations",
     "icon": "edit-3"
   },
+  "workspace_drive_create_folder": {
+    "name": "Workspace Drive Create Folder",
+    "description": "Create a real folder inside the internal workspace drive for workspace-scoped organization",
+    "category": "operations",
+    "icon": "folder-plus"
+  },
+  "vutler_calendar_list": {
+    "name": "Vutler Calendar List",
+    "description": "List events stored in the internal Vutler calendar",
+    "category": "operations",
+    "icon": "calendar"
+  },
+  "vutler_calendar_create": {
+    "name": "Vutler Calendar Create",
+    "description": "Create an event in the internal Vutler calendar",
+    "category": "operations",
+    "icon": "calendar-plus"
+  },
+  "vutler_calendar_update": {
+    "name": "Vutler Calendar Update",
+    "description": "Update an event in the internal Vutler calendar",
+    "category": "operations",
+    "icon": "calendar-check"
+  },
+  "vutler_calendar_delete": {
+    "name": "Vutler Calendar Delete",
+    "description": "Delete an event from the internal Vutler calendar",
+    "category": "operations",
+    "icon": "calendar-x"
+  },
   "google_drive_list": {
     "name": "Google Drive List",
     "description": "List files available through the connected Google Drive integration in read-only mode",

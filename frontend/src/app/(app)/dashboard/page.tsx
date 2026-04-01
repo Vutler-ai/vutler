@@ -9,6 +9,7 @@ import { getTemplates } from '@/lib/api/endpoints/marketplace';
 import { getTasks } from '@/lib/api/endpoints/tasks';
 import type { Agent, Task, MarketplaceTemplate } from '@/lib/api/types';
 import { getAvatarImageUrl, getStaticAvatarUrl } from '@/lib/avatar';
+import { getTemplateLaunchHref, getTemplateLaunchLabel } from '@/lib/template-launch';
 import {
   Card,
   CardContent,
@@ -425,6 +426,12 @@ function PopularTemplatesSection({
   const templates = data?.templates ?? [];
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
+    const launchHref = getTemplateLaunchHref(template);
+    if (launchHref) {
+      router.push(launchHref);
+      return;
+    }
+
     setInstalling(template.id);
     try {
       const agent = await createAgent({
@@ -523,7 +530,7 @@ function PopularTemplatesSection({
                     Creating...
                   </>
                 ) : (
-                  'Use Template'
+                  getTemplateLaunchLabel(template) || 'Use Template'
                 )}
               </button>
             </div>

@@ -15,7 +15,7 @@ Items shipped in the last ~50 commits:
 ## Active — Current Sprint
 Current focus, in active delivery flow:
 
-- Documentation P1/P2 completion
+- Documentation P1/P2 completion (SECURITY, `frontend/README`, `TOOLS`, and this roadmap) now includes actionable production readiness callouts for runtime, usage, LLM providers, and SSE observability.
 - `@vutler/local-daemon` (WebSocket git-sync client)
 - Provider stability monitoring
 - Microsoft 365 tenant validation for Nexus enterprise OAuth

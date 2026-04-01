@@ -1,0 +1,38 @@
+{
+  "key": "local_login_smoke_v1",
+  "version": "1.0.0",
+  "status": "active",
+  "managed_by": "platform",
+  "definition": {
+    "flow_key": "local_login_smoke_v1",
+    "name": "Local Login Smoke",
+    "steps": [
+      {
+        "action_key": "browser.open",
+        "input": {}
+      },
+      {
+        "action_key": "browser.login",
+        "input": {
+          "usernameSelector": "#username",
+          "passwordSelector": "#password",
+          "submitSelector": "button[type=submit]",
+          "successUrlContains": "/dashboard",
+          "successText": "Welcome"
+        }
+      },
+      {
+        "action_key": "browser.assert_url",
+        "input": {
+          "contains": "/dashboard"
+        }
+      },
+      {
+        "action_key": "browser.capture",
+        "input": {
+          "fullPage": true
+        }
+      }
+    ]
+  }
+}

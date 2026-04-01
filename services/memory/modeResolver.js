@@ -1,5 +1,8 @@
 'use strict';
 
+const { hasSniparaCapability } = require('../../packages/core/middleware/featureGate');
+const { getWorkspacePlanId } = require('../workspacePlanService');
+
 const SCHEMA = 'tenant_vutler';
 const MEMORY_MODE_DISABLED = 'disabled';
 const MEMORY_MODE_PASSIVE = 'passive';
@@ -74,6 +77,17 @@ async function resolveMemoryMode({ db = null, workspaceId = null, agent = null, 
       read: workspaceMode === MEMORY_MODE_ACTIVE,
       write: workspaceMode !== MEMORY_MODE_DISABLED,
       inject: workspaceMode === MEMORY_MODE_ACTIVE,
+    };
+  }
+
+  const workspacePlanId = await getWorkspacePlanId(db, workspaceId).catch(() => null);
+  if (workspacePlanId && hasSniparaCapability(workspacePlanId, 'memory')) {
+    return {
+      mode: MEMORY_MODE_ACTIVE,
+      source: 'plan',
+      read: true,
+      write: true,
+      inject: true,
     };
   }
 

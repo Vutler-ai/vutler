@@ -3,8 +3,19 @@
 const express = require('express');
 const router = express.Router();
 const taskRouter = require('../services/taskRouter');
-const { pool } = require('../lib/postgres');
-const SCHEMA = 'tenant_vutler';
+const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+
+function workspaceIdOf(req) {
+  return req.workspaceId || '00000000-0000-0000-0000-000000000001';
+}
+
+function mapLegacyEventName(event) {
+  if (event === 'task_created') return 'task.created';
+  if (event === 'task_completed') return 'task.completed';
+  if (event === 'task_updated') return 'task.updated';
+  if (event === 'task_failed') return 'task.failed';
+  return event;
+}
 
 // POST /sync — Snipara webhook endpoint
 router.post('/sync', async (req, res) => {
@@ -15,86 +26,29 @@ router.post('/sync', async (req, res) => {
       return res.status(400).json({ success: false, error: 'event and task are required' });
     }
 
-    console.log('[TaskSync] Received webhook:', event, task.swarm_task_id);
-
-    const { swarm_task_id, title, description, priority, status, metadata } = task;
-    const workspace_id = metadata?.workspace_id;
-
-    if (!workspace_id) {
+    const workspaceId = task?.metadata?.workspace_id || task?.workspace_id || req.workspaceId;
+    if (!workspaceId) {
       console.warn('[TaskSync] Missing workspace_id in metadata');
       return res.status(400).json({ success: false, error: 'workspace_id required in metadata' });
     }
 
-    // Check if this is an update to an existing Vutler task
-    const existing = await pool.query(
-      `SELECT * FROM ${SCHEMA}.tasks WHERE swarm_task_id = $1`,
-      [swarm_task_id]
+    const projected = await getSwarmCoordinator().projectWebhookEvent(
+      mapLegacyEventName(event),
+      {
+        task_id: task?.swarm_task_id || task?.task_id || task?.id,
+        swarm_id: task?.swarm_id || task?.metadata?.snipara_swarm_id || null,
+        title: task?.title,
+        description: task?.description,
+        priority: task?.priority,
+        status: task?.status,
+        assigned_to: task?.assigned_to || task?.assigned_agent || null,
+        workspace_id: workspaceId,
+        ...(task?.metadata || {}),
+      },
+      workspaceId
     );
 
-    if (event === 'task_created' && existing.rows.length === 0) {
-      // Create new task in Vutler from Snipara swarm
-      const result = await pool.query(
-        `INSERT INTO ${SCHEMA}.tasks (
-          title, description, priority, status, source, workspace_id, 
-          swarm_task_id, metadata, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-        RETURNING *`,
-        [
-          title,
-          description || null,
-          priority || 'P2',
-          'todo',
-          'snipara_swarm',
-          workspace_id,
-          swarm_task_id,
-          JSON.stringify(metadata || {})
-        ]
-      );
-
-      console.log('[TaskSync] Created task from swarm:', result.rows[0].id);
-      return res.json({ success: true, data: { task: result.rows[0], action: 'created' } });
-    }
-
-    if (event === 'task_completed' && existing.rows.length > 0) {
-      const result = await pool.query(
-        `UPDATE ${SCHEMA}.tasks 
-         SET status = 'done', resolved_at = NOW(), updated_at = NOW()
-         WHERE swarm_task_id = $1
-         RETURNING *`,
-        [swarm_task_id]
-      );
-
-      console.log('[TaskSync] Completed task from swarm:', result.rows[0].id);
-      return res.json({ success: true, data: { task: result.rows[0], action: 'completed' } });
-    }
-
-    if (event === 'task_updated' && existing.rows.length > 0) {
-      const updates = [];
-      const params = [swarm_task_id];
-      let idx = 2;
-
-      if (title) { updates.push(`title = $${idx++}`); params.push(title); }
-      if (description !== undefined) { updates.push(`description = $${idx++}`); params.push(description); }
-      if (priority) { updates.push(`priority = $${idx++}`); params.push(priority); }
-      if (status) { 
-        const vutlerStatus = status === 'completed' ? 'done' : status === 'in_progress' ? 'in_progress' : 'todo';
-        updates.push(`status = $${idx++}`); 
-        params.push(vutlerStatus); 
-      }
-
-      if (updates.length > 0) {
-        updates.push(`updated_at = NOW()`);
-        const result = await pool.query(
-          `UPDATE ${SCHEMA}.tasks SET ${updates.join(', ')} WHERE swarm_task_id = $1 RETURNING *`,
-          params
-        );
-
-        console.log('[TaskSync] Updated task from swarm:', result.rows[0].id);
-        return res.json({ success: true, data: { task: result.rows[0], action: 'updated' } });
-      }
-    }
-
-    res.json({ success: true, data: { action: 'ignored', reason: 'already exists or no action needed' } });
+    res.json({ success: true, data: { action: 'projected', task: projected } });
 
   } catch (err) {
     console.error('[TaskSync] Webhook error:', err.message);
@@ -109,7 +63,18 @@ router.post('/', async (req, res) => {
     if (!title) {
       return res.status(400).json({ success: false, error: 'title is required' });
     }
-    const task = await taskRouter.createTask({ title, description, source, source_ref, priority, due_date, created_by, workspace_id, assigned_agent, metadata });
+    const task = await taskRouter.createTask({
+      title,
+      description,
+      source,
+      source_ref,
+      priority,
+      due_date,
+      created_by,
+      workspace_id: workspaceIdOf(req),
+      assigned_agent,
+      metadata
+    });
     res.status(201).json({ success: true, data: task });
   } catch (err) {
     console.error('[TasksAPI] POST error:', err.message);
@@ -153,8 +118,8 @@ router.get('/due', async (req, res) => {
 // GET / — list tasks
 router.get('/', async (req, res) => {
   try {
-    const { status, assigned_agent, workspace_id } = req.query;
-    const tasks = await taskRouter.listTasks({ status, assigned_agent, workspace_id });
+    const { status, assigned_agent } = req.query;
+    const tasks = await taskRouter.listTasks({ status, assigned_agent, workspace_id: workspaceIdOf(req) });
     res.json({ success: true, data: tasks });
   } catch (err) {
     console.error('[TasksAPI] GET error:', err.message);
@@ -165,7 +130,7 @@ router.get('/', async (req, res) => {
 // GET /:id — get task
 router.get('/:id', async (req, res) => {
   try {
-    const task = await taskRouter.getTask(req.params.id);
+    const task = await taskRouter.getTask(req.params.id, workspaceIdOf(req));
     if (!task) {
       return res.status(404).json({ success: false, error: 'Task not found' });
     }
@@ -179,7 +144,7 @@ router.get('/:id', async (req, res) => {
 // PUT /:id — update task
 router.put('/:id', async (req, res) => {
   try {
-    const task = await taskRouter.updateTask(req.params.id, req.body);
+    const task = await taskRouter.updateTask(req.params.id, req.body, workspaceIdOf(req));
     if (!task) {
       return res.status(404).json({ success: false, error: 'Task not found' });
     }
@@ -193,7 +158,7 @@ router.put('/:id', async (req, res) => {
 // DELETE /:id — cancel task
 router.delete('/:id', async (req, res) => {
   try {
-    const task = await taskRouter.updateTask(req.params.id, { status: 'cancelled' });
+    const task = await taskRouter.updateTask(req.params.id, { status: 'cancelled' }, workspaceIdOf(req));
     if (!task) {
       return res.status(404).json({ success: false, error: 'Task not found' });
     }

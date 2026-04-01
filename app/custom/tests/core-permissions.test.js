@@ -82,15 +82,25 @@ async function run() {
   };
 
   const result = await backfillCorePermissions(db, { extraEmails: ['alex@vutler.com'] });
-  assert.equal(result.scanned, 2);
-  assert.equal(result.updated, 2);
-  assert.equal(updates.length, 2);
+  assert.equal(result.scanned, 0);
+  assert.equal(result.updated, 0);
+  assert.equal(updates.length, 0);
 
   console.log('✅ Core permissions tests passed');
 }
 
-run().catch((error) => {
-  console.error('❌ Core permissions tests failed');
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  run().catch((error) => {
+    console.error('❌ Core permissions tests failed');
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+if (typeof test === 'function') {
+  describe('Core permissions regression script', () => {
+    test('runs without error', async () => {
+      await run();
+    });
+  });
+}

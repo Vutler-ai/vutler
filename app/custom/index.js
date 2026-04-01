@@ -17,7 +17,6 @@ const usageAPI = require('./api/usage');
 const runtimeAPI = require('./api/runtime');
 const driveAPI = require('./api/drive-s3');
 const uiPackAPI = require('./api/ui-pack');
-const whatsappMirrorAPI = require('./api/whatsapp-mirror');
 const tasksV2API = require('./api/tasks-v2');
 const memoryAPI = require('./api/memory');
 const toolsAPI = require('./api/tools');
@@ -254,7 +253,6 @@ async function initializeVutler(app, httpServer) {
     app.use('/api/v1', runtimeAPI);
     app.use('/api/v1/drive', driveAPI);
     app.use('/api/v1', uiPackAPI);
-    app.use('/api/v1', whatsappMirrorAPI);
     app.use('/api/v1', tasksV2API);
     app.use('/api/v1', memoryAPI);
     app.use('/api/v1', toolsAPI);
@@ -315,7 +313,6 @@ async function initializeVutler(app, httpServer) {
     console.log('   - GET    /api/v1/inbox/approvals');
     console.log('   - POST   /api/v1/inbox/approvals/:id/decision');
     console.log('   - GET    /api/v1/calendar/events');
-    console.log('   - POST   /api/v1/whatsapp/mirror');
     
     // Start IMAP poller if configured (simplified, no MongoDB)
     if (process.env.IMAP_HOST && process.env.IMAP_USER && process.env.IMAP_PASS) {

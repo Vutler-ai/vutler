@@ -36,6 +36,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -893,6 +894,9 @@ function ComposeDialog({
       <DialogContent className="bg-zinc-900 border-zinc-800 text-white max-w-2xl w-full">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold">New Message</DialogTitle>
+          <DialogDescription className="text-zinc-400">
+            Compose and send an email from the current workspace inbox.
+          </DialogDescription>
         </DialogHeader>
 
         {sent ? (

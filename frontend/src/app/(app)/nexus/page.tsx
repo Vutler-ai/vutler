@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { getNodes, deployLocal, deployEnterprise } from '@/lib/api/endpoints/nexus';
 import {
@@ -21,6 +22,8 @@ import type {
   CreateClientPayload,
   AutoSpawnRule,
   EnterpriseProfileSelectionValidation,
+  NexusEnterpriseDriveRepo,
+  NexusTokenResponse,
 } from '@/lib/api/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -129,11 +132,13 @@ function DeployModal({
   onClose,
   initialMode,
   initialClientName,
+  initialProfileKey,
   billing,
 }: {
   onClose: () => void;
   initialMode?: DeployMode;
   initialClientName?: string;
+  initialProfileKey?: string;
   billing?: NexusBillingSnapshot | null;
 }) {
   const [step, setStep] = useState<DeployStep>(initialMode === 'local' ? 'local-config' : initialMode === 'enterprise' ? 'ent-basics' : 'select');
@@ -142,6 +147,7 @@ function DeployModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [enterpriseDriveRepo, setEnterpriseDriveRepo] = useState<NexusEnterpriseDriveRepo | null>(null);
 
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -163,7 +169,7 @@ function DeployModal({
   const [nodeName, setNodeName] = useState('');
   const [clientName, setClientName] = useState(initialClientName ?? '');
   const [seats, setSeats] = useState(5);
-  const [profileKey, setProfileKey] = useState('');
+  const [profileKey, setProfileKey] = useState(initialProfileKey ?? '');
   const [profileValidation, setProfileValidation] = useState<EnterpriseProfileSelectionValidation | null>(null);
   // Enterprise: step 2 — primary agent
   const [primaryAgentId, setPrimaryAgentId] = useState('');
@@ -199,6 +205,11 @@ function DeployModal({
       .finally(() => setProfilesLoading(false));
   }, [step, enterpriseProfiles.length, profilesLoading]);
 
+  useEffect(() => {
+    if (!initialProfileKey) return;
+    setProfileKey(initialProfileKey);
+  }, [initialProfileKey]);
+
   const selectedProfile = enterpriseProfiles.find((profile) => profile.key === profileKey) || null;
 
   const handleGenerate = async () => {
@@ -211,9 +222,13 @@ function DeployModal({
       setError('No enterprise Nexus quota remaining on the current billing plan.');
       return;
     }
+    if (mode === 'enterprise' && billing?.seats && billing.seats.total !== -1 && seats > billing.seats.available) {
+      setError(`Requested ${seats} seats, but only ${billing.seats.available} enterprise seat(s) are available on this workspace.`);
+      return;
+    }
     setLoading(true);
     try {
-      let result: { token: string };
+      let result: NexusTokenResponse;
       if (mode === 'local') {
         const permissions = { filesystem: permFilesystem, shell: permShell, mail: permMail, calendar: permCalendar, contacts: permContacts, clipboard: permClipboard };
         result = await deployLocal({
@@ -222,6 +237,7 @@ function DeployModal({
           permissions,
         } as any);
         setToken(result.token);
+        setEnterpriseDriveRepo(null);
         setStep('local-token');
       } else {
         if (!profileKey) {
@@ -246,6 +262,7 @@ function DeployModal({
           selectedHelperProfiles: profileValidation?.summary.selectedHelperProfiles,
         });
         setToken(result.token);
+        setEnterpriseDriveRepo(result.payload?.drive_repo ?? null);
         setStep('ent-token');
       }
     } catch (err) {
@@ -270,10 +287,14 @@ function DeployModal({
   const modeQuota = mode === 'enterprise'
     ? { remaining: billing?.remaining.enterprise, limit: billing?.limits.enterprise, label: 'Enterprise' }
     : { remaining: billing?.remaining.local, limit: billing?.limits.local, label: 'Local' };
+  const enterpriseSeatSummary = billing?.seats ?? null;
   const quotaBlocked = billing
     ? mode === 'enterprise'
       ? (!billing.canProvision.enterprise || !billing.canProvision.total)
       : (!billing.canProvision.local || !billing.canProvision.total)
+    : false;
+  const seatQuotaBlocked = mode === 'enterprise' && enterpriseSeatSummary?.total !== undefined && enterpriseSeatSummary.total !== -1
+    ? enterpriseSeatSummary.available <= 0
     : false;
 
   const stepLabel: Record<DeployStep, string> = {
@@ -420,9 +441,10 @@ function DeployModal({
 
             {error && <p className="text-red-400 text-sm">{error}</p>}
             {quotaBlocked && <p className="text-amber-400 text-sm">This billing plan cannot provision another {modeQuota.label.toLowerCase()} node.</p>}
+            {seatQuotaBlocked && <p className="text-amber-400 text-sm">No enterprise seats are left to allocate on this workspace.</p>}
             <button
               onClick={handleGenerate}
-              disabled={loading || quotaBlocked}
+              disabled={loading || quotaBlocked || seatQuotaBlocked}
               className="w-full py-2.5 bg-[#3b82f6] hover:bg-[#2563eb] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
             >
               {loading && <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
@@ -452,17 +474,25 @@ function DeployModal({
               <input
                 type="number"
                 min={1}
-                max={100}
+                max={enterpriseSeatSummary && enterpriseSeatSummary.available > 0 ? enterpriseSeatSummary.available : 100}
                 value={seats}
                 onChange={(e) => setSeats(Math.max(1, parseInt(e.target.value, 10) || 1))}
                 className={inputCls}
               />
-              <p className="text-xs text-[#6b7280]">How many agents can run concurrently on this node.</p>
+              <p className="text-xs text-[#6b7280]">
+                {enterpriseSeatSummary
+                  ? `How many agents can run concurrently on this node. ${formatQuotaValue(enterpriseSeatSummary.available)} seat(s) available to allocate on this workspace.`
+                  : 'How many agents can run concurrently on this node.'}
+              </p>
             </div>
             {error && <p className="text-red-400 text-sm">{error}</p>}
             <button
               onClick={() => {
                 if (!nodeName.trim() || !clientName.trim()) { setError('Node name and client name are required'); return; }
+                if (enterpriseSeatSummary && enterpriseSeatSummary.total !== -1 && seats > enterpriseSeatSummary.available) {
+                  setError(`Requested ${seats} seats, but only ${enterpriseSeatSummary.available} enterprise seat(s) are available on this workspace.`);
+                  return;
+                }
                 setError('');
                 setStep('ent-profile');
               }}
@@ -822,9 +852,44 @@ function DeployModal({
               </div>
             </div>
 
-            {/* ── Step 3: Setup via QR or CLI ── */}
+            {step === 'ent-token' && enterpriseDriveRepo && (
+              <div className="space-y-1.5">
+                <label className="text-xs text-[#9ca3af] uppercase tracking-wide">3. Drive Repo</label>
+                <div className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg p-3 space-y-3">
+                  <div>
+                    <p className="text-white text-sm font-medium">Enterprise Drive namespace provisioned</p>
+                    <p className="text-[#6b7280] text-xs mt-0.5">
+                      Use it immediately for client context, room inventories, playbooks, and generated reports.
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-[#111827] px-3 py-2">
+                    <p className="text-[#6b7280] uppercase tracking-wide text-[11px]">Root path</p>
+                    <p className="text-emerald-400 text-[11px] font-mono mt-1 break-all">{enterpriseDriveRepo.rootPath}</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 text-xs">
+                    <div className="rounded-lg bg-[#111827] px-3 py-2">
+                      <p className="text-[#6b7280] uppercase tracking-wide text-[11px]">Context</p>
+                      <p className="text-white font-mono mt-1 break-all">{enterpriseDriveRepo.sharedPaths.context}</p>
+                    </div>
+                    <div className="rounded-lg bg-[#111827] px-3 py-2">
+                      <p className="text-[#6b7280] uppercase tracking-wide text-[11px]">Inventory</p>
+                      <p className="text-white font-mono mt-1 break-all">{enterpriseDriveRepo.sharedPaths.inventory}</p>
+                    </div>
+                    <div className="rounded-lg bg-[#111827] px-3 py-2">
+                      <p className="text-[#6b7280] uppercase tracking-wide text-[11px]">Node imports</p>
+                      <p className="text-white font-mono mt-1 break-all">{enterpriseDriveRepo.nodePaths.imports}</p>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-amber-400">
+                    Put spreadsheets and context here first. Credentials can be imported from files, but should then move into governed registries or a vault.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 3/4: Setup via QR or CLI ── */}
             <div className="space-y-1.5">
-              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">3. Setup</label>
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">{step === 'ent-token' && enterpriseDriveRepo ? '4. Setup' : '3. Setup'}</label>
               <div className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg p-3 space-y-3">
                 <div className="flex items-start gap-3">
                   <span className="text-lg shrink-0">📱</span>
@@ -1140,6 +1205,27 @@ function BillingOverviewCard({ billing }: { billing: NexusBillingSnapshot }) {
           </div>
         ))}
       </div>
+
+      {billing.seats && (
+        <div className="pt-1 border-t border-[rgba(255,255,255,0.06)]">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <div>
+              <p className="text-white">Enterprise seats</p>
+              <p className="text-xs text-[#6b7280]">
+                {billing.seats.addOnSeats > 0
+                  ? `${billing.seats.included} included + ${billing.seats.addOnSeats} add-on`
+                  : `${billing.seats.included} included`}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-white font-medium">
+                {formatQuotaValue(billing.seats.available)} left / {formatQuotaValue(billing.seats.total)}
+              </p>
+              <p className="text-xs text-[#6b7280]">{billing.seats.allocated} allocated</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1472,6 +1558,7 @@ function EnterpriseTab({
 type ActiveTab = 'my-nodes' | 'enterprise';
 
 export default function NexusPage() {
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<ActiveTab>('my-nodes');
 
   const [nodes, setNodes] = useState<NexusNode[]>([]);
@@ -1488,6 +1575,7 @@ export default function NexusPage() {
   const [deployOpen, setDeployOpen] = useState(false);
   const [deployMode, setDeployMode] = useState<'local' | 'enterprise' | undefined>(undefined);
   const [deployClientName, setDeployClientName] = useState<string | undefined>(undefined);
+  const [deployProfileKey, setDeployProfileKey] = useState<string | undefined>(undefined);
   const [clientFormOpen, setClientFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | undefined>(undefined);
   const [deletingClient, setDeletingClient] = useState<Client | undefined>(undefined);
@@ -1538,12 +1626,14 @@ export default function NexusPage() {
   const openDeployLocal = () => {
     setDeployMode('local');
     setDeployClientName(undefined);
+    setDeployProfileKey(undefined);
     setDeployOpen(true);
   };
 
-  const openDeployEnterprise = (clientName?: string) => {
+  const openDeployEnterprise = (clientName?: string, profileKey?: string) => {
     setDeployMode('enterprise');
     setDeployClientName(clientName);
+    setDeployProfileKey(profileKey);
     setDeployOpen(true);
   };
 
@@ -1551,8 +1641,29 @@ export default function NexusPage() {
     setDeployOpen(false);
     setDeployMode(undefined);
     setDeployClientName(undefined);
+    setDeployProfileKey(undefined);
     fetchNodes();
   };
+
+  useEffect(() => {
+    const mode = searchParams.get('mode');
+    const profile = searchParams.get('profile') || undefined;
+
+    if (mode === 'enterprise') {
+      setActiveTab('enterprise');
+      setDeployMode('enterprise');
+      setDeployProfileKey(profile);
+      setDeployOpen(true);
+      return;
+    }
+
+    if (mode === 'local') {
+      setActiveTab('my-nodes');
+      setDeployMode('local');
+      setDeployProfileKey(undefined);
+      setDeployOpen(true);
+    }
+  }, [searchParams]);
 
   const handleEditClient = (client: Client) => {
     setEditingClient(client);
@@ -1652,6 +1763,7 @@ export default function NexusPage() {
           initialClientName={deployClientName}
           billing={billing}
           onClose={handleDeployClose}
+          initialProfileKey={deployProfileKey}
         />
       )}
 

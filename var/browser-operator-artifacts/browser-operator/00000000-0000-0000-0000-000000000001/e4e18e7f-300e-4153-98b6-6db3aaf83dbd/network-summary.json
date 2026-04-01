@@ -1,0 +1,10 @@
+{
+  "requests": 2,
+  "responsesByStatusClass": {
+    "2xx": 2,
+    "3xx": 0,
+    "4xx": 0,
+    "5xx": 0,
+    "other": 0
+  }
+}
