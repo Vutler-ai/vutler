@@ -36,31 +36,67 @@ const PLANS: PlanInfo[] = [
     features: ["1 Agent", "500 messages/mo", "1 GB storage"],
   },
   {
-    name: "Starter",
-    key: "plan_starter",
-    price: 19,
+    name: "Office Starter",
+    key: "plan_office_starter",
+    price: 29,
     icon: Zap,
     color: "text-blue-400",
     bg: "bg-blue-500/10",
-    features: ["5 Agents", "5,000 messages/mo", "5 GB storage", "Email integration"],
+    features: ["Office workspace", "Chat, Drive, Email, Tasks", "10 GB storage"],
   },
   {
-    name: "Team",
-    key: "plan_team",
-    price: 49,
+    name: "Office Team",
+    key: "plan_office_team",
+    price: 79,
+    icon: Star,
+    color: "text-cyan-400",
+    bg: "bg-cyan-500/10",
+    features: ["Expanded office capacity", "100 GB storage", "Goals and CRM"],
+  },
+  {
+    name: "Agents Starter",
+    key: "plan_agents_starter",
+    price: 29,
+    icon: Zap,
+    color: "text-violet-400",
+    bg: "bg-violet-500/10",
+    features: ["25 agents", "Nexus local", "Builder and runtime"],
+  },
+  {
+    name: "Agents Pro",
+    key: "plan_agents_pro",
+    price: 79,
     icon: Star,
     color: "text-amber-400",
     bg: "bg-amber-500/10",
-    features: ["25 Agents", "25,000 messages/mo", "25 GB storage", "All integrations", "Priority support"],
+    features: ["100 agents", "Larger Nexus local capacity", "Advanced agent runtime"],
   },
   {
-    name: "Enterprise",
+    name: "Nexus Enterprise",
+    key: "plan_nexus_enterprise",
+    price: 1490,
+    icon: Crown,
+    color: "text-orange-400",
+    bg: "bg-orange-500/10",
+    features: ["1 enterprise node", "5 included seats", "Governed on-site runtime", "Specialized enterprise agents"],
+  },
+  {
+    name: "Full Platform",
+    key: "plan_full",
+    price: 129,
+    icon: TrendingUp,
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10",
+    features: ["Office + Agents", "100 agents", "10 local Nexus nodes"],
+  },
+  {
+    name: "Platform Enterprise",
     key: "plan_enterprise",
-    price: 199,
+    price: 0,
     icon: Crown,
     color: "text-purple-400",
     bg: "bg-purple-500/10",
-    features: ["Unlimited Agents", "Unlimited messages", "1 TB storage", "Custom integrations", "SLA", "Dedicated support"],
+    features: ["Custom contracts", "Dedicated support", "Advanced SLAs"],
   },
   {
     name: "Beta",
@@ -101,11 +137,20 @@ export default function AdminPlansPage() {
   }
 
   const totalPaying =
-    Number(stats.plan_starter) + Number(stats.plan_team) + Number(stats.plan_enterprise);
+    Number(stats.plan_office_starter || 0) +
+    Number(stats.plan_office_team || 0) +
+    Number(stats.plan_agents_starter || 0) +
+    Number(stats.plan_agents_pro || 0) +
+    Number(stats.plan_nexus_enterprise || 0) +
+    Number(stats.plan_full || 0) +
+    Number(stats.plan_enterprise || 0);
   const mrr =
-    Number(stats.plan_starter) * 19 +
-    Number(stats.plan_team) * 49 +
-    Number(stats.plan_enterprise) * 199;
+    Number(stats.plan_office_starter || 0) * 29 +
+    Number(stats.plan_office_team || 0) * 79 +
+    Number(stats.plan_agents_starter || 0) * 29 +
+    Number(stats.plan_agents_pro || 0) * 79 +
+    Number(stats.plan_nexus_enterprise || 0) * 1490 +
+    Number(stats.plan_full || 0) * 129;
   const arr = mrr * 12;
 
   return (
@@ -129,7 +174,7 @@ export default function AdminPlansPage() {
             <span className="text-xs text-muted-foreground">MRR</span>
           </div>
           <div className="text-2xl font-bold text-emerald-400">
-            CHF {mrr.toLocaleString()}
+            ${mrr.toLocaleString()}
           </div>
         </div>
         <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-5">
@@ -138,7 +183,7 @@ export default function AdminPlansPage() {
             <span className="text-xs text-muted-foreground">ARR</span>
           </div>
           <div className="text-2xl font-bold text-blue-400">
-            CHF {arr.toLocaleString()}
+            ${arr.toLocaleString()}
           </div>
         </div>
         <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-5">
@@ -179,7 +224,7 @@ export default function AdminPlansPage() {
                   <div>
                     <h3 className="font-semibold">{plan.name}</h3>
                     <p className="text-xs text-muted-foreground">
-                      {plan.price > 0 ? `CHF ${plan.price}/mo` : "Free"}
+                      {plan.price > 0 ? `$${plan.price}/mo` : "Custom / Free"}
                     </p>
                   </div>
                 </div>
@@ -192,7 +237,7 @@ export default function AdminPlansPage() {
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground">Monthly revenue</span>
                     <span className="font-medium text-emerald-400">
-                      CHF {revenue.toLocaleString()}
+                      ${revenue.toLocaleString()}
                     </span>
                   </div>
                 </div>

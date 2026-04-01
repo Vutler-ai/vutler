@@ -12,7 +12,9 @@ const {
 const { validateProfileSelection } = require('../services/nexusEnterpriseProvisioning');
 const {
   createEventSubscription,
+  getEventSubscriptionById,
   listEventSubscriptions,
+  updateEventSubscription,
 } = require('../services/nexusEnterpriseEventSubscriptions');
 const {
   provisionEventSubscription,
@@ -25,7 +27,8 @@ function getVersionParam(value) {
 }
 
 function handleRegistryError(res, error) {
-  const status = error?.code === 'NEXUS_ENTERPRISE_REGISTRY_INVALID' ? 500 : 500;
+  console.error('[nexus-enterprise] Registry error:', error);
+  const status = error?.statusCode || 500;
   return res.status(status).json({
     success: false,
     error: error?.message || 'Failed to load Nexus Enterprise registry',
@@ -187,6 +190,80 @@ router.post('/event-subscriptions', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error?.message || 'Failed to create event subscription',
+    });
+  }
+});
+
+router.patch('/event-subscriptions/:id', async (req, res) => {
+  try {
+    if (!req.workspaceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const current = await getEventSubscriptionById(req.params.id, req.workspaceId);
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Subscription not found' });
+    }
+
+    const payload = req.body || {};
+    const updated = await updateEventSubscription(
+      req.params.id,
+      {
+        provider: current.provider,
+        status: payload.status,
+        provisioningMode: payload.provisioningMode,
+        provisioningStatus: payload.provisioningStatus,
+        provisioningError: payload.provisioningError,
+        sourceResource: payload.sourceResource,
+        roomName: payload.roomName,
+        events: payload.events,
+        configPatch: payload.configPatch,
+      },
+      req.workspaceId
+    );
+
+    res.json({ success: true, data: { subscription: updated } });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to update event subscription',
+    });
+  }
+});
+
+router.post('/event-subscriptions/:id/retry', async (req, res) => {
+  try {
+    if (!req.workspaceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const current = await getEventSubscriptionById(req.params.id, req.workspaceId);
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Subscription not found' });
+    }
+
+    const payload = req.body || {};
+    const prepared = await updateEventSubscription(
+      req.params.id,
+      {
+        provider: current.provider,
+        provisioningMode: payload.provisioningMode || current.provisioningMode,
+        provisioningStatus: 'pending',
+        provisioningError: null,
+        configPatch: {
+          retryRequestedAt: new Date().toISOString(),
+          retryRequestedBy: 'workspace',
+        },
+      },
+      req.workspaceId
+    );
+
+    const provisioned = await provisionEventSubscription(req.workspaceId, prepared);
+    res.json({ success: true, data: { subscription: provisioned } });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error?.message || 'Failed to retry event subscription provisioning',
     });
   }
 });

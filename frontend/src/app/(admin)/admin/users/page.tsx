@@ -17,13 +17,27 @@ import {
   Check,
 } from "lucide-react";
 
-const PLANS = ["free", "starter", "team", "enterprise", "beta"] as const;
+const PLANS = [
+  "free",
+  "office_starter",
+  "office_team",
+  "agents_starter",
+  "agents_pro",
+  "nexus_enterprise",
+  "full",
+  "enterprise",
+  "beta",
+] as const;
 const ROLES = ["user", "admin", "banned"] as const;
 
 const planBadge: Record<string, { color: string; icon: typeof Crown }> = {
   free: { color: "text-gray-400 bg-gray-500/10", icon: Users },
-  starter: { color: "text-blue-400 bg-blue-500/10", icon: Zap },
-  team: { color: "text-amber-400 bg-amber-500/10", icon: Star },
+  office_starter: { color: "text-blue-400 bg-blue-500/10", icon: Zap },
+  office_team: { color: "text-cyan-400 bg-cyan-500/10", icon: Star },
+  agents_starter: { color: "text-violet-400 bg-violet-500/10", icon: Zap },
+  agents_pro: { color: "text-amber-400 bg-amber-500/10", icon: Star },
+  nexus_enterprise: { color: "text-orange-400 bg-orange-500/10", icon: Crown },
+  full: { color: "text-emerald-400 bg-emerald-500/10", icon: Star },
   enterprise: { color: "text-purple-400 bg-purple-500/10", icon: Crown },
   beta: { color: "text-emerald-400 bg-emerald-500/10", icon: Zap },
 };
