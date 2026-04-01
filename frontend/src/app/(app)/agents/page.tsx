@@ -266,6 +266,7 @@ function CategoryBadge({ category }: { category: string }) {
 // ─── Templates Tab ────────────────────────────────────────────────────────────
 
 function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<TemplateCategory>('All');
   const [installing, setInstalling] = useState<string | null>(null);
@@ -303,6 +304,20 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
   }, [templates, search, activeCategory]);
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
+    const launchSurface = typeof template.permissions?.launch_surface === 'string'
+      ? template.permissions.launch_surface
+      : null;
+    const isBrowserOperatorTemplate =
+      launchSurface === '/browser-operator' ||
+      template.permissions?.browser_operator === true ||
+      template.name === 'Synthetic User QA' ||
+      template.description.toLowerCase().includes('browser-based testing agent');
+
+    if (isBrowserOperatorTemplate) {
+      router.push(launchSurface || '/browser-operator');
+      return;
+    }
+
     setInstalling(template.id);
     setInstallError(null);
     try {
@@ -455,7 +470,9 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
                         Creating...
                       </span>
                     ) : (
-                      'Use Template'
+                      template.permissions?.browser_operator === true || template.name === 'Synthetic User QA'
+                        ? 'Open Browser Operator'
+                        : 'Use Template'
                     )}
                   </Button>
                 </div>

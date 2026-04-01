@@ -425,6 +425,20 @@ function PopularTemplatesSection({
   const templates = data?.templates ?? [];
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
+    const launchSurface = typeof template.permissions?.launch_surface === 'string'
+      ? template.permissions.launch_surface
+      : null;
+    const isBrowserOperatorTemplate =
+      launchSurface === '/browser-operator' ||
+      template.permissions?.browser_operator === true ||
+      template.name === 'Synthetic User QA' ||
+      template.description.toLowerCase().includes('browser-based testing agent');
+
+    if (isBrowserOperatorTemplate) {
+      router.push(launchSurface || '/browser-operator');
+      return;
+    }
+
     setInstalling(template.id);
     try {
       const agent = await createAgent({
@@ -523,7 +537,9 @@ function PopularTemplatesSection({
                     Creating...
                   </>
                 ) : (
-                  'Use Template'
+                  template.permissions?.browser_operator === true || template.name === 'Synthetic User QA'
+                    ? 'Open Browser Operator'
+                    : 'Use Template'
                 )}
               </button>
             </div>

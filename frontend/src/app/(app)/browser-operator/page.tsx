@@ -381,30 +381,36 @@ export default function BrowserOperatorPage() {
                   <div className="space-y-2">
                     <div className="text-sm font-semibold text-white">Evidence</div>
                     <div className="max-h-64 space-y-2 overflow-auto pr-1">
-                      {selectedEvidence.map((item) => (
-                        <div
-                          key={item.id}
-                          className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0f1017] px-3 py-2 text-xs"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-medium text-white">{item.artifact_kind}</span>
-                            <span className="text-[#6b7280]">{item.mime_type || 'artifact'}</span>
+                      {selectedEvidence.map((item) => {
+                        const metadata = item.metadata as Record<string, unknown>;
+                        const downloadUrl = typeof metadata.download_url === 'string' ? metadata.download_url : '';
+                        const filePath = typeof metadata.file_path === 'string' ? metadata.file_path : '';
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0f1017] px-3 py-2 text-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-white">{item.artifact_kind}</span>
+                              <span className="text-[#6b7280]">{item.mime_type || 'artifact'}</span>
+                            </div>
+                            {downloadUrl && (
+                              <a
+                                href={downloadUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 block text-blue-400 hover:text-blue-300"
+                              >
+                                Open artifact
+                              </a>
+                            )}
+                            {filePath && (
+                              <div className="mt-1 break-all text-[#9ca3af]">{filePath}</div>
+                            )}
                           </div>
-                          {item.metadata?.download_url && (
-                            <a
-                              href={String(item.metadata.download_url)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mt-1 block text-blue-400 hover:text-blue-300"
-                            >
-                              Open artifact
-                            </a>
-                          )}
-                          {item.metadata?.file_path && (
-                            <div className="mt-1 break-all text-[#9ca3af]">{String(item.metadata.file_path)}</div>
-                          )}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </>

@@ -882,6 +882,7 @@ export interface MarketplaceTemplate {
   avatar?: string | null;
   skills?: string[];
   tags?: string[];
+  permissions?: Record<string, unknown>;
   author?: string;
   rating?: number;
   avg_rating?: number;
