@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import Script from "next/script";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { CookieConsentProvider } from "@/components/legal/cookie-consent";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -34,15 +34,10 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="antialiased">
-        {children}
-        <ServiceWorkerRegister />
-        {/* Umami Analytics - Privacy-focused, no cookies */}
-        <Script
-          defer
-          src="https://cloud.umami.is/script.js"
-          data-website-id="223241c1-605f-4afe-8dc7-3a8a59c06d68"
-          strategy="afterInteractive"
-        />
+        <CookieConsentProvider>
+          {children}
+          <ServiceWorkerRegister />
+        </CookieConsentProvider>
       </body>
     </html>
   );

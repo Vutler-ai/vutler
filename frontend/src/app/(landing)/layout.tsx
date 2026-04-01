@@ -4,6 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { CookieSettingsButton } from '@/components/legal/cookie-settings-button';
 
 function LandingNavbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -159,6 +160,10 @@ function LandingFooter() {
             <ul className="space-y-2">
               <li><Link href="/privacy" className="text-sm text-white/40 hover:text-white transition-colors">Privacy Policy</Link></li>
               <li><Link href="/terms" className="text-sm text-white/40 hover:text-white transition-colors">Terms of Service</Link></li>
+              <li><Link href="/cookies" className="text-sm text-white/40 hover:text-white transition-colors">Cookie Policy</Link></li>
+              <li><Link href="/dpa" className="text-sm text-white/40 hover:text-white transition-colors">DPA</Link></li>
+              <li><Link href="/subprocessors" className="text-sm text-white/40 hover:text-white transition-colors">Subprocessors</Link></li>
+              <li><Link href="/legal-notice" className="text-sm text-white/40 hover:text-white transition-colors">Legal Notice</Link></li>
               <li><Link href="/security" className="text-sm text-white/40 hover:text-white transition-colors">Security</Link></li>
               <li><a href="mailto:info@starbox-group.com" className="text-sm text-white/40 hover:text-white transition-colors">Contact</a></li>
             </ul>
@@ -170,6 +175,10 @@ function LandingFooter() {
             &copy; {new Date().getFullYear()} Vutler. All rights reserved.
           </p>
           <div className="flex items-center gap-4">
+            <CookieSettingsButton
+              variant="link"
+              className="h-auto p-0 text-xs text-white/30 hover:text-white/60"
+            />
             <span className="text-xs text-white/20">AGPL-3.0 Licensed</span>
             <span className="text-white/10">·</span>
             <a href="https://github.com/Vutler-ai/vutler" target="_blank" rel="noopener noreferrer" className="text-xs text-white/30 hover:text-white/60 transition-colors">

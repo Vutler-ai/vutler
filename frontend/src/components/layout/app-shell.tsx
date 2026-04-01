@@ -8,6 +8,7 @@ import BottomNav from './bottom-nav';
 import OfflineBanner from '../offline-banner';
 import PWAInstallPrompt from '../pwa-install-prompt';
 import PushPermission from '../push-permission';
+import { CookieSettingsButton } from '@/components/legal/cookie-settings-button';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useFeatures } from '@/hooks/useFeatures';
 import { findGuardedFeature } from '@/lib/auth/route-access';
@@ -131,6 +132,10 @@ export default function AppShell({
               >
                 Privacy
               </a>
+              <CookieSettingsButton
+                variant="link"
+                className="h-auto p-0 text-sm text-[#9ca3af] hover:text-white"
+              />
             </nav>
           </div>
         </footer>

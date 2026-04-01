@@ -1,4 +1,4 @@
-export const LANDING_ROUTES = ['/', '/pricing', '/about', '/docs', '/privacy', '/terms', '/security', '/setup-llm'] as const;
+export const LANDING_ROUTES = ['/', '/pricing', '/about', '/docs', '/privacy', '/terms', '/cookies', '/dpa', '/subprocessors', '/security', '/legal-notice', '/setup-llm'] as const;
 
 export const AUTH_ROUTES = ['/login', '/register', '/forgot-password'] as const;
 
