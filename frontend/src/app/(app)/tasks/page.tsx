@@ -108,6 +108,16 @@ function getMetadataNumber(metadata: TaskMetadata, key: string): number | null {
   return null;
 }
 
+function getMetadataBoolean(metadata: TaskMetadata, key: string): boolean | null {
+  const value = metadata[key];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value === "true") return true;
+    if (value === "false") return false;
+  }
+  return null;
+}
+
 function getMetadataObject(metadata: TaskMetadata, key: string): Record<string, unknown> | null {
   const value = metadata[key];
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -352,6 +362,13 @@ function summarizeRunEvent(event: OrchestrationRunEvent): string {
   if (event.event_type === "run.resumed") return "Run resumed";
   if (event.event_type === "verify.passed") return "Verification passed";
   if (event.event_type === "verify.failed") return "Verification failed";
+  if (event.event_type === "delegate.task_blocked") return "Delegated task blocked";
+  if (event.event_type === "delegate.task_resumed" || event.event_type === "watchdog.task_unblocked") {
+    return "Delegated task resumed";
+  }
+  if (event.event_type === "delegate.task_closure_ready" || event.event_type === "watchdog.task_closure_ready") {
+    return "Delegated task closure-ready";
+  }
   if (event.event_type === "delegate.phase_queued") {
     return String(payload.phase_title || "Next phase queued");
   }
@@ -359,6 +376,39 @@ function summarizeRunEvent(event: OrchestrationRunEvent): string {
     return String(payload.delegated_task_agent || "Delegated task created");
   }
   return humanizeStatus(event.event_type);
+}
+
+function describeRunEvent(event: OrchestrationRunEvent): string | null {
+  const payload = (event.payload || {}) as Record<string, unknown>;
+  const blockerReason = typeof payload.blocker_reason === "string" ? payload.blocker_reason.trim() : "";
+  const blockerType = typeof payload.blocker_type === "string" ? payload.blocker_type.trim() : "";
+  const resolution = typeof payload.resolution === "string" ? payload.resolution.trim() : "";
+  const note = typeof payload.note === "string" ? payload.note.trim() : "";
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
+  const summary = typeof payload.summary === "string" ? payload.summary.trim() : "";
+  const autoClosedParent = typeof payload.auto_closed_parent === "string" ? payload.auto_closed_parent.trim() : "";
+  const closedWithWaiver = typeof payload.closed_with_waiver === "boolean" ? payload.closed_with_waiver : null;
+
+  if (event.event_type === "delegate.task_blocked") {
+    const parts = [blockerReason, blockerType ? `Type: ${humanizeStatus(blockerType)}` : ""].filter(Boolean);
+    return parts.join(" · ") || "Waiting for an external unblock signal.";
+  }
+  if (event.event_type === "delegate.task_resumed" || event.event_type === "watchdog.task_unblocked") {
+    return resolution || "A blocker was cleared and the run resumed.";
+  }
+  if (event.event_type === "delegate.task_closure_ready" || event.event_type === "watchdog.task_closure_ready") {
+    const parts = [
+      resolution,
+      closedWithWaiver === true ? "Closed with waiver" : "",
+      autoClosedParent ? `Parent: ${autoClosedParent}` : "",
+    ].filter(Boolean);
+    return parts.join(" · ") || "Snipara marked the delegated task ready for closure.";
+  }
+  if (event.event_type === "run.awaiting_approval") return summary || "Waiting for human approval.";
+  if (event.event_type === "run.failed") return message || null;
+  if (event.event_type === "run.cancelled" || event.event_type === "run.resumed") return note || null;
+  if (event.event_type === "verify.failed") return message || summary || null;
+  return null;
 }
 
 function summarizeRunStep(step: OrchestrationRunStep): string {
@@ -545,6 +595,12 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
   const phaseIndex = getMetadataNumber(taskMetadata, "orchestration_phase_index");
   const phaseCount = getMetadataNumber(taskMetadata, "orchestration_phase_count");
   const phaseTitle = getMetadataString(taskMetadata, "orchestration_phase_title");
+  const blockerType = getMetadataString(taskMetadata, "orchestration_blocker_type");
+  const blockerReason = getMetadataString(taskMetadata, "orchestration_blocker_reason");
+  const lastResolution = getMetadataString(taskMetadata, "orchestration_last_resolution");
+  const closureReady = getMetadataBoolean(taskMetadata, "orchestration_closure_ready");
+  const closedWithWaiver = getMetadataBoolean(taskMetadata, "orchestration_closed_with_waiver");
+  const autoClosedParent = getMetadataString(taskMetadata, "orchestration_auto_closed_parent");
 
   const fetchSubtasks = useCallback(async () => {
     if (!task) return;
@@ -853,6 +909,34 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
                 </div>
               )}
 
+              {(blockerReason || lastResolution) && (
+                <div className="p-3 rounded-lg bg-sky-500/8 border border-sky-500/20">
+                  <p className="text-xs text-sky-300 font-medium mb-1">Snipara signal</p>
+                  {blockerReason ? (
+                    <p className="text-sm text-[#e5e7eb]">
+                      Blocker: {blockerReason}
+                      {blockerType ? ` (${humanizeStatus(blockerType)})` : ""}
+                    </p>
+                  ) : null}
+                  {lastResolution ? (
+                    <p className="text-sm text-[#cbd5e1] mt-1">Resolution: {lastResolution}</p>
+                  ) : null}
+                </div>
+              )}
+
+              {closureReady && (
+                <div className="p-3 rounded-lg bg-emerald-500/8 border border-emerald-500/20">
+                  <p className="text-xs text-emerald-300 font-medium mb-1">Closure state</p>
+                  <p className="text-sm text-[#e5e7eb]">
+                    Delegated task reached Snipara closure-ready state.
+                  </p>
+                  <p className="text-sm text-[#cbd5e1] mt-1">
+                    {closedWithWaiver ? "Closed with waiver." : "Closed without waiver."}
+                    {autoClosedParent ? ` Parent: ${autoClosedParent}.` : ""}
+                  </p>
+                </div>
+              )}
+
               {loadingRun ? (
                 <div className="space-y-2">
                   <Skeleton className="h-3 w-40 bg-[#1e293b]" />
@@ -928,6 +1012,11 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
                           {item.kind === "event" && (item.data as OrchestrationRunEvent).actor && (
                             <p className="text-[11px] text-[#94a3b8] mt-1">
                               Actor: {(item.data as OrchestrationRunEvent).actor}
+                            </p>
+                          )}
+                          {item.kind === "event" && describeRunEvent(item.data as OrchestrationRunEvent) && (
+                            <p className="text-[11px] text-[#cbd5e1] mt-1">
+                              {describeRunEvent(item.data as OrchestrationRunEvent)}
                             </p>
                           )}
                         </div>
