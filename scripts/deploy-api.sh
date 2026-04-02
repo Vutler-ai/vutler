@@ -8,6 +8,32 @@ SHORT_SHA="$(cd "$REPO_ROOT" && git rev-parse --short "$REVISION")"
 TAG="vutler-api:${SHORT_SHA}-$(date +%Y%m%d-%H%M%S)"
 ENV_FILE=/tmp/vutler-api-runtime.env
 RUNBOOK_PATH="docs/runbooks/vutler-api-key-rotation.md"
+RELEASES_DIR="$DEPLOY_ROOT/releases"
+DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DEPLOY_METHOD="deploy-api"
+SMOKE_STATUS="health-only"
+
+write_release_record() {
+  local api_image_id worker_image_id release_file
+
+  mkdir -p "$RELEASES_DIR"
+  api_image_id="$(docker inspect -f '{{.Image}}' vutler-api 2>/dev/null || true)"
+  worker_image_id="$(docker inspect -f '{{.Image}}' vutler-sandbox-worker 2>/dev/null || true)"
+  release_file="${RELEASES_DIR}/${DEPLOYED_AT//:/-}-${SHORT_SHA}.env"
+
+  cat > "$release_file" <<EOF
+DEPLOY_METHOD=$DEPLOY_METHOD
+DEPLOYED_AT=$DEPLOYED_AT
+DEPLOY_REVISION=$(cd "$DEPLOY_ROOT" && git rev-parse HEAD)
+DEPLOY_SHORT_SHA=$SHORT_SHA
+DEPLOY_TAG=$TAG
+SMOKE_STATUS=$SMOKE_STATUS
+API_IMAGE_ID=$api_image_id
+WORKER_IMAGE_ID=$worker_image_id
+EOF
+
+  cp "$release_file" "$DEPLOY_ROOT/current-release.env"
+}
 
 require_env_var() {
   local var_name=$1
@@ -52,6 +78,11 @@ docker run -d \
   --network vutler_vutler-network \
   -p 127.0.0.1:3001:3001 \
   --env-file "$ENV_FILE" \
+  -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+  -e "VUTLER_RELEASE_REVISION=$(cd "$DEPLOY_ROOT" && git rev-parse HEAD)" \
+  -e "VUTLER_RELEASE_SHORT_SHA=$SHORT_SHA" \
+  -e "VUTLER_RELEASE_TAG=$TAG" \
+  -e "VUTLER_RELEASE_DEPLOYED_AT=$DEPLOYED_AT" \
   --health-cmd 'curl -f http://localhost:3001/api/v1/health || exit 1' \
   --health-interval 30s \
   --health-timeout 10s \
@@ -69,6 +100,11 @@ docker run -d \
   --network vutler_vutler-network \
   --no-healthcheck \
   --env-file "$ENV_FILE" \
+  -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+  -e "VUTLER_RELEASE_REVISION=$(cd "$DEPLOY_ROOT" && git rev-parse HEAD)" \
+  -e "VUTLER_RELEASE_SHORT_SHA=$SHORT_SHA" \
+  -e "VUTLER_RELEASE_TAG=$TAG" \
+  -e "VUTLER_RELEASE_DEPLOYED_AT=$DEPLOYED_AT" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   vutler-api:latest \
   node workers/sandbox-worker.js >/dev/null
@@ -83,6 +119,7 @@ for i in $(seq 1 25); do
 done
 
 curl -fsS http://127.0.0.1:3001/api/v1/health >/dev/null
+write_release_record
 echo "DEPLOY_OK tag=$TAG"
 echo "DEPLOY_REVISION=$(cd "$DEPLOY_ROOT" && git rev-parse HEAD)"
 echo "Next: ./scripts/smoke-test.sh"

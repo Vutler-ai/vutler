@@ -37,6 +37,7 @@ Default behavior:
 - restarts `vutler-api` on the previous image
 - restarts `vutler-frontend` on the previous image when available
 - runs the smoke test from the recorded deploy directory
+- refreshes `/home/ubuntu/vutler-deploy/current-release.env` after a successful rollback
 
 Useful flags:
 - `--rollback-note <path>` to target a specific rollback note
@@ -64,6 +65,12 @@ Expected:
 - `vutler-api` healthy
 - `vutler-frontend` healthy
 - smoke test passes
+
+Recommended follow-up:
+
+```bash
+./scripts/production-state-audit.sh --strict
+```
 
 ## Hard Rules
 

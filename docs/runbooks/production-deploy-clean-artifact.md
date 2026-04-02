@@ -65,6 +65,7 @@ The script:
 - rebuilds `vutler-api`
 - optionally rebuilds `vutler-frontend`
 - runs `./scripts/smoke-test.sh` unless told not to
+- updates `/home/ubuntu/vutler-deploy/current-release.env` after a successful promotion
 
 It still enforces the same rule: the target commit must already be contained in `origin/main`.
 
@@ -220,6 +221,12 @@ cd "$DEPLOY_DIR"
 
 Expected:
 - `10/10 passed`
+
+Recommended follow-up:
+
+```bash
+./scripts/production-state-audit.sh --strict
+```
 
 ## Hard Rules
 

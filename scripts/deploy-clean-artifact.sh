@@ -217,6 +217,35 @@ SKIP_SMOKE="$5"
 API_ENV_FILE=/tmp/vutler-api-runtime.env
 FRONTEND_ENV_FILE=/tmp/vutler-frontend-runtime.env
 ROLLBACK_FILE="$DEPLOY_DIR/rollback.env"
+RELEASES_DIR=/home/ubuntu/vutler-deploy/releases
+CURRENT_RELEASE_FILE=/home/ubuntu/vutler-deploy/current-release.env
+DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DEPLOY_METHOD="clean-artifact"
+
+write_release_record() {
+  local smoke_status=$1
+  local api_image_id worker_image_id frontend_image_id release_file
+
+  mkdir -p "$RELEASES_DIR"
+  api_image_id="$(docker inspect -f '{{.Image}}' vutler-api 2>/dev/null || true)"
+  worker_image_id="$(docker inspect -f '{{.Image}}' vutler-sandbox-worker 2>/dev/null || true)"
+  frontend_image_id="$(docker inspect -f '{{.Image}}' vutler-frontend 2>/dev/null || true)"
+  release_file="${RELEASES_DIR}/${DEPLOYED_AT//:/-}-${COMMIT}.env"
+
+  cat > "$release_file" <<RELEASE
+DEPLOY_METHOD=$DEPLOY_METHOD
+DEPLOYED_AT=$DEPLOYED_AT
+DEPLOY_COMMIT=$COMMIT
+DEPLOY_DIR=$DEPLOY_DIR
+DEPLOY_TAR=$REMOTE_TAR
+SMOKE_STATUS=$smoke_status
+API_IMAGE_ID=$api_image_id
+WORKER_IMAGE_ID=$worker_image_id
+FRONTEND_IMAGE_ID=$frontend_image_id
+RELEASE
+
+  cp "$release_file" "$CURRENT_RELEASE_FILE"
+}
 
 log() {
   printf 'REMOTE ==> %s\n' "$*"
@@ -290,6 +319,11 @@ docker run -d \
   --network vutler_vutler-network \
   -p 127.0.0.1:3001:3001 \
   --env-file "$API_ENV_FILE" \
+  -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+  -e "VUTLER_RELEASE_REVISION=$COMMIT" \
+  -e "VUTLER_RELEASE_SHORT_SHA=${COMMIT:0:12}" \
+  -e "VUTLER_RELEASE_TAG=vutler-api:$COMMIT" \
+  -e "VUTLER_RELEASE_DEPLOYED_AT=$DEPLOYED_AT" \
   --health-cmd 'curl -f http://localhost:3001/api/v1/health || exit 1' \
   --health-interval 30s \
   --health-timeout 10s \
@@ -308,6 +342,11 @@ docker run -d \
   --network vutler_vutler-network \
   --no-healthcheck \
   --env-file "$API_ENV_FILE" \
+  -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+  -e "VUTLER_RELEASE_REVISION=$COMMIT" \
+  -e "VUTLER_RELEASE_SHORT_SHA=${COMMIT:0:12}" \
+  -e "VUTLER_RELEASE_TAG=vutler-api:$COMMIT" \
+  -e "VUTLER_RELEASE_DEPLOYED_AT=$DEPLOYED_AT" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   vutler-api:latest \
   node workers/sandbox-worker.js >/dev/null
@@ -342,6 +381,10 @@ if [ "$DEPLOY_FRONTEND" = "1" ]; then
     --restart unless-stopped \
     --network host \
     --env-file "$FRONTEND_ENV_FILE" \
+    -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+    -e "VUTLER_RELEASE_REVISION=$COMMIT" \
+    -e "VUTLER_RELEASE_SHORT_SHA=${COMMIT:0:12}" \
+    -e "VUTLER_RELEASE_DEPLOYED_AT=$DEPLOYED_AT" \
     vutler-frontend:latest >/dev/null
 
   if ! wait_for_health vutler-frontend 40 3; then
@@ -361,6 +404,9 @@ if [ "$SKIP_SMOKE" != "1" ]; then
   log "Running smoke test"
   cd "$DEPLOY_DIR"
   ./scripts/smoke-test.sh
+  write_release_record "passed"
+else
+  write_release_record "skipped"
 fi
 
 log "Deploy complete"

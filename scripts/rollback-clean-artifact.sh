@@ -101,6 +101,10 @@ SKIP_SMOKE="$3"
 API_ENV_FILE=/tmp/vutler-api-runtime.env
 FRONTEND_ENV_FILE=/tmp/vutler-frontend-runtime.env
 ROLLBACK_RECORD="/tmp/vutler-rollback-$(date +%Y%m%d-%H%M%S).env"
+RELEASES_DIR=/home/ubuntu/vutler-deploy/releases
+CURRENT_RELEASE_FILE=/home/ubuntu/vutler-deploy/current-release.env
+ROLLED_BACK_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DEPLOY_METHOD="rollback"
 
 log() {
   printf 'REMOTE ==> %s\n' "$*"
@@ -136,11 +140,35 @@ wait_for_health() {
   return 1
 }
 
+write_release_record() {
+  local smoke_status=$1
+  local api_image_id worker_image_id frontend_image_id release_file
+  mkdir -p "$RELEASES_DIR"
+  api_image_id="$(docker inspect -f '{{.Image}}' vutler-api 2>/dev/null || true)"
+  worker_image_id="$(docker inspect -f '{{.Image}}' vutler-sandbox-worker 2>/dev/null || true)"
+  frontend_image_id="$(docker inspect -f '{{.Image}}' vutler-frontend 2>/dev/null || true)"
+  release_file="${RELEASES_DIR}/${ROLLED_BACK_AT//:/-}-${ROLLBACK_REVISION}.env"
+
+  cat > "$release_file" <<RELEASE
+DEPLOY_METHOD=$DEPLOY_METHOD
+DEPLOYED_AT=$ROLLED_BACK_AT
+DEPLOY_COMMIT=$ROLLBACK_REVISION
+SOURCE_ROLLBACK_NOTE=$ROLLBACK_NOTE
+SMOKE_STATUS=$smoke_status
+API_IMAGE_ID=$api_image_id
+WORKER_IMAGE_ID=$worker_image_id
+FRONTEND_IMAGE_ID=$frontend_image_id
+RELEASE
+
+  cp "$release_file" "$CURRENT_RELEASE_FILE"
+}
+
 [ -f "$ROLLBACK_NOTE" ] || fail "Rollback note not found: $ROLLBACK_NOTE"
 # shellcheck disable=SC1090
 . "$ROLLBACK_NOTE"
 
 [ -n "${API_PREVIOUS_IMAGE:-}" ] || fail "API_PREVIOUS_IMAGE is missing from $ROLLBACK_NOTE"
+ROLLBACK_REVISION="${DEPLOY_COMMIT:-rollback-unknown}"
 docker image inspect "$API_PREVIOUS_IMAGE" >/dev/null 2>&1 || fail "Previous API image not found locally: $API_PREVIOUS_IMAGE"
 
 CURRENT_API_IMAGE="$(docker inspect -f '{{.Image}}' vutler-api 2>/dev/null || true)"
@@ -165,6 +193,11 @@ docker run -d \
   --network vutler_vutler-network \
   -p 127.0.0.1:3001:3001 \
   --env-file "$API_ENV_FILE" \
+  -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+  -e "VUTLER_RELEASE_REVISION=$ROLLBACK_REVISION" \
+  -e "VUTLER_RELEASE_SHORT_SHA=${ROLLBACK_REVISION:0:12}" \
+  -e "VUTLER_RELEASE_TAG=$API_PREVIOUS_IMAGE" \
+  -e "VUTLER_RELEASE_DEPLOYED_AT=$ROLLED_BACK_AT" \
   --health-cmd 'curl -f http://localhost:3001/api/v1/health || exit 1' \
   --health-interval 30s \
   --health-timeout 10s \
@@ -182,6 +215,11 @@ docker run -d \
   --network vutler_vutler-network \
   --no-healthcheck \
   --env-file "$API_ENV_FILE" \
+  -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+  -e "VUTLER_RELEASE_REVISION=$ROLLBACK_REVISION" \
+  -e "VUTLER_RELEASE_SHORT_SHA=${ROLLBACK_REVISION:0:12}" \
+  -e "VUTLER_RELEASE_TAG=$API_PREVIOUS_IMAGE" \
+  -e "VUTLER_RELEASE_DEPLOYED_AT=$ROLLED_BACK_AT" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   "$API_PREVIOUS_IMAGE" \
   node workers/sandbox-worker.js >/dev/null
@@ -213,6 +251,10 @@ if [ "$API_ONLY" != "1" ] && [ -n "${FRONTEND_PREVIOUS_IMAGE:-}" ]; then
     --restart unless-stopped \
     --network host \
     --env-file "$FRONTEND_ENV_FILE" \
+    -e "VUTLER_RELEASE_METHOD=$DEPLOY_METHOD" \
+    -e "VUTLER_RELEASE_REVISION=$ROLLBACK_REVISION" \
+    -e "VUTLER_RELEASE_SHORT_SHA=${ROLLBACK_REVISION:0:12}" \
+    -e "VUTLER_RELEASE_DEPLOYED_AT=$ROLLED_BACK_AT" \
     "$FRONTEND_PREVIOUS_IMAGE" >/dev/null
 
   if ! wait_for_health vutler-frontend 40 3; then
@@ -233,6 +275,9 @@ if [ "$SKIP_SMOKE" != "1" ] && [ -n "${DEPLOY_DIR:-}" ] && [ -x "${DEPLOY_DIR:-}
   log "Running smoke test"
   cd "$DEPLOY_DIR"
   ./scripts/smoke-test.sh
+  write_release_record "passed"
+else
+  write_release_record "skipped"
 fi
 
 log "Rollback complete"

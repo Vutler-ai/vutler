@@ -9,9 +9,11 @@
     "migrate": "node scripts/run-migrations.js",
     "migrate:status": "node scripts/run-migrations.js --status",
     "migrate:dry-run": "node scripts/run-migrations.js --dry-run",
+    "db:backup": "bash scripts/backup-db.sh",
     "db:owners:audit": "node scripts/audit-schema-owners.js",
     "db:owners:audit:json": "node scripts/audit-schema-owners.js --json",
     "db:owners:sql": "node scripts/generate-owner-normalization-sql.js",
+    "ops:prod:audit": "bash scripts/production-state-audit.sh",
     "sandbox:worker": "node workers/sandbox-worker.js",
     "test": "jest --testPathPattern='tests/' --forceExit 2>/dev/null || bash tests/run-all.sh",
     "test:unit": "jest tests/llm-router.test.js --forceExit",
@@ -52,44 +54,57 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1004.0",
-    "@aws-sdk/s3-request-presigner": "^3.1004.0",
+    "@aws-sdk/client-s3": "^3.1022.0",
+    "@aws-sdk/s3-request-presigner": "^3.1022.0",
     "ajv": "^8.18.0",
-    "axios": "^1.6.0",
+    "axios": "^1.14.0",
     "bcryptjs": "^3.0.3",
     "chokidar": "^4.0.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.0",
     "express": "^4.18.2",
-    "express-rate-limit": "^8.3.0",
-    "express-validator": "^7.3.1",
+    "express-rate-limit": "^8.3.2",
+    "express-validator": "^7.3.2",
     "helmet": "^8.1.0",
     "imap": "^0.8.19",
     "jsonwebtoken": "^9.0.3",
     "mailparser": "^3.9.6",
     "multer": "^2.1.1",
     "nodemailer": "^8.0.4",
-    "pg": "^8.11.0",
-    "playwright": "^1.59.0",
+    "pg": "^8.20.0",
+    "playwright": "^1.59.1",
     "stripe": "^20.4.1",
     "uuid": "^13.0.0",
     "web-push": "^3.6.7",
-    "ws": "^8.19.0",
+    "ws": "^8.20.0",
     "y-protocols": "^1.0.7",
-    "yjs": "^13.6.29"
+    "yjs": "^13.6.30"
   },
   "devDependencies": {
-    "@jest/globals": "^30.2.0",
+    "@jest/globals": "^30.3.0",
     "eslint": "^8.50.0",
-    "jest": "^30.2.0",
-    "nodemon": "^3.0.1",
+    "jest": "^30.3.0",
+    "nodemon": "^3.1.14",
     "prettier": "^3.0.3"
   },
   "overrides": {
     "fast-xml-parser": "5.5.9",
+    "flatted": "3.4.2",
     "lodash": "4.18.1",
     "path-to-regexp": "0.1.13",
+    "minimatch@^3.0.0": {
+      "brace-expansion": "1.1.13"
+    },
+    "minimatch@^9.0.0": {
+      "brace-expansion": "2.0.3"
+    },
+    "readdirp": {
+      "picomatch": "2.3.2"
+    },
+    "jest-util": {
+      "picomatch": "4.0.4"
+    },
     "semver": ">=7.6.0"
   }
 }
