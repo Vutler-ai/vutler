@@ -2,10 +2,10 @@
 'use strict';
 
 /**
- * Vutler Office MCP Server
+ * Legacy internal MCP package from before the unified MCP rollout.
  *
- * Exposes Vutler Office tools (email, chat, tasks, drive, calendar, search)
- * to AI agents (Claude Code, Cursor, etc.) via the Model Context Protocol.
+ * New integrations should use `@vutler/mcp`, which exposes the unified
+ * Vutler workspace MCP surface with plan-based tool gating.
  *
  * Transport: stdio — pipe this process's stdin/stdout to the agent host.
  *
@@ -110,6 +110,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 async function main() {
+  process.stderr.write(
+    '[deprecated] packages/mcp-server is a legacy package. Use @vutler/mcp for new integrations.\n'
+  );
+
   if (!process.env.VUTLER_API_KEY) {
     process.stderr.write(
       '[vutler-mcp] WARNING: VUTLER_API_KEY is not set. ' +

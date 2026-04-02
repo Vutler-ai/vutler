@@ -75,7 +75,7 @@ Routing is handled by Next.js route groups: `(landing)/` for public pages, `(app
 ### Integrations
 - **ChatGPT OAuth** connect/poll flow for Codex provider
 - **Post for Me** social media integration with Stripe addon packs
-- **MCP Nexus Bridge** tab on landing page with Claude Code examples
+- **Unified Vutler MCP** tab on landing page with Claude Code examples
 - **Agent-level provisioning** now scopes usage of connected providers instead of attaching integrations directly to the agent
 
 ### Pricing

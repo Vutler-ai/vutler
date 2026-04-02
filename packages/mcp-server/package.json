@@ -1,7 +1,7 @@
 {
   "name": "@vutler/mcp-office",
   "version": "1.0.0",
-  "description": "MCP server for Vutler Office — email, chat, tasks, drive, calendar for AI agents",
+  "description": "Legacy internal MCP package. Use @vutler/mcp for the unified Vutler MCP server.",
   "main": "index.js",
   "bin": {
     "vutler-mcp": "./index.js"

@@ -12,7 +12,7 @@ Le précédent état (bugs P0/P1, DDL Vaultbrix, anciens P2) est archivé et n�
 - [x] Audit sécurité pré-prod terminé, avec correctifs **P0 / P1 / P2**
 - [x] Guard d’authentification pour la sandbox
 - [x] Provider **Codex** via **ChatGPT OAuth** avec streaming **SSE**
-- [x] Bridge **MCP Nexus** (`@vutler/mcp-nexus`)
+- [x] Serveur **MCP Vutler** unifié (`@vutler/mcp`)
 - [x] Intégration **Post for Me** + packs add-on **Stripe**
 - [x] Séparation de **vutler.ai** et **app.vutler.ai**
 - [x] Wizard de type d’agent + limites de skills (**max 8**)

@@ -2,10 +2,10 @@
 'use strict';
 
 /**
- * Vutler Office MCP Server
+ * Legacy compatibility server for the former office-specific MCP package.
  *
- * Exposes Vutler Office tools (chat, drive, email, tasks, calendar, CRM)
- * to AI agents (Claude, Nexus, etc.) via the Model Context Protocol.
+ * New integrations should use `@vutler/mcp`, which exposes the unified
+ * Vutler workspace MCP surface with plan-based tool gating.
  *
  * Transport: stdio (pipe this process's stdin/stdout to the agent host)
  *
@@ -121,6 +121,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 async function main() {
+  process.stderr.write(
+    '[deprecated] @vutler/mcp-office is a legacy package. Use @vutler/mcp for new integrations.\n'
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   // Log to stderr so it doesn't pollute the stdio MCP channel

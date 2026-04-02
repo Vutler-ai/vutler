@@ -238,16 +238,18 @@ This metadata should include enough structured context to support later inspecti
 
 ---
 
-## MCP Nexus Bridge
+## Unified MCP Access
 
-Vutler exposes an MCP bridge through:
+Vutler exposes one public MCP server through:
 
-- **`@vutler/mcp-nexus`**
+- **`@vutler/mcp`**
 
 ### Purpose
-This package allows external MCP-compatible clients to delegate work to Vutler agents.
+This package allows external MCP-compatible clients to operate inside the Vutler workspace and delegate work to Vutler agents.
 
 Typical clients include:
+- Claude Desktop
+- Cursor
 - Claude Code
 - any MCP-compatible tool or runtime
 
@@ -255,7 +257,7 @@ Typical clients include:
 Authentication is handled with:
 - **X-API-Key**
 
-This bridge should be treated as the standard external delegation layer for agent task execution from MCP ecosystems.
+This server should be treated as the standard programmable access layer for Vutler workspaces.
 
 ---
 

@@ -33,7 +33,7 @@ Public package:
 
 - `@vutler/mcp`
 
-Legacy/internal packages:
+Legacy/internal compatibility aliases:
 
 - `@vutler/mcp-office`
 - `@vutler/mcp-nexus`
@@ -183,7 +183,7 @@ Avoid this wording:
 
 ## Immediate Repo Changes To Make
 
-1. Replace public MCP snippets that still point only to `@vutler/mcp-nexus`.
+1. Replace public MCP snippets that still point to legacy MCP package names.
 2. Introduce a single public package name and alias old packages behind it.
 3. Reconcile pricing copy so Office is sold as a native agent workspace, not as a surface bundle without agents.
 4. Remove or clarify any remaining `full access during open beta` copy if plan gating is now real.

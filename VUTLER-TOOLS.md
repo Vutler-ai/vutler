@@ -434,11 +434,11 @@ curl -X POST "https://app.vutler.ai/api/v1/llm/providers" \
 
 ---
 
-## 10. MCP Nexus Bridge
+## 10. Unified Vutler MCP Server
 
 ### Package
 ```text
-@vutler/mcp-nexus
+@vutler/mcp
 ```
 
 ### Authentification
@@ -449,12 +449,12 @@ X-API-Key: <VUTLER_API_KEY>
 ```
 
 ### Usage
-Le MCP Nexus Bridge permet de déléguer des tâches aux agents Vutler depuis des environnements compatibles MCP, notamment **Claude Code**.
+Le serveur MCP Vutler permet d’opérer le workspace Vutler et de déléguer des tâches aux agents depuis des environnements compatibles MCP, notamment **Claude Code**.
 
 ### Cas d’usage typiques
 - créer et assigner des tâches à des agents
 - interroger l’état des agents
-- déclencher des workflows internes
+- opérer email, tasks, files, calendar, memory ou clients selon le plan
 - connecter Claude Code à un workspace Vutler
 
 ---
@@ -663,7 +663,7 @@ Cette version corrige les éléments obsolètes suivants :
 - mise à jour des modèles LLM dans les exemples
 - clarification sur le chat : WebSocket natif, pas Rocket.Chat
 - clarification sur la sandbox : endpoint désormais protégé par auth guard
-- ajout du bridge `@vutler/mcp-nexus`
+- ajout du serveur MCP unifié `@vutler/mcp`
 
 ---
 ```

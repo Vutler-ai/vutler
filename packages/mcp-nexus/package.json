@@ -1,7 +1,7 @@
 {
   "name": "@vutler/mcp-nexus",
   "version": "1.0.0",
-  "description": "MCP server for Vutler Nexus Bridge — delegate tasks to Vutler agents from Claude Code",
+  "description": "Legacy compatibility package. Use @vutler/mcp for the unified Vutler MCP server.",
   "main": "index.js",
   "bin": {
     "vutler-mcp-nexus": "./index.js"

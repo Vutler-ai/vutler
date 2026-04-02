@@ -54,18 +54,18 @@ Snipara permet de :
 
 ---
 
-## 2. MCP Nexus Bridge (Task Delegation)
+## 2. Unified Vutler MCP Server
 
-Le **MCP Nexus Bridge** permet de déléguer des tâches aux agents Vutler depuis Claude Code ou tout autre client compatible MCP.
+Le **serveur MCP Vutler** expose l’accès programmable au workspace Vutler depuis Claude Code, Claude Desktop, Cursor ou tout autre client compatible MCP.
 
-- **Package npm**: `@vutler/mcp-nexus`
+- **Package npm**: `@vutler/mcp`
 
 ### Rôle
-Le bridge sert d’adaptateur entre :
-- un client MCP (ex. Claude Code),
+Le serveur sert d’adaptateur entre :
+- un client MCP (ex. Claude Code, Claude Desktop, Cursor),
 - et l’API Vutler.
 
-En pratique, il **traduit les appels MCP en requêtes API Vutler**.
+En pratique, il **traduit les appels MCP en requêtes API Vutler** et expose les tools selon le plan du workspace.
 
 ### Authentification
 - Auth via header `X-API-Key`
@@ -74,13 +74,13 @@ En pratique, il **traduit les appels MCP en requêtes API Vutler**.
 > Ne jamais committer une API key dans le repo.
 
 ### Configuration
-Le bridge peut être configuré dans :
+Le serveur peut être configuré dans :
 - `.mcp.json`
 - ou les settings du client MCP / Claude Code
 
 ### Cas d’usage
 - déléguer une tâche à un agent Vutler depuis Claude Code,
-- exposer les agents Vutler comme outils MCP dans un environnement externe,
+- opérer `email`, `tasks`, `files`, `calendar`, `memory` ou `clients` depuis un client MCP,
 - centraliser l’exécution agent via l’API Vutler.
 
 ---
@@ -110,7 +110,7 @@ Cette configuration influence :
 
 ## 4. Claude Code Integration
 
-Les agents Vutler sont accessibles depuis **Claude Code** via le **MCP Nexus Bridge**.
+Les agents et outils workspace Vutler sont accessibles depuis **Claude Code** via le **serveur MCP Vutler**.
 
 ### Ce que ça permet
 Depuis une session Claude Code, on peut :
@@ -121,7 +121,7 @@ Depuis une session Claude Code, on peut :
 ### Cas d’usage
 - déléguer une tâche à **Jarvis** ou **Mike** depuis Claude Code,
 - orchestrer une session locale avec des agents Vutler distants,
-- utiliser Claude Code comme client MCP pour piloter des agents métier.
+- utiliser Claude Code comme client MCP pour piloter des agents métier et leur workspace.
 
 ### Produit / UX
 - Une section ou tab dédiée **MCP** existe sur la landing page pour présenter cette intégration.
@@ -231,7 +231,7 @@ Exécution de code dans un environnement isolé.
 Les briques principales à connaître sont :
 
 - **Snipara MCP** pour le contexte et la mémoire
-- **MCP Nexus Bridge** pour exposer les agents Vutler via MCP
+- **Serveur MCP Vutler** pour exposer le workspace et les agents Vutler via MCP
 - **Claude Code integration** pour déléguer des tâches aux agents depuis un client MCP
 - **Post for Me** pour les actions social media
 - **OAuth ChatGPT / Codex** pour certains modèles connectés

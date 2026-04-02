@@ -1,7 +1,7 @@
 {
   "name": "@vutler/mcp-office",
   "version": "1.0.0",
-  "description": "MCP server exposing Vutler Office tools to AI agents (Claude, Nexus, etc.)",
+  "description": "Legacy compatibility package. Use @vutler/mcp for the unified Vutler MCP server.",
   "main": "index.js",
   "bin": {
     "vutler-mcp-office": "./index.js"
