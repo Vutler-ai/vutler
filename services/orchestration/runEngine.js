@@ -99,6 +99,30 @@ function extractTaskBlocker(task) {
   };
 }
 
+function extractTaskSignal(task) {
+  const metadata = parseJsonLike(task?.metadata);
+  return {
+    metadata,
+    lastEvent: String(metadata.snipara_last_event || '').trim().toLowerCase(),
+    resolution: String(metadata.snipara_resolution || '').trim() || null,
+    blockerType: String(metadata.snipara_blocker_type || metadata.blocker_type || '').trim() || null,
+    blockerReason: String(metadata.snipara_blocker_reason || metadata.blocker_reason || '').trim() || null,
+    closedWithWaiver: metadata.snipara_closed_with_waiver === undefined
+      ? null
+      : Boolean(metadata.snipara_closed_with_waiver),
+    autoClosedParent: String(metadata.snipara_auto_closed_parent || '').trim() || null,
+  };
+}
+
+function isUnblockedSignal(signal) {
+  return String(signal?.lastEvent || '').endsWith('.unblocked');
+}
+
+function isClosureReadySignal(signal) {
+  const lastEvent = String(signal?.lastEvent || '');
+  return lastEvent.endsWith('.closure_ready') || lastEvent.endsWith('.closed');
+}
+
 function nextSequenceNo(steps = []) {
   return steps.reduce((max, step) => Math.max(max, Number(step?.sequence_no) || 0), 0) + 1;
 }
@@ -1007,13 +1031,34 @@ class OrchestrationRunEngine {
       throw new Error(`Delegated child task missing for run ${run.id}, step ${step.id}.`);
     }
 
+    const taskSignal = extractTaskSignal(childTask);
+
     if (ACTIVE_TASK_STATUSES.has(String(childTask.status || '').toLowerCase())) {
       const wakeAt = buildWakeAt(this.resumeDelayMs);
+
+      if (run.status === 'blocked' || step.status === 'blocked' || isUnblockedSignal(taskSignal)) {
+        await appendRunEvent(pool, {
+          runId: run.id,
+          stepId: step.id,
+          eventType: 'delegate.task_resumed',
+          actor: 'run-engine',
+          payload: {
+            delegated_task_id: childTask.id,
+            child_task_status: childTask.status,
+            resolution: taskSignal.resolution,
+            blocker_type: taskSignal.blockerType,
+            blocker_reason: taskSignal.blockerReason,
+            last_event: taskSignal.lastEvent || null,
+          },
+        });
+      }
 
       await updateRunStep(pool, step.id, {
         status: 'waiting',
         startedAt: step.started_at || now,
         spawnedTaskId: childTask.id,
+        completedAt: null,
+        error: null,
         wait: {
           kind: 'task_completion',
           task_id: childTask.id,
@@ -1029,6 +1074,10 @@ class OrchestrationRunEngine {
           orchestration_step_id: step.id,
           delegated_task_id: childTask.id,
           orchestration_next_wake_at: wakeAt.toISOString(),
+          orchestration_blocker_type: null,
+          orchestration_blocker_reason: null,
+          orchestration_last_resolution: taskSignal.resolution,
+          pending_approval: null,
           orchestration_proactive: true,
         },
       });
@@ -1038,15 +1087,46 @@ class OrchestrationRunEngine {
         currentStepId: step.id,
         nextWakeAt: wakeAt,
         lastProgressAt: now,
+        error: null,
       }));
       return;
     }
 
     if (String(childTask.status || '').toLowerCase() === 'completed') {
+      if (isClosureReadySignal(taskSignal)) {
+        await appendRunEvent(pool, {
+          runId: run.id,
+          stepId: step.id,
+          eventType: 'delegate.task_closure_ready',
+          actor: 'run-engine',
+          payload: {
+            delegated_task_id: childTask.id,
+            child_task_status: childTask.status,
+            closed_with_waiver: taskSignal.closedWithWaiver,
+            auto_closed_parent: taskSignal.autoClosedParent,
+            resolution: taskSignal.resolution,
+            last_event: taskSignal.lastEvent || null,
+          },
+        });
+
+        await updateTaskRecord(rootTask.id, {
+          metadata: {
+            orchestration_closure_ready: true,
+            orchestration_closed_with_waiver: taskSignal.closedWithWaiver,
+            orchestration_auto_closed_parent: taskSignal.autoClosedParent,
+            orchestration_last_resolution: taskSignal.resolution,
+            delegated_task_id: childTask.id,
+            orchestration_proactive: true,
+          },
+        });
+      }
+
       await updateRunStep(pool, step.id, {
         status: 'completed',
         completedAt: now,
         spawnedTaskId: childTask.id,
+        error: null,
+        wait: null,
         output: {
           delegated_task_id: childTask.id,
           child_task_status: childTask.status,
@@ -1059,6 +1139,7 @@ class OrchestrationRunEngine {
         currentStepId: verifyStep.id,
         nextWakeAt: null,
         lastProgressAt: now,
+        error: null,
       });
       await this.processVerifyStep(run, verifyStep, [...steps, verifyStep], {
         rootTask,

@@ -671,4 +671,206 @@ describe('runEngine claim/resume loop', () => {
       content: 'The autonomous orchestration engine is now wired and resumes proactively.',
     }));
   });
+
+  test('records closure-ready Snipara metadata before verification and finalization', async () => {
+    const taskUpdates = [];
+    const appendRunEvent = jest.fn().mockResolvedValue(null);
+    const evaluateTaskOutput = jest.fn().mockResolvedValue({
+      passed: true,
+      threshold: 7,
+      verdict: {
+        overall_pass: true,
+        overall_score: 8,
+        scores: [],
+        summary: 'Closure is acceptable.',
+      },
+    });
+    const recordVerdict = jest.fn().mockResolvedValue(null);
+    const claimRunnableRuns = jest.fn().mockResolvedValue([{
+      id: 'run-closure-1',
+      workspace_id: 'ws-1',
+      root_task_id: 'root-task-closure-1',
+      status: 'waiting_on_tasks',
+      lock_token: 'lock-closure-1',
+      requested_agent_id: 'agent-1',
+      requested_agent_username: 'mike',
+      display_agent_id: 'agent-1',
+      display_agent_username: 'mike',
+    }]);
+    const getRunById = jest.fn().mockResolvedValue({
+      id: 'run-closure-1',
+      workspace_id: 'ws-1',
+      root_task_id: 'root-task-closure-1',
+      status: 'waiting_on_tasks',
+      lock_token: 'lock-closure-1',
+      requested_agent_id: 'agent-1',
+      requested_agent_username: 'mike',
+      display_agent_id: 'agent-1',
+      display_agent_username: 'mike',
+      summary: 'Waiting for Snipara closure.',
+    });
+    const getCurrentRunStep = jest.fn().mockResolvedValue({
+      id: 'step-delegate-closure-1',
+      run_id: 'run-closure-1',
+      sequence_no: 2,
+      step_type: 'delegate_task',
+      status: 'waiting',
+      title: 'Delegate execution task',
+      spawned_task_id: 'child-task-closure-1',
+    });
+    const listRunSteps = jest.fn().mockResolvedValue([
+      {
+        id: 'step-plan-closure-1',
+        run_id: 'run-closure-1',
+        sequence_no: 1,
+        step_type: 'plan',
+        status: 'completed',
+        title: 'Plan orchestration run',
+      },
+      {
+        id: 'step-delegate-closure-1',
+        run_id: 'run-closure-1',
+        sequence_no: 2,
+        step_type: 'delegate_task',
+        status: 'waiting',
+        title: 'Delegate execution task',
+        spawned_task_id: 'child-task-closure-1',
+      },
+    ]);
+    const createRunStep = jest.fn()
+      .mockResolvedValueOnce({
+        id: 'step-verify-closure-1',
+        run_id: 'run-closure-1',
+        sequence_no: 3,
+        step_type: 'verify',
+        status: 'queued',
+        title: 'Verify delegated result',
+      })
+      .mockResolvedValueOnce({
+        id: 'step-finalize-closure-1',
+        run_id: 'run-closure-1',
+        sequence_no: 4,
+        step_type: 'finalize',
+        status: 'queued',
+        title: 'Finalize successful run',
+      });
+    const heartbeatRunLease = jest.fn().mockResolvedValue({
+      id: 'run-closure-1',
+      lock_token: 'lock-closure-1',
+    });
+    const updateRun = jest.fn().mockResolvedValue({ id: 'run-closure-1' });
+    const updateRunStep = jest.fn().mockResolvedValue({});
+
+    const poolQuery = jest.fn(async (sql, params) => {
+      if (sql.includes('FROM tenant_vutler.tasks') && sql.includes('WHERE id = $1')) {
+        if (params[0] === 'root-task-closure-1') {
+          return {
+            rows: [{
+              id: 'root-task-closure-1',
+              title: 'Close compliance loop',
+              description: 'Capture the closure-ready result and finalize.',
+              priority: 'high',
+              workspace_id: 'ws-1',
+              metadata: { origin: 'task' },
+            }],
+          };
+        }
+
+        if (params[0] === 'child-task-closure-1') {
+          return {
+            rows: [{
+              id: 'child-task-closure-1',
+              status: 'completed',
+              metadata: {
+                snipara_last_event: 'htask.closure_ready',
+                snipara_closed_with_waiver: true,
+                snipara_auto_closed_parent: 'parent-1',
+                snipara_resolution: 'Policy exception approved.',
+                result: 'Closure package ready for final verification.',
+              },
+            }],
+          };
+        }
+      }
+
+      if (sql.startsWith('UPDATE tenant_vutler.tasks')) {
+        taskUpdates.push({ sql, params });
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected SQL in closure-ready run test: ${sql}`);
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
+    jest.doMock('../../services/chatMessages', () => ({ insertChatMessage: jest.fn() }));
+    jest.doMock('../../services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        updateSharedContext: jest.fn().mockResolvedValue(null),
+        rememberLearning: jest.fn().mockResolvedValue(null),
+      }),
+    }));
+    jest.doMock('../../services/verificationEngine', () => ({
+      getVerificationEngine: () => ({
+        maxRetries: 3,
+        passThreshold: 7,
+        evaluateTaskOutput,
+        recordVerdict,
+      }),
+    }));
+    jest.doMock('../../services/orchestration/runStore', () => ({
+      DEFAULT_LEASE_MS: 60_000,
+      TERMINAL_RUN_STATUSES: new Set(['completed', 'failed', 'cancelled', 'timed_out']),
+      appendRunEvent,
+      claimRunnableRuns,
+      createRunStep,
+      getCurrentRunStep,
+      getRunById,
+      heartbeatRunLease,
+      listRunSteps,
+      parseJsonLike: jest.requireActual('../../services/orchestration/runStore').parseJsonLike,
+      updateRun,
+      updateRunStep,
+    }));
+
+    const { OrchestrationRunEngine } = require('../../services/orchestration/runEngine');
+    const engine = new OrchestrationRunEngine({
+      pollIntervalMs: 50,
+      resumeDelayMs: 3_000,
+      leaseMs: 30_000,
+      workerId: 'worker-run-engine-test',
+    });
+
+    await engine.pollOnce();
+
+    expect(appendRunEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      runId: 'run-closure-1',
+      stepId: 'step-delegate-closure-1',
+      eventType: 'delegate.task_closure_ready',
+      payload: expect.objectContaining({
+        delegated_task_id: 'child-task-closure-1',
+        closed_with_waiver: true,
+        auto_closed_parent: 'parent-1',
+        resolution: 'Policy exception approved.',
+      }),
+    }));
+
+    const closurePayload = taskUpdates
+      .map((call) => call.params.find((value) => typeof value === 'string' && value.trim().startsWith('{')))
+      .filter(Boolean)
+      .map((value) => JSON.parse(value))
+      .find((payload) => payload.orchestration_closure_ready === true);
+
+    expect(closurePayload).toEqual(expect.objectContaining({
+      orchestration_closure_ready: true,
+      orchestration_closed_with_waiver: true,
+      orchestration_auto_closed_parent: 'parent-1',
+      orchestration_last_resolution: 'Policy exception approved.',
+      delegated_task_id: 'child-task-closure-1',
+    }));
+    expect(evaluateTaskOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'root-task-closure-1' }),
+      'Closure package ready for final verification.'
+    );
+    expect(recordVerdict).toHaveBeenCalled();
+  });
 });
