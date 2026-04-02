@@ -67,9 +67,9 @@
     "helmet": "^8.1.0",
     "imap": "^0.8.19",
     "jsonwebtoken": "^9.0.3",
-    "mailparser": "^3.6.5",
-    "multer": "^1.4.5-lts.1",
-    "nodemailer": "^8.0.1",
+    "mailparser": "^3.9.6",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.4",
     "pg": "^8.11.0",
     "playwright": "^1.59.0",
     "stripe": "^20.4.1",
@@ -87,6 +87,9 @@
     "prettier": "^3.0.3"
   },
   "overrides": {
+    "fast-xml-parser": "5.5.9",
+    "lodash": "4.18.1",
+    "path-to-regexp": "0.1.13",
     "semver": ">=7.6.0"
   }
 }

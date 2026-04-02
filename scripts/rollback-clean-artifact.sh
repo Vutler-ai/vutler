@@ -180,6 +180,7 @@ docker run -d \
   --name vutler-sandbox-worker \
   --restart unless-stopped \
   --network vutler_vutler-network \
+  --no-healthcheck \
   --env-file "$API_ENV_FILE" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   "$API_PREVIOUS_IMAGE" \

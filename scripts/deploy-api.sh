@@ -67,6 +67,7 @@ docker run -d \
   --name vutler-sandbox-worker \
   --restart unless-stopped \
   --network vutler_vutler-network \
+  --no-healthcheck \
   --env-file "$ENV_FILE" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   vutler-api:latest \
