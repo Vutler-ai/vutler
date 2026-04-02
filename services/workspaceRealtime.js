@@ -12,6 +12,15 @@ function parseJsonLike(value) {
   return value && typeof value === 'object' ? value : {};
 }
 
+function asFiniteNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function publishWorkspaceEvent(workspaceId, event = {}) {
   if (!workspaceId) return false;
 
@@ -30,18 +39,38 @@ function buildTaskRealtimePayload(task = {}) {
     id: task.id || null,
     status: task.status || null,
     title: task.title || null,
+    description: task.description || null,
+    priority: task.priority || null,
     parent_id: task.parent_id || null,
     assignee: task.assignee || null,
     assigned_agent: task.assigned_agent || null,
+    due_date: task.due_date || null,
+    subtask_count: asFiniteNumber(task.subtask_count),
+    subtask_completed_count: asFiniteNumber(task.subtask_completed_count),
     snipara_task_id: task.snipara_task_id || null,
     swarm_task_id: task.swarm_task_id || null,
+    source: task.source || null,
     updated_at: task.updated_at || null,
+    execution_backend: metadata.execution_backend || null,
     orchestration_run_id: metadata.orchestration_run_id || metadata.orchestration_parent_run_id || null,
     orchestration_status: metadata.orchestration_status || null,
+    blocker_type: metadata.orchestration_blocker_type || metadata.snipara_blocker_type || metadata.blocker_type || null,
+    blocker_reason: metadata.orchestration_blocker_reason || metadata.snipara_blocker_reason || metadata.blocker_reason || null,
+    last_resolution: metadata.orchestration_last_resolution || metadata.snipara_resolution || null,
+    closure_ready: metadata.orchestration_closure_ready === true,
+    closed_with_waiver: metadata.orchestration_closed_with_waiver === true,
+    auto_closed_parent: metadata.orchestration_auto_closed_parent || metadata.snipara_auto_closed_parent || null,
+    pending_approval_summary: metadata.pending_approval?.summary || null,
+    phase_title: metadata.orchestration_phase_title || null,
+    phase_index: metadata.orchestration_phase_index ?? null,
+    phase_count: metadata.orchestration_phase_count ?? null,
+    snipara_last_event: metadata.snipara_last_event || null,
   };
 }
 
 function buildRunRealtimePayload(run = {}) {
+  const error = parseJsonLike(run.error_json);
+  const result = parseJsonLike(run.result_json);
   return {
     id: run.id || null,
     status: run.status || null,
@@ -51,6 +80,9 @@ function buildRunRealtimePayload(run = {}) {
     updated_at: run.updated_at || null,
     completed_at: run.completed_at || null,
     cancelled_at: run.cancelled_at || null,
+    summary: run.summary || null,
+    error_message: error.message || null,
+    result_message: result.result || null,
   };
 }
 

@@ -2,6 +2,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '@/lib/authFetch';
+import { getAuthToken } from '@/lib/api/client';
+import { ChatWebSocket } from '@/lib/websocket';
+import {
+  getWorkspaceEventDescription,
+  getWorkspaceEventTitle,
+  isWorkspaceAttentionEvent,
+  shouldSurfaceWorkspaceEvent,
+} from '@/lib/workspace-events';
+import type { WorkspaceRealtimeEvent } from '@/lib/workspace-events';
 
 interface Notification {
   id: string;
@@ -10,10 +19,39 @@ interface Notification {
   message: string;
   read: boolean;
   createdAt: string;
+  live?: boolean;
 }
 
 const typeIcons: Record<string, string> = { info: 'ℹ️', warning: '⚠️', error: '❌', success: '✅' };
 const typeColors: Record<string, string> = { info: 'border-[#3b82f6]', warning: 'border-[#f59e0b]', error: 'border-[#ef4444]', success: 'border-[#10b981]' };
+
+function mapWorkspaceEventToNotification(event: WorkspaceRealtimeEvent): Notification | null {
+  if (!event?.type) return null;
+
+  const runStatus = String(event.run?.status || '');
+  const taskResolution = String(event.task?.last_resolution || '');
+  const closureReady = event.task?.closure_ready === true;
+  const attention = isWorkspaceAttentionEvent(event);
+
+  if (!shouldSurfaceWorkspaceEvent(event)) {
+    return null;
+  }
+
+  let type: Notification['type'] = 'info';
+  if (runStatus === 'failed' || runStatus === 'blocked') type = 'error';
+  else if (runStatus === 'awaiting_approval' || attention) type = 'warning';
+  else if (taskResolution || closureReady || runStatus === 'completed') type = 'success';
+
+  return {
+    id: String(event.id || `${event.type}-${event.timestamp || Date.now()}`),
+    type,
+    title: getWorkspaceEventTitle(event),
+    message: getWorkspaceEventDescription(event),
+    read: false,
+    createdAt: event.timestamp || new Date().toISOString(),
+    live: true,
+  };
+}
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -27,14 +65,44 @@ export default function NotificationsPage() {
   }, []);
 
   const markRead = async (id: string) => {
-    await authFetch(`/api/v1/notifications/${id}/read`, { method: 'PUT' });
+    const target = notifications.find((notification) => notification.id === id);
+    if (!target?.live) {
+      await authFetch(`/api/v1/notifications/${id}/read`, { method: 'PUT' });
+    }
     setNotifications(ns => ns.map(n => n.id === id ? { ...n, read: true } : n));
   };
 
   const markAllRead = async () => {
-    await Promise.all(notifications.filter(n => !n.read).map(n => authFetch(`/api/v1/notifications/${n.id}/read`, { method: 'PUT' })));
+    await Promise.all(
+      notifications
+        .filter(n => !n.read && !n.live)
+        .map(n => authFetch(`/api/v1/notifications/${n.id}/read`, { method: 'PUT' }))
+    );
     setNotifications(ns => ns.map(n => ({ ...n, read: true })));
   };
+
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    const ws = new ChatWebSocket(token);
+    const offConnected = ws.on('_connected', () => {
+      ws.joinWorkspace();
+    });
+    const offWorkspaceEvent = ws.on('workspace:event', (event: WorkspaceRealtimeEvent) => {
+      const notification = mapWorkspaceEventToNotification(event);
+      if (!notification) return;
+      setNotifications((current) => [notification, ...current.filter((entry) => entry.id !== notification.id)].slice(0, 50));
+    });
+
+    ws.connect();
+    return () => {
+      offConnected();
+      offWorkspaceEvent();
+      ws.leaveWorkspace();
+      ws.destroy();
+    };
+  }, []);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 

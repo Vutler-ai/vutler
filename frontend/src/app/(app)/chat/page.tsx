@@ -59,6 +59,14 @@ import type {
   OrchestrationUnavailableProvider,
   WorkspaceAgentPressure,
 } from "@/lib/api/types";
+import type { WorkspaceRealtimeEvent } from "@/lib/workspace-events";
+import {
+  getWorkspaceEventDescription,
+  getWorkspaceEventTaskId,
+  getWorkspaceEventTitle,
+  isWorkspaceAttentionEvent,
+  shouldSurfaceWorkspaceEvent,
+} from "@/lib/workspace-events";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -788,6 +796,7 @@ export default function ChatPage() {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [actionRuns, setActionRuns] = useState<ChatActionRun[]>([]);
   const [actionRunsLoading, setActionRunsLoading] = useState(false);
+  const [workspaceAlerts, setWorkspaceAlerts] = useState<WorkspaceRealtimeEvent[]>([]);
 
   // Auto-select first channel once loaded
   useEffect(() => {
@@ -894,6 +903,7 @@ export default function ChatPage() {
     );
 
     const offConnected = ws.on("_connected", () => {
+      ws.joinWorkspace();
       refreshSelectedChannel().catch(() => {});
     });
 
@@ -903,12 +913,29 @@ export default function ChatPage() {
       }
     });
 
+    const offWorkspaceEvent = ws.on("workspace:event", (event: WorkspaceRealtimeEvent) => {
+      const normalizedEvent: WorkspaceRealtimeEvent = {
+        ...event,
+        timestamp: event.timestamp || new Date().toISOString(),
+      };
+      if (!shouldSurfaceWorkspaceEvent(normalizedEvent)) return;
+      setWorkspaceAlerts((current) => {
+        const next = [
+          normalizedEvent,
+          ...current.filter((entry) => entry.id !== normalizedEvent.id),
+        ];
+        return next.slice(0, 8);
+      });
+    });
+
     ws.connect();
     return () => {
       offMessageNew();
       offTyping();
       offConnected();
       offJoined();
+      offWorkspaceEvent();
+      ws.leaveWorkspace();
       ws.destroy();
       wsRef.current = null;
     };
@@ -1886,13 +1913,77 @@ export default function ChatPage() {
                 <div className="flex h-full w-full flex-col">
                   <div className="border-b border-white/[0.07] px-4 py-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                      Action Runs
+                      Workspace Signals
                     </p>
                     <p className="mt-1 text-sm text-gray-300">
-                      {selectedMessageId ? `Message ${selectedMessageId.slice(0, 8)}` : "Select a message"}
+                      Approval, blockers, recoveries, and completion events from orchestration runs.
                     </p>
                   </div>
-                  <div className="flex-1 overflow-y-auto px-4 py-4">
+                  <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+                    <section className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Live Activity</p>
+                        <Badge className="border-sky-500/20 bg-sky-500/10 text-sky-200">
+                          {workspaceAlerts.length} live
+                        </Badge>
+                      </div>
+                      {workspaceAlerts.length === 0 ? (
+                        <p className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3 text-sm text-gray-500">
+                          Waiting for orchestration events across the workspace.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {workspaceAlerts.map((event) => {
+                            const taskId = getWorkspaceEventTaskId(event);
+                            const href = taskId ? `/tasks?task=${encodeURIComponent(taskId)}` : "/tasks";
+                            const attention = isWorkspaceAttentionEvent(event);
+
+                            return (
+                              <a
+                                key={event.id || `${event.type}-${event.timestamp}`}
+                                href={href}
+                                className={`block rounded-xl border p-3 transition-colors ${
+                                  attention
+                                    ? "border-amber-500/20 bg-amber-500/8 hover:bg-amber-500/12"
+                                    : "border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]"
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-white">{getWorkspaceEventTitle(event)}</p>
+                                    <p className="mt-1 line-clamp-3 text-xs text-gray-400">
+                                      {getWorkspaceEventDescription(event)}
+                                    </p>
+                                  </div>
+                                  {attention ? (
+                                    <Badge className="border-amber-500/20 bg-amber-500/12 text-amber-200">
+                                      Review
+                                    </Badge>
+                                  ) : (
+                                    <CheckBadgeIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
+                                  )}
+                                </div>
+                                <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-gray-500">
+                                  <span>{formatTime(event.timestamp || new Date().toISOString())}</span>
+                                  <span className="inline-flex items-center gap-1 text-sky-300">
+                                    Open task
+                                    <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
+                                  </span>
+                                </div>
+                              </a>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="space-y-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Action Runs</p>
+                        <p className="mt-1 text-sm text-gray-300">
+                          {selectedMessageId ? `Message ${selectedMessageId.slice(0, 8)}` : "Select a message"}
+                        </p>
+                      </div>
                     {!selectedMessageId ? (
                       <p className="text-sm text-gray-500">Select a message bubble to inspect orchestration actions.</p>
                     ) : actionRunsLoading ? (
@@ -1941,6 +2032,7 @@ export default function ChatPage() {
                         ))}
                       </div>
                     )}
+                    </section>
                   </div>
                 </div>
               </aside>

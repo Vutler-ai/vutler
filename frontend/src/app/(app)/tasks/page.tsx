@@ -29,6 +29,14 @@ import type {
 } from "@/lib/api/types";
 import type { Agent } from "@/lib/api/types";
 import { ChatWebSocket } from "@/lib/websocket";
+import {
+  applyWorkspaceEventToTasks,
+  getWorkspaceEventDescription,
+  getWorkspaceEventTaskId,
+  getWorkspaceEventTitle,
+  isWorkspaceAttentionEvent,
+} from "@/lib/workspace-events";
+import type { WorkspaceRealtimeEvent } from "@/lib/workspace-events";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,18 +98,6 @@ function normalizeStatus(status: Task["status"]): NormalizedStatus {
 }
 
 type TaskMetadata = Record<string, unknown>;
-type WorkspaceRealtimeEvent = {
-  id?: string;
-  type: string;
-  entity?: string | null;
-  origin?: string | null;
-  reason?: string | null;
-  timestamp?: string | null;
-  workspaceId?: string | null;
-  task?: Record<string, unknown> | null;
-  run?: Record<string, unknown> | null;
-  payload?: Record<string, unknown> | null;
-};
 
 function asTaskMetadata(task: Task | null | undefined): TaskMetadata {
   if (!task?.metadata || typeof task.metadata !== "object") return {};
@@ -1768,6 +1764,7 @@ export default function TasksPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [lastRealtimeEvent, setLastRealtimeEvent] = useState<WorkspaceRealtimeEvent | null>(null);
+  const [workspaceActivity, setWorkspaceActivity] = useState<WorkspaceRealtimeEvent[]>([]);
 
   useEffect(() => {
     if (!agentNames.length) return;
@@ -1805,13 +1802,16 @@ export default function TasksPage() {
       void mutate();
     });
     const offWorkspaceEvent = ws.on("workspace:event", (event: WorkspaceRealtimeEvent) => {
-      setLastRealtimeEvent({
+      const normalizedEvent = {
         ...event,
         timestamp: event.timestamp || new Date().toISOString(),
+      };
+      setLastRealtimeEvent(normalizedEvent);
+      setWorkspaceActivity((current) => {
+        const next = [normalizedEvent, ...current.filter((entry) => entry.id !== normalizedEvent.id)];
+        return next.slice(0, 12);
       });
-      if (String(event.type || "").startsWith("task.")) {
-        void mutate();
-      }
+      void mutate((current) => applyWorkspaceEventToTasks(current || [], normalizedEvent), false);
     });
 
     ws.connect();
@@ -1994,6 +1994,46 @@ export default function TasksPage() {
           })}
         </div>
       </div>
+
+      {workspaceActivity.length > 0 && (
+        <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#14151f] p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-xs text-[#7dd3fc] uppercase tracking-wider">Live Activity</p>
+              <p className="text-sm text-[#9ca3af] mt-1">Workspace orchestration and Snipara activity in real time.</p>
+            </div>
+            <span className="text-[11px] text-[#64748b]">{workspaceActivity.length} recent event{workspaceActivity.length !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {workspaceActivity.slice(0, 6).map((event) => (
+              <button
+                key={event.id || `${event.type}-${event.timestamp}`}
+                type="button"
+                onClick={() => {
+                  const taskId = getWorkspaceEventTaskId(event);
+                  if (!taskId || !tasks) return;
+                  const found = tasks.find((entry) => entry.id === taskId);
+                  if (found) setDetailTask(found);
+                }}
+                className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                  isWorkspaceAttentionEvent(event)
+                    ? "border-amber-500/20 bg-amber-500/8 hover:bg-amber-500/12"
+                    : "border-white/8 bg-white/5 hover:bg-white/8"
+                }`}
+              >
+                <p className="text-sm text-white">{getWorkspaceEventTitle(event)}</p>
+                <p className="text-xs text-[#94a3b8] mt-1 line-clamp-2">{getWorkspaceEventDescription(event)}</p>
+                <div className="flex items-center justify-between gap-3 mt-2">
+                  <span className="text-[11px] text-[#64748b]">{formatTimestamp(event.timestamp)}</span>
+                  {isWorkspaceAttentionEvent(event) && (
+                    <span className="text-[10px] uppercase tracking-wider text-amber-300">Needs attention</span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Error */}
       {error && (
