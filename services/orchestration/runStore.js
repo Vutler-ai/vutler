@@ -1,6 +1,7 @@
 'use strict';
 
 const pool = require('../../lib/vaultbrix');
+const { publishRunEvent } = require('../workspaceRealtime');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_LEASE_MS = 60_000;
@@ -233,7 +234,16 @@ async function updateRun(db = pool, runId, patch = {}) {
       RETURNING *`,
     params
   );
-  return result.rows[0] || null;
+  const run = result.rows[0] || null;
+  if (run) {
+    publishRunEvent(run, {
+      reason: patch.status || 'run_updated',
+      payload: {
+        current_step_id: run.current_step_id || null,
+      },
+    });
+  }
+  return run;
 }
 
 async function updateRunStep(db = pool, stepId, patch = {}) {

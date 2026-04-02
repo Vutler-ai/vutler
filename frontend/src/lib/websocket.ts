@@ -17,6 +17,7 @@ export class ChatWebSocket {
   private _connected = false;
   private _destroyed = false;
   private joinedChannels: Set<string> = new Set();
+  private workspaceJoined = false;
 
   constructor(token: string) {
     this.token = token;
@@ -44,6 +45,9 @@ export class ChatWebSocket {
       // Rejoin channels
       for (const ch of this.joinedChannels) {
         this.send('channel:join', { channelId: ch });
+      }
+      if (this.workspaceJoined) {
+        this.send('workspace:join', {});
       }
 
       // Keepalive ping every 25s
@@ -102,6 +106,16 @@ export class ChatWebSocket {
     this.send('channel:leave', { channelId });
   }
 
+  joinWorkspace(): void {
+    this.workspaceJoined = true;
+    this.send('workspace:join', {});
+  }
+
+  leaveWorkspace(): void {
+    this.workspaceJoined = false;
+    this.send('workspace:leave', {});
+  }
+
   sendTyping(channelId: string): void {
     this.send('typing', { channelId });
   }
@@ -126,5 +140,6 @@ export class ChatWebSocket {
     this.ws = null;
     this.handlers.clear();
     this.joinedChannels.clear();
+    this.workspaceJoined = false;
   }
 }

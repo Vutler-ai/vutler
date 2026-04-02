@@ -9,6 +9,10 @@ const { authenticateAgent } = require('../lib/auth');
 const pool = require('../../../lib/vaultbrix');
 const { getSwarmCoordinator } = require('../services/swarmCoordinator');
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
+const {
+  publishTaskDeleted,
+  publishTaskEvent,
+} = require('../../../services/workspaceRealtime');
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
@@ -357,6 +361,11 @@ router.post('/tasks-v2', authenticateAgent, async (req, res) => {
         workspaceId: wsId(req),
         swarmCoordinator,
       });
+      publishTaskEvent(created, {
+        type: 'task.created',
+        origin: 'tasks-v2',
+        reason: 'hierarchical_root_created',
+      });
       return res.status(201).json({ success: true, data: created });
     }
 
@@ -478,6 +487,11 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
       }).catch(() => {});
     }
 
+    publishTaskEvent(saved.rows[0], {
+      type: 'task.updated',
+      origin: 'tasks-v2',
+      reason: updates.status || 'task_patched',
+    });
     res.json({ success: true, data: saved.rows[0] });
   } catch (error) {
     console.error('[Tasks API] Error updating task:', error);
@@ -528,6 +542,11 @@ router.post('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
         workspaceId,
         swarmCoordinator,
       });
+      publishTaskEvent(created, {
+        type: 'task.created',
+        origin: 'tasks-v2',
+        reason: 'hierarchical_subtask_created',
+      });
       return res.status(201).json({ success: true, data: created });
     }
 
@@ -558,6 +577,12 @@ router.delete('/tasks-v2/:id', authenticateAgent, async (req, res) => {
       [req.params.id, wsId(req)]
     );
     if (!result.rows.length) return res.status(404).json({ success: false, error: 'Task not found' });
+    publishTaskDeleted({
+      workspaceId: wsId(req),
+      taskId: result.rows[0].id,
+      reason: 'task_deleted',
+      origin: 'tasks-v2',
+    });
     res.json({ success: true });
   } catch (error) {
     console.error('[Tasks API] Error deleting task:', error);

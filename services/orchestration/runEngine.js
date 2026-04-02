@@ -5,6 +5,7 @@ const pool = require('../../lib/vaultbrix');
 const { insertChatMessage } = require('../chatMessages');
 const { getSwarmCoordinator } = require('../swarmCoordinator');
 const { getVerificationEngine } = require('../verificationEngine');
+const { publishTaskEvent } = require('../workspaceRealtime');
 const {
   DEFAULT_LEASE_MS,
   TERMINAL_RUN_STATUSES,
@@ -288,12 +289,22 @@ async function updateTaskRecord(taskId, { status, output, metadata } = {}) {
   }
 
   values.push(taskId);
-  await pool.query(
+  const result = await pool.query(
     `UPDATE ${SCHEMA}.tasks
         SET ${sets.join(', ')}
-      WHERE id = $${idx}`,
+      WHERE id = $${idx}
+      RETURNING *`,
     values
   );
+  const taskRow = result.rows?.[0] || null;
+  if (taskRow) {
+    publishTaskEvent(taskRow, {
+      type: 'task.updated',
+      origin: 'run-engine',
+      reason: status || 'task_metadata_updated',
+    });
+  }
+  return taskRow;
 }
 
 async function postTaskChatResult(task, content, senderId, senderName) {

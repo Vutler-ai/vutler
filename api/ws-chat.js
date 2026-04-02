@@ -9,6 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'MISSING-SET-JWT_SECRET-ENV';
 
 const connections = new Map(); // connectionId -> { ws, userId, userName, workspaceId, channels:Set }
 const channelSubs = new Map(); // channelId -> Set<connectionId>
+const workspaceSubs = new Map(); // workspaceId -> Set<connectionId>
 
 function parseJWT(token) {
   try {
@@ -44,8 +45,34 @@ function removeSub(connectionId, channelId) {
   if (conn) conn.channels.delete(channelId);
 }
 
+function addWorkspaceSub(connectionId, workspaceId) {
+  const normalized = String(workspaceId || '').trim();
+  if (!normalized) return;
+  if (!workspaceSubs.has(normalized)) workspaceSubs.set(normalized, new Set());
+  workspaceSubs.get(normalized).add(connectionId);
+}
+
+function removeWorkspaceSub(connectionId, workspaceId) {
+  const normalized = String(workspaceId || '').trim();
+  if (!normalized) return;
+  workspaceSubs.get(normalized)?.delete(connectionId);
+  if (workspaceSubs.get(normalized)?.size === 0) workspaceSubs.delete(normalized);
+}
+
 function broadcastToChannel(channelId, type, data = {}, excludeConnectionId = null) {
   const subs = channelSubs.get(channelId);
+  if (!subs) return;
+  for (const cid of subs) {
+    if (excludeConnectionId && cid === excludeConnectionId) continue;
+    const conn = connections.get(cid);
+    if (conn) send(conn.ws, type, data);
+  }
+}
+
+function broadcastToWorkspace(workspaceId, type, data = {}, excludeConnectionId = null) {
+  const normalized = String(workspaceId || '').trim();
+  if (!normalized) return;
+  const subs = workspaceSubs.get(normalized);
   if (!subs) return;
   for (const cid of subs) {
     if (excludeConnectionId && cid === excludeConnectionId) continue;
@@ -57,6 +84,26 @@ function broadcastToChannel(channelId, type, data = {}, excludeConnectionId = nu
 function publishMessage(message) {
   if (!message?.channel_id) return;
   broadcastToChannel(message.channel_id, 'message:new', message);
+}
+
+function publishWorkspaceEvent(workspaceId, event = {}) {
+  const normalized = String(workspaceId || '').trim();
+  if (!normalized) return false;
+
+  broadcastToWorkspace(normalized, 'workspace:event', {
+    id: event.id || crypto.randomBytes(8).toString('hex'),
+    type: event.type || 'workspace.updated',
+    entity: event.entity || null,
+    origin: event.origin || 'server',
+    reason: event.reason || null,
+    timestamp: event.timestamp || new Date().toISOString(),
+    workspaceId: normalized,
+    task: event.task || null,
+    run: event.run || null,
+    payload: event.payload || null,
+  });
+
+  return true;
 }
 
 function setupChatWebSocket(server, app) {
@@ -147,6 +194,16 @@ function setupChatWebSocket(server, app) {
         return send(ws, 'channel:left', { channelId: String(data.channelId) });
       }
 
+      if (type === 'workspace:join') {
+        addWorkspaceSub(connectionId, conn.workspaceId);
+        return send(ws, 'workspace:joined', { workspaceId: conn.workspaceId });
+      }
+
+      if (type === 'workspace:leave') {
+        removeWorkspaceSub(connectionId, conn.workspaceId);
+        return send(ws, 'workspace:left', { workspaceId: conn.workspaceId });
+      }
+
       if (type === 'typing' && data.channelId) {
         broadcastToChannel(String(data.channelId), 'message:typing', {
           channelId: String(data.channelId),
@@ -160,6 +217,7 @@ function setupChatWebSocket(server, app) {
       const c = connections.get(connectionId);
       if (c) {
         for (const ch of c.channels) removeSub(connectionId, ch);
+        removeWorkspaceSub(connectionId, c.workspaceId);
       }
       connections.delete(connectionId);
     });
@@ -169,4 +227,4 @@ function setupChatWebSocket(server, app) {
   return wss;
 }
 
-module.exports = { setupChatWebSocket, publishMessage };
+module.exports = { setupChatWebSocket, publishMessage, publishWorkspaceEvent };

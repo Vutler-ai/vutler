@@ -19,6 +19,7 @@ const {
   resolveAgentDriveRoot,
 } = require('../../../services/agentDriveService');
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
+const { publishTaskEvent } = require('../../../services/workspaceRealtime');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -555,6 +556,11 @@ class SwarmCoordinator {
           ? `delegate.${source.slice('snipara-webhook:'.length)}`
           : 'delegate.task_status_changed',
       }).catch(() => {});
+      publishTaskEvent(taskRow, {
+        type: 'task.updated',
+        origin: source && source.startsWith('snipara-webhook:') ? 'snipara-webhook' : 'swarm',
+        reason: source || 'swarm_upsert',
+      });
       return taskRow;
     }
 
@@ -572,6 +578,11 @@ class SwarmCoordinator {
         ? `delegate.${source.slice('snipara-webhook:'.length)}`
         : 'delegate.task_status_changed',
     }).catch(() => {});
+    publishTaskEvent(taskRow, {
+      type: 'task.created',
+      origin: source && source.startsWith('snipara-webhook:') ? 'snipara-webhook' : 'swarm',
+      reason: source || 'swarm_insert',
+    });
     return taskRow;
   }
 

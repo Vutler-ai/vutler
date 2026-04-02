@@ -19,6 +19,7 @@ import {
   getOrchestrationRun,
   resumeOrchestrationRun,
 } from "@/lib/api/endpoints/orchestration";
+import { getAuthToken } from "@/lib/api/client";
 import type {
   Task,
   CreateTaskPayload,
@@ -27,6 +28,7 @@ import type {
   OrchestrationRunStep,
 } from "@/lib/api/types";
 import type { Agent } from "@/lib/api/types";
+import { ChatWebSocket } from "@/lib/websocket";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,6 +90,18 @@ function normalizeStatus(status: Task["status"]): NormalizedStatus {
 }
 
 type TaskMetadata = Record<string, unknown>;
+type WorkspaceRealtimeEvent = {
+  id?: string;
+  type: string;
+  entity?: string | null;
+  origin?: string | null;
+  reason?: string | null;
+  timestamp?: string | null;
+  workspaceId?: string | null;
+  task?: Record<string, unknown> | null;
+  run?: Record<string, unknown> | null;
+  payload?: Record<string, unknown> | null;
+};
 
 function asTaskMetadata(task: Task | null | undefined): TaskMetadata {
   if (!task?.metadata || typeof task.metadata !== "object") return {};
@@ -604,9 +618,10 @@ interface TaskDetailSheetProps {
   onClose: () => void;
   onTaskUpdated: () => void;
   assignees: string[];
+  realtimeEvent?: WorkspaceRealtimeEvent | null;
 }
 
-function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: TaskDetailSheetProps) {
+function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realtimeEvent = null }: TaskDetailSheetProps) {
   const [liveTask, setLiveTask] = useState<Task | null>(task);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [loadingSubtasks, setLoadingSubtasks] = useState(false);
@@ -759,6 +774,28 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
       }
     };
   }, [open, currentTaskId, isLiveOrchestration, isLiveRunActive, fetchCurrentTask, fetchRunDetail, fetchSubtasks]);
+
+  useEffect(() => {
+    if (!open || !realtimeEvent || !currentTaskId) return;
+
+    const taskEvent = realtimeEvent.task || null;
+    const runEvent = realtimeEvent.run || null;
+    const eventTaskId = typeof taskEvent?.id === "string" ? taskEvent.id : null;
+    const eventParentId = typeof taskEvent?.parent_id === "string" ? taskEvent.parent_id : null;
+    const eventRunId = typeof runEvent?.id === "string" ? runEvent.id : null;
+
+    const touchesCurrentTask = eventTaskId === currentTaskId;
+    const touchesSubtask = eventParentId === currentTaskId;
+    const touchesCurrentRun = Boolean(orchestrationRunId && eventRunId === orchestrationRunId);
+
+    if (!touchesCurrentTask && !touchesSubtask && !touchesCurrentRun) return;
+
+    void Promise.allSettled([
+      fetchCurrentTask({ propagate: true }),
+      fetchRunDetail({ silent: true }),
+      fetchSubtasks({ silent: true }),
+    ]);
+  }, [open, realtimeEvent, currentTaskId, orchestrationRunId, fetchCurrentTask, fetchRunDetail, fetchSubtasks]);
 
   const handleAddSubtask = async () => {
     if (!newSubtaskTitle.trim() || !currentTask) return;
@@ -1730,6 +1767,7 @@ export default function TasksPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [lastRealtimeEvent, setLastRealtimeEvent] = useState<WorkspaceRealtimeEvent | null>(null);
 
   useEffect(() => {
     if (!agentNames.length) return;
@@ -1754,6 +1792,37 @@ export default function TasksPage() {
       setDetailTask(updated);
     }
   }, [detailTask, tasks]);
+
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) return;
+
+    const ws = new ChatWebSocket(token);
+    const offConnected = ws.on("_connected", () => {
+      ws.joinWorkspace();
+    });
+    const offWorkspaceJoined = ws.on("workspace:joined", () => {
+      void mutate();
+    });
+    const offWorkspaceEvent = ws.on("workspace:event", (event: WorkspaceRealtimeEvent) => {
+      setLastRealtimeEvent({
+        ...event,
+        timestamp: event.timestamp || new Date().toISOString(),
+      });
+      if (String(event.type || "").startsWith("task.")) {
+        void mutate();
+      }
+    });
+
+    ws.connect();
+    return () => {
+      offConnected();
+      offWorkspaceJoined();
+      offWorkspaceEvent();
+      ws.leaveWorkspace();
+      ws.destroy();
+    };
+  }, [mutate]);
 
   const filteredTasks = useMemo(() => {
     let list = tasks ?? [];
@@ -1994,6 +2063,7 @@ export default function TasksPage() {
         onClose={() => setDetailTask(null)}
         onTaskUpdated={() => mutate()}
         assignees={assigneeOptions}
+        realtimeEvent={lastRealtimeEvent}
       />
 
       {/* Create / Edit Dialog */}
