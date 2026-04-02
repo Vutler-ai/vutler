@@ -98,4 +98,56 @@ describe('runSignals', () => {
       wakeAt: expect.any(Date),
     }));
   });
+
+  test('includes Snipara blocker context in run wake events for blocked tasks', async () => {
+    const updateRun = jest.fn().mockResolvedValue({ id: 'run-1' });
+    const appendRunEvent = jest.fn().mockResolvedValue({ id: 'evt-blocked-1' });
+    const getRunById = jest.fn().mockResolvedValue({
+      id: 'run-1',
+      status: 'blocked',
+      current_step_id: 'step-1',
+    });
+    const requestImmediatePoll = jest.fn();
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query: jest.fn() }));
+    jest.doMock('../../services/orchestration/runStore', () => ({
+      TERMINAL_RUN_STATUSES: new Set(['completed', 'failed', 'cancelled', 'timed_out']),
+      appendRunEvent,
+      getRunById,
+      parseJsonLike: jest.requireActual('../../services/orchestration/runStore').parseJsonLike,
+      updateRun,
+    }));
+    jest.doMock('../../services/orchestration/runEngine', () => ({
+      getRunEngine: () => ({ requestImmediatePoll }),
+    }));
+
+    const { signalRunFromTask } = require('../../services/orchestration/runSignals');
+    await signalRunFromTask({
+      id: 'child-task-blocked-1',
+      status: 'blocked',
+      metadata: {
+        orchestration_parent_run_id: 'run-1',
+        orchestration_parent_step_id: 'step-1',
+        snipara_last_event: 'task.blocked',
+        snipara_blocker_type: 'external_dependency',
+        snipara_blocker_reason: 'Waiting on legal owner response.',
+      },
+    }, {
+      reason: 'snipara_webhook',
+      eventType: 'delegate.task.blocked',
+    });
+
+    expect(appendRunEvent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      eventType: 'delegate.task.blocked',
+      payload: expect.objectContaining({
+        task_status: 'blocked',
+        source_task_metadata: expect.objectContaining({
+          blocker_type: 'external_dependency',
+          blocker_reason: 'Waiting on legal owner response.',
+          snipara_last_event: 'task.blocked',
+        }),
+      }),
+    }));
+    expect(requestImmediatePoll).toHaveBeenCalledTimes(1);
+  });
 });

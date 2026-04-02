@@ -80,6 +80,25 @@ function extractTaskError(task) {
   return `Task ${task?.id || 'unknown'} ended with status ${task?.status || 'failed'}.`;
 }
 
+function extractTaskBlocker(task) {
+  const metadata = parseJsonLike(task?.metadata);
+  const blockerType = String(metadata.snipara_blocker_type || metadata.blocker_type || '').trim();
+  const blockerReason = String(metadata.snipara_blocker_reason || metadata.blocker_reason || '').trim();
+  const lastEvent = String(metadata.snipara_last_event || '').trim().toLowerCase();
+  const combined = `${blockerType} ${blockerReason} ${lastEvent}`.toLowerCase();
+  const approval = /(approval|approv|signoff|sign-off|human|manual|decision)/.test(combined);
+  const remediation = /(rework|quality|qa|validation|fix|revise|repair|review)/.test(combined);
+  const dependency = /(dependency|external|waiting|context|input|missing|blocked|reviewer|owner)/.test(combined);
+  return {
+    blockerType: blockerType || null,
+    blockerReason: blockerReason || null,
+    lastEvent: lastEvent || null,
+    message: blockerReason || blockerType || extractTaskError(task),
+    action: approval ? 'approval' : remediation ? 'remediate' : dependency ? 'blocked' : 'blocked',
+    metadata,
+  };
+}
+
 function nextSequenceNo(steps = []) {
   return steps.reduce((max, step) => Math.max(max, Number(step?.sequence_no) || 0), 0) + 1;
 }
@@ -1049,6 +1068,11 @@ class OrchestrationRunEngine {
       return;
     }
 
+    if (String(childTask.status || '').toLowerCase() === 'blocked') {
+      await this.handleBlockedDelegate(run, step, steps, rootTask, childTask);
+      return;
+    }
+
     if (FAILED_TASK_STATUSES.has(String(childTask.status || '').toLowerCase())) {
       await this.handleDelegateFailure(run, step, steps, rootTask, childTask);
       return;
@@ -1261,6 +1285,134 @@ class OrchestrationRunEngine {
       currentStepId: step.id,
       nextWakeAt: null,
       lastProgressAt: now,
+    }));
+  }
+
+  async handleBlockedDelegate(run, step, steps, rootTask, childTask) {
+    const now = new Date();
+    const blocker = extractTaskBlocker(childTask);
+    const nextRetryCount = (Number(step.retry_count) || 0) + 1;
+
+    await updateRunStep(pool, step.id, {
+      status: 'blocked',
+      retryCount: nextRetryCount,
+      completedAt: null,
+      spawnedTaskId: childTask.id,
+      wait: {
+        kind: 'blocked',
+        task_id: childTask.id,
+        blocker_type: blocker.blockerType,
+        blocker_reason: blocker.blockerReason,
+      },
+      error: {
+        delegated_task_id: childTask.id,
+        child_task_status: childTask.status,
+        blocker_type: blocker.blockerType,
+        blocker_reason: blocker.blockerReason,
+        message: blocker.message,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step.id,
+      eventType: 'delegate.task_blocked',
+      actor: 'run-engine',
+      payload: {
+        delegated_task_id: childTask.id,
+        child_task_status: childTask.status,
+        blocker_type: blocker.blockerType,
+        blocker_reason: blocker.blockerReason,
+        action: blocker.action,
+      },
+    });
+
+    if (blocker.action === 'approval') {
+      const approvalStep = await this.ensureApprovalGateStep(run, steps, childTask, {
+        overall_score: null,
+        summary: blocker.message,
+      }, rootTask);
+      const awaitingRun = await updateRun(pool, run.id, buildReleaseLeasePatch({
+        status: 'awaiting_approval',
+        currentStepId: approvalStep.id,
+        nextWakeAt: null,
+        lastProgressAt: now,
+      }));
+
+      await updateTaskRecord(rootTask.id, {
+        metadata: {
+          orchestration_status: 'awaiting_approval',
+          orchestration_run_id: run.id,
+          orchestration_step_id: approvalStep.id,
+          delegated_task_id: childTask.id,
+          approval_required: true,
+          approval_mode: approvalModeOf(rootTask),
+          orchestration_blocker_type: blocker.blockerType,
+          orchestration_blocker_reason: blocker.blockerReason,
+          pending_approval: {
+            run_id: run.id,
+            step_id: approvalStep.id,
+            delegated_task_id: childTask.id,
+            summary: blocker.message,
+            blocker_type: blocker.blockerType,
+            blocker_reason: blocker.blockerReason,
+          },
+          orchestration_proactive: true,
+        },
+      });
+
+      await this.postApprovalRequest(rootTask, run, approvalStep, {
+        summary: blocker.message,
+      }).catch((err) => {
+        console.warn('[RunEngine] Failed to post approval request for blocked task:', err.message);
+      });
+
+      return awaitingRun;
+    }
+
+    if (blocker.action === 'remediate') {
+      await this.queueFollowUpDelegateStep(run, rootTask, steps, {
+        title: `Remediation: ${rootTask.title || 'Autonomous task'}`,
+        selectedAgentUsername: run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null,
+        selectedAgentId: run.requested_agent_id || null,
+        retryCount: nextRetryCount,
+        previousTask: childTask,
+        sourceStep: step,
+        verdict: {
+          overall_score: 0,
+          summary: blocker.message,
+          scores: [],
+        },
+        threshold: getVerificationEngine().passThreshold,
+        escalation: false,
+      });
+      return;
+    }
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: 'blocked',
+        orchestration_run_id: run.id,
+        orchestration_step_id: step.id,
+        delegated_task_id: childTask.id,
+        orchestration_blocker_type: blocker.blockerType,
+        orchestration_blocker_reason: blocker.blockerReason,
+        pending_approval: null,
+        orchestration_proactive: true,
+      },
+    });
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'blocked',
+      currentStepId: step.id,
+      nextWakeAt: null,
+      lastProgressAt: now,
+      error: {
+        message: blocker.message,
+        blocker_type: blocker.blockerType,
+        blocker_reason: blocker.blockerReason,
+        delegated_task_id: childTask.id,
+      },
     }));
   }
 

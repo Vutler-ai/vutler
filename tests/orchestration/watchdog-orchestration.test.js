@@ -87,4 +87,80 @@ describe('watchdog orchestration integration', () => {
     }));
     expect(signalRunFromTask).not.toHaveBeenCalled();
   });
+
+  test('handleBlocked enriches the task and wakes the orchestration run with blocker context', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'child-task-blocked-1',
+          workspace_id: 'ws-1',
+          status: 'in_progress',
+          metadata: {
+            orchestration_parent_run_id: 'run-1',
+            orchestration_parent_step_id: 'step-1',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn().mockResolvedValue({ signaled: true, runId: 'run-1' });
+    const appendRunEventForTask = jest.fn().mockResolvedValue({ appended: true, runId: 'run-1' });
+    const postSystemMessage = jest.fn().mockResolvedValue({});
+    const getTeamChannelId = jest.fn().mockResolvedValue('channel-1');
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+    jest.doMock('../../app/custom/services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        getTeamChannelId,
+        postSystemMessage,
+      }),
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({ checkIntervalMs: 1000, stallThresholdMs: 1000, maxNudges: 1 });
+
+    await watchdog.handleBlocked({
+      task_id: 'snip-1',
+      owner: 'mike',
+      blocker_type: 'external_dependency',
+      blocker_reason: 'Waiting on legal owner response.',
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'blocked'"),
+      expect.any(Array)
+    );
+    expect(appendRunEventForTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'child-task-blocked-1',
+      status: 'blocked',
+      metadata: expect.objectContaining({
+        snipara_blocker_type: 'external_dependency',
+        snipara_blocker_reason: 'Waiting on legal owner response.',
+      }),
+    }), expect.objectContaining({
+      eventType: 'watchdog.task_blocked',
+      actor: 'watchdog',
+    }));
+    expect(wakeRunFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'child-task-blocked-1',
+      status: 'blocked',
+      metadata: expect.objectContaining({
+        snipara_blocker_type: 'external_dependency',
+      }),
+    }), expect.objectContaining({
+      reason: 'watchdog_blocked_event',
+      eventType: 'delegate.task_blocked',
+      actor: 'watchdog',
+      extraPayload: expect.objectContaining({
+        blocker_type: 'external_dependency',
+        blocker_reason: 'Waiting on legal owner response.',
+      }),
+    }));
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
 });

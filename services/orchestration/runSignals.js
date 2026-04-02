@@ -79,6 +79,11 @@ async function wakeRunFromTask(task, {
         execution_mode: metadata.execution_mode || null,
         snipara_task_id: task.snipara_task_id || null,
         swarm_task_id: task.swarm_task_id || null,
+        snipara_last_event: metadata.snipara_last_event || null,
+        snipara_hierarchy_level: metadata.snipara_hierarchy_level || null,
+        blocker_type: metadata.snipara_blocker_type || metadata.blocker_type || null,
+        blocker_reason: metadata.snipara_blocker_reason || metadata.blocker_reason || null,
+        last_output: metadata.last_output || metadata.result || null,
       },
       ...extraPayload,
     },
@@ -132,6 +137,11 @@ async function appendRunEventForTask(task, {
     payload: {
       task_id: task.id,
       task_status: normalizeTaskStatus(task.status),
+      source_task_metadata: {
+        blocker_type: parseJsonLike(task.metadata).snipara_blocker_type || parseJsonLike(task.metadata).blocker_type || null,
+        blocker_reason: parseJsonLike(task.metadata).snipara_blocker_reason || parseJsonLike(task.metadata).blocker_reason || null,
+        snipara_last_event: parseJsonLike(task.metadata).snipara_last_event || null,
+      },
       ...payload,
     },
   });

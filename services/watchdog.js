@@ -175,6 +175,53 @@ class AgentWatchdog {
       `🚧 Task blocked: "${blocker_reason}" (type: ${blocker_type}, owner: ${owner || 'unassigned'}). Needs attention.`,
       'watchdog',
     );
+
+    if (!task) return;
+
+    const meta = this._parseMetadata(task);
+    const nextMetadata = {
+      ...meta,
+      snipara_blocker_type: blocker_type || meta.snipara_blocker_type || null,
+      snipara_blocker_reason: blocker_reason || meta.snipara_blocker_reason || null,
+      snipara_last_event: meta.snipara_last_event || 'task.blocked',
+      watchdog_last_blocked_at: new Date().toISOString(),
+    };
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET status = 'blocked',
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [task.id, JSON.stringify(nextMetadata)]
+    );
+
+    const blockedTask = {
+      ...task,
+      status: 'blocked',
+      metadata: nextMetadata,
+    };
+
+    await appendRunEventForTask(blockedTask, {
+      eventType: 'watchdog.task_blocked',
+      actor: 'watchdog',
+      payload: {
+        blocker_type,
+        blocker_reason,
+        owner: owner || null,
+      },
+    }).catch(() => {});
+
+    await wakeRunFromTask(blockedTask, {
+      reason: 'watchdog_blocked_event',
+      eventType: 'delegate.task_blocked',
+      actor: 'watchdog',
+      extraPayload: {
+        blocker_type,
+        blocker_reason,
+        owner: owner || null,
+      },
+    }).catch(() => {});
   }
 
   /**
