@@ -175,6 +175,10 @@ class SwarmCoordinator {
     return created.rows[0].id;
   }
 
+  async loadAgentDirectory(workspaceId = DEFAULT_WORKSPACE) {
+    return loadAgentDirectory(workspaceId);
+  }
+
   async getTeamChannelId(workspaceId = DEFAULT_WORKSPACE) {
     return this.ensureTeamChannel(workspaceId);
   }

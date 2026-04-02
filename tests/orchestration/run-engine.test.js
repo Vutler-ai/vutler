@@ -191,6 +191,225 @@ describe('runEngine claim/resume loop', () => {
     }));
   });
 
+  test('uses swarm-assisted decomposition to seed the first planned phase and agent', async () => {
+    const taskUpdates = [];
+    const appendRunEvent = jest.fn().mockResolvedValue(null);
+    const claimRunnableRuns = jest.fn().mockResolvedValue([{
+      id: 'run-llm-1',
+      workspace_id: 'ws-1',
+      root_task_id: 'root-task-llm-1',
+      status: 'planning',
+      lock_token: 'lock-llm-1',
+      requested_agent_id: 'agent-1',
+      requested_agent_username: 'mike',
+      display_agent_id: 'agent-1',
+      display_agent_username: 'mike',
+    }]);
+    const getRunById = jest.fn().mockResolvedValue({
+      id: 'run-llm-1',
+      workspace_id: 'ws-1',
+      root_task_id: 'root-task-llm-1',
+      status: 'planning',
+      lock_token: 'lock-llm-1',
+      requested_agent_id: 'agent-1',
+      requested_agent_username: 'mike',
+      display_agent_id: 'agent-1',
+      display_agent_username: 'mike',
+      summary: 'Autonomous FULL-mode run.',
+      plan_json: { goal: 'Ship orchestration' },
+    });
+    const getCurrentRunStep = jest.fn().mockResolvedValue({
+      id: 'step-plan-llm-1',
+      run_id: 'run-llm-1',
+      sequence_no: 1,
+      step_type: 'plan',
+      status: 'queued',
+      title: 'Plan orchestration run',
+    });
+    const listRunSteps = jest.fn()
+      .mockResolvedValueOnce([{
+        id: 'step-plan-llm-1',
+        run_id: 'run-llm-1',
+        sequence_no: 1,
+        step_type: 'plan',
+        status: 'queued',
+        title: 'Plan orchestration run',
+      }])
+      .mockResolvedValueOnce([
+        {
+          id: 'step-plan-llm-1',
+          run_id: 'run-llm-1',
+          sequence_no: 1,
+          step_type: 'plan',
+          status: 'completed',
+          title: 'Plan orchestration run',
+        },
+        {
+          id: 'step-delegate-llm-1',
+          run_id: 'run-llm-1',
+          sequence_no: 2,
+          step_type: 'delegate_task',
+          status: 'queued',
+          title: 'Phase 1: Inspect current runtime',
+          selected_agent_username: 'oscar',
+          selected_agent_id: 'agent-oscar',
+          input_json: {
+            plan_phase_index: 0,
+            plan_phase_title: 'Inspect current runtime',
+            plan_phase_count: 2,
+            phase_objective: 'Map the current orchestration gaps before implementation.',
+            snipara_swarm_id: 'swarm-1',
+            strategy: 'multi_phase_sequential',
+          },
+        },
+      ]);
+    const createRunStep = jest.fn().mockResolvedValue({
+      id: 'step-delegate-llm-1',
+      run_id: 'run-llm-1',
+      sequence_no: 2,
+      step_type: 'delegate_task',
+      status: 'queued',
+      title: 'Phase 1: Inspect current runtime',
+      selected_agent_username: 'oscar',
+      selected_agent_id: 'agent-oscar',
+      input_json: {
+        plan_phase_index: 0,
+        plan_phase_title: 'Inspect current runtime',
+        plan_phase_count: 2,
+        phase_objective: 'Map the current orchestration gaps before implementation.',
+        snipara_swarm_id: 'swarm-1',
+        strategy: 'multi_phase_sequential',
+      },
+    });
+    const heartbeatRunLease = jest.fn().mockResolvedValue({
+      id: 'run-llm-1',
+      lock_token: 'lock-llm-1',
+    });
+    const updateRun = jest.fn().mockResolvedValue({ id: 'run-llm-1' });
+    const updateRunStep = jest.fn().mockResolvedValue({});
+    const createTask = jest.fn().mockResolvedValue({
+      id: 'child-task-llm-1',
+      status: 'pending',
+    });
+
+    const poolQuery = jest.fn(async (sql, params) => {
+      if (sql.includes('FROM tenant_vutler.tasks') && sql.includes('WHERE id = $1')) {
+        return {
+          rows: [{
+            id: 'root-task-llm-1',
+            title: 'Ship orchestration',
+            description: 'Plan and ship the orchestration runtime safely.',
+            priority: 'high',
+            assigned_agent: 'mike',
+            workspace_id: 'ws-1',
+            metadata: { workflow_mode: 'FULL', origin: 'task' },
+          }],
+        };
+      }
+
+      if (sql.includes(`metadata ->> 'orchestration_parent_run_id'`)) {
+        return { rows: [] };
+      }
+
+      if (sql.startsWith('UPDATE tenant_vutler.tasks')) {
+        taskUpdates.push({ sql, params });
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected SQL in assisted planning test: ${sql}`);
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
+    jest.doMock('../../services/chatMessages', () => ({ insertChatMessage: jest.fn() }));
+    jest.doMock('../../services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        createTask,
+        recallWorkspaceContext: jest.fn().mockResolvedValue('Workspace standards from Snipara memory.'),
+        getSniparaRuntimeConfig: jest.fn().mockResolvedValue({
+          swarmId: 'swarm-1',
+          config: { configured: true, projectId: 'project-1' },
+        }),
+        loadAgentDirectory: jest.fn().mockResolvedValue([
+          { id: 'agent-1', username: 'mike', name: 'Mike' },
+          { id: 'agent-oscar', username: 'oscar', name: 'Oscar' },
+        ]),
+        decomposeWithLLM: jest.fn().mockResolvedValue([
+          {
+            title: 'Inspect current runtime',
+            description: 'Map the current orchestration gaps before implementation.',
+            agent: 'oscar',
+          },
+          {
+            title: 'Implement the durable flow',
+            description: 'Wire the execution and resume loop.',
+            agent: 'mike',
+          },
+        ]),
+        resolveAgentForSubtask: jest.fn((subtask) => subtask.agent),
+        updateSharedContext: jest.fn().mockResolvedValue(null),
+      }),
+    }));
+    jest.doMock('../../services/verificationEngine', () => ({
+      getVerificationEngine: () => ({
+        maxRetries: 3,
+        passThreshold: 7,
+        evaluateTaskOutput: jest.fn(),
+        recordVerdict: jest.fn(),
+      }),
+    }));
+    jest.doMock('../../services/orchestration/runStore', () => ({
+      DEFAULT_LEASE_MS: 60_000,
+      TERMINAL_RUN_STATUSES: new Set(['completed', 'failed', 'cancelled', 'timed_out']),
+      appendRunEvent,
+      claimRunnableRuns,
+      createRunStep,
+      getCurrentRunStep,
+      getRunById,
+      heartbeatRunLease,
+      listRunSteps,
+      parseJsonLike: jest.requireActual('../../services/orchestration/runStore').parseJsonLike,
+      updateRun,
+      updateRunStep,
+    }));
+
+    const { OrchestrationRunEngine } = require('../../services/orchestration/runEngine');
+    const engine = new OrchestrationRunEngine({
+      pollIntervalMs: 50,
+      resumeDelayMs: 3_000,
+      leaseMs: 30_000,
+      workerId: 'worker-run-engine-test',
+    });
+
+    await engine.pollOnce();
+
+    expect(createRunStep).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      title: 'Phase 1: Inspect current runtime',
+      selectedAgentUsername: 'oscar',
+      selectedAgentId: 'agent-oscar',
+      input: expect.objectContaining({
+        strategy: 'multi_phase_sequential',
+        plan_phase_title: 'Inspect current runtime',
+        plan_phase_count: 2,
+      }),
+    }));
+    expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
+      title: '[Run run-llm-] 1/2: Inspect current runtime',
+      assigned_agent: 'oscar',
+      metadata: expect.objectContaining({
+        orchestration_plan_phase_title: 'Inspect current runtime',
+        orchestration_snipara_swarm_id: 'swarm-1',
+      }),
+    }), 'ws-1');
+    expect(JSON.parse(taskUpdates[0].params[0])).toEqual(expect.objectContaining({
+      orchestration_planning_source: 'swarm_llm_decomposition',
+      orchestration_phase_title: 'Inspect current runtime',
+      orchestration_delegated_agents: expect.arrayContaining([
+        expect.objectContaining({ agentRef: 'oscar', reason: 'Inspect current runtime' }),
+      ]),
+      orchestration_snipara_swarm_id: 'swarm-1',
+    }));
+  });
+
   test('resumes a waiting run and finalizes it when the delegated task completes', async () => {
     const taskUpdates = [];
     const updateRunCalls = [];

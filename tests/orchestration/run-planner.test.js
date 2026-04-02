@@ -54,4 +54,43 @@ describe('runPlanner', () => {
       title: 'Verify rollout and approvals',
     }));
   });
+
+  test('prefers swarm-suggested phases when they are provided', () => {
+    const plan = buildRunPlan({
+      run: {
+        requested_agent_username: 'mike',
+      },
+      rootTask: {
+        title: 'Ship orchestration',
+        description: 'Do the thing end to end.',
+      },
+      suggestedPhases: [
+        {
+          title: 'Inspect current runtime',
+          description: 'Map existing orchestration gaps.',
+          agent: 'oscar',
+        },
+        {
+          title: 'Implement the durable flow',
+          description: 'Wire run state into the scheduler and engine.',
+          agent_username: 'mike',
+          verification_focus: 'State transitions and retries are covered.',
+        },
+      ],
+    });
+
+    expect(plan.strategy).toBe('multi_phase_sequential');
+    expect(plan.phases).toEqual([
+      expect.objectContaining({
+        title: 'Inspect current runtime',
+        objective: 'Map existing orchestration gaps.',
+        agent_username: 'oscar',
+      }),
+      expect.objectContaining({
+        title: 'Implement the durable flow',
+        verification_focus: 'State transitions and retries are covered.',
+        agent_username: 'mike',
+      }),
+    ]);
+  });
 });

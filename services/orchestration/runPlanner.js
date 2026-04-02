@@ -53,7 +53,7 @@ function normalizePhase(entry, index, fallbackAgent = null) {
   if (typeof entry !== 'object') return null;
 
   const title = normalizePhaseTitle(entry.title || entry.label || entry.objective, `Phase ${index + 1}`);
-  const objective = truncate(entry.objective || entry.instructions || entry.title || title, 260);
+  const objective = truncate(entry.objective || entry.instructions || entry.description || entry.title || title, 260);
   if (!objective) return null;
 
   return {
@@ -113,13 +113,24 @@ function buildRunPlan({
   rootTask = {},
   workspaceContext = '',
   snipara = {},
+  suggestedPhases = [],
 } = {}) {
   const metadata = parseJsonLike(rootTask.metadata);
   const requestedAgent = cleanText(
     run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || snipara.agent_username
   ) || null;
-  const phases = extractMetadataPhases(metadata, requestedAgent);
-  const checklistPhases = phases.length > 0 ? phases : extractChecklistPhases(rootTask.description, requestedAgent);
+  const phases = Array.isArray(suggestedPhases)
+    ? suggestedPhases
+      .slice(0, MAX_PHASES)
+      .map((entry, index) => normalizePhase(entry, index, requestedAgent))
+      .filter(Boolean)
+    : [];
+  const metadataPhases = extractMetadataPhases(metadata, requestedAgent);
+  const checklistPhases = phases.length > 0
+    ? phases
+    : metadataPhases.length > 0
+      ? metadataPhases
+      : extractChecklistPhases(rootTask.description, requestedAgent);
   const delegatePhases = checklistPhases.length > 0 ? checklistPhases : [buildFallbackPhase(rootTask, requestedAgent)].filter(Boolean);
   const contextExcerpt = truncate(workspaceContext, MAX_CONTEXT_CHARS) || null;
   const goal = cleanText(rootTask.title) || 'Autonomous execution';

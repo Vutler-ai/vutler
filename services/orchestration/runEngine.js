@@ -51,6 +51,16 @@ function humanizeAgentName(agentRef) {
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
+function findAgentRecord(agentRef, agents = []) {
+  const normalized = String(agentRef || '').trim().toLowerCase();
+  if (!normalized) return null;
+  return agents.find((agent) => {
+    return String(agent?.id || '').trim().toLowerCase() === normalized
+      || String(agent?.username || '').trim().toLowerCase() === normalized
+      || String(agent?.name || '').trim().toLowerCase() === normalized;
+  }) || null;
+}
+
 function isTerminalStepStatus(status) {
   return ['completed', 'failed', 'cancelled', 'skipped'].includes(String(status || '').toLowerCase());
 }
@@ -127,6 +137,7 @@ function buildDelegatedTaskDescription(run, rootTask, step = null) {
   const planGoal = String(plan.goal || rootTask?.title || '').trim();
   const phaseTitle = String(input.plan_phase_title || '').trim();
   const phaseObjective = String(input.phase_objective || '').trim();
+  const verificationFocus = String(input.phase_verification_focus || '').trim();
   const phaseIndex = Number.isFinite(Number(input.plan_phase_index)) ? Number(input.plan_phase_index) + 1 : null;
   const phaseCount = Number.isFinite(Number(input.plan_phase_count)) ? Number(input.plan_phase_count) : null;
   const workspaceContext = String(
@@ -154,6 +165,7 @@ function buildDelegatedTaskDescription(run, rootTask, step = null) {
     planGoal ? `Goal: ${planGoal}` : '',
     phaseTitle ? `Current phase${phaseIndex ? ` (${phaseIndex}${phaseCount ? `/${phaseCount}` : ''})` : ''}: ${phaseTitle}` : '',
     phaseObjective ? `Phase objective: ${phaseObjective}` : '',
+    verificationFocus ? `Definition of done: ${verificationFocus}` : '',
     revisionLabel,
     escalationLabel,
     workspaceContext ? `Workspace context:\n${workspaceContext}` : '',
@@ -697,6 +709,11 @@ class OrchestrationRunEngine {
       ).catch(() => '');
     }
 
+    const {
+      suggestedPhases,
+      availableAgents,
+    } = await this.buildSuggestedPlanPhases(run, rootTask, workspaceContext, coordinator);
+
     let sniparaConfig = null;
     let sniparaSwarmId = null;
     if (typeof coordinator.getSniparaRuntimeConfig === 'function') {
@@ -715,13 +732,27 @@ class OrchestrationRunEngine {
         projectId: sniparaConfig?.projectId || null,
         rootTaskId: rootTask.snipara_task_id || rootTask.swarm_task_id || rootMetadata.snipara_hierarchy_root_id || null,
       },
+      suggestedPhases,
     });
+    plan.planning_source = suggestedPhases.length > 0 ? 'swarm_llm_decomposition' : 'heuristic';
     const firstPhase = resolvePlanPhase(plan, 0);
     const phaseCount = getPlanPhaseCount(plan);
+    const delegatedAgents = Array.isArray(plan.phases)
+      ? plan.phases
+        .map((phase) => ({
+          agentRef: phase?.agent_username || null,
+          reason: phase?.title || phase?.objective || null,
+          domain: phase?.key || null,
+        }))
+        .filter((entry) => entry.agentRef || entry.reason)
+      : [];
+    const firstPhaseAgent = findAgentRecord(firstPhase?.agent_username, availableAgents);
     const runContext = mergeJsonObjects(run.context_json, {
       workspace_context_excerpt: plan.workspace_context_excerpt,
       snipara: plan.snipara,
       plan_phase_count: phaseCount,
+      delegated_agents: delegatedAgents,
+      planning_source: plan.planning_source,
     });
 
     await updateRun(pool, run.id, {
@@ -757,8 +788,8 @@ class OrchestrationRunEngine {
           : 'Delegate execution task',
         status: 'queued',
         executor: 'task',
-        selectedAgentId: run.requested_agent_id || null,
-        selectedAgentUsername: run.requested_agent_username || rootTask.assigned_agent || null,
+        selectedAgentId: firstPhaseAgent?.id || run.requested_agent_id || null,
+        selectedAgentUsername: firstPhaseAgent?.username || firstPhase?.agent_username || run.requested_agent_username || rootTask.assigned_agent || null,
         input: {
           root_task_id: rootTask.id,
           root_task_title: rootTask.title || '',
@@ -793,6 +824,8 @@ class OrchestrationRunEngine {
         title: phaseCount > 1 && firstPhase?.title
           ? `Phase 1: ${firstPhase.title}`
           : delegateStep.title,
+        selectedAgentId: delegateStep.selected_agent_id || firstPhaseAgent?.id || run.requested_agent_id || null,
+        selectedAgentUsername: delegateStep.selected_agent_username || firstPhaseAgent?.username || firstPhase?.agent_username || run.requested_agent_username || rootTask.assigned_agent || null,
         input: {
           ...existingInput,
           strategy: existingInput.strategy || plan.strategy,
@@ -818,8 +851,8 @@ class OrchestrationRunEngine {
     await updateRunStep(pool, activeDelegateStep.id, {
       status: 'waiting',
       startedAt: activeDelegateStep.started_at || now,
-      selectedAgentId: run.requested_agent_id || null,
-      selectedAgentUsername: run.requested_agent_username || rootTask.assigned_agent || null,
+      selectedAgentId: activeDelegateStep.selected_agent_id || firstPhaseAgent?.id || run.requested_agent_id || null,
+      selectedAgentUsername: activeDelegateStep.selected_agent_username || firstPhaseAgent?.username || firstPhase?.agent_username || run.requested_agent_username || rootTask.assigned_agent || null,
       spawnedTaskId: childTask.id,
       wait: {
         kind: 'task_completion',
@@ -860,13 +893,15 @@ class OrchestrationRunEngine {
         orchestration_next_wake_at: wakeAt.toISOString(),
         orchestration_phase_index: firstPhase?.index || 0,
         orchestration_phase_title: firstPhase?.title || rootTask.title || null,
-        orchestration_phase_count: phaseCount || 1,
-        orchestration_plan_strategy: plan.strategy,
-        orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
-        orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
-        orchestration_proactive: true,
-      },
-    });
+          orchestration_phase_count: phaseCount || 1,
+          orchestration_plan_strategy: plan.strategy,
+          orchestration_planning_source: plan.planning_source,
+          orchestration_delegated_agents: delegatedAgents,
+          orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
+          orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
+          orchestration_proactive: true,
+        },
+      });
 
     await appendRunEvent(pool, {
       runId: run.id,
@@ -877,6 +912,7 @@ class OrchestrationRunEngine {
         spawned_task_id: childTask.id,
         next_wake_at: wakeAt.toISOString(),
         plan_strategy: plan.strategy,
+        planning_source: plan.planning_source,
         phase_index: firstPhase?.index || 0,
         phase_title: firstPhase?.title || null,
         proactive: true,
@@ -889,6 +925,55 @@ class OrchestrationRunEngine {
       nextWakeAt: wakeAt,
       lastProgressAt: now,
     }));
+  }
+
+  async buildSuggestedPlanPhases(run, rootTask, workspaceContext, coordinator) {
+    const planningCoordinator = coordinator || getSwarmCoordinator();
+    let availableAgents = [];
+    if (typeof planningCoordinator.loadAgentDirectory === 'function') {
+      availableAgents = await planningCoordinator.loadAgentDirectory(run.workspace_id).catch(() => []);
+    }
+
+    if (typeof planningCoordinator.decomposeWithLLM !== 'function') {
+      return { suggestedPhases: [], availableAgents };
+    }
+
+    const preferredAgentId = run.requested_agent_id
+      || run.requested_agent_username
+      || rootTask.assigned_agent
+      || rootTask.assignee
+      || null;
+    const planningInput = [
+      rootTask.title || '',
+      rootTask.description || '',
+      workspaceContext ? `Workspace context:\n${workspaceContext}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    const subtasks = await planningCoordinator.decomposeWithLLM(
+      planningInput,
+      availableAgents,
+      run.workspace_id,
+      { preferredAgentId }
+    ).catch(() => []);
+
+    if (!Array.isArray(subtasks) || subtasks.length === 0) {
+      return { suggestedPhases: [], availableAgents };
+    }
+
+    const suggestedPhases = subtasks.slice(0, 3).map((subtask, index) => {
+      const resolvedAgent = typeof planningCoordinator.resolveAgentForSubtask === 'function'
+        ? planningCoordinator.resolveAgentForSubtask(subtask, availableAgents, preferredAgentId)
+        : String(subtask?.agent || preferredAgentId || '').trim() || null;
+      return {
+        key: `phase_${index + 1}`,
+        title: subtask?.title || `Phase ${index + 1}`,
+        objective: subtask?.description || subtask?.title || rootTask.description || rootTask.title || '',
+        agent_username: resolvedAgent || null,
+        verification_focus: subtask?.verification_focus || subtask?.success_criteria || null,
+      };
+    }).filter((entry) => entry.title || entry.objective);
+
+    return { suggestedPhases, availableAgents };
   }
 
   async processDelegateStep(run, step, steps) {
