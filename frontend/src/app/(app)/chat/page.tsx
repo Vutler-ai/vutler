@@ -44,6 +44,11 @@ import {
   createDirectConversation,
   updateChannelPreferences,
 } from "@/lib/api/endpoints/chat";
+import {
+  approveOrchestrationRun,
+  getOrchestrationAutonomyMetrics,
+  resumeOrchestrationRun,
+} from "@/lib/api/endpoints/orchestration";
 import { ChatWebSocket } from "@/lib/websocket";
 import { useApi } from "@/hooks/use-api";
 import type {
@@ -55,18 +60,22 @@ import type {
   ChatContact,
   ChatResourceArtifact,
   OrchestrationDelegatedAgent,
+  OrchestrationAutonomyMetrics,
   OrchestrationUnavailableDomain,
   OrchestrationUnavailableProvider,
   WorkspaceAgentPressure,
 } from "@/lib/api/types";
 import type { WorkspaceRealtimeEvent } from "@/lib/workspace-events";
 import {
+  getWorkspaceEventActions,
   getWorkspaceEventDescription,
+  getWorkspaceEventRunId,
   getWorkspaceEventTaskId,
   getWorkspaceEventTitle,
   isWorkspaceAttentionEvent,
   shouldSurfaceWorkspaceEvent,
 } from "@/lib/workspace-events";
+import type { WorkspaceRealtimeEventActionKind } from "@/lib/workspace-events";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -797,6 +806,15 @@ export default function ChatPage() {
   const [actionRuns, setActionRuns] = useState<ChatActionRun[]>([]);
   const [actionRunsLoading, setActionRunsLoading] = useState(false);
   const [workspaceAlerts, setWorkspaceAlerts] = useState<WorkspaceRealtimeEvent[]>([]);
+  const [workspaceAlertAction, setWorkspaceAlertAction] = useState<Record<string, WorkspaceRealtimeEventActionKind | null>>({});
+  const [workspaceAlertError, setWorkspaceAlertError] = useState<Record<string, string | null>>({});
+  const {
+    data: autonomyMetrics,
+    mutate: mutateAutonomyMetrics,
+  } = useApi<OrchestrationAutonomyMetrics>(
+    "/api/v1/orchestration/metrics/autonomy?windowDays=14",
+    () => getOrchestrationAutonomyMetrics({ windowDays: 14 })
+  );
 
   // Auto-select first channel once loaded
   useEffect(() => {
@@ -804,6 +822,43 @@ export default function ChatPage() {
       setSelectedChannel(channels[0]);
     }
   }, [channels, selectedChannel]);
+
+  const handleWorkspaceAlertAction = useCallback(async (
+    event: WorkspaceRealtimeEvent,
+    action: WorkspaceRealtimeEventActionKind
+  ) => {
+    const eventId = String(event.id || `${event.type}-${event.timestamp || Date.now()}`);
+
+    if (action === "open_task") {
+      const taskId = getWorkspaceEventTaskId(event);
+      window.location.assign(taskId ? `/tasks?task=${encodeURIComponent(taskId)}` : "/tasks");
+      return;
+    }
+
+    const runId = getWorkspaceEventRunId(event);
+    if (!runId) return;
+
+    setWorkspaceAlertAction((current) => ({ ...current, [eventId]: action }));
+    setWorkspaceAlertError((current) => ({ ...current, [eventId]: null }));
+
+    try {
+      if (action === "approve") {
+        await approveOrchestrationRun(runId, { approved: true });
+      } else if (action === "reject") {
+        await approveOrchestrationRun(runId, { approved: false });
+      } else if (action === "resume") {
+        await resumeOrchestrationRun(runId);
+      }
+      await mutateAutonomyMetrics();
+    } catch (error) {
+      setWorkspaceAlertError((current) => ({
+        ...current,
+        [eventId]: error instanceof Error ? error.message : "Action failed",
+      }));
+    } finally {
+      setWorkspaceAlertAction((current) => ({ ...current, [eventId]: null }));
+    }
+  }, [mutateAutonomyMetrics]);
 
   // ── messages ──
   const [messages, setMessages] = useState<Message[]>([]);
@@ -919,6 +974,7 @@ export default function ChatPage() {
         timestamp: event.timestamp || new Date().toISOString(),
       };
       if (!shouldSurfaceWorkspaceEvent(normalizedEvent)) return;
+      void mutateAutonomyMetrics();
       setWorkspaceAlerts((current) => {
         const next = [
           normalizedEvent,
@@ -939,7 +995,7 @@ export default function ChatPage() {
       ws.destroy();
       wsRef.current = null;
     };
-  }, [refreshSelectedChannel]);
+  }, [mutateAutonomyMetrics, refreshSelectedChannel]);
 
   useEffect(() => {
     if (!selectedChannel || !wsRef.current) return;
@@ -1935,13 +1991,13 @@ export default function ChatPage() {
                         <div className="space-y-3">
                           {workspaceAlerts.map((event) => {
                             const taskId = getWorkspaceEventTaskId(event);
-                            const href = taskId ? `/tasks?task=${encodeURIComponent(taskId)}` : "/tasks";
                             const attention = isWorkspaceAttentionEvent(event);
+                            const eventId = String(event.id || `${event.type}-${event.timestamp}`);
+                            const eventActions = getWorkspaceEventActions(event);
 
                             return (
-                              <a
-                                key={event.id || `${event.type}-${event.timestamp}`}
-                                href={href}
+                              <div
+                                key={eventId}
                                 className={`block rounded-xl border p-3 transition-colors ${
                                   attention
                                     ? "border-amber-500/20 bg-amber-500/8 hover:bg-amber-500/12"
@@ -1963,16 +2019,114 @@ export default function ChatPage() {
                                     <CheckBadgeIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
                                   )}
                                 </div>
+                                {eventActions.length > 0 && (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {eventActions.map((action) => (
+                                      <Button
+                                        key={`${eventId}-${action.kind}`}
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => handleWorkspaceAlertAction(event, action.kind)}
+                                        disabled={Boolean(workspaceAlertAction[eventId])}
+                                        className={
+                                          action.kind === "approve"
+                                            ? "h-7 border-emerald-500/30 bg-emerald-500/10 px-2.5 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+                                            : action.kind === "reject"
+                                              ? "h-7 border-amber-500/30 bg-transparent px-2.5 text-[11px] text-amber-300 hover:bg-amber-500/10"
+                                              : action.kind === "resume"
+                                                ? "h-7 border-sky-500/30 bg-transparent px-2.5 text-[11px] text-sky-300 hover:bg-sky-500/10"
+                                                : "h-7 border-white/10 bg-transparent px-2.5 text-[11px] text-white hover:bg-white/10"
+                                        }
+                                      >
+                                        {workspaceAlertAction[eventId] === action.kind
+                                          ? action.kind === "approve"
+                                            ? "Approving…"
+                                            : action.kind === "reject"
+                                              ? "Rejecting…"
+                                              : action.kind === "resume"
+                                                ? "Resuming…"
+                                                : "Opening…"
+                                          : action.label}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                )}
+                                {workspaceAlertError[eventId] && (
+                                  <p className="mt-2 text-xs text-red-300">{workspaceAlertError[eventId]}</p>
+                                )}
                                 <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-gray-500">
                                   <span>{formatTime(event.timestamp || new Date().toISOString())}</span>
                                   <span className="inline-flex items-center gap-1 text-sky-300">
-                                    Open task
+                                    {taskId ? "Open task" : "Review run"}
                                     <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5" />
                                   </span>
                                 </div>
-                              </a>
+                              </div>
                             );
                           })}
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="space-y-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Autonomy Metrics</p>
+                        <p className="mt-1 text-sm text-gray-300">
+                          Workspace snapshot over the last {autonomyMetrics?.window_days || 14} days.
+                        </p>
+                      </div>
+                      {!autonomyMetrics ? (
+                        <Skeleton className="h-28 w-full rounded-xl bg-white/5" />
+                      ) : (
+                        <div className="rounded-xl border border-white/[0.07] bg-white/[0.03] p-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-lg border border-white/10 bg-[#08090f] p-2">
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Runs</p>
+                              <p className="mt-1 text-lg font-semibold text-white">{autonomyMetrics.totals.total_runs}</p>
+                            </div>
+                            <div className="rounded-lg border border-white/10 bg-[#08090f] p-2">
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Limited</p>
+                              <p className="mt-1 text-lg font-semibold text-amber-200">{autonomyMetrics.totals.autonomy_limited_runs}</p>
+                            </div>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Top blockers</p>
+                            {autonomyMetrics.blocker_counts.length === 0 ? (
+                              <p className="text-sm text-gray-500">No autonomy blockers recorded.</p>
+                            ) : (
+                              autonomyMetrics.blocker_counts.slice(0, 3).map((item) => (
+                                <div key={`${item.kind || "metric"}-${item.key}`} className="flex items-center justify-between gap-3 text-sm">
+                                  <span className="text-gray-300">{item.label}</span>
+                                  <Badge className="border-amber-500/20 bg-amber-500/10 text-amber-200">
+                                    {item.count}
+                                  </Badge>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">Most constrained agents</p>
+                            {autonomyMetrics.agent_breakdown.length === 0 ? (
+                              <p className="text-sm text-gray-500">No agent-level constraints yet.</p>
+                            ) : (
+                              autonomyMetrics.agent_breakdown.slice(0, 3).map((agent) => (
+                                <div key={`${agent.agent_id || "agent"}-${agent.agent_username || "unknown"}`} className="rounded-lg border border-white/10 bg-[#08090f] p-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <p className="text-sm font-medium text-white">{agent.agent_username || "Unassigned"}</p>
+                                    <span className="text-xs text-amber-200">
+                                      {agent.autonomy_limited_runs}/{agent.run_count} limited
+                                    </span>
+                                  </div>
+                                  {agent.blocker_counts[0] && (
+                                    <p className="mt-1 text-xs text-gray-400">
+                                      Top blocker: {agent.blocker_counts[0].label}
+                                    </p>
+                                  )}
+                                </div>
+                              ))
+                            )}
+                          </div>
                         </div>
                       )}
                     </section>

@@ -1,5 +1,5 @@
 import { apiFetch } from '../client';
-import type { OrchestrationRunDetail } from '../types';
+import type { OrchestrationAutonomyMetrics, OrchestrationRunDetail } from '../types';
 
 export async function getOrchestrationRun(id: string): Promise<OrchestrationRunDetail> {
   const data = await apiFetch<{ data?: OrchestrationRunDetail } | OrchestrationRunDetail>(`/api/v1/orchestration/runs/${id}`);
@@ -32,4 +32,15 @@ export async function cancelOrchestrationRun(id: string, payload?: { note?: stri
   });
   if (typeof data === 'object' && data && 'data' in data) return data.data;
   return data;
+}
+
+export async function getOrchestrationAutonomyMetrics(params?: { windowDays?: number }) {
+  const query = new URLSearchParams();
+  if (params?.windowDays) query.set('windowDays', String(params.windowDays));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const data = await apiFetch<{ data?: OrchestrationAutonomyMetrics } | OrchestrationAutonomyMetrics>(
+    `/api/v1/orchestration/metrics/autonomy${suffix}`
+  );
+  if (typeof data === 'object' && data && 'data' in data && data.data) return data.data;
+  return data as OrchestrationAutonomyMetrics;
 }

@@ -59,6 +59,20 @@ export type WorkspaceRealtimeEvent = {
   payload?: Record<string, unknown> | null;
 };
 
+export type WorkspaceRealtimeEventActionKind =
+  | 'open_task'
+  | 'approve'
+  | 'reject'
+  | 'resume';
+
+export type WorkspaceRealtimeEventAction = {
+  kind: WorkspaceRealtimeEventActionKind;
+  label: string;
+  taskId?: string | null;
+  runId?: string | null;
+  style?: 'primary' | 'secondary' | 'warning';
+};
+
 function asMetadata(task: Task): Record<string, unknown> {
   return task.metadata && typeof task.metadata === "object" ? task.metadata : {};
 }
@@ -116,6 +130,14 @@ export function getWorkspaceEventTaskId(event: WorkspaceRealtimeEvent): string |
   return null;
 }
 
+export function getWorkspaceEventRunId(event: WorkspaceRealtimeEvent): string | null {
+  if (typeof event.run?.id === "string" && event.run.id.trim()) return event.run.id.trim();
+  if (typeof event.task?.orchestration_run_id === "string" && event.task.orchestration_run_id.trim()) {
+    return event.task.orchestration_run_id.trim();
+  }
+  return null;
+}
+
 export function shouldSurfaceWorkspaceEvent(event: WorkspaceRealtimeEvent): boolean {
   const task = event.task || {};
   const run = event.run || {};
@@ -124,6 +146,31 @@ export function shouldSurfaceWorkspaceEvent(event: WorkspaceRealtimeEvent): bool
     || task.closure_ready === true
     || run.status === "completed"
     || run.status === "cancelled";
+}
+
+export function getWorkspaceEventActions(event: WorkspaceRealtimeEvent): WorkspaceRealtimeEventAction[] {
+  const taskId = getWorkspaceEventTaskId(event);
+  const runId = getWorkspaceEventRunId(event);
+  const runStatus = String(event.run?.status || "").trim();
+  const actions: WorkspaceRealtimeEventAction[] = [];
+
+  if (runId && runStatus === "awaiting_approval") {
+    actions.push(
+      { kind: 'approve', label: 'Approve', runId, taskId, style: 'primary' },
+      { kind: 'reject', label: 'Reject', runId, taskId, style: 'warning' }
+    );
+  } else if (
+    runId
+    && ["blocked", "waiting_on_tasks", "sleeping", "running", "planning"].includes(runStatus)
+  ) {
+    actions.push({ kind: 'resume', label: 'Resume', runId, taskId, style: 'secondary' });
+  }
+
+  if (taskId) {
+    actions.push({ kind: 'open_task', label: 'Open task', runId, taskId, style: 'secondary' });
+  }
+
+  return actions;
 }
 
 export function applyWorkspaceEventToTasks(tasks: Task[] = [], event: WorkspaceRealtimeEvent): Task[] {

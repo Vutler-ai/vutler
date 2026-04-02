@@ -3,14 +3,22 @@
 import React, { useState, useEffect } from 'react';
 import { authFetch } from '@/lib/authFetch';
 import { getAuthToken } from '@/lib/api/client';
+import {
+  approveOrchestrationRun,
+  resumeOrchestrationRun,
+} from '@/lib/api/endpoints/orchestration';
 import { ChatWebSocket } from '@/lib/websocket';
 import {
+  getWorkspaceEventActions,
   getWorkspaceEventDescription,
   getWorkspaceEventTitle,
   isWorkspaceAttentionEvent,
   shouldSurfaceWorkspaceEvent,
 } from '@/lib/workspace-events';
-import type { WorkspaceRealtimeEvent } from '@/lib/workspace-events';
+import type {
+  WorkspaceRealtimeEvent,
+  WorkspaceRealtimeEventActionKind,
+} from '@/lib/workspace-events';
 
 interface Notification {
   id: string;
@@ -20,6 +28,9 @@ interface Notification {
   read: boolean;
   createdAt: string;
   live?: boolean;
+  taskId?: string | null;
+  runId?: string | null;
+  event?: WorkspaceRealtimeEvent | null;
 }
 
 const typeIcons: Record<string, string> = { info: 'ℹ️', warning: '⚠️', error: '❌', success: '✅' };
@@ -50,12 +61,17 @@ function mapWorkspaceEventToNotification(event: WorkspaceRealtimeEvent): Notific
     read: false,
     createdAt: event.timestamp || new Date().toISOString(),
     live: true,
+    taskId: event.task?.id || event.run?.root_task_id || null,
+    runId: event.run?.id || event.task?.orchestration_run_id || null,
+    event,
   };
 }
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionPending, setActionPending] = useState<Record<string, WorkspaceRealtimeEventActionKind | null>>({});
+  const [actionError, setActionError] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     authFetch('/api/v1/notifications').then(r => r.json()).then(data => {
@@ -79,6 +95,53 @@ export default function NotificationsPage() {
         .map(n => authFetch(`/api/v1/notifications/${n.id}/read`, { method: 'PUT' }))
     );
     setNotifications(ns => ns.map(n => ({ ...n, read: true })));
+  };
+
+  const handleNotificationAction = async (
+    notification: Notification,
+    action: WorkspaceRealtimeEventActionKind
+  ) => {
+    if (action === 'open_task') {
+      const href = notification.taskId ? `/tasks?task=${encodeURIComponent(notification.taskId)}` : '/tasks';
+      window.location.assign(href);
+      return;
+    }
+
+    if (!notification.runId) return;
+
+    setActionPending((current) => ({ ...current, [notification.id]: action }));
+    setActionError((current) => ({ ...current, [notification.id]: null }));
+
+    try {
+      if (action === 'approve') {
+        await approveOrchestrationRun(notification.runId, { approved: true });
+      } else if (action === 'reject') {
+        await approveOrchestrationRun(notification.runId, { approved: false });
+      } else if (action === 'resume') {
+        await resumeOrchestrationRun(notification.runId);
+      }
+
+      setNotifications((current) => current.map((entry) => (
+        entry.id === notification.id
+          ? {
+              ...entry,
+              read: true,
+              message: action === 'approve'
+                ? 'Approval sent. The run will continue automatically.'
+                : action === 'reject'
+                  ? 'Rejection sent. The run will re-evaluate or stop based on policy.'
+                  : 'Resume requested. The run will pick up on the next cycle.',
+            }
+          : entry
+      )));
+    } catch (error) {
+      setActionError((current) => ({
+        ...current,
+        [notification.id]: error instanceof Error ? error.message : 'Action failed',
+      }));
+    } finally {
+      setActionPending((current) => ({ ...current, [notification.id]: null }));
+    }
   };
 
   useEffect(() => {
@@ -140,6 +203,42 @@ export default function NotificationsPage() {
                       <h3 className="font-semibold text-sm sm:text-base">{n.title}</h3>
                       <p className="text-sm text-[#94a3b8] mt-0.5">{n.message}</p>
                       <p className="text-xs text-[#64748b] mt-2">{new Date(n.createdAt).toLocaleString()}</p>
+                      {n.event && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {getWorkspaceEventActions(n.event).map((action) => {
+                            const pending = actionPending[n.id] === action.kind;
+                            const baseClass = action.kind === 'approve'
+                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                              : action.kind === 'reject'
+                                ? 'border border-amber-500/30 text-amber-300 hover:bg-amber-500/10'
+                                : action.kind === 'resume'
+                                  ? 'border border-sky-500/30 text-sky-300 hover:bg-sky-500/10'
+                                  : 'border border-white/10 text-white hover:bg-white/8';
+                            return (
+                              <button
+                                key={`${n.id}-${action.kind}`}
+                                type="button"
+                                onClick={() => handleNotificationAction(n, action.kind)}
+                                disabled={Boolean(actionPending[n.id])}
+                                className={`rounded-lg px-3 py-1.5 text-xs transition-colors cursor-pointer ${baseClass}`}
+                              >
+                                {pending
+                                  ? action.kind === 'approve'
+                                    ? 'Approving…'
+                                    : action.kind === 'reject'
+                                      ? 'Rejecting…'
+                                      : action.kind === 'resume'
+                                        ? 'Resuming…'
+                                        : 'Opening…'
+                                  : action.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {actionError[n.id] && (
+                        <p className="mt-2 text-xs text-red-300">{actionError[n.id]}</p>
+                      )}
                     </div>
                   </div>
                   {!n.read && (

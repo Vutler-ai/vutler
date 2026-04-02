@@ -5,6 +5,7 @@ const pool = require('../../../lib/vaultbrix');
 const { authenticateAgent } = require('../lib/auth');
 const { getRunEngine } = require('../../../services/orchestration/runEngine');
 const {
+  getAutonomyMetrics,
   getRunById,
   getCurrentRunStep,
   listRunEvents,
@@ -84,6 +85,26 @@ async function loadRunDetail(runId, workspaceId) {
     root_task: rootTask,
   };
 }
+
+router.get('/metrics/autonomy', authenticateAgent, async (req, res) => {
+  try {
+    const windowDays = Number.parseInt(String(req.query?.windowDays || '14'), 10);
+    const data = await getAutonomyMetrics(undefined, workspaceIdOf(req), {
+      windowDays: Number.isFinite(windowDays) ? windowDays : 14,
+    });
+    return res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('[Orchestration API] GET autonomy metrics error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch orchestration autonomy metrics',
+      message: error.message,
+    });
+  }
+});
 
 router.get('/runs/:id', authenticateAgent, async (req, res) => {
   try {

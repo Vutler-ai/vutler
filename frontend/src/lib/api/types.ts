@@ -512,6 +512,45 @@ export interface OrchestrationRunDetail {
   root_task?: Task | null;
 }
 
+export interface OrchestrationAutonomyMetricCount {
+  kind?: 'provider' | 'tool_capability' | 'skill' | string;
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface OrchestrationAutonomyAgentMetric {
+  agent_id?: string | null;
+  agent_username?: string | null;
+  run_count: number;
+  autonomy_limited_runs: number;
+  blocked_runs: number;
+  awaiting_approval_runs: number;
+  completed_runs: number;
+  blocker_counts: OrchestrationAutonomyMetricCount[];
+  suggestion_counts: OrchestrationAutonomyMetricCount[];
+  updated_at?: string | null;
+}
+
+export interface OrchestrationAutonomyMetrics {
+  workspace_id: string;
+  window_days: number;
+  updated_at: string;
+  totals: {
+    total_runs: number;
+    autonomy_limited_runs: number;
+    blocked_runs: number;
+    awaiting_approval_runs: number;
+    completed_runs: number;
+    failed_runs: number;
+    cancelled_runs: number;
+  };
+  blocker_counts: OrchestrationAutonomyMetricCount[];
+  suggestion_counts: OrchestrationAutonomyMetricCount[];
+  run_status_counts: OrchestrationAutonomyMetricCount[];
+  agent_breakdown: OrchestrationAutonomyAgentMetric[];
+}
+
 export interface ChatResourceArtifact {
   kind?: string;
   label: string;

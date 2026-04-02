@@ -16,6 +16,7 @@ import {
 import {
   approveOrchestrationRun,
   cancelOrchestrationRun,
+  getOrchestrationAutonomyMetrics,
   getOrchestrationRun,
   resumeOrchestrationRun,
 } from "@/lib/api/endpoints/orchestration";
@@ -23,6 +24,7 @@ import { getAuthToken } from "@/lib/api/client";
 import type {
   Task,
   CreateTaskPayload,
+  OrchestrationAutonomyMetrics,
   OrchestrationRunDetail,
   OrchestrationRunEvent,
   OrchestrationRunStep,
@@ -1884,6 +1886,13 @@ export default function TasksPage() {
     "/api/v1/tasks-v2",
     () => getTasks()
   );
+  const {
+    data: autonomyMetrics,
+    mutate: mutateAutonomyMetrics,
+  } = useApi<OrchestrationAutonomyMetrics>(
+    "/api/v1/orchestration/metrics/autonomy?windowDays=14",
+    () => getOrchestrationAutonomyMetrics({ windowDays: 14 })
+  );
 
   const { data: agentData } = useApi<{ agents: Agent[]; count: number }>("/api/v1/agents");
   const agentNames = agentData?.agents?.map((agent) => agent.name).filter(Boolean) ?? [];
@@ -1947,6 +1956,7 @@ export default function TasksPage() {
         const next = [normalizedEvent, ...current.filter((entry) => entry.id !== normalizedEvent.id)];
         return next.slice(0, 12);
       });
+      void mutateAutonomyMetrics();
       void mutate((current) => applyWorkspaceEventToTasks(current || [], normalizedEvent), false);
     });
 
@@ -1958,7 +1968,7 @@ export default function TasksPage() {
       ws.leaveWorkspace();
       ws.destroy();
     };
-  }, [mutate]);
+  }, [mutate, mutateAutonomyMetrics]);
 
   const filteredTasks = useMemo(() => {
     let list = tasks ?? [];
@@ -2170,6 +2180,123 @@ export default function TasksPage() {
           </div>
         </div>
       )}
+
+      <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#14151f] p-4">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <p className="text-xs text-[#7dd3fc] uppercase tracking-wider">Autonomy Metrics</p>
+            <p className="text-sm text-[#9ca3af] mt-1">
+              Aggregated blockers and approval pressure over the last {autonomyMetrics?.window_days || 14} days.
+            </p>
+          </div>
+          {autonomyMetrics && (
+            <span className="text-[11px] text-[#64748b]">
+              Updated {formatTimestamp(autonomyMetrics.updated_at)}
+            </span>
+          )}
+        </div>
+
+        {!autonomyMetrics ? (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} className="h-24 rounded-xl bg-[#1e1f2e]" />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-white/8 bg-white/5 p-4">
+                <p className="text-[11px] uppercase tracking-wider text-[#64748b]">Runs</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{autonomyMetrics.totals.total_runs}</p>
+              </div>
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 p-4">
+                <p className="text-[11px] uppercase tracking-wider text-amber-200/80">Autonomy limited</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-100">{autonomyMetrics.totals.autonomy_limited_runs}</p>
+              </div>
+              <div className="rounded-xl border border-red-500/20 bg-red-500/8 p-4">
+                <p className="text-[11px] uppercase tracking-wider text-red-200/80">Blocked</p>
+                <p className="mt-2 text-2xl font-semibold text-red-100">{autonomyMetrics.totals.blocked_runs}</p>
+              </div>
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/8 p-4">
+                <p className="text-[11px] uppercase tracking-wider text-sky-200/80">Awaiting approval</p>
+                <p className="mt-2 text-2xl font-semibold text-sky-100">{autonomyMetrics.totals.awaiting_approval_runs}</p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.1fr,1fr]">
+              <div className="rounded-xl border border-white/8 bg-white/5 p-4">
+                <p className="text-sm font-medium text-white">Top blockers</p>
+                <div className="mt-3 space-y-2">
+                  {autonomyMetrics.blocker_counts.length === 0 ? (
+                    <p className="text-sm text-[#9ca3af]">No autonomy blockers recorded on recent runs.</p>
+                  ) : (
+                    autonomyMetrics.blocker_counts.slice(0, 6).map((item) => (
+                      <div key={`${item.kind || "metric"}-${item.key}`} className="flex items-center justify-between gap-3 rounded-lg border border-white/8 bg-[#0f111b] px-3 py-2">
+                        <div>
+                          <p className="text-sm text-white">{item.label}</p>
+                          <p className="text-[11px] text-[#64748b]">{humanizeStatus(item.kind || "capability")}</p>
+                        </div>
+                        <span className="text-sm font-medium text-amber-200">{item.count}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {autonomyMetrics.suggestion_counts.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-xs uppercase tracking-wider text-[#64748b]">Suggested fixes</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {autonomyMetrics.suggestion_counts.slice(0, 4).map((item) => (
+                        <span
+                          key={item.key}
+                          className="inline-flex items-center rounded-full border border-sky-500/20 bg-sky-500/8 px-3 py-1 text-xs text-sky-100"
+                        >
+                          {item.label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-white/8 bg-white/5 p-4">
+                <p className="text-sm font-medium text-white">Agents under autonomy pressure</p>
+                <div className="mt-3 space-y-3">
+                  {autonomyMetrics.agent_breakdown.length === 0 ? (
+                    <p className="text-sm text-[#9ca3af]">No agent-level autonomy constraints yet.</p>
+                  ) : (
+                    autonomyMetrics.agent_breakdown.slice(0, 5).map((agent) => (
+                      <div key={`${agent.agent_id || "agent"}-${agent.agent_username || "unknown"}`} className="rounded-lg border border-white/8 bg-[#0f111b] p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-white">{agent.agent_username || "Unassigned"}</p>
+                            <p className="text-[11px] text-[#64748b]">
+                              {agent.autonomy_limited_runs}/{agent.run_count} runs limited
+                            </p>
+                          </div>
+                          <div className="text-right text-[11px] text-[#94a3b8]">
+                            <p>{agent.blocked_runs} blocked</p>
+                            <p>{agent.awaiting_approval_runs} approvals</p>
+                          </div>
+                        </div>
+                        {agent.blocker_counts[0] && (
+                          <p className="mt-2 text-xs text-[#9ca3af]">
+                            Top blocker: <span className="text-white">{agent.blocker_counts[0].label}</span>
+                          </p>
+                        )}
+                        {agent.suggestion_counts[0] && (
+                          <p className="mt-1 text-xs text-sky-200">
+                            Suggestion: {agent.suggestion_counts[0].label}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Error */}
       {error && (
