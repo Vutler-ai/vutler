@@ -9,6 +9,20 @@ const {
 } = require('./runtimeCapabilityAvailability');
 const { SOCIAL_PROVIDERS } = require('./agentIntegrationService');
 
+const SCHEMA = 'tenant_vutler';
+const RECURRING_BLOCKER_LOOKBACK_DAYS = 14;
+const RECURRING_BLOCKER_THRESHOLD = 3;
+const RECURRING_BLOCKER_RUN_LIMIT = 250;
+const CAPABILITY_SUGGESTIONS = {
+  email: 'Provision email for this agent or route the step to an email-enabled agent.',
+  social: 'Connect a social account and allow social access for this agent to enable autonomous publishing.',
+  drive: 'Allow shared drive access for this agent to let the run write files autonomously.',
+  calendar: 'Connect calendar access and allow it for this agent to enable autonomous scheduling.',
+  tasks: 'Allow task access for this agent to enable autonomous task operations.',
+  sandbox: 'Use a technical agent type and enable sandbox to allow proactive code execution.',
+  memory: 'Enable persistent memory for this agent to let the run recall prior context autonomously.',
+};
+
 function uniqueStrings(values = []) {
   return Array.from(new Set(
     values
@@ -47,18 +61,183 @@ function isOverlayEmpty(overlay = {}) {
     && uniqueStrings(overlay.toolCapabilities).length === 0;
 }
 
+function humanizeToken(value, fallback = 'Capability') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  return raw
+    .split(/[_-]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function normalizeBlockedEntry(entry, fallbackKind = 'provider') {
+  if (!entry || typeof entry !== 'object') return null;
+  const key = String(entry.key || entry.provider || entry.capability || '').trim();
+  if (!key) return null;
+  return {
+    kind: fallbackKind,
+    key,
+    capability: String(entry.capability || '').trim() || null,
+    provider: String(entry.provider || '').trim() || null,
+    reason: String(entry.reason || '').trim() || null,
+  };
+}
+
+function flattenBlockedOverlayEntries(blocked = {}) {
+  const providers = Array.isArray(blocked.providers) ? blocked.providers : [];
+  const skills = Array.isArray(blocked.skills) ? blocked.skills : [];
+  const toolCapabilities = Array.isArray(blocked.toolCapabilities) ? blocked.toolCapabilities : [];
+
+  return [
+    ...providers.map((entry) => normalizeBlockedEntry(entry, 'provider')),
+    ...skills.map((entry) => normalizeBlockedEntry(entry, 'skill')),
+    ...toolCapabilities.map((entry) => normalizeBlockedEntry(entry, 'tool_capability')),
+  ].filter(Boolean);
+}
+
+function blockerCountKey(entry) {
+  return `${entry.kind}:${String(entry.key || '').trim().toLowerCase()}`;
+}
+
+function recommendationForEntry(entry) {
+  const capability = String(entry?.capability || '').trim().toLowerCase();
+  if (capability && CAPABILITY_SUGGESTIONS[capability]) {
+    return CAPABILITY_SUGGESTIONS[capability];
+  }
+  return String(entry?.reason || '').trim() || `Resolve ${humanizeToken(entry?.key)} so the run can keep executing autonomously.`;
+}
+
+async function buildBlockedOverlayInsights({
+  workspaceId,
+  agent = null,
+  blocked = {},
+  db = pool,
+  lookbackDays = RECURRING_BLOCKER_LOOKBACK_DAYS,
+  recurringThreshold = RECURRING_BLOCKER_THRESHOLD,
+  runLimit = RECURRING_BLOCKER_RUN_LIMIT,
+} = {}) {
+  const currentEntries = flattenBlockedOverlayEntries(blocked);
+  if (!workspaceId || currentEntries.length === 0 || !db || typeof db.query !== 'function') {
+    return null;
+  }
+
+  try {
+    const recentRunsResult = await db.query(
+      `SELECT id::text AS id,
+              requested_agent_id::text AS requested_agent_id,
+              requested_agent_username,
+              display_agent_id::text AS display_agent_id,
+              display_agent_username
+         FROM ${SCHEMA}.orchestration_runs
+        WHERE workspace_id = $1
+          AND created_at >= NOW() - ($2 * INTERVAL '1 day')
+        ORDER BY created_at DESC
+        LIMIT $3`,
+      [workspaceId, lookbackDays, runLimit]
+    );
+
+    const recentRuns = recentRunsResult.rows || [];
+    const runIds = recentRuns.map((row) => row.id).filter(Boolean);
+    if (runIds.length === 0) {
+      return null;
+    }
+
+    const agentId = String(agent?.id || '').trim() || null;
+    const agentUsername = String(agent?.username || agent?.name || '').trim().toLowerCase() || null;
+    const scopedRunIds = new Set(
+      recentRuns
+        .filter((row) => {
+          const requestedId = String(row.requested_agent_id || '').trim();
+          const displayId = String(row.display_agent_id || '').trim();
+          const requestedUsername = String(row.requested_agent_username || '').trim().toLowerCase();
+          const displayUsername = String(row.display_agent_username || '').trim().toLowerCase();
+          if (agentId && (requestedId === agentId || displayId === agentId)) return true;
+          if (agentUsername && (requestedUsername === agentUsername || displayUsername === agentUsername)) return true;
+          return false;
+        })
+        .map((row) => row.id)
+    );
+
+    const recentEventsResult = await db.query(
+      `SELECT run_id::text AS run_id,
+              payload
+         FROM ${SCHEMA}.orchestration_run_events
+        WHERE run_id::text = ANY($1::text[])
+          AND event_type = 'overlay.resolved'
+        ORDER BY created_at DESC`,
+      [runIds]
+    );
+
+    const workspaceCounts = new Map();
+    const agentCounts = new Map();
+    for (const row of recentEventsResult.rows || []) {
+      const payload = row?.payload && typeof row.payload === 'object'
+        ? row.payload
+        : {};
+      const blockedOverlay = payload.blocked_overlay && typeof payload.blocked_overlay === 'object'
+        ? payload.blocked_overlay
+        : {};
+      const entries = flattenBlockedOverlayEntries(blockedOverlay);
+      for (const entry of entries) {
+        const key = blockerCountKey(entry);
+        workspaceCounts.set(key, (workspaceCounts.get(key) || 0) + 1);
+        if (scopedRunIds.has(String(row.run_id || ''))) {
+          agentCounts.set(key, (agentCounts.get(key) || 0) + 1);
+        }
+      }
+    }
+
+    const blockers = currentEntries.map((entry) => {
+      const key = blockerCountKey(entry);
+      const workspaceCount = workspaceCounts.get(key) || 0;
+      const agentCount = agentCounts.get(key) || 0;
+      const recurring = workspaceCount >= recurringThreshold || agentCount >= Math.max(2, recurringThreshold - 1);
+      const label = humanizeToken(entry.key || entry.capability || entry.provider);
+      const recommendation = recommendationForEntry(entry);
+      const summary = recurring
+        ? `${label} has blocked ${workspaceCount} autonomous run${workspaceCount === 1 ? '' : 's'} in the last ${lookbackDays} days${agentCount > 0 ? ` (${agentCount} on this agent)` : ''}. ${recommendation}`
+        : null;
+
+      return {
+        kind: entry.kind,
+        key: entry.key,
+        capability: entry.capability,
+        provider: entry.provider,
+        reason: entry.reason,
+        label,
+        workspace_count: workspaceCount,
+        agent_count: agentCount,
+        recurring,
+        recommendation,
+        summary,
+      };
+    });
+
+    const recurringBlockers = blockers
+      .filter((entry) => entry.recurring)
+      .sort((left, right) => {
+        if (right.agent_count !== left.agent_count) return right.agent_count - left.agent_count;
+        return right.workspace_count - left.workspace_count;
+      });
+    const primaryBlocker = recurringBlockers[0] || null;
+
+    return {
+      lookback_days: lookbackDays,
+      recurring_threshold: recurringThreshold,
+      blockers,
+      recurring_blockers: recurringBlockers,
+      primary_blocker: primaryBlocker,
+      recommendation_summary: primaryBlocker?.summary || null,
+      escalation_recommended: recurringBlockers.length > 0,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function buildOverlaySuggestionMessages(overlay = {}) {
   const blocked = overlay?.blocked || {};
-  const capabilitySuggestions = {
-    email: 'Provision email for this agent or route the step to an email-enabled agent.',
-    social: 'Connect a social account and allow social access for this agent to enable autonomous publishing.',
-    drive: 'Allow shared drive access for this agent to let the run write files autonomously.',
-    calendar: 'Connect calendar access and allow it for this agent to enable autonomous scheduling.',
-    tasks: 'Allow task access for this agent to enable autonomous task operations.',
-    sandbox: 'Use a technical agent type and enable sandbox to allow proactive code execution.',
-    memory: 'Enable persistent memory for this agent to let the run recall prior context autonomously.',
-  };
-
   const suggestions = [];
   const seenCapabilities = new Set();
   const allBlocked = [
@@ -69,14 +248,24 @@ function buildOverlaySuggestionMessages(overlay = {}) {
 
   for (const entry of allBlocked) {
     const capability = String(entry?.capability || '').trim().toLowerCase();
-    if (capability && capabilitySuggestions[capability] && !seenCapabilities.has(capability)) {
+    if (capability && CAPABILITY_SUGGESTIONS[capability] && !seenCapabilities.has(capability)) {
       seenCapabilities.add(capability);
-      suggestions.push(capabilitySuggestions[capability]);
+      suggestions.push(CAPABILITY_SUGGESTIONS[capability]);
       continue;
     }
 
     const reason = String(entry?.reason || '').trim();
     if (reason) suggestions.push(reason);
+  }
+
+  const recurringBlockers = Array.isArray(overlay?.insights?.recurring_blockers)
+    ? overlay.insights.recurring_blockers
+    : [];
+  for (const insight of recurringBlockers.slice(0, 2)) {
+    const summary = String(insight?.summary || '').trim();
+    const recommendation = String(insight?.recommendation || '').trim();
+    if (summary) suggestions.push(summary);
+    else if (recommendation) suggestions.push(recommendation);
   }
 
   return uniqueStrings(suggestions);
@@ -219,6 +408,17 @@ async function filterExecutionOverlay({
     allowedSkills.push(skillKey);
   }
 
+  const blockedInsights = await buildBlockedOverlayInsights({
+    workspaceId,
+    agent,
+    blocked: {
+      providers: blockedProviders,
+      skills: blockedSkills,
+      toolCapabilities: blockedToolCapabilities,
+    },
+    db,
+  });
+
   return {
     skillKeys: allowedSkills,
     integrationProviders: allowedProviders,
@@ -228,14 +428,17 @@ async function filterExecutionOverlay({
       skills: blockedSkills,
       toolCapabilities: blockedToolCapabilities,
     },
+    insights: blockedInsights,
     capabilityMatrix: matrix,
   };
 }
 
 module.exports = {
   buildOverlaySuggestionMessages,
+  buildBlockedOverlayInsights,
   capabilityKeyForProvider,
   capabilityKeyForToolCapability,
   filterExecutionOverlay,
+  flattenBlockedOverlayEntries,
   isOverlayEmpty,
 };

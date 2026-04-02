@@ -456,6 +456,10 @@ async function executeTask(task) {
         orchestration_blocked_overlay_skills: filteredExecutionOverlay.blocked?.skills || [],
         orchestration_blocked_overlay_tool_capabilities: filteredExecutionOverlay.blocked?.toolCapabilities || [],
         orchestration_autonomy_suggestions: buildOverlaySuggestionMessages(filteredExecutionOverlay),
+        orchestration_autonomy_insights: filteredExecutionOverlay.insights?.recurring_blockers || [],
+        orchestration_autonomy_recommendation_summary: filteredExecutionOverlay.insights?.recommendation_summary || null,
+        orchestration_autonomy_recurring_blocker: filteredExecutionOverlay.insights?.primary_blocker?.label || null,
+        orchestration_autonomy_escalation_recommended: filteredExecutionOverlay.insights?.escalation_recommended === true,
       } : {}),
     };
 

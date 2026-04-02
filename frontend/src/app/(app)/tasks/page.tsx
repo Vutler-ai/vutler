@@ -155,6 +155,16 @@ type OverlayBlockedItem = {
   provider?: string | null;
 };
 
+type AutonomyInsightItem = {
+  kind?: string | null;
+  key?: string | null;
+  label?: string | null;
+  workspace_count?: number | null;
+  agent_count?: number | null;
+  recommendation?: string | null;
+  summary?: string | null;
+};
+
 function getMetadataBlockedItems(metadata: TaskMetadata, key: string): OverlayBlockedItem[] {
   return getMetadataArray(metadata, key)
     .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)))
@@ -163,6 +173,20 @@ function getMetadataBlockedItems(metadata: TaskMetadata, key: string): OverlayBl
       reason: typeof value.reason === "string" ? value.reason : null,
       capability: typeof value.capability === "string" ? value.capability : null,
       provider: typeof value.provider === "string" ? value.provider : null,
+    }));
+}
+
+function getMetadataAutonomyInsights(metadata: TaskMetadata, key: string): AutonomyInsightItem[] {
+  return getMetadataArray(metadata, key)
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)))
+    .map((value) => ({
+      kind: typeof value.kind === "string" ? value.kind : null,
+      key: typeof value.key === "string" ? value.key : null,
+      label: typeof value.label === "string" ? value.label : null,
+      workspace_count: typeof value.workspace_count === "number" ? value.workspace_count : null,
+      agent_count: typeof value.agent_count === "number" ? value.agent_count : null,
+      recommendation: typeof value.recommendation === "string" ? value.recommendation : null,
+      summary: typeof value.summary === "string" ? value.summary : null,
     }));
 }
 
@@ -425,6 +449,7 @@ function SniparaIndicator({ task }: { task: Task }) {
 
 function summarizeRunEvent(event: OrchestrationRunEvent): string {
   const payload = (event.payload || {}) as Record<string, unknown>;
+  if (event.event_type === "autonomy.recommendation") return "Autonomy upgrade recommended";
   if (event.event_type === "run.awaiting_approval") return "Human approval required";
   if (event.event_type === "run.completed") return "Run completed";
   if (event.event_type === "run.failed") return "Run failed";
@@ -481,7 +506,24 @@ function describeRunEvent(event: OrchestrationRunEvent): string | null {
   const suggestions = Array.isArray(payload.suggestions)
     ? payload.suggestions.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     : [];
+  const recurringBlockers = Array.isArray(payload.recurring_blockers)
+    ? payload.recurring_blockers.filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)))
+    : [];
 
+  if (event.event_type === "autonomy.recommendation") {
+    const details = recurringBlockers
+      .map((item) => {
+        const label = typeof item.label === "string" ? item.label : humanizeStatus(String(item.key || "capability"));
+        const workspaceCount = typeof item.workspace_count === "number" ? item.workspace_count : null;
+        const agentCount = typeof item.agent_count === "number" ? item.agent_count : null;
+        const counts = workspaceCount != null
+          ? `${workspaceCount} workspace run${workspaceCount === 1 ? "" : "s"}${agentCount ? ` · ${agentCount} on this agent` : ""}`
+          : "";
+        return counts ? `${label}: ${counts}` : label;
+      })
+      .filter(Boolean);
+    return [summary, details.length > 0 ? `Recurring: ${details.join(" · ")}` : ""].filter(Boolean).join(" | ") || null;
+  }
   if (event.event_type === "delegate.task_blocked") {
     const parts = [blockerReason, blockerType ? `Type: ${humanizeStatus(blockerType)}` : ""].filter(Boolean);
     return parts.join(" · ") || "Waiting for an external unblock signal.";
@@ -725,6 +767,10 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
   const blockedOverlaySkills = getMetadataBlockedItems(taskMetadata, "orchestration_blocked_overlay_skills");
   const blockedOverlayToolCapabilities = getMetadataBlockedItems(taskMetadata, "orchestration_blocked_overlay_tool_capabilities");
   const autonomySuggestions = getMetadataStringArray(taskMetadata, "orchestration_autonomy_suggestions");
+  const autonomyInsights = getMetadataAutonomyInsights(taskMetadata, "orchestration_autonomy_insights");
+  const autonomyRecommendationSummary = getMetadataString(taskMetadata, "orchestration_autonomy_recommendation_summary");
+  const autonomyRecurringBlocker = getMetadataString(taskMetadata, "orchestration_autonomy_recurring_blocker");
+  const autonomyEscalationRecommended = getMetadataBoolean(taskMetadata, "orchestration_autonomy_escalation_recommended") === true;
   const autonomyLimited = getMetadataBoolean(taskMetadata, "orchestration_autonomy_limited") === true;
   const hasAutonomyTelemetry = overlaySkills.length > 0
     || overlayProviders.length > 0
@@ -732,7 +778,9 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
     || blockedOverlayProviders.length > 0
     || blockedOverlaySkills.length > 0
     || blockedOverlayToolCapabilities.length > 0
-    || autonomySuggestions.length > 0;
+    || autonomySuggestions.length > 0
+    || autonomyInsights.length > 0
+    || Boolean(autonomyRecommendationSummary);
   const activeRunStatus = String(runDetail?.run.status || orchestrationStatus || "").toLowerCase();
   const isLiveOrchestration = isOrchestratedTask(currentTask);
   const isLiveRunActive = ACTIVE_ORCHESTRATION_RUN_STATUSES.has(activeRunStatus);
@@ -1169,6 +1217,17 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
                   <p className={`text-xs font-medium mb-2 ${autonomyLimited ? "text-amber-300" : "text-indigo-300"}`}>
                     Autonomy
                   </p>
+                  {autonomyRecommendationSummary && (
+                    <div className={`mb-3 rounded-lg border px-3 py-2 ${autonomyEscalationRecommended ? "border-amber-400/30 bg-amber-500/10" : "border-sky-400/20 bg-sky-500/8"}`}>
+                      <p className={`text-[11px] uppercase tracking-wider ${autonomyEscalationRecommended ? "text-amber-200" : "text-sky-200"}`}>
+                        {autonomyEscalationRecommended ? "Recurring blocker" : "Recommendation"}
+                      </p>
+                      <p className="mt-1 text-sm text-[#f8fafc]">{autonomyRecommendationSummary}</p>
+                      {autonomyRecurringBlocker && (
+                        <p className="mt-1 text-xs text-[#cbd5e1]">Primary blocker: {autonomyRecurringBlocker}</p>
+                      )}
+                    </div>
+                  )}
                   {(overlayProviders.length > 0 || overlaySkills.length > 0 || overlayToolCapabilities.length > 0) && (
                     <div className="space-y-1">
                       <p className="text-[11px] uppercase tracking-wider text-[#94a3b8]">Applied overlay</p>
@@ -1208,6 +1267,28 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
                         <p key={`${suggestion}-${index}`} className="text-sm text-[#cbd5e1]">
                           {suggestion}
                         </p>
+                      ))}
+                    </div>
+                  )}
+
+                  {autonomyInsights.length > 0 && (
+                    <div className="space-y-2 mt-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#94a3b8]">Recurring blockers</p>
+                      {autonomyInsights.slice(0, 3).map((insight, index) => (
+                        <div key={`${insight.key || insight.label || "insight"}-${index}`} className="rounded-lg border border-white/8 bg-[#0f111b] px-3 py-2">
+                          <p className="text-sm text-white">{insight.label || humanizeStatus(insight.key || "capability")}</p>
+                          <p className="mt-1 text-xs text-[#94a3b8]">
+                            {typeof insight.workspace_count === "number"
+                              ? `${insight.workspace_count} workspace run${insight.workspace_count === 1 ? "" : "s"}`
+                              : "Recurring blocker"}
+                            {typeof insight.agent_count === "number" && insight.agent_count > 0
+                              ? ` · ${insight.agent_count} on this agent`
+                              : ""}
+                          </p>
+                          {insight.recommendation && (
+                            <p className="mt-1 text-xs text-[#cbd5e1]">{insight.recommendation}</p>
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}

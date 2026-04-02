@@ -168,6 +168,9 @@ function extractPhaseOverlayTelemetry(phase = null) {
   const suggestions = Array.isArray(phase?.execution_overlay_suggestions)
     ? phase.execution_overlay_suggestions.filter((value) => typeof value === 'string' && value.trim())
     : [];
+  const insights = phase?.execution_overlay_insights && typeof phase.execution_overlay_insights === 'object'
+    ? phase.execution_overlay_insights
+    : null;
 
   return {
     applied: {
@@ -181,6 +184,13 @@ function extractPhaseOverlayTelemetry(phase = null) {
       toolCapabilities: Array.isArray(blockedOverlay.toolCapabilities) ? blockedOverlay.toolCapabilities : [],
     },
     suggestions,
+    insights: insights ? {
+      recommendationSummary: typeof insights.recommendation_summary === 'string' ? insights.recommendation_summary : null,
+      recurringBlockers: Array.isArray(insights.recurring_blockers) ? insights.recurring_blockers : [],
+      primaryBlocker: insights.primary_blocker && typeof insights.primary_blocker === 'object' ? insights.primary_blocker : null,
+      escalationRecommended: insights.escalation_recommended === true,
+      lookbackDays: Number.isFinite(Number(insights.lookback_days)) ? Number(insights.lookback_days) : null,
+    } : null,
   };
 }
 
@@ -194,6 +204,10 @@ function buildPhaseOverlayMetadataPatch(phase = null) {
     orchestration_blocked_overlay_skills: telemetry.blocked.skills,
     orchestration_blocked_overlay_tool_capabilities: telemetry.blocked.toolCapabilities,
     orchestration_autonomy_suggestions: telemetry.suggestions,
+    orchestration_autonomy_insights: telemetry.insights?.recurringBlockers || [],
+    orchestration_autonomy_recommendation_summary: telemetry.insights?.recommendationSummary || null,
+    orchestration_autonomy_recurring_blocker: telemetry.insights?.primaryBlocker?.label || null,
+    orchestration_autonomy_escalation_recommended: telemetry.insights?.escalationRecommended === true,
     orchestration_autonomy_limited: telemetry.blocked.providers.length > 0
       || telemetry.blocked.skills.length > 0
       || telemetry.blocked.toolCapabilities.length > 0,
@@ -207,7 +221,13 @@ function hasOverlayTelemetry(phase = null) {
     || telemetry.applied.toolCapabilities.length > 0
     || telemetry.blocked.providers.length > 0
     || telemetry.blocked.skills.length > 0
-    || telemetry.blocked.toolCapabilities.length > 0;
+    || telemetry.blocked.toolCapabilities.length > 0
+    || Boolean(telemetry.insights?.recommendationSummary);
+}
+
+function hasAutonomyRecommendation(phase = null) {
+  const telemetry = extractPhaseOverlayTelemetry(phase);
+  return Boolean(telemetry.insights?.recommendationSummary);
 }
 
 function hasBlockedOverlayEntries(filteredOverlay = null) {
@@ -906,6 +926,7 @@ class OrchestrationRunEngine {
     }
 
     if (hasOverlayTelemetry(firstPhase)) {
+      const overlayTelemetry = extractPhaseOverlayTelemetry(firstPhase);
       await appendRunEvent(pool, {
         runId: run.id,
         stepId: step.id,
@@ -914,11 +935,29 @@ class OrchestrationRunEngine {
         payload: {
           phase_index: firstPhase?.index || 0,
           phase_title: firstPhase?.title || rootTask.title || null,
-          applied_overlay: extractPhaseOverlayTelemetry(firstPhase).applied,
-          blocked_overlay: extractPhaseOverlayTelemetry(firstPhase).blocked,
-          suggestions: extractPhaseOverlayTelemetry(firstPhase).suggestions,
+          applied_overlay: overlayTelemetry.applied,
+          blocked_overlay: overlayTelemetry.blocked,
+          suggestions: overlayTelemetry.suggestions,
+          insights: overlayTelemetry.insights?.recurringBlockers || [],
+          recommendation_summary: overlayTelemetry.insights?.recommendationSummary || null,
+          escalation_recommended: overlayTelemetry.insights?.escalationRecommended === true,
         },
       });
+      if (hasAutonomyRecommendation(firstPhase)) {
+        await appendRunEvent(pool, {
+          runId: run.id,
+          stepId: step.id,
+          eventType: 'autonomy.recommendation',
+          actor: 'run-engine',
+          payload: {
+            phase_index: firstPhase?.index || 0,
+            phase_title: firstPhase?.title || rootTask.title || null,
+            summary: overlayTelemetry.insights?.recommendationSummary || null,
+            recurring_blockers: overlayTelemetry.insights?.recurringBlockers || [],
+            escalation_recommended: overlayTelemetry.insights?.escalationRecommended === true,
+          },
+        });
+      }
     }
 
     let delegateStep = steps.find((entry) => entry.step_type === 'delegate_task');
@@ -951,6 +990,7 @@ class OrchestrationRunEngine {
           execution_overlay: firstPhase?.execution_overlay || null,
           execution_overlay_blocked: firstPhase?.execution_overlay_blocked || null,
           execution_overlay_suggestions: firstPhase?.execution_overlay_suggestions || [],
+          execution_overlay_insights: firstPhase?.execution_overlay_insights || null,
           proactive: true,
         },
       });
@@ -989,6 +1029,7 @@ class OrchestrationRunEngine {
           execution_overlay: existingInput.execution_overlay || firstPhase?.execution_overlay || null,
           execution_overlay_blocked: existingInput.execution_overlay_blocked || firstPhase?.execution_overlay_blocked || null,
           execution_overlay_suggestions: existingInput.execution_overlay_suggestions || firstPhase?.execution_overlay_suggestions || [],
+          execution_overlay_insights: existingInput.execution_overlay_insights || firstPhase?.execution_overlay_insights || null,
           proactive: true,
         },
       });
@@ -1184,6 +1225,7 @@ class OrchestrationRunEngine {
       delete nextPhase.execution_overlay;
       delete nextPhase.execution_overlay_blocked;
       delete nextPhase.execution_overlay_suggestions;
+      delete nextPhase.execution_overlay_insights;
       return nextPhase;
     }
 
@@ -1200,6 +1242,7 @@ class OrchestrationRunEngine {
       toolCapabilities: Array.isArray(filteredOverlay.blocked?.toolCapabilities) ? filteredOverlay.blocked.toolCapabilities : [],
     };
     nextPhase.execution_overlay_suggestions = buildOverlaySuggestionMessages(filteredOverlay);
+    nextPhase.execution_overlay_insights = filteredOverlay.insights || null;
     return nextPhase;
   }
 
@@ -1971,6 +2014,9 @@ class OrchestrationRunEngine {
     const overlaySuggestions = Array.isArray(input.execution_overlay_suggestions)
       ? input.execution_overlay_suggestions.filter((value) => typeof value === 'string' && value.trim())
       : [];
+    const overlayInsights = input.execution_overlay_insights && typeof input.execution_overlay_insights === 'object'
+      ? input.execution_overlay_insights
+      : null;
     const childTask = await coordinator.createTask({
       title: buildDelegatedTaskTitle(run, rootTask, step),
       description: buildDelegatedTaskDescription(run, rootTask, step),
@@ -2008,6 +2054,14 @@ class OrchestrationRunEngine {
           orchestration_blocked_overlay_skills: Array.isArray(blockedOverlay.skills) ? blockedOverlay.skills : [],
           orchestration_blocked_overlay_tool_capabilities: Array.isArray(blockedOverlay.toolCapabilities) ? blockedOverlay.toolCapabilities : [],
           orchestration_autonomy_suggestions: overlaySuggestions,
+          orchestration_autonomy_insights: Array.isArray(overlayInsights?.recurring_blockers) ? overlayInsights.recurring_blockers : [],
+          orchestration_autonomy_recommendation_summary: typeof overlayInsights?.recommendation_summary === 'string'
+            ? overlayInsights.recommendation_summary
+            : null,
+          orchestration_autonomy_recurring_blocker: typeof overlayInsights?.primary_blocker?.label === 'string'
+            ? overlayInsights.primary_blocker.label
+            : null,
+          orchestration_autonomy_escalation_recommended: overlayInsights?.escalation_recommended === true,
           orchestration_autonomy_limited: (
             (Array.isArray(blockedOverlay.providers) && blockedOverlay.providers.length > 0)
             || (Array.isArray(blockedOverlay.skills) && blockedOverlay.skills.length > 0)
@@ -2111,6 +2165,7 @@ class OrchestrationRunEngine {
         execution_overlay: phase.execution_overlay || null,
         execution_overlay_blocked: phase.execution_overlay_blocked || null,
         execution_overlay_suggestions: phase.execution_overlay_suggestions || [],
+        execution_overlay_insights: phase.execution_overlay_insights || null,
         proactive: true,
       },
     });
@@ -2129,6 +2184,7 @@ class OrchestrationRunEngine {
     });
 
     if (hasOverlayTelemetry(phase)) {
+      const overlayTelemetry = extractPhaseOverlayTelemetry(phase);
       await appendRunEvent(pool, {
         runId: run.id,
         stepId: delegateStep.id,
@@ -2137,11 +2193,29 @@ class OrchestrationRunEngine {
         payload: {
           phase_index: phase.index,
           phase_title: phase.title || null,
-          applied_overlay: extractPhaseOverlayTelemetry(phase).applied,
-          blocked_overlay: extractPhaseOverlayTelemetry(phase).blocked,
-          suggestions: extractPhaseOverlayTelemetry(phase).suggestions,
+          applied_overlay: overlayTelemetry.applied,
+          blocked_overlay: overlayTelemetry.blocked,
+          suggestions: overlayTelemetry.suggestions,
+          insights: overlayTelemetry.insights?.recurringBlockers || [],
+          recommendation_summary: overlayTelemetry.insights?.recommendationSummary || null,
+          escalation_recommended: overlayTelemetry.insights?.escalationRecommended === true,
         },
       });
+      if (hasAutonomyRecommendation(phase)) {
+        await appendRunEvent(pool, {
+          runId: run.id,
+          stepId: delegateStep.id,
+          eventType: 'autonomy.recommendation',
+          actor: 'run-engine',
+          payload: {
+            phase_index: phase.index,
+            phase_title: phase.title || null,
+            summary: overlayTelemetry.insights?.recommendationSummary || null,
+            recurring_blockers: overlayTelemetry.insights?.recurringBlockers || [],
+            escalation_recommended: overlayTelemetry.insights?.escalationRecommended === true,
+          },
+        });
+      }
     }
 
     const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
@@ -2228,6 +2302,7 @@ class OrchestrationRunEngine {
         execution_overlay: phase?.execution_overlay || parseJsonLike(sourceStep?.input_json).execution_overlay || null,
         execution_overlay_blocked: phase?.execution_overlay_blocked || parseJsonLike(sourceStep?.input_json).execution_overlay_blocked || null,
         execution_overlay_suggestions: phase?.execution_overlay_suggestions || parseJsonLike(sourceStep?.input_json).execution_overlay_suggestions || [],
+        execution_overlay_insights: phase?.execution_overlay_insights || parseJsonLike(sourceStep?.input_json).execution_overlay_insights || null,
         escalation,
         proactive: true,
       },
@@ -2252,9 +2327,11 @@ class OrchestrationRunEngine {
         execution_overlay: parseJsonLike(sourceStep?.input_json).execution_overlay || null,
         execution_overlay_blocked: parseJsonLike(sourceStep?.input_json).execution_overlay_blocked || null,
         execution_overlay_suggestions: parseJsonLike(sourceStep?.input_json).execution_overlay_suggestions || [],
+        execution_overlay_insights: parseJsonLike(sourceStep?.input_json).execution_overlay_insights || null,
         index: phase?.index || 0,
         title: phase?.title || rootTask.title || null,
       };
+      const overlayTelemetry = extractPhaseOverlayTelemetry(overlayPhase);
       await appendRunEvent(pool, {
         runId: run.id,
         stepId: delegateStep.id,
@@ -2263,13 +2340,33 @@ class OrchestrationRunEngine {
         payload: {
           phase_index: overlayPhase.index || 0,
           phase_title: overlayPhase.title || null,
-          applied_overlay: extractPhaseOverlayTelemetry(overlayPhase).applied,
-          blocked_overlay: extractPhaseOverlayTelemetry(overlayPhase).blocked,
-          suggestions: extractPhaseOverlayTelemetry(overlayPhase).suggestions,
+          applied_overlay: overlayTelemetry.applied,
+          blocked_overlay: overlayTelemetry.blocked,
+          suggestions: overlayTelemetry.suggestions,
+          insights: overlayTelemetry.insights?.recurringBlockers || [],
+          recommendation_summary: overlayTelemetry.insights?.recommendationSummary || null,
+          escalation_recommended: overlayTelemetry.insights?.escalationRecommended === true,
           retry_count: retryCount || 0,
           escalation,
         },
       });
+      if (hasAutonomyRecommendation(overlayPhase)) {
+        await appendRunEvent(pool, {
+          runId: run.id,
+          stepId: delegateStep.id,
+          eventType: 'autonomy.recommendation',
+          actor: 'run-engine',
+          payload: {
+            phase_index: overlayPhase.index || 0,
+            phase_title: overlayPhase.title || null,
+            summary: overlayTelemetry.insights?.recommendationSummary || null,
+            recurring_blockers: overlayTelemetry.insights?.recurringBlockers || [],
+            escalation_recommended: overlayTelemetry.insights?.escalationRecommended === true,
+            retry_count: retryCount || 0,
+            escalation,
+          },
+        });
+      }
     }
 
     const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
@@ -2305,6 +2402,7 @@ class OrchestrationRunEngine {
           execution_overlay: parseJsonLike(sourceStep?.input_json).execution_overlay || null,
           execution_overlay_blocked: parseJsonLike(sourceStep?.input_json).execution_overlay_blocked || null,
           execution_overlay_suggestions: parseJsonLike(sourceStep?.input_json).execution_overlay_suggestions || [],
+          execution_overlay_insights: parseJsonLike(sourceStep?.input_json).execution_overlay_insights || null,
         }),
         orchestration_proactive: true,
       },

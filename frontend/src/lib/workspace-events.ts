@@ -30,6 +30,9 @@ export type WorkspaceRealtimeTaskPayload = {
   phase_index?: number | null;
   phase_count?: number | null;
   snipara_last_event?: string | null;
+  autonomy_recommendation_summary?: string | null;
+  autonomy_recurring_blocker?: string | null;
+  autonomy_escalation_recommended?: boolean | null;
 };
 
 export type WorkspaceRealtimeRunPayload = {
@@ -109,6 +112,15 @@ function mergeTaskMetadata(task: Task, event: WorkspaceRealtimeEvent): Record<st
     ...(taskPayload.phase_index !== undefined ? { orchestration_phase_index: taskPayload.phase_index } : {}),
     ...(taskPayload.phase_count !== undefined ? { orchestration_phase_count: taskPayload.phase_count } : {}),
     ...(taskPayload.snipara_last_event !== undefined ? { snipara_last_event: taskPayload.snipara_last_event } : {}),
+    ...(taskPayload.autonomy_recommendation_summary !== undefined
+      ? { orchestration_autonomy_recommendation_summary: taskPayload.autonomy_recommendation_summary }
+      : {}),
+    ...(taskPayload.autonomy_recurring_blocker !== undefined
+      ? { orchestration_autonomy_recurring_blocker: taskPayload.autonomy_recurring_blocker }
+      : {}),
+    ...(taskPayload.autonomy_escalation_recommended !== undefined
+      ? { orchestration_autonomy_escalation_recommended: taskPayload.autonomy_escalation_recommended }
+      : {}),
   };
 }
 
@@ -142,6 +154,7 @@ export function shouldSurfaceWorkspaceEvent(event: WorkspaceRealtimeEvent): bool
   const task = event.task || {};
   const run = event.run || {};
   return isWorkspaceAttentionEvent(event)
+    || Boolean(task.autonomy_recommendation_summary)
     || Boolean(task.last_resolution)
     || task.closure_ready === true
     || run.status === "completed"
@@ -245,6 +258,7 @@ export function getWorkspaceEventTitle(event: WorkspaceRealtimeEvent): string {
 
   if (type === "task.created") return task.title ? `Task created: ${task.title}` : "Task created";
   if (type === "task.deleted") return "Task deleted";
+  if (task.autonomy_recommendation_summary) return "Autonomy upgrade recommended";
   if (run.status === "awaiting_approval") return "Approval required";
   if (run.status === "blocked" || task.blocker_reason) return "Run blocked";
   if (type === "task.updated" && task.last_resolution) return "Run resumed";
@@ -259,6 +273,7 @@ export function getWorkspaceEventDescription(event: WorkspaceRealtimeEvent): str
   const run = event.run || {};
 
   if (task.pending_approval_summary) return task.pending_approval_summary;
+  if (task.autonomy_recommendation_summary) return task.autonomy_recommendation_summary;
   if (task.blocker_reason) {
     return task.blocker_type
       ? `${task.blocker_reason} (${String(task.blocker_type).replace(/_/g, " ")})`
@@ -282,6 +297,7 @@ export function isWorkspaceAttentionEvent(event: WorkspaceRealtimeEvent): boolea
   return run.status === "awaiting_approval"
     || run.status === "blocked"
     || run.status === "failed"
+    || task.autonomy_escalation_recommended === true
     || Boolean(task.blocker_reason)
     || Boolean(task.pending_approval_summary);
 }

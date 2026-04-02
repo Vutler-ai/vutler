@@ -65,6 +65,9 @@ function buildTaskRealtimePayload(task = {}) {
     phase_index: metadata.orchestration_phase_index ?? null,
     phase_count: metadata.orchestration_phase_count ?? null,
     snipara_last_event: metadata.snipara_last_event || null,
+    autonomy_recommendation_summary: metadata.orchestration_autonomy_recommendation_summary || null,
+    autonomy_recurring_blocker: metadata.orchestration_autonomy_recurring_blocker || null,
+    autonomy_escalation_recommended: metadata.orchestration_autonomy_escalation_recommended === true,
   };
 }
 

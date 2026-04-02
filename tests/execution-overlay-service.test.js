@@ -16,7 +16,10 @@ jest.mock('../services/runtimeCapabilityAvailability', () => ({
 
 const { resolveAgentCapabilityMatrix } = require('../services/agentCapabilityMatrixService');
 const { resolveWorkspaceCapabilityAvailability } = require('../services/runtimeCapabilityAvailability');
-const { filterExecutionOverlay } = require('../services/executionOverlayService');
+const {
+  buildOverlaySuggestionMessages,
+  filterExecutionOverlay,
+} = require('../services/executionOverlayService');
 
 describe('executionOverlayService', () => {
   beforeEach(() => {
@@ -96,5 +99,117 @@ describe('executionOverlayService', () => {
     }));
     expect(resolveWorkspaceCapabilityAvailability).not.toHaveBeenCalled();
     expect(resolveAgentCapabilityMatrix).not.toHaveBeenCalled();
+  });
+
+  test('adds recurring blocker insights when the same capability keeps blocking runs', async () => {
+    resolveWorkspaceCapabilityAvailability.mockResolvedValue({
+      providerStates: {
+        email: { available: true, reason: null },
+      },
+      availableProviders: ['email'],
+      unavailableProviders: [],
+    });
+    resolveAgentCapabilityMatrix.mockResolvedValue({
+      capabilities: {
+        email: { effective: false, reason: 'Email is not provisioned for this agent.' },
+      },
+    });
+
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM tenant_vutler.orchestration_runs')) {
+          return {
+            rows: [
+              {
+                id: 'run-1',
+                requested_agent_id: 'agent-1',
+                requested_agent_username: 'andrea',
+                display_agent_id: 'agent-1',
+                display_agent_username: 'andrea',
+              },
+              {
+                id: 'run-2',
+                requested_agent_id: 'agent-1',
+                requested_agent_username: 'andrea',
+                display_agent_id: 'agent-1',
+                display_agent_username: 'andrea',
+              },
+              {
+                id: 'run-3',
+                requested_agent_id: 'agent-2',
+                requested_agent_username: 'mike',
+                display_agent_id: 'agent-2',
+                display_agent_username: 'mike',
+              },
+            ],
+          };
+        }
+
+        if (sql.includes('FROM tenant_vutler.orchestration_run_events')) {
+          return {
+            rows: [
+              {
+                run_id: 'run-1',
+                payload: {
+                  blocked_overlay: {
+                    providers: [{ key: 'email', capability: 'email', reason: 'Email is not provisioned for this agent.' }],
+                    skills: [],
+                    toolCapabilities: [],
+                  },
+                },
+              },
+              {
+                run_id: 'run-2',
+                payload: {
+                  blocked_overlay: {
+                    providers: [{ key: 'email', capability: 'email', reason: 'Email is not provisioned for this agent.' }],
+                    skills: [],
+                    toolCapabilities: [],
+                  },
+                },
+              },
+              {
+                run_id: 'run-3',
+                payload: {
+                  blocked_overlay: {
+                    providers: [{ key: 'email', capability: 'email', reason: 'Email is not provisioned for this agent.' }],
+                    skills: [],
+                    toolCapabilities: [],
+                  },
+                },
+              },
+            ],
+          };
+        }
+
+        throw new Error(`Unexpected SQL in recurring blocker test: ${sql}`);
+      }),
+    };
+
+    const overlay = await filterExecutionOverlay({
+      workspaceId: 'ws-1',
+      agent: { id: 'agent-1', username: 'andrea', type: ['sales'] },
+      overlay: {
+        integrationProviders: ['email'],
+      },
+      db,
+    });
+
+    expect(overlay.insights).toEqual(expect.objectContaining({
+      escalation_recommended: true,
+      recommendation_summary: expect.stringContaining('Email has blocked 3 autonomous runs'),
+    }));
+    expect(overlay.insights.primary_blocker).toEqual(expect.objectContaining({
+      key: 'email',
+      workspace_count: 3,
+      agent_count: 2,
+      recurring: true,
+    }));
+
+    const suggestions = buildOverlaySuggestionMessages(overlay);
+    expect(suggestions).toEqual(expect.arrayContaining([
+      'Provision email for this agent or route the step to an email-enabled agent.',
+      expect.stringContaining('Email has blocked 3 autonomous runs'),
+    ]));
   });
 });
