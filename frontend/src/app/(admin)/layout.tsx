@@ -1,6 +1,4 @@
 "use client";
-
-
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
@@ -18,9 +16,11 @@ import { Button } from "@/components/ui/button";
 import {
   adminFetch,
   getAdminToken,
+  getAuthToken,
   setAdminToken,
   clearAdminToken,
   syncAdminSessionCookie,
+  syncAuthSessionCookie,
 } from "@/lib/api/client";
 
 const navigation = [
@@ -48,21 +48,30 @@ export default function AdminLayout({
   const [loginLoading, setLoginLoading] = useState(false);
 
   useEffect(() => {
-    const token = getAdminToken();
+    const adminToken = getAdminToken();
+    const authToken = getAuthToken();
+    const token = adminToken || authToken;
+
     if (token) {
-      void syncAdminSessionCookie(token).catch(() => {});
-      // Verify token is still valid by calling stats
+      if (adminToken) {
+        void syncAdminSessionCookie(adminToken).catch(() => {});
+      } else if (authToken) {
+        void syncAuthSessionCookie(authToken).catch(() => {});
+      }
+
       adminFetch<{ success: boolean }>("/api/v1/admin/stats")
         .then(() => {
           setIsAuthorized(true);
-          // Decode email from JWT
           try {
-            const payload = JSON.parse(atob(token.split(".")[1]));
+            const activeToken = getAdminToken() || getAuthToken() || token;
+            const payload = JSON.parse(atob(activeToken.split(".")[1]));
             setAdminEmail(payload.email || "");
           } catch { /* ignore */ }
         })
         .catch(() => {
-          clearAdminToken();
+          if (adminToken) {
+            clearAdminToken();
+          }
         })
         .finally(() => setLoading(false));
     } else {

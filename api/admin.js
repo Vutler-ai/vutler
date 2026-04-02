@@ -8,6 +8,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const pool = require('../lib/vaultbrix');
 const router = express.Router();
 
@@ -21,8 +22,9 @@ const { provisionEventSubscription } = require('../services/nexusEnterpriseSubsc
 
 const SCHEMA = 'tenant_vutler';
 const TABLE = `${SCHEMA}.users_auth`;
+const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-// In-memory admin sessions (token -> { userId, email, expires })
+// In-memory session cache kept for backwards compatibility.
 const adminSessions = new Map();
 
 // Clean expired sessions every 10 min
@@ -40,6 +42,40 @@ function hashPassword(password, salt) {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
 }
 
+function buildAdminSession(payload = {}) {
+  return {
+    userId: payload.userId || payload.id || null,
+    email: payload.email || '',
+    workspaceId: payload.workspaceId || payload.workspace_id || null,
+    role: payload.role || 'user',
+    expires: typeof payload.exp === 'number'
+      ? payload.exp * 1000
+      : Date.now() + ADMIN_SESSION_TTL_MS,
+  };
+}
+
+function getAdminTokenFromRequest(req) {
+  const adminHeader = req.headers['x-admin-token'];
+  if (typeof adminHeader === 'string' && adminHeader.trim()) {
+    return adminHeader.trim();
+  }
+
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+
+  return '';
+}
+
+async function resolveAdminUser(userId) {
+  const result = await pool.query(
+    `SELECT id, email, workspace_id, role FROM ${TABLE} WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+  return result.rows[0] || null;
+}
+
 /**
  * POST /api/v1/admin/login
  * Admin login — returns session token
@@ -52,7 +88,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT id, email, password_hash, salt, role, name FROM ${TABLE} WHERE email = $1`,
+      `SELECT id, workspace_id, email, password_hash, salt, role, name FROM ${TABLE} WHERE email = $1`,
       [email.toLowerCase().trim()]
     );
 
@@ -86,7 +122,6 @@ router.post('/login', async (req, res) => {
     }
 
     // Create session token
-    const jwt = require('jsonwebtoken');
     if (!process.env.JWT_SECRET) {
       console.error('[Admin] JWT_SECRET env var is not set');
       return res.status(500).json({ success: false, error: 'Server configuration error' });
@@ -97,6 +132,13 @@ router.post('/login', async (req, res) => {
       JWT_SECRET,
       { algorithm: 'HS256', expiresIn: '7d' }
     );
+    adminSessions.set(token, buildAdminSession({
+      id: user.id,
+      email: user.email,
+      workspace_id: user.workspace_id,
+      role: user.role,
+      exp: Math.floor(Date.now() / 1000) + (ADMIN_SESSION_TTL_MS / 1000),
+    }));
 
     console.log(`[Admin] Login successful: ${user.email}`);
     res.json({
@@ -112,20 +154,60 @@ router.post('/login', async (req, res) => {
 /**
  * Admin auth middleware — all routes below require valid admin session
  */
-function requireAdmin(req, res, next) {
-  const token = req.headers['x-admin-token'];
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Admin token required (X-Admin-Token header)' });
-  }
+async function requireAdmin(req, res, next) {
+  try {
+    const token = getAdminTokenFromRequest(req);
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Admin token required' });
+    }
 
-  const session = adminSessions.get(token);
-  if (!session || session.expires < Date.now()) {
-    adminSessions.delete(token);
-    return res.status(401).json({ success: false, error: 'Invalid or expired admin session' });
-  }
+    const cachedSession = adminSessions.get(token);
+    let session = null;
+    if (cachedSession && cachedSession.expires >= Date.now()) {
+      session = cachedSession;
+    } else {
+      adminSessions.delete(token);
 
-  req.adminUser = session;
-  next();
+      if (!process.env.JWT_SECRET) {
+        console.error('[Admin] JWT_SECRET env var is not set');
+        return res.status(500).json({ success: false, error: 'Server configuration error' });
+      }
+
+      let decoded;
+      try {
+        decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+      } catch (err) {
+        return res.status(401).json({ success: false, error: 'Invalid or expired admin session' });
+      }
+
+      session = buildAdminSession(decoded);
+    }
+
+    if (!session?.userId) {
+      return res.status(401).json({ success: false, error: 'Invalid admin token payload' });
+    }
+
+    const adminUser = await resolveAdminUser(session.userId);
+    if (!adminUser || adminUser.role !== 'admin') {
+      adminSessions.delete(token);
+      return res.status(403).json({ success: false, error: 'Admin access required' });
+    }
+
+    const hydratedSession = {
+      ...session,
+      userId: adminUser.id,
+      email: adminUser.email,
+      workspaceId: adminUser.workspace_id,
+      role: adminUser.role,
+    };
+
+    adminSessions.set(token, hydratedSession);
+    req.adminUser = hydratedSession;
+    next();
+  } catch (err) {
+    console.error('[Admin] Admin auth error:', err.message);
+    res.status(500).json({ success: false, error: 'Admin authentication failed' });
+  }
 }
 
 // Apply admin middleware to all routes below

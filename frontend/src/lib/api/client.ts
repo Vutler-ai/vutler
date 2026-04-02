@@ -179,34 +179,55 @@ export async function adminFetch<T>(
   options?: AdminFetchOptions
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`;
-  const token = getAdminToken();
+  const adminToken = getAdminToken();
+  const authToken = getAuthToken();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((options?.headers as Record<string, string>) || {}),
   };
 
-  if (token) {
-    headers['X-Admin-Token'] = token;
+  if (adminToken) {
+    headers['X-Admin-Token'] = adminToken;
+  } else if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
   }
 
   const { body: rawBody, ...restOptions } = options || {};
-  const fetchOptions: RequestInit = { ...restOptions, headers };
-  if (rawBody && typeof rawBody !== 'string') {
-    fetchOptions.body = JSON.stringify(rawBody);
-  } else if (rawBody) {
-    fetchOptions.body = rawBody;
-  }
+  const buildFetchOptions = (requestHeaders: Record<string, string>): RequestInit => {
+    const fetchOptions: RequestInit = { ...restOptions, headers: requestHeaders };
+    if (rawBody && typeof rawBody !== 'string') {
+      fetchOptions.body = JSON.stringify(rawBody);
+    } else if (rawBody) {
+      fetchOptions.body = rawBody;
+    }
+    return fetchOptions;
+  };
 
-  let response: Response;
-  try {
-    response = await fetch(url, fetchOptions);
-  } catch (err) {
-    throw new Error(err instanceof Error ? err.message : 'Network error');
+  const performFetch = async (requestHeaders: Record<string, string>): Promise<Response> => {
+    try {
+      return await fetch(url, buildFetchOptions(requestHeaders));
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : 'Network error');
+    }
+  };
+
+  let response = await performFetch(headers);
+
+  if (response.status === 401 && adminToken && authToken) {
+    clearAdminToken();
+    const fallbackHeaders = {
+      'Content-Type': 'application/json',
+      ...((options?.headers as Record<string, string>) || {}),
+      Authorization: `Bearer ${authToken}`,
+    };
+    response = await performFetch(fallbackHeaders);
   }
 
   if (response.status === 401) {
-    clearAdminToken();
+    if (adminToken) {
+      clearAdminToken();
+    }
     throw new Error('Admin authentication required');
   }
 

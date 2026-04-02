@@ -83,7 +83,7 @@ export function proxy(request: NextRequest) {
   }
 
   if (matchesRoute(pathname, '/admin')) {
-    if (!adminToken && pathname !== '/admin') {
+    if (!adminToken && !authToken && pathname !== '/admin') {
       const url = request.nextUrl.clone();
       url.pathname = '/admin';
       url.search = '';
