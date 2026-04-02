@@ -3,6 +3,22 @@
 describe('runEngine claim/resume loop', () => {
   beforeEach(() => {
     jest.resetModules();
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        overlayToolCapabilities: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+        availability: null,
+        unavailableDomains: [],
+        workspacePressure: null,
+        specializationProfile: null,
+        recommendations: [],
+      }),
+    }));
   });
 
   test('claims a planning run, delegates a child task, and parks the run in waiting_on_tasks', async () => {
@@ -260,6 +276,11 @@ describe('runEngine claim/resume loop', () => {
             phase_objective: 'Map the current orchestration gaps before implementation.',
             snipara_swarm_id: 'swarm-1',
             strategy: 'multi_phase_sequential',
+            execution_overlay: {
+              integrationProviders: ['sandbox'],
+              skillKeys: [],
+              toolCapabilities: ['code_execution'],
+            },
           },
         },
       ]);
@@ -279,6 +300,11 @@ describe('runEngine claim/resume loop', () => {
         phase_objective: 'Map the current orchestration gaps before implementation.',
         snipara_swarm_id: 'swarm-1',
         strategy: 'multi_phase_sequential',
+        execution_overlay: {
+          integrationProviders: ['sandbox'],
+          skillKeys: [],
+          toolCapabilities: ['code_execution'],
+        },
       },
     });
     const heartbeatRunLease = jest.fn().mockResolvedValue({
@@ -321,6 +347,48 @@ describe('runEngine claim/resume loop', () => {
 
     jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
     jest.doMock('../../services/chatMessages', () => ({ insertChatMessage: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockImplementation(async ({ messageText }) => {
+        if (String(messageText).includes('Inspect current runtime')) {
+          return {
+            domains: ['technical'],
+            overlayProviders: ['sandbox'],
+            overlaySkillKeys: [],
+            overlayToolCapabilities: ['code_execution'],
+            primaryDelegate: null,
+            delegatedAgents: [],
+            reasons: [],
+            availability: null,
+            unavailableDomains: [],
+            workspacePressure: null,
+            specializationProfile: null,
+            recommendations: [],
+          };
+        }
+        return {
+          domains: [],
+          overlayProviders: ['project_management'],
+          overlaySkillKeys: ['task_management'],
+          overlayToolCapabilities: [],
+          primaryDelegate: null,
+          delegatedAgents: [],
+          reasons: [],
+          availability: null,
+          unavailableDomains: [],
+          workspacePressure: null,
+          specializationProfile: null,
+          recommendations: [],
+        };
+      }),
+    }));
+    jest.doMock('../../services/executionOverlayService', () => ({
+      filterExecutionOverlay: jest.fn().mockImplementation(async ({ overlay }) => ({
+        skillKeys: Array.isArray(overlay?.skillKeys) ? overlay.skillKeys : [],
+        integrationProviders: Array.isArray(overlay?.integrationProviders) ? overlay.integrationProviders : [],
+        toolCapabilities: Array.isArray(overlay?.toolCapabilities) ? overlay.toolCapabilities : [],
+      })),
+      isOverlayEmpty: jest.requireActual('../../services/executionOverlayService').isOverlayEmpty,
+    }));
     jest.doMock('../../services/swarmCoordinator', () => ({
       getSwarmCoordinator: () => ({
         createTask,
@@ -330,8 +398,8 @@ describe('runEngine claim/resume loop', () => {
           config: { configured: true, projectId: 'project-1' },
         }),
         loadAgentDirectory: jest.fn().mockResolvedValue([
-          { id: 'agent-1', username: 'mike', name: 'Mike' },
-          { id: 'agent-oscar', username: 'oscar', name: 'Oscar' },
+          { id: 'agent-1', username: 'mike', name: 'Mike', type: ['engineering'] },
+          { id: 'agent-oscar', username: 'oscar', name: 'Oscar', type: ['engineering'] },
         ]),
         decomposeWithLLM: jest.fn().mockResolvedValue([
           {
@@ -390,6 +458,10 @@ describe('runEngine claim/resume loop', () => {
         strategy: 'multi_phase_sequential',
         plan_phase_title: 'Inspect current runtime',
         plan_phase_count: 2,
+        execution_overlay: expect.objectContaining({
+          integrationProviders: ['sandbox'],
+          toolCapabilities: ['code_execution'],
+        }),
       }),
     }));
     expect(createTask).toHaveBeenCalledWith(expect.objectContaining({
@@ -398,6 +470,11 @@ describe('runEngine claim/resume loop', () => {
       metadata: expect.objectContaining({
         orchestration_plan_phase_title: 'Inspect current runtime',
         orchestration_snipara_swarm_id: 'swarm-1',
+        execution_overlay: expect.objectContaining({
+          integrationProviders: ['sandbox'],
+          toolCapabilities: ['code_execution'],
+        }),
+        orchestration_overlay_tool_capabilities: ['code_execution'],
       }),
     }), 'ws-1');
     expect(JSON.parse(taskUpdates[0].params[0])).toEqual(expect.objectContaining({

@@ -11,6 +11,7 @@ const { createMemoryRuntimeService } = require('../../../services/memory/runtime
 const { createSniparaGateway } = require('../../../services/snipara/gateway');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 const { resolveOrchestrationCapabilities } = require('../../../services/orchestrationCapabilityResolver');
+const { filterExecutionOverlay, isOverlayEmpty } = require('../../../services/executionOverlayService');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
@@ -508,6 +509,7 @@ async function handleMessage(message) {
     domains: [],
     overlayProviders: [],
     overlaySkillKeys: [],
+    overlayToolCapabilities: [],
     primaryDelegate: null,
     delegatedAgents: [],
     reasons: [],
@@ -574,10 +576,24 @@ async function handleMessage(message) {
   const executionAgent = typeof swarmCoordinator.resolveAgentExecutionContext === 'function'
     ? await swarmCoordinator.resolveAgentExecutionContext(hydratedTargetAgent, workspaceId)
     : hydratedTargetAgent;
-  executionAgent.execution_overlay = {
+  const desiredExecutionOverlay = {
     skillKeys: orchestration.overlaySkillKeys || [],
     integrationProviders: orchestration.overlayProviders || [],
+    toolCapabilities: orchestration.overlayToolCapabilities || [],
   };
+  const filteredExecutionOverlay = await filterExecutionOverlay({
+    workspaceId,
+    agent: executionAgent,
+    overlay: desiredExecutionOverlay,
+    db: pool,
+  }).catch(() => desiredExecutionOverlay);
+  executionAgent.execution_overlay = isOverlayEmpty(filteredExecutionOverlay)
+    ? {}
+    : {
+        skillKeys: filteredExecutionOverlay.skillKeys || [],
+        integrationProviders: filteredExecutionOverlay.integrationProviders || [],
+        toolCapabilities: filteredExecutionOverlay.toolCapabilities || [],
+      };
   const soul = appendPlacementInstruction(
     await getAgentSoul(executionAgent),
     executionAgent.workspaceToolPolicy?.placementInstruction
@@ -639,8 +655,9 @@ async function handleMessage(message) {
       requested_agent_username: executionAgent.username || null,
       requested_agent_reason: resolution?.reason || 'unknown',
       orchestration_domains: orchestration.domains || [],
-      orchestration_overlay_skills: orchestration.overlaySkillKeys || [],
-      orchestration_overlay_providers: orchestration.overlayProviders || [],
+      orchestration_overlay_skills: executionAgent.execution_overlay.skillKeys || [],
+      orchestration_overlay_providers: executionAgent.execution_overlay.integrationProviders || [],
+      orchestration_overlay_tool_capabilities: executionAgent.execution_overlay.toolCapabilities || [],
       orchestration_delegated_agents: orchestration.delegatedAgents || [],
       available_runtime_providers: orchestration.availability?.availableProviders || [],
       unavailable_runtime_providers: orchestration.availability?.unavailableProviders || [],

@@ -46,6 +46,8 @@ function normalizePhase(entry, index, fallbackAgent = null) {
       title: normalizePhaseTitle(objective, `Phase ${index + 1}`),
       objective,
       agent_username: fallbackAgent || null,
+      agent_id: null,
+      execution_overlay: null,
       verification_focus: null,
     };
   }
@@ -62,6 +64,14 @@ function normalizePhase(entry, index, fallbackAgent = null) {
     title,
     objective,
     agent_username: cleanText(entry.agent_username || entry.agent || entry.assignee) || fallbackAgent || null,
+    agent_id: cleanText(entry.agent_id || entry.agentId) || null,
+    execution_overlay: entry.execution_overlay && typeof entry.execution_overlay === 'object'
+      ? {
+          skillKeys: Array.isArray(entry.execution_overlay.skillKeys) ? entry.execution_overlay.skillKeys : [],
+          integrationProviders: Array.isArray(entry.execution_overlay.integrationProviders) ? entry.execution_overlay.integrationProviders : [],
+          toolCapabilities: Array.isArray(entry.execution_overlay.toolCapabilities) ? entry.execution_overlay.toolCapabilities : [],
+        }
+      : null,
     verification_focus: truncate(entry.verification_focus || entry.check || '', 180) || null,
   };
 }

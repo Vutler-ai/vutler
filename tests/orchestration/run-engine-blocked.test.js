@@ -3,6 +3,22 @@
 describe('runEngine blocked task remediation', () => {
   beforeEach(() => {
     jest.resetModules();
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        overlayToolCapabilities: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+        availability: null,
+        unavailableDomains: [],
+        workspacePressure: null,
+        specializationProfile: null,
+        recommendations: [],
+      }),
+    }));
   });
 
   test('routes approval-like blockers to an approval gate', async () => {

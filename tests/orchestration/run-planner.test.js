@@ -69,6 +69,11 @@ describe('runPlanner', () => {
           title: 'Inspect current runtime',
           description: 'Map existing orchestration gaps.',
           agent: 'oscar',
+          execution_overlay: {
+            integrationProviders: ['sandbox'],
+            skillKeys: [],
+            toolCapabilities: ['code_execution'],
+          },
         },
         {
           title: 'Implement the durable flow',
@@ -85,6 +90,10 @@ describe('runPlanner', () => {
         title: 'Inspect current runtime',
         objective: 'Map existing orchestration gaps.',
         agent_username: 'oscar',
+        execution_overlay: expect.objectContaining({
+          integrationProviders: ['sandbox'],
+          toolCapabilities: ['code_execution'],
+        }),
       }),
       expect.objectContaining({
         title: 'Implement the durable flow',

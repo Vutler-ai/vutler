@@ -26,6 +26,7 @@ const DOMAIN_RULES = [
     preferredAgents: ['nora', 'luna', 'max'],
     overlayProviders: ['social_media'],
     overlaySkills: ['content_scheduling', 'social_analytics', 'engagement_monitoring', 'multi_platform_posting'],
+    overlayToolCapabilities: [],
     delegateByDefault: true,
   },
   {
@@ -34,6 +35,7 @@ const DOMAIN_RULES = [
     preferredAgents: ['andrea', 'max', 'nora', 'luna'],
     overlayProviders: ['email'],
     overlaySkills: ['email_outreach'],
+    overlayToolCapabilities: [],
     delegateByDefault: true,
   },
   {
@@ -42,6 +44,7 @@ const DOMAIN_RULES = [
     preferredAgents: ['jarvis', 'victor', 'mike'],
     overlayProviders: ['project_management'],
     overlaySkills: ['task_management', 'status_reporting'],
+    overlayToolCapabilities: [],
     delegateByDefault: false,
   },
   {
@@ -56,6 +59,7 @@ const DOMAIN_RULES = [
       'workspace_drive_write',
       'workspace_drive_create_folder',
     ],
+    overlayToolCapabilities: [],
     delegateByDefault: false,
   },
   {
@@ -72,6 +76,7 @@ const DOMAIN_RULES = [
       'google_calendar_update',
       'google_calendar_check_availability',
     ],
+    overlayToolCapabilities: [],
     delegateByDefault: false,
   },
   {
@@ -80,7 +85,21 @@ const DOMAIN_RULES = [
     preferredAgents: ['philip', 'luna', 'victor'],
     overlayProviders: ['workspace_drive'],
     overlaySkills: ['status_reporting', 'workspace_drive_write', 'workspace_drive_read'],
+    overlayToolCapabilities: [],
     delegateByDefault: false,
+  },
+  {
+    key: 'technical',
+    patterns: [
+      'code', 'repo', 'repository', 'debug', 'bug', 'stack trace', 'exception', 'refactor',
+      'migration', 'sql', 'endpoint', 'api', 'script', 'cli', 'regex', 'parser', 'test ',
+      'unit test', 'integration test', 'sandbox', 'implement in', 'fix the',
+    ],
+    preferredAgents: ['mike', 'victor', 'oscar', 'jarvis'],
+    overlayProviders: ['sandbox'],
+    overlaySkills: [],
+    overlayToolCapabilities: ['code_execution'],
+    delegateByDefault: true,
   },
 ];
 
@@ -165,6 +184,7 @@ async function resolveOrchestrationCapabilities({
 
   const overlayProviders = new Set(['project_management']);
   const overlaySkills = new Set();
+  const overlayToolCapabilities = new Set();
   const delegatedAgents = [];
   const reasons = [];
   const unavailableDomains = [];
@@ -204,6 +224,7 @@ async function resolveOrchestrationCapabilities({
         || provider === 'vutler_calendar'
         || provider === 'project_management'
         || provider === 'email'
+        || provider === 'sandbox'
         || connectedProviders.has(provider)) {
         overlayProviders.add(provider);
       }
@@ -211,6 +232,10 @@ async function resolveOrchestrationCapabilities({
 
     for (const skillKey of filterAvailableSkillKeys(rule.overlaySkills, capabilityAvailability)) {
       overlaySkills.add(skillKey);
+    }
+
+    for (const toolCapability of Array.isArray(rule.overlayToolCapabilities) ? rule.overlayToolCapabilities : []) {
+      if (toolCapability) overlayToolCapabilities.add(toolCapability);
     }
 
     const specialist = pickSpecialistAgent(
@@ -272,6 +297,7 @@ async function resolveOrchestrationCapabilities({
     domains: matchedRules.map((rule) => rule.key),
     overlayProviders: Array.from(overlayProviders),
     overlaySkillKeys: Array.from(overlaySkills),
+    overlayToolCapabilities: Array.from(overlayToolCapabilities),
     primaryDelegate,
     delegatedAgents,
     reasons,

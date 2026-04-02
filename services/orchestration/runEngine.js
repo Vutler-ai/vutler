@@ -6,6 +6,8 @@ const { insertChatMessage } = require('../chatMessages');
 const { getSwarmCoordinator } = require('../swarmCoordinator');
 const { getVerificationEngine } = require('../verificationEngine');
 const { publishTaskEvent } = require('../workspaceRealtime');
+const { resolveOrchestrationCapabilities } = require('../orchestrationCapabilityResolver');
+const { filterExecutionOverlay, isOverlayEmpty } = require('../executionOverlayService');
 const {
   DEFAULT_LEASE_MS,
   TERMINAL_RUN_STATUSES,
@@ -126,6 +128,14 @@ function isClosureReadySignal(signal) {
 
 function nextSequenceNo(steps = []) {
   return steps.reduce((max, step) => Math.max(max, Number(step?.sequence_no) || 0), 0) + 1;
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(new Set(
+    values
+      .filter((value) => value !== null && value !== undefined && String(value).trim())
+      .map((value) => String(value).trim())
+  ));
 }
 
 function buildDelegatedTaskTitle(run, rootTask, step = null) {
@@ -776,7 +786,7 @@ class OrchestrationRunEngine {
       sniparaSwarmId = runtimeConfig?.swarmId || null;
     }
 
-    const plan = buildRunPlan({
+    let plan = buildRunPlan({
       run,
       rootTask,
       workspaceContext,
@@ -788,6 +798,7 @@ class OrchestrationRunEngine {
       },
       suggestedPhases,
     });
+    plan = await this.enrichPlanWithExecutionOverlays(run, rootTask, plan, availableAgents);
     plan.planning_source = suggestedPhases.length > 0 ? 'swarm_llm_decomposition' : 'heuristic';
     const firstPhase = resolvePlanPhase(plan, 0);
     const phaseCount = getPlanPhaseCount(plan);
@@ -800,7 +811,7 @@ class OrchestrationRunEngine {
         }))
         .filter((entry) => entry.agentRef || entry.reason)
       : [];
-    const firstPhaseAgent = findAgentRecord(firstPhase?.agent_username, availableAgents);
+    const firstPhaseAgent = findAgentRecord(firstPhase?.agent_id || firstPhase?.agent_username, availableAgents);
     const runContext = mergeJsonObjects(run.context_json, {
       workspace_context_excerpt: plan.workspace_context_excerpt,
       snipara: plan.snipara,
@@ -857,6 +868,7 @@ class OrchestrationRunEngine {
           workspace_context_excerpt: plan.workspace_context_excerpt || null,
           snipara_swarm_id: plan.snipara?.swarm_id || null,
           snipara_root_task_id: plan.snipara?.root_task_id || null,
+          execution_overlay: firstPhase?.execution_overlay || null,
           proactive: true,
         },
       });
@@ -892,6 +904,7 @@ class OrchestrationRunEngine {
           workspace_context_excerpt: existingInput.workspace_context_excerpt || plan.workspace_context_excerpt || null,
           snipara_swarm_id: existingInput.snipara_swarm_id || plan.snipara?.swarm_id || null,
           snipara_root_task_id: existingInput.snipara_root_task_id || plan.snipara?.root_task_id || null,
+          execution_overlay: existingInput.execution_overlay || firstPhase?.execution_overlay || null,
           proactive: true,
         },
       });
@@ -1018,16 +1031,127 @@ class OrchestrationRunEngine {
       const resolvedAgent = typeof planningCoordinator.resolveAgentForSubtask === 'function'
         ? planningCoordinator.resolveAgentForSubtask(subtask, availableAgents, preferredAgentId)
         : String(subtask?.agent || preferredAgentId || '').trim() || null;
+      const resolvedAgentRecord = findAgentRecord(resolvedAgent, availableAgents);
       return {
         key: `phase_${index + 1}`,
         title: subtask?.title || `Phase ${index + 1}`,
         objective: subtask?.description || subtask?.title || rootTask.description || rootTask.title || '',
-        agent_username: resolvedAgent || null,
+        agent_id: resolvedAgentRecord?.id || null,
+        agent_username: resolvedAgentRecord?.username || resolvedAgent || null,
         verification_focus: subtask?.verification_focus || subtask?.success_criteria || null,
       };
     }).filter((entry) => entry.title || entry.objective);
 
     return { suggestedPhases, availableAgents };
+  }
+
+  async enrichPlanWithExecutionOverlays(run, rootTask, plan, availableAgents = []) {
+    const parsedPlan = parseJsonLike(plan);
+    const phases = Array.isArray(parsedPlan.phases) ? parsedPlan.phases : [];
+    if (phases.length === 0) return parsedPlan;
+
+    const nextPhases = [];
+    for (const phase of phases) {
+      nextPhases.push(await this.enrichPlanPhaseWithExecutionOverlay(run, rootTask, phase, availableAgents));
+    }
+
+    return {
+      ...parsedPlan,
+      phases: nextPhases,
+    };
+  }
+
+  async enrichPlanPhaseWithExecutionOverlay(run, rootTask, phase, availableAgents = []) {
+    const selectedAgent = findAgentRecord(
+      phase?.agent_id || phase?.agent_username || run.requested_agent_id || run.requested_agent_username,
+      availableAgents
+    );
+    const desiredOverlay = await this.resolveDesiredExecutionOverlayForPhase(
+      run,
+      rootTask,
+      phase,
+      availableAgents,
+      selectedAgent
+    );
+
+    const nextPhase = {
+      ...phase,
+      ...(selectedAgent?.id ? { agent_id: selectedAgent.id } : {}),
+      ...(selectedAgent?.username ? { agent_username: selectedAgent.username } : {}),
+    };
+
+    if (isOverlayEmpty(desiredOverlay)) {
+      delete nextPhase.execution_overlay;
+      return nextPhase;
+    }
+
+    const filteredOverlay = await filterExecutionOverlay({
+      workspaceId: run.workspace_id,
+      agent: selectedAgent || {
+        id: run.requested_agent_id || null,
+        username: phase?.agent_username || run.requested_agent_username || null,
+      },
+      overlay: desiredOverlay,
+      db: pool,
+    }).catch(() => desiredOverlay);
+
+    if (isOverlayEmpty(filteredOverlay)) {
+      delete nextPhase.execution_overlay;
+      return nextPhase;
+    }
+
+    nextPhase.execution_overlay = {
+      skillKeys: filteredOverlay.skillKeys || [],
+      integrationProviders: filteredOverlay.integrationProviders || [],
+      toolCapabilities: filteredOverlay.toolCapabilities || [],
+    };
+    return nextPhase;
+  }
+
+  async resolveDesiredExecutionOverlayForPhase(run, rootTask, phase, availableAgents = [], selectedAgent = null) {
+    const existingOverlay = phase?.execution_overlay && typeof phase.execution_overlay === 'object'
+      ? phase.execution_overlay
+      : {};
+    const phaseText = [
+      rootTask?.title || '',
+      phase?.title || '',
+      phase?.objective || '',
+    ].filter(Boolean).join('\n\n');
+
+    if (!phaseText.trim()) {
+      return {
+        skillKeys: Array.isArray(existingOverlay.skillKeys) ? existingOverlay.skillKeys : [],
+        integrationProviders: Array.isArray(existingOverlay.integrationProviders) ? existingOverlay.integrationProviders : [],
+        toolCapabilities: Array.isArray(existingOverlay.toolCapabilities) ? existingOverlay.toolCapabilities : [],
+      };
+    }
+
+    const resolved = await resolveOrchestrationCapabilities({
+      workspaceId: run.workspace_id,
+      messageText: phaseText,
+      history: [],
+      requestedAgent: selectedAgent || {
+        id: run.requested_agent_id || null,
+        username: phase?.agent_username || run.requested_agent_username || null,
+      },
+      availableAgents,
+      db: pool,
+    }).catch(() => null);
+
+    return {
+      skillKeys: uniqueStrings([
+        ...(Array.isArray(existingOverlay.skillKeys) ? existingOverlay.skillKeys : []),
+        ...(Array.isArray(resolved?.overlaySkillKeys) ? resolved.overlaySkillKeys : []),
+      ]),
+      integrationProviders: uniqueStrings([
+        ...(Array.isArray(existingOverlay.integrationProviders) ? existingOverlay.integrationProviders : []),
+        ...(Array.isArray(resolved?.overlayProviders) ? resolved.overlayProviders : []),
+      ]),
+      toolCapabilities: uniqueStrings([
+        ...(Array.isArray(existingOverlay.toolCapabilities) ? existingOverlay.toolCapabilities : []),
+        ...(Array.isArray(resolved?.overlayToolCapabilities) ? resolved.overlayToolCapabilities : []),
+      ]),
+    };
   }
 
   async processDelegateStep(run, step, steps) {
@@ -1743,6 +1867,9 @@ class OrchestrationRunEngine {
     const input = parseJsonLike(step?.input_json);
     const selectedAgentUsername = step.selected_agent_username || run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null;
     const selectedAgentId = step.selected_agent_id || run.requested_agent_id || null;
+    const executionOverlay = input.execution_overlay && typeof input.execution_overlay === 'object'
+      ? input.execution_overlay
+      : null;
     const childTask = await coordinator.createTask({
       title: buildDelegatedTaskTitle(run, rootTask, step),
       description: buildDelegatedTaskDescription(run, rootTask, step),
@@ -1769,6 +1896,12 @@ class OrchestrationRunEngine {
         orchestration_phase_objective: input.phase_objective || null,
         orchestration_snipara_swarm_id: input.snipara_swarm_id || null,
         orchestration_snipara_root_task_id: input.snipara_root_task_id || null,
+        ...(executionOverlay ? {
+          execution_overlay: executionOverlay,
+          orchestration_overlay_skills: Array.isArray(executionOverlay.skillKeys) ? executionOverlay.skillKeys : [],
+          orchestration_overlay_providers: Array.isArray(executionOverlay.integrationProviders) ? executionOverlay.integrationProviders : [],
+          orchestration_overlay_tool_capabilities: Array.isArray(executionOverlay.toolCapabilities) ? executionOverlay.toolCapabilities : [],
+        } : {}),
         verification_required: true,
         orchestration_proactive: true,
       },
@@ -1863,6 +1996,7 @@ class OrchestrationRunEngine {
         workspace_context_excerpt: parseJsonLike(run.context_json).workspace_context_excerpt || null,
         snipara_swarm_id: parseJsonLike(run.context_json).snipara?.swarm_id || null,
         snipara_root_task_id: parseJsonLike(run.context_json).snipara?.root_task_id || null,
+        execution_overlay: phase.execution_overlay || null,
         proactive: true,
       },
     });
@@ -1960,6 +2094,7 @@ class OrchestrationRunEngine {
         workspace_context_excerpt: parseJsonLike(run.context_json).workspace_context_excerpt || null,
         snipara_swarm_id: parseJsonLike(run.context_json).snipara?.swarm_id || null,
         snipara_root_task_id: parseJsonLike(run.context_json).snipara?.root_task_id || null,
+        execution_overlay: phase?.execution_overlay || parseJsonLike(sourceStep?.input_json).execution_overlay || null,
         escalation,
         proactive: true,
       },

@@ -116,7 +116,7 @@ function buildWorkspacePlacementInstruction(driveRoot, agentDriveRoot = null) {
 async function loadAgentDirectory(workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
-    `SELECT id, name, username, role, workspace_id
+    `SELECT id, name, username, role, type, capabilities, config, workspace_id
      FROM ${SCHEMA}.agents
      WHERE workspace_id = $1`,
     [ws]

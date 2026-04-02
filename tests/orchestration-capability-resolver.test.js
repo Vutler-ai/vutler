@@ -24,8 +24,9 @@ jest.mock('../services/runtimeCapabilityAvailability', () => ({
       social_media: { key: 'social_media', available: true, reason: null },
       email: { key: 'email', available: true, reason: null },
       google: { key: 'google', available: true, reason: null },
+      sandbox: { key: 'sandbox', available: true, reason: null },
     },
-    availableProviders: ['project_management', 'social_media', 'email', 'google'],
+    availableProviders: ['project_management', 'social_media', 'email', 'google', 'sandbox'],
     unavailableProviders: [],
   }),
   filterAvailableProviders: jest.fn((providers = [], snapshot) =>
@@ -134,5 +135,23 @@ describe('orchestrationCapabilityResolver', () => {
     });
     expect(plan.overlayProviders).toEqual(expect.arrayContaining(['email', 'project_management']));
     expect(plan.overlaySkillKeys).toEqual(expect.arrayContaining(['email_outreach']));
+  });
+
+  test('adds sandbox capability hints for technical implementation requests', async () => {
+    const plan = await resolveOrchestrationCapabilities({
+      workspaceId: 'ws-1',
+      messageText: 'Debug the repo, fix the failing API test, and patch the endpoint.',
+      requestedAgent: { id: 'agent-mike', username: 'mike', capabilities: ['requirements_gathering'] },
+      availableAgents: [
+        { id: 'agent-mike', username: 'mike', capabilities: ['requirements_gathering'] },
+        { id: 'agent-oscar', username: 'oscar', capabilities: ['code_execution'] },
+      ],
+      db: { query: jest.fn() },
+    });
+
+    expect(plan.domains).toEqual(expect.arrayContaining(['technical']));
+    expect(plan.overlayProviders).toEqual(expect.arrayContaining(['sandbox', 'project_management']));
+    expect(plan.overlayToolCapabilities).toEqual(expect.arrayContaining(['code_execution']));
+    expect(plan.primaryDelegate).toBeNull();
   });
 });

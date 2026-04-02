@@ -11,6 +11,7 @@ const { insertChatMessage } = require('../../../services/chatMessages');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
+const { filterExecutionOverlay, isOverlayEmpty } = require('../../../services/executionOverlayService');
 const {
   ensureRunForTask,
   isMissingOrchestrationSchemaError,
@@ -283,6 +284,31 @@ function buildInitialRunContext(task, executionAgent, workspaceId) {
   };
 }
 
+async function resolveTaskExecutionOverlay(task, executionAgent, workspaceId) {
+  const metadata = parseMetadata(task?.metadata);
+  const desiredOverlay = metadata.execution_overlay && typeof metadata.execution_overlay === 'object'
+    ? metadata.execution_overlay
+    : null;
+  if (!desiredOverlay || isOverlayEmpty(desiredOverlay)) return null;
+
+  const filtered = await filterExecutionOverlay({
+    workspaceId,
+    agent: executionAgent,
+    overlay: desiredOverlay,
+    db: pool,
+  }).catch(() => ({
+    skillKeys: [],
+    integrationProviders: [],
+    toolCapabilities: [],
+  }));
+
+  return isOverlayEmpty(filtered) ? null : {
+    skillKeys: filtered.skillKeys || [],
+    integrationProviders: filtered.integrationProviders || [],
+    toolCapabilities: filtered.toolCapabilities || [],
+  };
+}
+
 async function queueAutonomousRunForTask(task, executionAgent, workspaceId) {
   const metadata = parseMetadata(task.metadata);
   const runSeed = await ensureRunForTask({
@@ -356,18 +382,24 @@ async function executeTask(task) {
     }
 
     const executionPrompt = await buildExecutionPrompt(executionAgent, task, workspaceId);
+    const executionOverlay = await resolveTaskExecutionOverlay(task, executionAgent, workspaceId);
+    const llmAgent = {
+      ...executionAgent,
+      ...(executionOverlay ? { execution_overlay: executionOverlay } : {}),
+    };
     const response = await llmChat(
       {
-        id: executionAgent.id,
-        username: executionAgent.username,
-        role: executionAgent.role,
-        model: executionAgent.model,
-        provider: executionAgent.provider,
+        id: llmAgent.id,
+        username: llmAgent.username,
+        role: llmAgent.role,
+        model: llmAgent.model,
+        provider: llmAgent.provider,
         system_prompt: executionPrompt.prompt,
-        temperature: parseFloat(executionAgent.temperature) || 0.7,
-        max_tokens: executionAgent.max_tokens || 4096,
+        temperature: parseFloat(llmAgent.temperature) || 0.7,
+        max_tokens: llmAgent.max_tokens || 4096,
         workspace_id: workspaceId,
-        capabilities: executionAgent.capabilities || [],
+        capabilities: llmAgent.capabilities || [],
+        ...(executionOverlay ? { execution_overlay: executionOverlay } : {}),
       },
       [{ role: 'user', content: buildTaskPrompt(task) }],
       pool,

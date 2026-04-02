@@ -3,6 +3,22 @@
 describe('runEngine verification and approval flow', () => {
   beforeEach(() => {
     jest.resetModules();
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: [],
+        overlayProviders: [],
+        overlaySkillKeys: [],
+        overlayToolCapabilities: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+        availability: null,
+        unavailableDomains: [],
+        workspacePressure: null,
+        specializationProfile: null,
+        recommendations: [],
+      }),
+    }));
   });
 
   test('creates an approval gate after verification passes when approval is required', async () => {
