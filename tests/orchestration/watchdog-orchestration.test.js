@@ -163,4 +163,123 @@ describe('watchdog orchestration integration', () => {
     }));
     expect(signalRunFromTask).not.toHaveBeenCalled();
   });
+
+  test('handleUnblocked marks the task in progress again and wakes the run', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'child-task-unblocked-1',
+          workspace_id: 'ws-1',
+          status: 'blocked',
+          metadata: {
+            orchestration_parent_run_id: 'run-1',
+            orchestration_parent_step_id: 'step-1',
+            snipara_blocker_type: 'external_dependency',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn().mockResolvedValue({ signaled: true, runId: 'run-1' });
+    const appendRunEventForTask = jest.fn().mockResolvedValue({ appended: true, runId: 'run-1' });
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({ checkIntervalMs: 1000, stallThresholdMs: 1000, maxNudges: 1 });
+
+    await watchdog.handleUnblocked({
+      task_id: 'snip-1',
+      resolution: 'Legal owner replied.',
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'in_progress'"),
+      expect.any(Array)
+    );
+    expect(appendRunEventForTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'child-task-unblocked-1',
+      status: 'in_progress',
+      metadata: expect.objectContaining({
+        snipara_resolution: 'Legal owner replied.',
+        snipara_blocker_type: null,
+      }),
+    }), expect.objectContaining({
+      eventType: 'watchdog.task_unblocked',
+    }));
+    expect(wakeRunFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'child-task-unblocked-1',
+      status: 'in_progress',
+    }), expect.objectContaining({
+      reason: 'watchdog_unblocked_event',
+      eventType: 'delegate.task_unblocked',
+      extraPayload: expect.objectContaining({
+        resolution: 'Legal owner replied.',
+      }),
+    }));
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
+
+  test('handleClosureReady appends a closure event and wakes the run', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'child-task-closure-1',
+          workspace_id: 'ws-1',
+          status: 'completed',
+          metadata: {
+            orchestration_parent_run_id: 'run-1',
+            orchestration_parent_step_id: 'step-1',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn().mockResolvedValue({ signaled: true, runId: 'run-1' });
+    const appendRunEventForTask = jest.fn().mockResolvedValue({ appended: true, runId: 'run-1' });
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({ checkIntervalMs: 1000, stallThresholdMs: 1000, maxNudges: 1 });
+
+    await watchdog.handleClosureReady({
+      task_id: 'snip-1',
+      closed_with_waiver: false,
+      auto_closed_parent: 'parent-1',
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SET metadata = COALESCE'),
+      expect.any(Array)
+    );
+    expect(appendRunEventForTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'child-task-closure-1',
+      metadata: expect.objectContaining({
+        snipara_auto_closed_parent: 'parent-1',
+      }),
+    }), expect.objectContaining({
+      eventType: 'watchdog.task_closure_ready',
+    }));
+    expect(wakeRunFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'child-task-closure-1',
+    }), expect.objectContaining({
+      reason: 'watchdog_closure_ready_event',
+      eventType: 'delegate.task_closure_ready',
+      extraPayload: expect.objectContaining({
+        auto_closed_parent: 'parent-1',
+      }),
+    }));
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
 });

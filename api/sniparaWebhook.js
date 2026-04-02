@@ -78,12 +78,23 @@ async function routeWebhookEvent(eventType, payload) {
       await getWatchdog().handleBlocked(payload.data);
       break;
 
+    case 'task.unblocked':
+    case 'htask.unblocked':
+      await getWatchdog().handleUnblocked(payload.data);
+      break;
+
     case 'htask.completed':
       await getScoringLoop().recordHtaskCompletion(payload.data);
       break;
 
     case 'htask.closure_ready':
+      await getWatchdog().handleClosureReady(payload.data);
       console.log('[SniparaWebhook] htask.closure_ready received:', payload.data?.task_id);
+      break;
+
+    case 'htask.closed':
+      await getWatchdog().handleClosureReady(payload.data);
+      console.log('[SniparaWebhook] htask.closed received:', payload.data?.task_id);
       break;
 
     case 'task.created':

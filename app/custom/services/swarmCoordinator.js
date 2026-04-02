@@ -97,6 +97,7 @@ function normalizeRemoteStatus(status, eventType = '') {
   if (fromEvent.endsWith('.completed') || fromEvent.endsWith('.closure_ready') || fromEvent.endsWith('.closed')) return 'completed';
   if (fromEvent.endsWith('.failed')) return 'failed';
   if (fromEvent.endsWith('.blocked')) return 'blocked';
+  if (fromEvent.endsWith('.unblocked')) return 'in_progress';
   if (fromEvent.endsWith('.created')) return 'pending';
 
   return 'pending';
@@ -616,9 +617,12 @@ class SwarmCoordinator {
         ...(data?.level ? { snipara_hierarchy_level: data.level } : {}),
         ...(eventType ? { snipara_last_event: eventType } : {}),
         ...(data?.timestamp ? { snipara_last_event_at: data.timestamp } : {}),
+        ...(data?.resolution ? { snipara_resolution: data.resolution } : {}),
         ...(data?.blocker_type ? { snipara_blocker_type: data.blocker_type } : {}),
         ...(data?.blocker_reason ? { snipara_blocker_reason: data.blocker_reason } : {}),
         ...(data?.evidence_provided ? { snipara_last_evidence: data.evidence_provided } : {}),
+        ...(data?.closed_with_waiver !== undefined ? { snipara_closed_with_waiver: Boolean(data.closed_with_waiver) } : {}),
+        ...(data?.auto_closed_parent ? { snipara_auto_closed_parent: data.auto_closed_parent } : {}),
         ...(data?.result ? { last_output: data.result } : {}),
       },
       taskKind,

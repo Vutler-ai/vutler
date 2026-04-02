@@ -224,6 +224,115 @@ class AgentWatchdog {
     }).catch(() => {});
   }
 
+  async handleUnblocked(data) {
+    const { task_id, resolution } = data;
+    console.log(`[Watchdog] Task unblocked: ${task_id}`);
+
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks WHERE snipara_task_id = $1 OR swarm_task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    const task = result.rows[0] || null;
+    if (!task) return;
+
+    const meta = this._parseMetadata(task);
+    const nextMetadata = {
+      ...meta,
+      snipara_last_event: meta.snipara_last_event || 'task.unblocked',
+      snipara_resolution: resolution || meta.snipara_resolution || null,
+      snipara_blocker_type: null,
+      snipara_blocker_reason: null,
+      watchdog_last_unblocked_at: new Date().toISOString(),
+    };
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET status = 'in_progress',
+           metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [task.id, JSON.stringify(nextMetadata)]
+    );
+
+    const resumedTask = {
+      ...task,
+      status: 'in_progress',
+      metadata: nextMetadata,
+    };
+
+    await appendRunEventForTask(resumedTask, {
+      eventType: 'watchdog.task_unblocked',
+      actor: 'watchdog',
+      payload: {
+        resolution: resolution || null,
+      },
+    }).catch(() => {});
+
+    await wakeRunFromTask(resumedTask, {
+      reason: 'watchdog_unblocked_event',
+      eventType: 'delegate.task_unblocked',
+      actor: 'watchdog',
+      extraPayload: {
+        resolution: resolution || null,
+      },
+    }).catch(() => {});
+  }
+
+  async handleClosureReady(data) {
+    const { task_id, closed_with_waiver, auto_closed_parent } = data;
+    console.log(`[Watchdog] Task closure ready: ${task_id}`);
+
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks WHERE snipara_task_id = $1 OR swarm_task_id = $1 LIMIT 1`,
+      [task_id]
+    );
+    const task = result.rows[0] || null;
+    if (!task) return;
+
+    const meta = this._parseMetadata(task);
+    const nextMetadata = {
+      ...meta,
+      snipara_last_event: meta.snipara_last_event || 'htask.closure_ready',
+      snipara_closed_with_waiver: closed_with_waiver !== undefined
+        ? Boolean(closed_with_waiver)
+        : meta.snipara_closed_with_waiver || false,
+      snipara_auto_closed_parent: auto_closed_parent || meta.snipara_auto_closed_parent || null,
+      watchdog_last_closure_ready_at: new Date().toISOString(),
+    };
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [task.id, JSON.stringify(nextMetadata)]
+    );
+
+    const closureTask = {
+      ...task,
+      metadata: nextMetadata,
+    };
+
+    await appendRunEventForTask(closureTask, {
+      eventType: 'watchdog.task_closure_ready',
+      actor: 'watchdog',
+      payload: {
+        closed_with_waiver: closed_with_waiver !== undefined ? Boolean(closed_with_waiver) : null,
+        auto_closed_parent: auto_closed_parent || null,
+      },
+    }).catch(() => {});
+
+    await wakeRunFromTask(closureTask, {
+      reason: 'watchdog_closure_ready_event',
+      eventType: 'delegate.task_closure_ready',
+      actor: 'watchdog',
+      extraPayload: {
+        closed_with_waiver: closed_with_waiver !== undefined ? Boolean(closed_with_waiver) : null,
+        auto_closed_parent: auto_closed_parent || null,
+      },
+    }).catch(() => {});
+  }
+
   /**
    * Send a nudge message to the assigned agent's chat channel.
    */
