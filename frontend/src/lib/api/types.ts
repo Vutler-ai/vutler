@@ -273,7 +273,7 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  status: 'todo' | 'in_progress' | 'done' | 'pending' | 'completed';
+  status: 'todo' | 'in_progress' | 'done' | 'pending' | 'completed' | 'blocked' | 'failed' | 'cancelled' | 'stalled' | 'open' | 'timed_out';
   priority: 'low' | 'medium' | 'high';
   assignee: string;
   due_date: string;
@@ -287,6 +287,7 @@ export interface Task {
   source?: string | null;
   // Agent
   assigned_agent?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface CreateTaskPayload {
@@ -422,6 +423,93 @@ export interface ChatActionRun {
   error_json?: Record<string, unknown> | null;
   started_at: string;
   completed_at?: string | null;
+}
+
+export interface OrchestrationRun {
+  id: string;
+  workspace_id: string;
+  source?: string | null;
+  source_ref?: Record<string, unknown> | null;
+  status: string;
+  mode?: string | null;
+  requested_agent_id?: string | null;
+  requested_agent_username?: string | null;
+  display_agent_id?: string | null;
+  display_agent_username?: string | null;
+  orchestrated_by?: string | null;
+  coordinator_agent_id?: string | null;
+  coordinator_agent_username?: string | null;
+  root_task_id?: string | null;
+  current_step_id?: string | null;
+  summary?: string | null;
+  plan_json?: Record<string, unknown> | null;
+  context_json?: Record<string, unknown> | null;
+  result_json?: Record<string, unknown> | null;
+  error_json?: Record<string, unknown> | null;
+  next_wake_at?: string | null;
+  last_progress_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OrchestrationRunStep {
+  id: string;
+  run_id: string;
+  parent_step_id?: string | null;
+  sequence_no: number;
+  step_type: string;
+  title: string;
+  status: string;
+  executor: string;
+  selected_agent_id?: string | null;
+  selected_agent_username?: string | null;
+  spawned_task_id?: string | null;
+  tool_name?: string | null;
+  skill_key?: string | null;
+  policy_bundle?: string | null;
+  approval_mode?: string | null;
+  retry_count?: number | null;
+  input_json?: Record<string, unknown> | null;
+  output_json?: Record<string, unknown> | null;
+  error_json?: Record<string, unknown> | null;
+  wait_json?: Record<string, unknown> | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface OrchestrationRunEvent {
+  id: string;
+  run_id: string;
+  step_id?: string | null;
+  event_type: string;
+  actor: string;
+  payload?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
+
+export interface OrchestrationTimelineItem {
+  kind: 'step' | 'event';
+  id: string;
+  timestamp?: string | null;
+  data: OrchestrationRunStep | OrchestrationRunEvent;
+}
+
+export interface OrchestrationRunDetail {
+  run: OrchestrationRun;
+  current_step?: OrchestrationRunStep | null;
+  steps: OrchestrationRunStep[];
+  events: OrchestrationRunEvent[];
+  timeline: {
+    items: OrchestrationTimelineItem[];
+    total_steps: number;
+    total_events: number;
+  };
+  root_task?: Task | null;
 }
 
 export interface ChatResourceArtifact {

@@ -79,6 +79,23 @@ async function listRunSteps(db = pool, runId) {
   return result.rows;
 }
 
+async function listRunEvents(db = pool, runId, { limit = 200 } = {}) {
+  if (!runId) return [];
+  const result = await db.query(
+    `SELECT *
+       FROM (
+         SELECT *
+           FROM ${SCHEMA}.orchestration_run_events
+          WHERE run_id = $1
+          ORDER BY created_at DESC
+          LIMIT $2
+       ) events
+      ORDER BY created_at ASC`,
+    [runId, limit]
+  );
+  return result.rows;
+}
+
 async function getCurrentRunStep(db = pool, runId) {
   if (!runId) return null;
   const result = await db.query(
@@ -498,6 +515,7 @@ module.exports = {
   getRunById,
   heartbeatRunLease,
   isMissingOrchestrationSchemaError,
+  listRunEvents,
   listRunSteps,
   parseJsonLike,
   updateRun,

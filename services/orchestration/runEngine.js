@@ -14,11 +14,18 @@ const {
   getCurrentRunStep,
   getRunById,
   heartbeatRunLease,
+  listRunEvents,
   listRunSteps,
   parseJsonLike,
   updateRun,
   updateRunStep,
 } = require('./runStore');
+const {
+  buildRunPlan,
+  getPlanPhaseCount,
+  resolveNextPlanPhase,
+  resolvePlanPhase,
+} = require('./runPlanner');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -67,8 +74,19 @@ function nextSequenceNo(steps = []) {
   return steps.reduce((max, step) => Math.max(max, Number(step?.sequence_no) || 0), 0) + 1;
 }
 
-function buildDelegatedTaskTitle(run, rootTask) {
+function buildDelegatedTaskTitle(run, rootTask, step = null) {
   const prefix = String(run?.id || '').slice(0, 8) || 'run';
+  const input = parseJsonLike(step?.input_json);
+  const phaseTitle = String(input.plan_phase_title || '').trim();
+  const phaseIndex = Number.isFinite(Number(input.plan_phase_index)) ? Number(input.plan_phase_index) + 1 : null;
+  const phaseCount = Number.isFinite(Number(input.plan_phase_count)) ? Number(input.plan_phase_count) : null;
+  if (phaseTitle) {
+    if (phaseCount && phaseCount > 1) {
+      const phaseLabel = phaseIndex ? `${phaseIndex}/${phaseCount}` : `Phase ?/${phaseCount}`;
+      return `[Run ${prefix}] ${phaseLabel}: ${phaseTitle}`;
+    }
+    return `[Run ${prefix}] ${phaseTitle}`;
+  }
   return `[Run ${prefix}] ${rootTask?.title || 'Autonomous execution'}`;
 }
 
@@ -107,6 +125,16 @@ function buildDelegatedTaskDescription(run, rootTask, step = null) {
   const summary = String(run?.summary || '').trim();
   const taskDescription = String(rootTask?.description || '').trim();
   const planGoal = String(plan.goal || rootTask?.title || '').trim();
+  const phaseTitle = String(input.plan_phase_title || '').trim();
+  const phaseObjective = String(input.phase_objective || '').trim();
+  const phaseIndex = Number.isFinite(Number(input.plan_phase_index)) ? Number(input.plan_phase_index) + 1 : null;
+  const phaseCount = Number.isFinite(Number(input.plan_phase_count)) ? Number(input.plan_phase_count) : null;
+  const workspaceContext = String(
+    input.workspace_context_excerpt
+    || plan.workspace_context_excerpt
+    || parseJsonLike(run?.context_json).workspace_context_excerpt
+    || ''
+  ).trim();
   const feedback = String(input.verification_feedback || '').trim();
   const previousOutput = String(input.previous_output || '').trim();
   const revisionLabel = Number.isFinite(Number(input.retry_count)) && Number(input.retry_count) > 0
@@ -124,8 +152,11 @@ function buildDelegatedTaskDescription(run, rootTask, step = null) {
     '',
     summary ? `Run summary: ${summary}` : '',
     planGoal ? `Goal: ${planGoal}` : '',
+    phaseTitle ? `Current phase${phaseIndex ? ` (${phaseIndex}${phaseCount ? `/${phaseCount}` : ''})` : ''}: ${phaseTitle}` : '',
+    phaseObjective ? `Phase objective: ${phaseObjective}` : '',
     revisionLabel,
     escalationLabel,
+    workspaceContext ? `Workspace context:\n${workspaceContext}` : '',
     feedback ? `Verification feedback:\n${feedback}` : '',
     previousOutput ? `Previous output to revise:\n${previousOutput}` : '',
     '',
@@ -400,6 +431,152 @@ class OrchestrationRunEngine {
     return { run: resumedRun, stepStatus: 'completed', approved: true };
   }
 
+  async resumeRun(runId, {
+    actor = 'human',
+    note = null,
+  } = {}) {
+    const run = await getRunById(pool, runId);
+    if (!run) throw new Error('Run not found.');
+    if (TERMINAL_RUN_STATUSES.has(run.status)) {
+      throw new Error('Run is already terminal.');
+    }
+
+    const currentStep = await getCurrentRunStep(pool, runId);
+    if (!currentStep) {
+      throw new Error('Run has no current step.');
+    }
+
+    if (run.status === 'awaiting_approval' && currentStep.step_type === 'approval_gate') {
+      throw new Error('Run is awaiting approval. Use the approval endpoint instead.');
+    }
+
+    const now = new Date();
+    if (['failed', 'cancelled', 'completed', 'skipped'].includes(String(currentStep.status || '').toLowerCase())) {
+      const stepPatch = {
+        completedAt: null,
+        error: null,
+      };
+      if (currentStep.step_type === 'approval_gate') {
+        stepPatch.status = 'awaiting_approval';
+      } else {
+        stepPatch.status = 'queued';
+        stepPatch.wait = null;
+      }
+      await updateRunStep(pool, currentStep.id, stepPatch);
+    }
+
+    const resumedRun = await updateRun(pool, runId, buildReleaseLeasePatch({
+      status: currentStep.step_type === 'plan' ? 'planning' : 'running',
+      currentStepId: currentStep.id,
+      nextWakeAt: now,
+      lastProgressAt: now,
+      error: null,
+    }));
+
+    await appendRunEvent(pool, {
+      runId,
+      stepId: currentStep.id,
+      eventType: 'run.resumed',
+      actor,
+      payload: {
+        note: note || null,
+        previous_status: run.status,
+      },
+    });
+
+    const rootTask = await loadTask(run.root_task_id).catch(() => null);
+    if (rootTask) {
+      await updateTaskRecord(rootTask.id, {
+        metadata: {
+          orchestration_status: resumedRun?.status || 'running',
+          orchestration_run_id: runId,
+          orchestration_step_id: currentStep.id,
+          orchestration_resume_requested_at: now.toISOString(),
+          orchestration_resume_note: note || null,
+          approval_rejected: false,
+          pending_approval: currentStep.step_type === 'approval_gate'
+            ? mergeJsonObjects(parseJsonLike(rootTask.metadata).pending_approval, {
+                run_id: runId,
+                step_id: currentStep.id,
+              })
+            : parseJsonLike(rootTask.metadata).pending_approval || null,
+          orchestration_proactive: true,
+        },
+      });
+    }
+
+    this.requestImmediatePoll();
+    return { run: resumedRun, resumed: true };
+  }
+
+  async cancelRun(runId, {
+    actor = 'human',
+    note = null,
+  } = {}) {
+    const run = await getRunById(pool, runId);
+    if (!run) throw new Error('Run not found.');
+    if (TERMINAL_RUN_STATUSES.has(run.status)) {
+      throw new Error('Run is already terminal.');
+    }
+
+    const currentStep = await getCurrentRunStep(pool, runId).catch(() => null);
+    const now = new Date();
+
+    if (currentStep && !isTerminalStepStatus(currentStep.status)) {
+      await updateRunStep(pool, currentStep.id, {
+        status: 'cancelled',
+        completedAt: now,
+        error: {
+          message: 'Run cancelled.',
+          note: note || null,
+          actor,
+        },
+      });
+    }
+
+    const cancelledRun = await updateRun(pool, runId, buildReleaseLeasePatch({
+      status: 'cancelled',
+      currentStepId: currentStep?.id || run.current_step_id || null,
+      nextWakeAt: null,
+      lastProgressAt: now,
+      cancelledAt: now,
+      completedAt: now,
+      error: {
+        message: 'Run cancelled.',
+        note: note || null,
+        actor,
+      },
+    }));
+
+    await appendRunEvent(pool, {
+      runId,
+      stepId: currentStep?.id || null,
+      eventType: 'run.cancelled',
+      actor,
+      payload: {
+        note: note || null,
+      },
+    });
+
+    const rootTask = await loadTask(run.root_task_id).catch(() => null);
+    if (rootTask) {
+      await updateTaskRecord(rootTask.id, {
+        status: 'cancelled',
+        metadata: {
+          orchestration_status: 'cancelled',
+          orchestration_run_id: runId,
+          orchestration_step_id: currentStep?.id || null,
+          orchestration_cancelled_at: now.toISOString(),
+          orchestration_cancelled_note: note || null,
+          pending_approval: null,
+          orchestration_proactive: true,
+        },
+      });
+    }
+
+    return { run: cancelledRun, cancelled: true };
+  }
+
   requestImmediatePoll() {
     if (this._immediatePollScheduled) return;
     this._immediatePollScheduled = true;
@@ -510,6 +687,64 @@ class OrchestrationRunEngine {
       });
     }
 
+    const coordinator = getSwarmCoordinator();
+    const rootMetadata = parseJsonLike(rootTask.metadata);
+    let workspaceContext = '';
+    if (typeof coordinator.recallWorkspaceContext === 'function') {
+      workspaceContext = await coordinator.recallWorkspaceContext(
+        `${rootTask.title || ''}\n${rootTask.description || ''}`.trim(),
+        run.workspace_id
+      ).catch(() => '');
+    }
+
+    let sniparaConfig = null;
+    let sniparaSwarmId = null;
+    if (typeof coordinator.getSniparaRuntimeConfig === 'function') {
+      const runtimeConfig = await coordinator.getSniparaRuntimeConfig(run.workspace_id).catch(() => null);
+      sniparaConfig = runtimeConfig?.config || null;
+      sniparaSwarmId = runtimeConfig?.swarmId || null;
+    }
+
+    const plan = buildRunPlan({
+      run,
+      rootTask,
+      workspaceContext,
+      snipara: {
+        configured: Boolean(sniparaConfig?.configured),
+        swarmId: sniparaSwarmId || rootTask.snipara_task_id || rootTask.swarm_task_id || null,
+        projectId: sniparaConfig?.projectId || null,
+        rootTaskId: rootTask.snipara_task_id || rootTask.swarm_task_id || rootMetadata.snipara_hierarchy_root_id || null,
+      },
+    });
+    const firstPhase = resolvePlanPhase(plan, 0);
+    const phaseCount = getPlanPhaseCount(plan);
+    const runContext = mergeJsonObjects(run.context_json, {
+      workspace_context_excerpt: plan.workspace_context_excerpt,
+      snipara: plan.snipara,
+      plan_phase_count: phaseCount,
+    });
+
+    await updateRun(pool, run.id, {
+      summary: plan.summary || run.summary,
+      plan,
+      context: runContext,
+    });
+
+    if (typeof coordinator.updateSharedContext === 'function') {
+      const phaseSummary = Array.isArray(plan.phases)
+        ? plan.phases.map((phase) => phase.title).filter(Boolean).join(' -> ')
+        : '';
+      await coordinator.updateSharedContext(
+        [
+          `Orchestration run ${run.id} planned.`,
+          `Goal: ${plan.goal}`,
+          `Strategy: ${plan.strategy}`,
+          phaseSummary ? `Phases: ${phaseSummary}` : '',
+        ].filter(Boolean).join('\n'),
+        run.workspace_id
+      ).catch(() => {});
+    }
+
     let delegateStep = steps.find((entry) => entry.step_type === 'delegate_task');
     if (!delegateStep) {
       delegateStep = await createRunStep(pool, {
@@ -517,7 +752,9 @@ class OrchestrationRunEngine {
         parentStepId: step.id,
         sequenceNo: nextSequenceNo(steps),
         stepType: 'delegate_task',
-        title: 'Delegate execution task',
+        title: phaseCount > 1 && firstPhase?.title
+          ? `Phase 1: ${firstPhase.title}`
+          : 'Delegate execution task',
         status: 'queued',
         executor: 'task',
         selectedAgentId: run.requested_agent_id || null,
@@ -525,7 +762,16 @@ class OrchestrationRunEngine {
         input: {
           root_task_id: rootTask.id,
           root_task_title: rootTask.title || '',
-          strategy: 'single_delegate',
+          strategy: plan.strategy,
+          plan_phase_index: firstPhase?.index || 0,
+          plan_phase_key: firstPhase?.key || 'phase_1',
+          plan_phase_title: firstPhase?.title || rootTask.title || 'Execute task',
+          plan_phase_count: phaseCount || 1,
+          phase_objective: firstPhase?.objective || rootTask.description || rootTask.title || '',
+          phase_verification_focus: firstPhase?.verification_focus || null,
+          workspace_context_excerpt: plan.workspace_context_excerpt || null,
+          snipara_swarm_id: plan.snipara?.swarm_id || null,
+          snipara_root_task_id: plan.snipara?.root_task_id || null,
           proactive: true,
         },
       });
@@ -541,14 +787,37 @@ class OrchestrationRunEngine {
           title: delegateStep.title,
         },
       });
+    } else {
+      const existingInput = parseJsonLike(delegateStep.input_json);
+      await updateRunStep(pool, delegateStep.id, {
+        title: phaseCount > 1 && firstPhase?.title
+          ? `Phase 1: ${firstPhase.title}`
+          : delegateStep.title,
+        input: {
+          ...existingInput,
+          strategy: existingInput.strategy || plan.strategy,
+          plan_phase_index: existingInput.plan_phase_index ?? (firstPhase?.index || 0),
+          plan_phase_key: existingInput.plan_phase_key || firstPhase?.key || 'phase_1',
+          plan_phase_title: existingInput.plan_phase_title || firstPhase?.title || rootTask.title || 'Execute task',
+          plan_phase_count: existingInput.plan_phase_count || phaseCount || 1,
+          phase_objective: existingInput.phase_objective || firstPhase?.objective || rootTask.description || rootTask.title || '',
+          phase_verification_focus: existingInput.phase_verification_focus || firstPhase?.verification_focus || null,
+          workspace_context_excerpt: existingInput.workspace_context_excerpt || plan.workspace_context_excerpt || null,
+          snipara_swarm_id: existingInput.snipara_swarm_id || plan.snipara?.swarm_id || null,
+          snipara_root_task_id: existingInput.snipara_root_task_id || plan.snipara?.root_task_id || null,
+          proactive: true,
+        },
+      });
     }
 
-    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
+    const refreshedSteps = await listRunSteps(pool, run.id);
+    const activeDelegateStep = refreshedSteps.find((entry) => entry.id === delegateStep.id) || delegateStep;
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, activeDelegateStep);
     const wakeAt = buildWakeAt(this.resumeDelayMs);
 
-    await updateRunStep(pool, delegateStep.id, {
+    await updateRunStep(pool, activeDelegateStep.id, {
       status: 'waiting',
-      startedAt: delegateStep.started_at || now,
+      startedAt: activeDelegateStep.started_at || now,
       selectedAgentId: run.requested_agent_id || null,
       selectedAgentUsername: run.requested_agent_username || rootTask.assigned_agent || null,
       spawnedTaskId: childTask.id,
@@ -586,28 +855,37 @@ class OrchestrationRunEngine {
       metadata: {
         orchestration_status: 'waiting_on_tasks',
         orchestration_run_id: run.id,
-        orchestration_step_id: delegateStep.id,
+        orchestration_step_id: activeDelegateStep.id,
         delegated_task_id: childTask.id,
         orchestration_next_wake_at: wakeAt.toISOString(),
+        orchestration_phase_index: firstPhase?.index || 0,
+        orchestration_phase_title: firstPhase?.title || rootTask.title || null,
+        orchestration_phase_count: phaseCount || 1,
+        orchestration_plan_strategy: plan.strategy,
+        orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
+        orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
         orchestration_proactive: true,
       },
     });
 
     await appendRunEvent(pool, {
       runId: run.id,
-      stepId: delegateStep.id,
+      stepId: activeDelegateStep.id,
       eventType: 'run.waiting_on_tasks',
       actor: 'run-engine',
       payload: {
         spawned_task_id: childTask.id,
         next_wake_at: wakeAt.toISOString(),
+        plan_strategy: plan.strategy,
+        phase_index: firstPhase?.index || 0,
+        phase_title: firstPhase?.title || null,
         proactive: true,
       },
     });
 
     await updateRun(pool, run.id, buildReleaseLeasePatch({
       status: 'waiting_on_tasks',
-      currentStepId: delegateStep.id,
+      currentStepId: activeDelegateStep.id,
       nextWakeAt: wakeAt,
       lastProgressAt: now,
     }));
@@ -711,6 +989,7 @@ class OrchestrationRunEngine {
     if (!childTask) {
       throw new Error(`Verify step ${step.id} is missing delegated task context.`);
     }
+    const delegateStep = context.delegateStep || this.resolveDelegateStepForVerifyStep(step, steps);
 
     if (step.status !== 'running') {
       await updateRunStep(pool, step.id, {
@@ -775,6 +1054,11 @@ class OrchestrationRunEngine {
           overall_score: evaluation.verdict?.overall_score ?? null,
         },
       });
+
+      const nextPlannedStep = await this.maybeQueueNextPlannedPhase(run, rootTask, steps, delegateStep, childTask);
+      if (nextPlannedStep) {
+        return nextPlannedStep;
+      }
 
       if (requiresApproval(rootTask)) {
         const approvalStep = await this.ensureApprovalGateStep(run, steps, childTask, evaluation.verdict, rootTask);
@@ -857,6 +1141,7 @@ class OrchestrationRunEngine {
         selectedAgentId: null,
         retryCount: nextRetryCount,
         previousTask: childTask,
+        sourceStep: delegateStep,
         verdict: evaluation.verdict,
         threshold: evaluation.threshold,
         escalation: true,
@@ -870,6 +1155,7 @@ class OrchestrationRunEngine {
       selectedAgentId: run.requested_agent_id || null,
       retryCount: nextRetryCount,
       previousTask: childTask,
+      sourceStep: delegateStep,
       verdict: evaluation.verdict,
       threshold: evaluation.threshold,
       escalation: false,
@@ -931,6 +1217,7 @@ class OrchestrationRunEngine {
         selectedAgentId: null,
         retryCount: nextRetryCount,
         previousTask: childTask,
+        sourceStep: step,
         verdict: {
           overall_score: 0,
           summary: message,
@@ -948,6 +1235,7 @@ class OrchestrationRunEngine {
       selectedAgentId: run.requested_agent_id || null,
       retryCount: nextRetryCount,
       previousTask: childTask,
+      sourceStep: step,
       verdict: {
         overall_score: 0,
         summary: message,
@@ -992,6 +1280,17 @@ class OrchestrationRunEngine {
           orchestration_proactive: true,
         },
       });
+
+      const coordinator = getSwarmCoordinator();
+      if (typeof coordinator.rememberLearning === 'function') {
+        await coordinator.rememberLearning(rootTask.title, resultText, run.workspace_id).catch(() => {});
+      }
+      if (typeof coordinator.updateSharedContext === 'function') {
+        await coordinator.updateSharedContext(
+          `Orchestration run ${run.id} completed for "${rootTask.title || 'task'}".`,
+          run.workspace_id
+        ).catch(() => {});
+      }
 
       await this.postRootTaskChatResult(rootTask, resultText, run).catch((err) => {
         console.warn('[RunEngine] Failed to post completion in chat:', err.message);
@@ -1051,6 +1350,14 @@ class OrchestrationRunEngine {
       },
     });
 
+    const coordinator = getSwarmCoordinator();
+    if (typeof coordinator.updateSharedContext === 'function') {
+      await coordinator.updateSharedContext(
+        `Orchestration run ${run.id} failed for "${rootTask.title || 'task'}": ${message}`,
+        run.workspace_id
+      ).catch(() => {});
+    }
+
     await this.postRootTaskFailure(rootTask, message).catch((err) => {
       console.warn('[RunEngine] Failed to post failure in chat:', err.message);
     });
@@ -1104,10 +1411,11 @@ class OrchestrationRunEngine {
     }
 
     const coordinator = getSwarmCoordinator();
+    const input = parseJsonLike(step?.input_json);
     const selectedAgentUsername = step.selected_agent_username || run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null;
     const selectedAgentId = step.selected_agent_id || run.requested_agent_id || null;
     const childTask = await coordinator.createTask({
-      title: buildDelegatedTaskTitle(run, rootTask),
+      title: buildDelegatedTaskTitle(run, rootTask, step),
       description: buildDelegatedTaskDescription(run, rootTask, step),
       priority: rootTask.priority || 'medium',
       assigned_agent: selectedAgentUsername,
@@ -1126,6 +1434,12 @@ class OrchestrationRunEngine {
         orchestration_requested_agent_username: run.requested_agent_username || null,
         orchestration_display_agent_id: run.display_agent_id || null,
         orchestration_display_agent_username: run.display_agent_username || null,
+        orchestration_plan_phase_index: Number.isFinite(Number(input.plan_phase_index)) ? Number(input.plan_phase_index) : null,
+        orchestration_plan_phase_title: input.plan_phase_title || null,
+        orchestration_plan_phase_count: input.plan_phase_count || null,
+        orchestration_phase_objective: input.phase_objective || null,
+        orchestration_snipara_swarm_id: input.snipara_swarm_id || null,
+        orchestration_snipara_root_task_id: input.snipara_root_task_id || null,
         verification_required: true,
         orchestration_proactive: true,
       },
@@ -1146,17 +1460,150 @@ class OrchestrationRunEngine {
     return childTask;
   }
 
+  resolvePlanPhaseForStep(run, step) {
+    const input = parseJsonLike(step?.input_json);
+    const phaseIndex = Number.isFinite(Number(input.plan_phase_index)) ? Number(input.plan_phase_index) : 0;
+    const phase = resolvePlanPhase(run?.plan_json, phaseIndex);
+    if (phase) return phase;
+    if (!input.plan_phase_title && !input.phase_objective) return null;
+    return {
+      index: phaseIndex,
+      key: input.plan_phase_key || `phase_${phaseIndex + 1}`,
+      title: input.plan_phase_title || `Phase ${phaseIndex + 1}`,
+      objective: input.phase_objective || '',
+      agent_username: input.selected_agent_username || step?.selected_agent_username || null,
+      verification_focus: input.phase_verification_focus || null,
+    };
+  }
+
+  resolveDelegateStepForVerifyStep(step, steps = []) {
+    const input = parseJsonLike(step?.input_json);
+    const delegateStepId = input.delegate_step_id || null;
+    const delegatedTaskId = input.delegated_task_id || null;
+    return steps.find((entry) => String(entry.id || '') === String(delegateStepId || ''))
+      || [...steps].reverse().find((entry) => {
+        if (entry.step_type !== 'delegate_task') return false;
+        return String(entry.spawned_task_id || '') === String(delegatedTaskId || '');
+      })
+      || null;
+  }
+
+  async maybeQueueNextPlannedPhase(run, rootTask, steps, delegateStep, previousTask) {
+    const currentPhase = this.resolvePlanPhaseForStep(run, delegateStep);
+    const nextPhase = resolveNextPlanPhase(run?.plan_json, currentPhase?.index || 0);
+    if (!nextPhase) return null;
+
+    return this.queuePlannedPhaseStep(run, rootTask, steps, {
+      phase: nextPhase,
+      previousTask,
+      previousStep: delegateStep,
+    });
+  }
+
+  async queuePlannedPhaseStep(run, rootTask, steps, {
+    phase,
+    previousTask = null,
+    previousStep = null,
+  } = {}) {
+    if (!phase) return null;
+
+    const now = new Date();
+    const phaseCount = getPlanPhaseCount(run?.plan_json) || 1;
+    const delegateStep = await createRunStep(pool, {
+      runId: run.id,
+      parentStepId: previousStep?.id || null,
+      sequenceNo: nextSequenceNo(steps),
+      stepType: 'delegate_task',
+      title: `Phase ${Number(phase.index) + 1}: ${phase.title || 'Execute task'}`,
+      status: 'queued',
+      executor: 'task',
+      selectedAgentId: phase.agent_id || run.requested_agent_id || null,
+      selectedAgentUsername: phase.agent_username || run.requested_agent_username || rootTask.assigned_agent || null,
+      input: {
+        root_task_id: rootTask.id,
+        root_task_title: rootTask.title || '',
+        previous_task_id: previousTask?.id || null,
+        previous_output: extractTaskResult(previousTask),
+        strategy: parseJsonLike(run.plan_json).strategy || 'multi_phase_sequential',
+        plan_phase_index: phase.index,
+        plan_phase_key: phase.key || `phase_${Number(phase.index) + 1}`,
+        plan_phase_title: phase.title || `Phase ${Number(phase.index) + 1}`,
+        plan_phase_count: phaseCount,
+        phase_objective: phase.objective || rootTask.description || '',
+        phase_verification_focus: phase.verification_focus || null,
+        workspace_context_excerpt: parseJsonLike(run.context_json).workspace_context_excerpt || null,
+        snipara_swarm_id: parseJsonLike(run.context_json).snipara?.swarm_id || null,
+        snipara_root_task_id: parseJsonLike(run.context_json).snipara?.root_task_id || null,
+        proactive: true,
+      },
+    });
+    steps.push(delegateStep);
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: delegateStep.id,
+      eventType: 'delegate.phase_queued',
+      actor: 'run-engine',
+      payload: {
+        phase_index: phase.index,
+        phase_title: phase.title || null,
+        selected_agent_username: delegateStep.selected_agent_username || null,
+      },
+    });
+
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
+    const wakeAt = buildWakeAt(this.resumeDelayMs);
+
+    await updateRunStep(pool, delegateStep.id, {
+      status: 'waiting',
+      startedAt: now,
+      spawnedTaskId: childTask.id,
+      wait: {
+        kind: 'task_completion',
+        task_id: childTask.id,
+        proactive: true,
+        next_check_after_ms: this.resumeDelayMs,
+      },
+    });
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: 'waiting_on_tasks',
+        orchestration_run_id: run.id,
+        orchestration_step_id: delegateStep.id,
+        delegated_task_id: childTask.id,
+        orchestration_next_wake_at: wakeAt.toISOString(),
+        orchestration_phase_index: phase.index,
+        orchestration_phase_title: phase.title || null,
+        orchestration_phase_count: phaseCount,
+        orchestration_proactive: true,
+      },
+    });
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'waiting_on_tasks',
+      currentStepId: delegateStep.id,
+      nextWakeAt: wakeAt,
+      lastProgressAt: now,
+    }));
+
+    return delegateStep;
+  }
+
   async queueFollowUpDelegateStep(run, rootTask, steps, {
     title,
     selectedAgentUsername,
     selectedAgentId,
     retryCount,
     previousTask,
+    sourceStep = null,
     verdict,
     threshold,
     escalation = false,
   } = {}) {
     const now = new Date();
+    const phase = this.resolvePlanPhaseForStep(run, sourceStep);
+    const phaseCount = getPlanPhaseCount(run?.plan_json) || (phase ? Number(phase.index) + 1 : 1);
     const delegateStep = await createRunStep(pool, {
       runId: run.id,
       sequenceNo: nextSequenceNo(steps),
@@ -1175,6 +1622,15 @@ class OrchestrationRunEngine {
         verification_feedback: formatVerificationFeedback(verdict, threshold),
         verification_summary: verdict?.summary || null,
         retry_count: retryCount || 0,
+        plan_phase_index: phase?.index || 0,
+        plan_phase_key: phase?.key || 'phase_1',
+        plan_phase_title: phase?.title || rootTask.title || 'Execute task',
+        plan_phase_count: phaseCount,
+        phase_objective: phase?.objective || rootTask.description || rootTask.title || '',
+        phase_verification_focus: phase?.verification_focus || null,
+        workspace_context_excerpt: parseJsonLike(run.context_json).workspace_context_excerpt || null,
+        snipara_swarm_id: parseJsonLike(run.context_json).snipara?.swarm_id || null,
+        snipara_root_task_id: parseJsonLike(run.context_json).snipara?.root_task_id || null,
         escalation,
         proactive: true,
       },
@@ -1218,6 +1674,9 @@ class OrchestrationRunEngine {
         orchestration_next_wake_at: wakeAt.toISOString(),
         last_verification_score: verdict?.overall_score ?? null,
         last_verification_summary: verdict?.summary || null,
+        orchestration_phase_index: phase?.index || 0,
+        orchestration_phase_title: phase?.title || rootTask.title || null,
+        orchestration_phase_count: phaseCount,
         escalation_active: escalation,
         escalation_agent: escalation ? (delegateStep.selected_agent_username || 'mike') : null,
         orchestration_proactive: true,
@@ -1492,6 +1951,13 @@ class OrchestrationRunEngine {
       await this.postRootTaskFailure(rootTask, message).catch(() => {});
     }
   }
+}
+
+function mergeJsonObjects(base, patch) {
+  return {
+    ...(parseJsonLike(base) || {}),
+    ...(patch || {}),
+  };
 }
 
 let singleton = null;

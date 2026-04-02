@@ -12,7 +12,19 @@ import {
   createSubtask,
   syncTasks,
 } from "@/lib/api/endpoints/tasks";
-import type { Task, CreateTaskPayload } from "@/lib/api/types";
+import {
+  approveOrchestrationRun,
+  cancelOrchestrationRun,
+  getOrchestrationRun,
+  resumeOrchestrationRun,
+} from "@/lib/api/endpoints/orchestration";
+import type {
+  Task,
+  CreateTaskPayload,
+  OrchestrationRunDetail,
+  OrchestrationRunEvent,
+  OrchestrationRunStep,
+} from "@/lib/api/types";
 import type { Agent } from "@/lib/api/types";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -69,9 +81,165 @@ const KANBAN_COLUMNS: { status: NormalizedStatus; label: string }[] = [
 type NormalizedStatus = "todo" | "in_progress" | "done";
 
 function normalizeStatus(status: Task["status"]): NormalizedStatus {
-  if (status === "completed") return "done";
-  if (status === "pending") return "todo";
-  return status as NormalizedStatus;
+  if (status === "completed" || status === "done") return "done";
+  if (status === "pending" || status === "todo") return "todo";
+  return "in_progress";
+}
+
+type TaskMetadata = Record<string, unknown>;
+
+function asTaskMetadata(task: Task | null | undefined): TaskMetadata {
+  if (!task?.metadata || typeof task.metadata !== "object") return {};
+  return task.metadata as TaskMetadata;
+}
+
+function getMetadataString(metadata: TaskMetadata, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getMetadataNumber(metadata: TaskMetadata, key: string): number | null {
+  const value = metadata[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function getMetadataObject(metadata: TaskMetadata, key: string): Record<string, unknown> | null {
+  const value = metadata[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function getTaskOrchestrationRunId(task: Task | null | undefined): string | null {
+  const metadata = asTaskMetadata(task);
+  return getMetadataString(metadata, "orchestration_run_id")
+    || getMetadataString(metadata, "orchestration_parent_run_id");
+}
+
+function getTaskOrchestrationStatus(task: Task | null | undefined): string | null {
+  return getMetadataString(asTaskMetadata(task), "orchestration_status");
+}
+
+function getTaskOrchestrationStepId(task: Task | null | undefined): string | null {
+  const metadata = asTaskMetadata(task);
+  return getMetadataString(metadata, "orchestration_step_id")
+    || getMetadataString(metadata, "orchestration_parent_step_id");
+}
+
+function isOrchestratedTask(task: Task | null | undefined): boolean {
+  const metadata = asTaskMetadata(task);
+  return Boolean(
+    getTaskOrchestrationRunId(task)
+    || getTaskOrchestrationStatus(task)
+    || getMetadataString(metadata, "execution_backend") === "orchestration_run"
+    || getMetadataString(metadata, "execution_backend") === "orchestration_delegate"
+  );
+}
+
+function humanizeStatus(value: string | null | undefined): string {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
+}
+
+function getTaskStatusAppearance(status: Task["status"]) {
+  const value = String(status || "").toLowerCase();
+  if (value === "pending" || value === "todo") {
+    return {
+      className: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+      label: "To Do",
+    };
+  }
+  if (value === "completed" || value === "done") {
+    return {
+      className: "bg-green-500/20 text-green-400 border-green-500/30",
+      label: "Done",
+    };
+  }
+  if (value === "blocked" || value === "stalled") {
+    return {
+      className: "bg-amber-500/20 text-amber-300 border-amber-500/30",
+      label: "Blocked",
+    };
+  }
+  if (value === "failed" || value === "timed_out") {
+    return {
+      className: "bg-red-500/20 text-red-400 border-red-500/30",
+      label: "Failed",
+    };
+  }
+  if (value === "cancelled") {
+    return {
+      className: "bg-zinc-500/20 text-zinc-300 border-zinc-500/30",
+      label: "Cancelled",
+    };
+  }
+  return {
+    className: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    label: "In Progress",
+  };
+}
+
+function getOrchestrationStatusAppearance(status: string | null | undefined) {
+  const value = String(status || "").toLowerCase();
+  if (!value) return null;
+  if (value === "awaiting_approval") {
+    return {
+      className: "bg-amber-500/15 text-amber-300 border-amber-500/30",
+      label: "Awaiting approval",
+    };
+  }
+  if (value === "waiting_on_tasks" || value === "sleeping") {
+    return {
+      className: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
+      label: "Waiting on tasks",
+    };
+  }
+  if (value === "blocked") {
+    return {
+      className: "bg-orange-500/15 text-orange-300 border-orange-500/30",
+      label: "Blocked",
+    };
+  }
+  if (value === "failed") {
+    return {
+      className: "bg-red-500/15 text-red-300 border-red-500/30",
+      label: "Run failed",
+    };
+  }
+  if (value === "completed") {
+    return {
+      className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
+      label: "Run completed",
+    };
+  }
+  if (value === "cancelled") {
+    return {
+      className: "bg-zinc-500/15 text-zinc-300 border-zinc-500/30",
+      label: "Run cancelled",
+    };
+  }
+  return {
+    className: "bg-sky-500/15 text-sky-300 border-sky-500/30",
+    label: humanizeStatus(value),
+  };
+}
+
+function formatTimestamp(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
@@ -92,22 +260,26 @@ function PriorityBadge({ priority }: { priority: Task["priority"] }) {
 }
 
 function StatusBadge({ status }: { status: Task["status"] }) {
-  const ns = normalizeStatus(status);
-  const map: Record<NormalizedStatus, string> = {
-    todo: "bg-gray-500/20 text-gray-400 border-gray-500/30",
-    in_progress: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-    done: "bg-green-500/20 text-green-400 border-green-500/30",
-  };
-  const labels: Record<NormalizedStatus, string> = {
-    todo: "To Do",
-    in_progress: "In Progress",
-    done: "Done",
-  };
+  const appearance = getTaskStatusAppearance(status);
   return (
     <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${map[ns]}`}
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${appearance.className}`}
     >
-      {labels[ns]}
+      {appearance.label}
+    </span>
+  );
+}
+
+function OrchestrationBadge({ task }: { task: Task }) {
+  const appearance = getOrchestrationStatusAppearance(getTaskOrchestrationStatus(task));
+  if (!appearance) return null;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${appearance.className}`}
+      title={getTaskOrchestrationRunId(task) || undefined}
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80 inline-block" />
+      {appearance.label}
     </span>
   );
 }
@@ -169,6 +341,28 @@ function SniparaIndicator({ task }: { task: Task }) {
       Snipara
     </span>
   );
+}
+
+function summarizeRunEvent(event: OrchestrationRunEvent): string {
+  const payload = (event.payload || {}) as Record<string, unknown>;
+  if (event.event_type === "run.awaiting_approval") return "Human approval required";
+  if (event.event_type === "run.completed") return "Run completed";
+  if (event.event_type === "run.failed") return "Run failed";
+  if (event.event_type === "run.cancelled") return "Run cancelled";
+  if (event.event_type === "run.resumed") return "Run resumed";
+  if (event.event_type === "verify.passed") return "Verification passed";
+  if (event.event_type === "verify.failed") return "Verification failed";
+  if (event.event_type === "delegate.phase_queued") {
+    return String(payload.phase_title || "Next phase queued");
+  }
+  if (event.event_type === "delegate.task_created") {
+    return String(payload.delegated_task_agent || "Delegated task created");
+  }
+  return humanizeStatus(event.event_type);
+}
+
+function summarizeRunStep(step: OrchestrationRunStep): string {
+  return `${humanizeStatus(step.step_type)}: ${step.title}`;
 }
 
 // ─── Task Form ────────────────────────────────────────────────────────────────
@@ -339,7 +533,18 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [addingSubtask, setAddingSubtask] = useState(false);
   const [updatingSubtask, setUpdatingSubtask] = useState<string | null>(null);
+  const [runDetail, setRunDetail] = useState<OrchestrationRunDetail | null>(null);
+  const [loadingRun, setLoadingRun] = useState(false);
+  const [runAction, setRunAction] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const orchestrationStatus = getTaskOrchestrationStatus(task);
+  const orchestrationRunId = getTaskOrchestrationRunId(task);
+  const taskMetadata = asTaskMetadata(task);
+  const pendingApproval = getMetadataObject(taskMetadata, "pending_approval");
+  const phaseIndex = getMetadataNumber(taskMetadata, "orchestration_phase_index");
+  const phaseCount = getMetadataNumber(taskMetadata, "orchestration_phase_count");
+  const phaseTitle = getMetadataString(taskMetadata, "orchestration_phase_title");
 
   const fetchSubtasks = useCallback(async () => {
     if (!task) return;
@@ -354,14 +559,40 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
     }
   }, [task]);
 
+  const fetchRunDetail = useCallback(async () => {
+    if (!orchestrationRunId) {
+      setRunDetail(null);
+      return;
+    }
+    setLoadingRun(true);
+    setRunError(null);
+    try {
+      const data = await getOrchestrationRun(orchestrationRunId);
+      setRunDetail(data);
+    } catch (error) {
+      setRunDetail(null);
+      setRunError(error instanceof Error ? error.message : "Failed to load orchestration run");
+    } finally {
+      setLoadingRun(false);
+    }
+  }, [orchestrationRunId]);
+
   useEffect(() => {
     if (open && task) {
       fetchSubtasks();
+      if (isOrchestratedTask(task)) {
+        void fetchRunDetail();
+      } else {
+        setRunDetail(null);
+        setRunError(null);
+      }
     } else {
       setSubtasks([]);
       setNewSubtaskTitle("");
+      setRunDetail(null);
+      setRunError(null);
     }
-  }, [open, task, fetchSubtasks]);
+  }, [open, task, fetchSubtasks, fetchRunDetail]);
 
   const handleAddSubtask = async () => {
     if (!newSubtaskTitle.trim() || !task) return;
@@ -410,9 +641,36 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
     }
   };
 
+  const handleRunDecision = async (action: "approve" | "reject" | "resume" | "cancel") => {
+    if (!orchestrationRunId) return;
+    setRunAction(action);
+    setRunError(null);
+    try {
+      if (action === "approve") {
+        await approveOrchestrationRun(orchestrationRunId, { approved: true });
+      } else if (action === "reject") {
+        await approveOrchestrationRun(orchestrationRunId, { approved: false });
+      } else if (action === "resume") {
+        await resumeOrchestrationRun(orchestrationRunId);
+      } else if (action === "cancel") {
+        await cancelOrchestrationRun(orchestrationRunId);
+      }
+      await fetchRunDetail();
+      onTaskUpdated();
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Run action failed");
+    } finally {
+      setRunAction(null);
+    }
+  };
+
   const completedCount = subtasks.filter(
     (s) => normalizeStatus(s.status) === "done"
   ).length;
+  const timelineItems = runDetail?.timeline?.items ?? [];
+  const canApprove = runDetail?.run.status === "awaiting_approval";
+  const canResume = ["blocked", "waiting_on_tasks", "sleeping", "running", "planning"].includes(String(runDetail?.run.status || ""));
+  const canCancel = Boolean(runDetail && !["completed", "failed", "cancelled", "timed_out"].includes(String(runDetail.run.status || "")));
 
   if (!task) return null;
 
@@ -431,6 +689,7 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <StatusBadge status={task.status} />
                 <PriorityBadge priority={task.priority} />
+                <OrchestrationBadge task={task} />
                 <SniparaIndicator task={task} />
               </div>
             </div>
@@ -494,6 +753,192 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
               <p className="text-[11px] text-[#6b7280] font-mono break-all">
                 {task.snipara_task_id || task.swarm_task_id}
               </p>
+            </div>
+          )}
+
+          {isOrchestratedTask(task) && (
+            <div className="p-4 rounded-xl bg-sky-500/5 border border-sky-500/15 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs text-sky-300 font-medium uppercase tracking-wider">Orchestration Run</p>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <OrchestrationBadge task={task} />
+                    {runDetail?.current_step && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] border border-white/10 text-[#cbd5e1] bg-white/5">
+                        {humanizeStatus(runDetail.current_step.step_type)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {canApprove && (
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={() => handleRunDecision("approve")}
+                        disabled={runAction !== null}
+                        className="h-8 bg-emerald-600 hover:bg-emerald-500 text-white"
+                      >
+                        {runAction === "approve" ? "Approving…" : "Approve"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRunDecision("reject")}
+                        disabled={runAction !== null}
+                        className="h-8 border-amber-500/30 bg-transparent text-amber-300 hover:bg-amber-500/10"
+                      >
+                        {runAction === "reject" ? "Rejecting…" : "Reject"}
+                      </Button>
+                    </>
+                  )}
+                  {!canApprove && canResume && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRunDecision("resume")}
+                      disabled={runAction !== null}
+                      className="h-8 border-sky-500/30 bg-transparent text-sky-300 hover:bg-sky-500/10"
+                    >
+                      {runAction === "resume" ? "Resuming…" : "Resume"}
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRunDecision("cancel")}
+                      disabled={runAction !== null}
+                      className="h-8 border-red-500/30 bg-transparent text-red-300 hover:bg-red-500/10"
+                    >
+                      {runAction === "cancel" ? "Cancelling…" : "Cancel"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider mb-1">Run ID</p>
+                  <p className="text-[11px] text-[#cbd5e1] font-mono break-all">{orchestrationRunId || "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider mb-1">Step</p>
+                  <p className="text-sm text-white">
+                    {runDetail?.current_step?.title || humanizeStatus(orchestrationStatus)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider mb-1">Next Wake</p>
+                  <p className="text-sm text-[#cbd5e1]">
+                    {formatTimestamp(runDetail?.run.next_wake_at || getMetadataString(taskMetadata, "orchestration_next_wake_at"))}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider mb-1">Phase</p>
+                  <p className="text-sm text-[#cbd5e1]">
+                    {phaseTitle
+                      ? `${phaseIndex != null ? phaseIndex + 1 : 1}${phaseCount ? `/${phaseCount}` : ""} · ${phaseTitle}`
+                      : "—"}
+                  </p>
+                </div>
+              </div>
+
+              {pendingApproval && (
+                <div className="p-3 rounded-lg bg-amber-500/8 border border-amber-500/20">
+                  <p className="text-xs text-amber-300 font-medium mb-1">Pending approval</p>
+                  <p className="text-sm text-[#e5e7eb]">
+                    {String(pendingApproval.summary || "This run is waiting for human sign-off.")}
+                  </p>
+                </div>
+              )}
+
+              {loadingRun ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-3 w-40 bg-[#1e293b]" />
+                  <Skeleton className="h-3 w-full bg-[#1e293b]" />
+                  <Skeleton className="h-3 w-4/5 bg-[#1e293b]" />
+                </div>
+              ) : runError ? (
+                <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  {runError}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {runDetail?.run.summary && (
+                    <div>
+                      <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider mb-1">Summary</p>
+                      <p className="text-sm text-[#cbd5e1]">{runDetail.run.summary}</p>
+                    </div>
+                  )}
+
+                  {runDetail?.run.plan_json && (
+                    <div className="space-y-2">
+                      <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider">Plan</p>
+                      {Array.isArray((runDetail.run.plan_json as Record<string, unknown>).phases) && (
+                        <div className="space-y-1.5">
+                          {((runDetail.run.plan_json as Record<string, unknown>).phases as Array<Record<string, unknown>>).map((phase, index) => (
+                            <div
+                              key={`${phase.key || index}`}
+                              className="rounded-lg border border-white/8 bg-white/5 px-3 py-2"
+                            >
+                              <p className="text-sm text-white">
+                                {index + 1}. {String(phase.title || `Phase ${index + 1}`)}
+                              </p>
+                              {typeof phase.objective === "string" && phase.objective.trim() ? (
+                                <p className="text-xs text-[#94a3b8] mt-1">{String(phase.objective)}</p>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] text-[#7dd3fc] uppercase tracking-wider">Timeline</p>
+                      {runDetail?.timeline && (
+                        <span className="text-[11px] text-[#64748b]">
+                          {runDetail.timeline.total_steps} steps · {runDetail.timeline.total_events} events
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {timelineItems.slice(-8).map((item) => (
+                        <div
+                          key={`${item.kind}-${item.id}`}
+                          className="rounded-lg border border-white/8 bg-[#0b1220] px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm text-white">
+                              {item.kind === "step"
+                                ? summarizeRunStep(item.data as OrchestrationRunStep)
+                                : summarizeRunEvent(item.data as OrchestrationRunEvent)}
+                            </p>
+                            <span className="text-[11px] text-[#64748b] whitespace-nowrap">
+                              {formatTimestamp(item.timestamp)}
+                            </span>
+                          </div>
+                          {item.kind === "step" && (
+                            <p className="text-[11px] text-[#94a3b8] mt-1">
+                              Status: {humanizeStatus((item.data as OrchestrationRunStep).status)}
+                            </p>
+                          )}
+                          {item.kind === "event" && (item.data as OrchestrationRunEvent).actor && (
+                            <p className="text-[11px] text-[#94a3b8] mt-1">
+                              Actor: {(item.data as OrchestrationRunEvent).actor}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                      {timelineItems.length === 0 && (
+                        <p className="text-xs text-[#64748b] italic">No orchestration events yet.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -668,6 +1113,7 @@ function TaskCard({ task, onOpenDetail, onDelete, onStatusChange }: TaskCardProp
       <div className="flex items-center justify-between gap-2">
         <PriorityBadge priority={task.priority} />
         <div className="flex items-center gap-1.5">
+          <OrchestrationBadge task={task} />
           <SniparaIndicator task={task} />
           <AssigneeAvatar name={task.assignee} />
         </div>
@@ -896,6 +1342,7 @@ function ListView({ tasks, onOpenDetail, onDelete }: ListViewProps) {
                               {task.subtask_completed_count ?? 0}/{task.subtask_count}
                             </span>
                           )}
+                          <OrchestrationBadge task={task} />
                           <SniparaIndicator task={task} />
                         </div>
                       </TableCell>
@@ -1091,6 +1538,14 @@ export default function TasksPage() {
       setDetailTask(found);
     }
   }, [taskQuery, tasks]);
+
+  useEffect(() => {
+    if (!detailTask || !tasks) return;
+    const updated = tasks.find((task) => task.id === detailTask.id);
+    if (updated && updated !== detailTask) {
+      setDetailTask(updated);
+    }
+  }, [detailTask, tasks]);
 
   const filteredTasks = useMemo(() => {
     let list = tasks ?? [];

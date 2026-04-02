@@ -36,3 +36,4 @@ export * as marketplaceApi from './endpoints/marketplace';
 export * as clientsApi from './endpoints/clients';
 export * as integrationsApi from './endpoints/integrations';
 export * as settingsApi from './endpoints/settings';
+export * as orchestrationApi from './endpoints/orchestration';
