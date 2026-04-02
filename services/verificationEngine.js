@@ -52,6 +52,109 @@ class VerificationEngine {
     this.maxRetries = options.maxRetries || MAX_RETRIES;
   }
 
+  _parseTaskMetadata(task) {
+    if (!task?.metadata) return {};
+    if (typeof task.metadata === 'string') {
+      try {
+        return JSON.parse(task.metadata || '{}');
+      } catch (_) {
+        return {};
+      }
+    }
+    return task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  }
+
+  _getThreshold(task) {
+    const meta = this._parseTaskMetadata(task);
+    return meta.workflow_mode === 'FULL'
+      ? Math.max(this.passThreshold, 8)
+      : Math.min(this.passThreshold, 6);
+  }
+
+  isRunManagedTask(task) {
+    const meta = this._parseTaskMetadata(task);
+    return Boolean(
+      meta.orchestration_parent_run_id
+      || meta.execution_backend === 'orchestration_delegate'
+      || meta.execution_backend === 'orchestration_run'
+      || meta.execution_mode === 'delegated_child'
+    );
+  }
+
+  async evaluateTaskOutput(task, output) {
+    const criteria = this._extractCriteria(task);
+    if (!criteria.length) {
+      return {
+        criteria,
+        threshold: this._getThreshold(task),
+        passed: true,
+        autoAccepted: true,
+        verdict: {
+          overall_pass: true,
+          overall_score: 10,
+          scores: [],
+          summary: 'Auto-accepted (no criteria)',
+        },
+      };
+    }
+
+    const prompt = this._buildPrompt(task, output, criteria);
+
+    let verdict;
+    try {
+      const llmResult = await chat(VERIFIER_AGENT, [
+        { role: 'user', content: prompt },
+      ]);
+      verdict = this._parseVerdict(llmResult.content);
+    } catch (err) {
+      console.error(`[Verifier] LLM call failed for task ${task?.id || 'unknown'}:`, err.message);
+      verdict = {
+        overall_pass: true,
+        overall_score: 7,
+        scores: [],
+        summary: 'Auto-accepted (verification unavailable)',
+      };
+      return {
+        criteria,
+        threshold: this._getThreshold(task),
+        passed: true,
+        autoAccepted: true,
+        verdict,
+      };
+    }
+
+    const threshold = this._getThreshold(task);
+    return {
+      criteria,
+      threshold,
+      passed: Boolean(verdict.overall_pass || verdict.overall_score >= threshold),
+      autoAccepted: false,
+      verdict,
+    };
+  }
+
+  async recordVerdict(task, verdict, { retryCount } = {}) {
+    if (!task?.id || !verdict) return null;
+
+    const result = await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET verification_score = $1,
+           verification_result = $2,
+           retry_count = COALESCE($3, retry_count),
+           updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [
+        verdict.overall_score,
+        JSON.stringify(verdict),
+        retryCount === undefined ? null : retryCount,
+        task.id,
+      ]
+    );
+
+    return result.rows[0] || null;
+  }
+
   /**
    * Verify a task completion payload from the Snipara webhook.
    * @param {object} data - Webhook payload data (task_id, agent_id, result, etc.)
@@ -74,40 +177,15 @@ class VerificationEngine {
       return;
     }
 
-    // Extract acceptance criteria from task description/metadata
-    const criteria = this._extractCriteria(task);
-    if (!criteria.length) {
-      // No criteria to verify against — auto-accept
-      console.log(`[Verifier] No criteria for task ${task.id}, auto-accepting`);
-      await this._accept(task, data, { overall_pass: true, overall_score: 10, scores: [], summary: 'Auto-accepted (no criteria)' });
+    if (this.isRunManagedTask(task)) {
+      console.log(`[Verifier] Task ${task.id} is managed by orchestration run state, skipping external lifecycle handling`);
       return;
     }
 
-    // Build verification prompt
-    const prompt = this._buildPrompt(task, result, criteria);
+    const evaluation = await this.evaluateTaskOutput(task, result);
+    const verdict = evaluation.verdict;
 
-    // Call LLM
-    let verdict;
-    try {
-      const llmResult = await chat(VERIFIER_AGENT, [
-        { role: 'user', content: prompt },
-      ]);
-
-      verdict = this._parseVerdict(llmResult.content);
-    } catch (err) {
-      console.error(`[Verifier] LLM call failed for task ${task.id}:`, err.message);
-      // On LLM failure, auto-accept to avoid blocking the pipeline
-      await this._accept(task, data, { overall_pass: true, overall_score: 7, scores: [], summary: 'Auto-accepted (verification unavailable)' });
-      return;
-    }
-
-    // Adjust threshold based on workflow mode (FULL = stricter, LITE = more lenient)
-    const meta = typeof task.metadata === 'string' ? JSON.parse(task.metadata || '{}') : (task.metadata || {});
-    const threshold = meta.workflow_mode === 'FULL'
-      ? Math.max(this.passThreshold, 8)
-      : Math.min(this.passThreshold, 6);
-
-    if (verdict.overall_pass || verdict.overall_score >= threshold) {
+    if (evaluation.passed) {
       console.log(`[Verifier] Task ${task.id} PASSED (score: ${verdict.overall_score}/10)`);
       await this._accept(task, data, verdict);
     } else {
@@ -179,16 +257,14 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
   }
 
   async _accept(task, webhookData, verdict) {
-    // Update local DB with verification result
+    await this.recordVerdict(task, verdict);
     await pool.query(
       `UPDATE ${SCHEMA}.tasks
        SET status = 'completed',
-           verification_score = $1,
-           verification_result = $2,
            resolved_at = NOW(),
            updated_at = NOW()
-       WHERE id = $3`,
-      [verdict.overall_score, JSON.stringify(verdict), task.id]
+       WHERE id = $1`,
+      [task.id]
     );
 
     // Record in scoring loop
@@ -200,15 +276,7 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
     const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
 
     // Update retry count
-    await pool.query(
-      `UPDATE ${SCHEMA}.tasks
-       SET retry_count = $1,
-           verification_score = $2,
-           verification_result = $3,
-           updated_at = NOW()
-       WHERE id = $4`,
-      [retryCount, verdict.overall_score, JSON.stringify(verdict), task.id]
-    );
+    await this.recordVerdict(task, verdict, { retryCount });
 
     // Build feedback for the agent
     const failedCriteria = (verdict.scores || [])
@@ -242,14 +310,13 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
     const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
 
     // Mark task as needing escalation
+    await this.recordVerdict(task, verdict);
     await pool.query(
       `UPDATE ${SCHEMA}.tasks
        SET status = 'escalated',
-           verification_score = $1,
-           verification_result = $2,
            updated_at = NOW()
-       WHERE id = $3`,
-      [verdict.overall_score, JSON.stringify(verdict), task.id]
+       WHERE id = $1`,
+      [task.id]
     );
 
     // Reassign to Mike (lead agent)

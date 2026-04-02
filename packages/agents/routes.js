@@ -50,6 +50,7 @@ mount('/marketplace',     'marketplace', '../../app/custom/api/marketplace');
 
 // ── Swarm ───────────────────────────────────────────────────────────────────
 mount('/swarm',           'swarm',       '../../app/custom/api/swarm');
+mount('/orchestration',   'agents',      '../../app/custom/api/orchestration');
 
 // ── LLM ─────────────────────────────────────────────────────────────────────
 mount('/llm',             'llm',         '../../app/custom/api/llm');

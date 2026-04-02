@@ -4,6 +4,7 @@ const os = require('os');
 const pool = require('../../lib/vaultbrix');
 const { insertChatMessage } = require('../chatMessages');
 const { getSwarmCoordinator } = require('../swarmCoordinator');
+const { getVerificationEngine } = require('../verificationEngine');
 const {
   DEFAULT_LEASE_MS,
   TERMINAL_RUN_STATUSES,
@@ -71,11 +72,49 @@ function buildDelegatedTaskTitle(run, rootTask) {
   return `[Run ${prefix}] ${rootTask?.title || 'Autonomous execution'}`;
 }
 
-function buildDelegatedTaskDescription(run, rootTask) {
+function formatVerificationFeedback(verdict, threshold) {
+  const failed = Array.isArray(verdict?.scores)
+    ? verdict.scores.filter((item) => Number(item?.score) < threshold)
+    : [];
+
+  if (failed.length === 0) {
+    return String(verdict?.summary || '').trim();
+  }
+
+  return failed
+    .map((item) => `- ${item.criterion}: ${item.score}/10${item.feedback ? ` - ${item.feedback}` : ''}`)
+    .join('\n');
+}
+
+function requiresApproval(rootTask) {
+  const metadata = parseJsonLike(rootTask?.metadata);
+  if (metadata.approval_required === true || metadata.require_approval === true) return true;
+  if (metadata.governance?.approval_required === true) return true;
+  const approvalMode = String(metadata.approval_mode || metadata.approvalMode || '').trim().toLowerCase();
+  return approvalMode === 'required' || approvalMode === 'manual' || approvalMode === 'human';
+}
+
+function approvalModeOf(rootTask) {
+  const metadata = parseJsonLike(rootTask?.metadata);
+  const approvalMode = String(metadata.approval_mode || metadata.approvalMode || '').trim().toLowerCase();
+  if (approvalMode === 'required' || approvalMode === 'human') return 'manual';
+  return approvalMode || 'manual';
+}
+
+function buildDelegatedTaskDescription(run, rootTask, step = null) {
   const plan = parseJsonLike(run?.plan_json);
+  const input = parseJsonLike(step?.input_json);
   const summary = String(run?.summary || '').trim();
   const taskDescription = String(rootTask?.description || '').trim();
   const planGoal = String(plan.goal || rootTask?.title || '').trim();
+  const feedback = String(input.verification_feedback || '').trim();
+  const previousOutput = String(input.previous_output || '').trim();
+  const revisionLabel = Number.isFinite(Number(input.retry_count)) && Number(input.retry_count) > 0
+    ? `Revision attempt #${Number(input.retry_count)}.`
+    : '';
+  const escalationLabel = input.escalation === true
+    ? 'This step is an escalation handoff after repeated verification failures. Take ownership and fix the underlying issue.'
+    : '';
 
   return [
     `You are executing a delegated step for orchestration run ${run?.id || 'unknown'}.`,
@@ -85,6 +124,10 @@ function buildDelegatedTaskDescription(run, rootTask) {
     '',
     summary ? `Run summary: ${summary}` : '',
     planGoal ? `Goal: ${planGoal}` : '',
+    revisionLabel,
+    escalationLabel,
+    feedback ? `Verification feedback:\n${feedback}` : '',
+    previousOutput ? `Previous output to revise:\n${previousOutput}` : '',
     '',
     'Deliver the concrete output needed to complete the root task.',
     'If blocked, state the blocker clearly and what is needed to continue.',
@@ -243,6 +286,120 @@ class OrchestrationRunEngine {
     return awakened;
   }
 
+  async approveRun(runId, {
+    approved = true,
+    note = null,
+    actor = 'human',
+  } = {}) {
+    const run = await getRunById(pool, runId);
+    if (!run) throw new Error('Run not found.');
+
+    const step = await getCurrentRunStep(pool, runId);
+    if (!step || step.step_type !== 'approval_gate' || run.status !== 'awaiting_approval') {
+      throw new Error('Run is not currently awaiting approval.');
+    }
+
+    const now = new Date();
+    const rootTask = await loadTask(run.root_task_id);
+    const input = parseJsonLike(step.input_json);
+    const childTask = input.delegated_task_id ? await loadTask(input.delegated_task_id) : null;
+
+    if (approved === false) {
+      await updateRunStep(pool, step.id, {
+        status: 'failed',
+        completedAt: now,
+        error: {
+          message: 'Approval rejected.',
+          note: note || null,
+          actor,
+        },
+      });
+
+      await appendRunEvent(pool, {
+        runId,
+        stepId: step.id,
+        eventType: 'approval.rejected',
+        actor,
+        payload: {
+          note: note || null,
+        },
+      });
+
+      if (rootTask) {
+        await updateTaskRecord(rootTask.id, {
+          metadata: {
+            orchestration_status: 'blocked',
+            orchestration_run_id: runId,
+            orchestration_step_id: step.id,
+            approval_rejected: true,
+            approval_rejected_note: note || null,
+            approval_rejected_at: now.toISOString(),
+            orchestration_proactive: true,
+          },
+        });
+      }
+
+      const blockedRun = await updateRun(pool, runId, buildReleaseLeasePatch({
+        status: 'blocked',
+        currentStepId: step.id,
+        nextWakeAt: null,
+        lastProgressAt: now,
+        error: {
+          message: 'Approval rejected.',
+          note: note || null,
+          actor,
+        },
+      }));
+      return { run: blockedRun, stepStatus: 'failed', approved: false };
+    }
+
+    await updateRunStep(pool, step.id, {
+      status: 'completed',
+      completedAt: now,
+      output: {
+        approved: true,
+        note: note || null,
+        actor,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId,
+      stepId: step.id,
+      eventType: 'approval.approved',
+      actor,
+      payload: {
+        note: note || null,
+      },
+    });
+
+    const steps = await listRunSteps(pool, runId);
+    const finalizeStep = await this.ensureFinalizeStep(run, steps, childTask, 'success');
+    const resumedRun = await updateRun(pool, runId, {
+      status: 'running',
+      currentStepId: finalizeStep.id,
+      nextWakeAt: new Date(),
+      lastProgressAt: now,
+    });
+
+    if (rootTask) {
+      await updateTaskRecord(rootTask.id, {
+        metadata: {
+          orchestration_status: 'running',
+          orchestration_run_id: runId,
+          orchestration_step_id: finalizeStep.id,
+          approval_granted: true,
+          approval_granted_note: note || null,
+          approval_granted_at: now.toISOString(),
+          orchestration_proactive: true,
+        },
+      });
+    }
+
+    this.requestImmediatePoll();
+    return { run: resumedRun, stepStatus: 'completed', approved: true };
+  }
+
   requestImmediatePoll() {
     if (this._immediatePollScheduled) return;
     this._immediatePollScheduled = true;
@@ -311,6 +468,16 @@ class OrchestrationRunEngine {
 
     if (currentStep.step_type === 'delegate_task') {
       await this.processDelegateStep(run, currentStep, steps);
+      return;
+    }
+
+    if (currentStep.step_type === 'verify') {
+      await this.processVerifyStep(run, currentStep, steps);
+      return;
+    }
+
+    if (currentStep.step_type === 'approval_gate') {
+      await this.processApprovalGateStep(run, currentStep, steps);
       return;
     }
 
@@ -504,6 +671,145 @@ class OrchestrationRunEngine {
         },
       });
 
+      const verifyStep = await this.ensureVerifyStep(run, steps, childTask, step);
+      await updateRun(pool, run.id, {
+        status: 'running',
+        currentStepId: verifyStep.id,
+        nextWakeAt: null,
+        lastProgressAt: now,
+      });
+      await this.processVerifyStep(run, verifyStep, [...steps, verifyStep], {
+        rootTask,
+        childTask,
+        delegateStep: step,
+      });
+      return;
+    }
+
+    if (FAILED_TASK_STATUSES.has(String(childTask.status || '').toLowerCase())) {
+      await this.handleDelegateFailure(run, step, steps, rootTask, childTask);
+      return;
+    }
+
+    const wakeAt = buildWakeAt(this.resumeDelayMs);
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'waiting_on_tasks',
+      currentStepId: step.id,
+      nextWakeAt: wakeAt,
+      lastProgressAt: now,
+    }));
+  }
+
+  async processVerifyStep(run, step, steps, context = {}) {
+    const now = new Date();
+    const rootTask = context.rootTask || await loadTask(run.root_task_id);
+    if (!rootTask) {
+      throw new Error(`Root task ${run.root_task_id || 'unknown'} not found for run ${run.id}.`);
+    }
+
+    const childTask = context.childTask || await this.loadTaskForStep(step, steps);
+    if (!childTask) {
+      throw new Error(`Verify step ${step.id} is missing delegated task context.`);
+    }
+
+    if (step.status !== 'running') {
+      await updateRunStep(pool, step.id, {
+        status: 'running',
+        startedAt: step.started_at || now,
+      });
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: step.id,
+        eventType: 'step.started',
+        actor: 'run-engine',
+        payload: { step_type: 'verify' },
+      });
+    }
+
+    const verifier = getVerificationEngine();
+    const evaluation = await verifier.evaluateTaskOutput(rootTask, extractTaskResult(childTask));
+    await verifier.recordVerdict(childTask, evaluation.verdict, {
+      retryCount: Number(step.retry_count) || Number(childTask.retry_count) || 0,
+    }).catch(() => {});
+
+    await updateRunStep(pool, step.id, {
+      output: {
+        delegated_task_id: childTask.id,
+        verification: evaluation.verdict,
+        verification_threshold: evaluation.threshold,
+        passed: evaluation.passed,
+      },
+    });
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        last_verification_score: evaluation.verdict?.overall_score ?? null,
+        last_verification_pass: evaluation.passed,
+        last_verification_summary: evaluation.verdict?.summary || null,
+        last_verified_task_id: childTask.id,
+        orchestration_status: 'running',
+        orchestration_step_id: step.id,
+        orchestration_proactive: true,
+      },
+    });
+
+    if (evaluation.passed) {
+      await updateRunStep(pool, step.id, {
+        status: 'completed',
+        completedAt: now,
+        output: {
+          delegated_task_id: childTask.id,
+          verification: evaluation.verdict,
+          verification_threshold: evaluation.threshold,
+          passed: true,
+        },
+      });
+
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: step.id,
+        eventType: 'verify.passed',
+        actor: 'run-engine',
+        payload: {
+          delegated_task_id: childTask.id,
+          overall_score: evaluation.verdict?.overall_score ?? null,
+        },
+      });
+
+      if (requiresApproval(rootTask)) {
+        const approvalStep = await this.ensureApprovalGateStep(run, steps, childTask, evaluation.verdict, rootTask);
+        const awaitingRun = await updateRun(pool, run.id, buildReleaseLeasePatch({
+          status: 'awaiting_approval',
+          currentStepId: approvalStep.id,
+          nextWakeAt: null,
+          lastProgressAt: now,
+        }));
+
+        await updateTaskRecord(rootTask.id, {
+          metadata: {
+            orchestration_status: 'awaiting_approval',
+            orchestration_run_id: run.id,
+            orchestration_step_id: approvalStep.id,
+            delegated_task_id: childTask.id,
+            approval_required: true,
+            approval_mode: approvalModeOf(rootTask),
+            pending_approval: {
+              run_id: run.id,
+              step_id: approvalStep.id,
+              delegated_task_id: childTask.id,
+              verification_score: evaluation.verdict?.overall_score ?? null,
+              summary: evaluation.verdict?.summary || null,
+            },
+            orchestration_proactive: true,
+          },
+        });
+
+        await this.postApprovalRequest(rootTask, run, approvalStep, evaluation.verdict).catch((err) => {
+          console.warn('[RunEngine] Failed to post approval request:', err.message);
+        });
+        return awaitingRun;
+      }
+
       const finalizeStep = await this.ensureFinalizeStep(run, steps, childTask, 'success');
       await updateRun(pool, run.id, {
         status: 'running',
@@ -519,40 +825,137 @@ class OrchestrationRunEngine {
       return;
     }
 
-    if (FAILED_TASK_STATUSES.has(String(childTask.status || '').toLowerCase())) {
-      await updateRunStep(pool, step.id, {
-        status: 'failed',
-        completedAt: now,
-        spawnedTaskId: childTask.id,
-        error: {
-          delegated_task_id: childTask.id,
-          child_task_status: childTask.status,
-          message: extractTaskError(childTask),
-        },
-      });
+    const nextRetryCount = (Number(step.retry_count) || 0) + 1;
+    await updateRunStep(pool, step.id, {
+      status: 'failed',
+      retryCount: nextRetryCount,
+      completedAt: now,
+      error: {
+        delegated_task_id: childTask.id,
+        verification: evaluation.verdict,
+        verification_threshold: evaluation.threshold,
+        feedback: formatVerificationFeedback(evaluation.verdict, evaluation.threshold),
+      },
+    });
 
-      const finalizeStep = await this.ensureFinalizeStep(run, steps, childTask, 'failure');
-      await updateRun(pool, run.id, {
-        status: 'running',
-        currentStepId: finalizeStep.id,
-        nextWakeAt: null,
-        lastProgressAt: now,
-      });
-      await this.processFinalizeStep(run, finalizeStep, [...steps, finalizeStep], {
-        rootTask,
-        childTask,
-        outcome: 'failure',
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step.id,
+      eventType: 'verify.failed',
+      actor: 'run-engine',
+      payload: {
+        delegated_task_id: childTask.id,
+        overall_score: evaluation.verdict?.overall_score ?? null,
+        retry_count: nextRetryCount,
+      },
+    });
+
+    if (nextRetryCount > verifier.maxRetries) {
+      await this.queueFollowUpDelegateStep(run, rootTask, steps, {
+        title: `Escalation review: ${rootTask.title || 'Autonomous task'}`,
+        selectedAgentUsername: 'mike',
+        selectedAgentId: null,
+        retryCount: nextRetryCount,
+        previousTask: childTask,
+        verdict: evaluation.verdict,
+        threshold: evaluation.threshold,
+        escalation: true,
       });
       return;
     }
 
-    const wakeAt = buildWakeAt(this.resumeDelayMs);
+    await this.queueFollowUpDelegateStep(run, rootTask, steps, {
+      title: `Revision #${nextRetryCount}: ${rootTask.title || 'Autonomous task'}`,
+      selectedAgentUsername: run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null,
+      selectedAgentId: run.requested_agent_id || null,
+      retryCount: nextRetryCount,
+      previousTask: childTask,
+      verdict: evaluation.verdict,
+      threshold: evaluation.threshold,
+      escalation: false,
+    });
+  }
+
+  async processApprovalGateStep(run, step) {
+    const now = new Date();
+    if (step.status !== 'awaiting_approval') {
+      await updateRunStep(pool, step.id, {
+        status: 'awaiting_approval',
+        startedAt: step.started_at || now,
+      });
+    }
+
     await updateRun(pool, run.id, buildReleaseLeasePatch({
-      status: 'waiting_on_tasks',
+      status: 'awaiting_approval',
       currentStepId: step.id,
-      nextWakeAt: wakeAt,
+      nextWakeAt: null,
       lastProgressAt: now,
     }));
+  }
+
+  async handleDelegateFailure(run, step, steps, rootTask, childTask) {
+    const now = new Date();
+    const message = extractTaskError(childTask);
+    const nextRetryCount = (Number(step.retry_count) || 0) + 1;
+
+    await updateRunStep(pool, step.id, {
+      status: 'failed',
+      retryCount: nextRetryCount,
+      completedAt: now,
+      spawnedTaskId: childTask.id,
+      error: {
+        delegated_task_id: childTask.id,
+        child_task_status: childTask.status,
+        message,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step.id,
+      eventType: 'delegate.task_failed',
+      actor: 'run-engine',
+      payload: {
+        delegated_task_id: childTask.id,
+        child_task_status: childTask.status,
+        retry_count: nextRetryCount,
+        message,
+      },
+    });
+
+    const verifier = getVerificationEngine();
+    if (nextRetryCount > verifier.maxRetries) {
+      await this.queueFollowUpDelegateStep(run, rootTask, steps, {
+        title: `Escalation review: ${rootTask.title || 'Autonomous task'}`,
+        selectedAgentUsername: 'mike',
+        selectedAgentId: null,
+        retryCount: nextRetryCount,
+        previousTask: childTask,
+        verdict: {
+          overall_score: 0,
+          summary: message,
+          scores: [],
+        },
+        threshold: verifier.passThreshold,
+        escalation: true,
+      });
+      return;
+    }
+
+    await this.queueFollowUpDelegateStep(run, rootTask, steps, {
+      title: `Revision #${nextRetryCount}: ${rootTask.title || 'Autonomous task'}`,
+      selectedAgentUsername: run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null,
+      selectedAgentId: run.requested_agent_id || null,
+      retryCount: nextRetryCount,
+      previousTask: childTask,
+      verdict: {
+        overall_score: 0,
+        summary: message,
+        scores: [],
+      },
+      threshold: verifier.passThreshold,
+      escalation: false,
+    });
   }
 
   async processFinalizeStep(run, step, steps, context = {}) {
@@ -584,6 +987,8 @@ class OrchestrationRunEngine {
           orchestration_completed_at: now.toISOString(),
           delegated_task_id: childTask?.id || null,
           delegated_task_status: childTask?.status || null,
+          pending_approval: null,
+          escalation_active: false,
           orchestration_proactive: true,
         },
       });
@@ -641,6 +1046,7 @@ class OrchestrationRunEngine {
         orchestration_failed_at: now.toISOString(),
         delegated_task_id: childTask?.id || null,
         delegated_task_status: childTask?.status || null,
+        pending_approval: null,
         orchestration_proactive: true,
       },
     });
@@ -698,11 +1104,11 @@ class OrchestrationRunEngine {
     }
 
     const coordinator = getSwarmCoordinator();
-    const selectedAgentUsername = run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null;
-    const selectedAgentId = run.requested_agent_id || null;
+    const selectedAgentUsername = step.selected_agent_username || run.requested_agent_username || rootTask.assigned_agent || rootTask.assignee || null;
+    const selectedAgentId = step.selected_agent_id || run.requested_agent_id || null;
     const childTask = await coordinator.createTask({
       title: buildDelegatedTaskTitle(run, rootTask),
-      description: buildDelegatedTaskDescription(run, rootTask),
+      description: buildDelegatedTaskDescription(run, rootTask, step),
       priority: rootTask.priority || 'medium',
       assigned_agent: selectedAgentUsername,
       for_agent_id: selectedAgentId || selectedAgentUsername,
@@ -720,6 +1126,7 @@ class OrchestrationRunEngine {
         orchestration_requested_agent_username: run.requested_agent_username || null,
         orchestration_display_agent_id: run.display_agent_id || null,
         orchestration_display_agent_username: run.display_agent_username || null,
+        verification_required: true,
         orchestration_proactive: true,
       },
     }, run.workspace_id);
@@ -739,8 +1146,184 @@ class OrchestrationRunEngine {
     return childTask;
   }
 
+  async queueFollowUpDelegateStep(run, rootTask, steps, {
+    title,
+    selectedAgentUsername,
+    selectedAgentId,
+    retryCount,
+    previousTask,
+    verdict,
+    threshold,
+    escalation = false,
+  } = {}) {
+    const now = new Date();
+    const delegateStep = await createRunStep(pool, {
+      runId: run.id,
+      sequenceNo: nextSequenceNo(steps),
+      stepType: 'delegate_task',
+      title: title || 'Delegate remediation task',
+      status: 'queued',
+      executor: 'task',
+      selectedAgentId: selectedAgentId || null,
+      selectedAgentUsername: selectedAgentUsername || run.requested_agent_username || rootTask.assigned_agent || null,
+      retryCount: retryCount || 0,
+      input: {
+        root_task_id: rootTask.id,
+        root_task_title: rootTask.title || '',
+        previous_task_id: previousTask?.id || null,
+        previous_output: extractTaskResult(previousTask),
+        verification_feedback: formatVerificationFeedback(verdict, threshold),
+        verification_summary: verdict?.summary || null,
+        retry_count: retryCount || 0,
+        escalation,
+        proactive: true,
+      },
+    });
+    steps.push(delegateStep);
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: delegateStep.id,
+      eventType: escalation ? 'delegate.escalation_queued' : 'delegate.revision_queued',
+      actor: 'run-engine',
+      payload: {
+        delegated_task_id: previousTask?.id || null,
+        selected_agent_username: delegateStep.selected_agent_username || null,
+        retry_count: retryCount || 0,
+        escalation,
+      },
+    });
+
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
+    const wakeAt = buildWakeAt(this.resumeDelayMs);
+
+    await updateRunStep(pool, delegateStep.id, {
+      status: 'waiting',
+      startedAt: now,
+      spawnedTaskId: childTask.id,
+      wait: {
+        kind: 'task_completion',
+        task_id: childTask.id,
+        proactive: true,
+        next_check_after_ms: this.resumeDelayMs,
+      },
+    });
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: 'waiting_on_tasks',
+        orchestration_run_id: run.id,
+        orchestration_step_id: delegateStep.id,
+        delegated_task_id: childTask.id,
+        orchestration_next_wake_at: wakeAt.toISOString(),
+        last_verification_score: verdict?.overall_score ?? null,
+        last_verification_summary: verdict?.summary || null,
+        escalation_active: escalation,
+        escalation_agent: escalation ? (delegateStep.selected_agent_username || 'mike') : null,
+        orchestration_proactive: true,
+      },
+    });
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'waiting_on_tasks',
+      currentStepId: delegateStep.id,
+      nextWakeAt: wakeAt,
+      lastProgressAt: now,
+    }));
+
+    return delegateStep;
+  }
+
+  async ensureVerifyStep(run, steps, childTask, delegateStep) {
+    const existing = steps.find((entry) => {
+      if (entry.step_type !== 'verify') return false;
+      const input = parseJsonLike(entry.input_json);
+      return String(input.delegated_task_id || '') === String(childTask?.id || '')
+        && !isTerminalStepStatus(entry.status);
+    });
+    if (existing) return existing;
+
+    const verifyStep = await createRunStep(pool, {
+      runId: run.id,
+      parentStepId: delegateStep?.id || null,
+      sequenceNo: nextSequenceNo(steps),
+      stepType: 'verify',
+      title: 'Verify delegated result',
+      status: 'queued',
+      executor: 'verifier',
+      selectedAgentUsername: 'verifier',
+      retryCount: Number(delegateStep?.retry_count) || 0,
+      input: {
+        delegated_task_id: childTask?.id || null,
+        delegate_step_id: delegateStep?.id || null,
+        retry_count: Number(delegateStep?.retry_count) || 0,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: verifyStep.id,
+      eventType: 'step.queued',
+      actor: 'run-engine',
+      payload: {
+        sequence_no: verifyStep.sequence_no,
+        step_type: 'verify',
+        title: verifyStep.title,
+      },
+    });
+
+    return verifyStep;
+  }
+
+  async ensureApprovalGateStep(run, steps, childTask, verdict, rootTask) {
+    const existing = steps.find((entry) => {
+      if (entry.step_type !== 'approval_gate') return false;
+      const input = parseJsonLike(entry.input_json);
+      return String(input.delegated_task_id || '') === String(childTask?.id || '')
+        && !isTerminalStepStatus(entry.status);
+    });
+    if (existing) return existing;
+
+    const approvalStep = await createRunStep(pool, {
+      runId: run.id,
+      sequenceNo: nextSequenceNo(steps),
+      stepType: 'approval_gate',
+      title: 'Human approval required',
+      status: 'awaiting_approval',
+      executor: 'human',
+      selectedAgentId: run.display_agent_id || run.requested_agent_id || null,
+      selectedAgentUsername: run.display_agent_username || run.requested_agent_username || null,
+      approvalMode: approvalModeOf(rootTask),
+      input: {
+        delegated_task_id: childTask?.id || null,
+        verification_score: verdict?.overall_score ?? null,
+        verification_summary: verdict?.summary || null,
+        approval_required: true,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: approvalStep.id,
+      eventType: 'run.awaiting_approval',
+      actor: 'run-engine',
+      payload: {
+        delegated_task_id: childTask?.id || null,
+        approval_mode: approvalStep.approval_mode || 'manual',
+        verification_score: verdict?.overall_score ?? null,
+      },
+    });
+
+    return approvalStep;
+  }
+
   async ensureFinalizeStep(run, steps, childTask, outcome) {
-    const existing = steps.find((entry) => entry.step_type === 'finalize');
+    const existing = steps.find((entry) => {
+      if (entry.step_type !== 'finalize') return false;
+      const input = parseJsonLike(entry.input_json);
+      return String(input.delegated_task_id || '') === String(childTask?.id || '')
+        && !isTerminalStepStatus(entry.status);
+    });
     if (existing) return existing;
 
     const finalizeStep = await createRunStep(pool, {
@@ -780,16 +1363,53 @@ class OrchestrationRunEngine {
     return 'failure';
   }
 
-  async loadFinalizeChildTask(run, step, steps) {
+  async loadTaskForStep(step, steps = []) {
     const input = parseJsonLike(step?.input_json);
     const delegatedTaskId = input.delegated_task_id || input.spawned_task_id || null;
     if (delegatedTaskId) {
       return loadTask(delegatedTaskId);
     }
 
+    const relatedDelegate = [...steps].reverse().find((entry) => {
+      if (entry.step_type !== 'delegate_task') return false;
+      return String(entry.id || '') === String(input.delegate_step_id || '')
+        || String(entry.parent_step_id || '') === String(step?.parent_step_id || '');
+    });
+
+    if (relatedDelegate?.spawned_task_id) {
+      return loadTask(relatedDelegate.spawned_task_id);
+    }
+
+    return null;
+  }
+
+  async loadFinalizeChildTask(run, step, steps) {
+    const loaded = await this.loadTaskForStep(step, steps);
+    if (loaded) return loaded;
     const delegateStep = [...steps].reverse().find((entry) => entry.step_type === 'delegate_task' && entry.spawned_task_id);
     if (!delegateStep?.spawned_task_id) return null;
     return loadTask(delegateStep.spawned_task_id);
+  }
+
+  async postApprovalRequest(rootTask, run, approvalStep, verdict) {
+    const metadata = parseJsonLike(rootTask?.metadata);
+    const content = [
+      `Approval required for "${rootTask.title || 'task'}".`,
+      verdict?.summary ? `Verification summary: ${verdict.summary}` : '',
+      `Run ID: ${run.id}`,
+      `Step ID: ${approvalStep.id}`,
+    ].filter(Boolean).join('\n');
+
+    const posted = await postTaskChatResult(rootTask, content, 'jarvis', 'Jarvis');
+    if (!posted) return false;
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        approval_request_posted: true,
+        approval_request_posted_at: new Date().toISOString(),
+      },
+    });
+    return true;
   }
 
   async postRootTaskChatResult(rootTask, content, run) {
