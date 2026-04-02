@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useApi } from "@/hooks/use-api";
 import {
   getTasks,
+  getTask,
   createTask,
   updateTask,
   deleteTask,
@@ -249,6 +250,34 @@ function formatTimestamp(value?: string | null): string {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+const ACTIVE_ORCHESTRATION_RUN_STATUSES = new Set([
+  "queued",
+  "planning",
+  "running",
+  "waiting_on_tasks",
+  "sleeping",
+  "blocked",
+  "awaiting_approval",
+]);
+
+function buildTaskRefreshFingerprint(task: Task | null | undefined): string {
+  if (!task) return "";
+  return JSON.stringify({
+    id: task.id,
+    status: task.status,
+    title: task.title,
+    description: task.description,
+    assignee: task.assignee,
+    assigned_agent: task.assigned_agent,
+    due_date: task.due_date,
+    subtask_count: task.subtask_count ?? null,
+    subtask_completed_count: task.subtask_completed_count ?? null,
+    snipara_task_id: task.snipara_task_id ?? null,
+    swarm_task_id: task.swarm_task_id ?? null,
+    metadata: task.metadata ?? null,
   });
 }
 
@@ -578,6 +607,7 @@ interface TaskDetailSheetProps {
 }
 
 function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: TaskDetailSheetProps) {
+  const [liveTask, setLiveTask] = useState<Task | null>(task);
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [loadingSubtasks, setLoadingSubtasks] = useState(false);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
@@ -588,9 +618,12 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
   const [runAction, setRunAction] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const orchestrationStatus = getTaskOrchestrationStatus(task);
-  const orchestrationRunId = getTaskOrchestrationRunId(task);
-  const taskMetadata = asTaskMetadata(task);
+  const refreshFingerprintRef = useRef<string>("");
+  const currentTask = liveTask ?? task;
+  const currentTaskId = currentTask?.id || null;
+  const orchestrationStatus = getTaskOrchestrationStatus(currentTask);
+  const orchestrationRunId = getTaskOrchestrationRunId(currentTask);
+  const taskMetadata = asTaskMetadata(currentTask);
   const pendingApproval = getMetadataObject(taskMetadata, "pending_approval");
   const phaseIndex = getMetadataNumber(taskMetadata, "orchestration_phase_index");
   const phaseCount = getMetadataNumber(taskMetadata, "orchestration_phase_count");
@@ -601,26 +634,50 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
   const closureReady = getMetadataBoolean(taskMetadata, "orchestration_closure_ready");
   const closedWithWaiver = getMetadataBoolean(taskMetadata, "orchestration_closed_with_waiver");
   const autoClosedParent = getMetadataString(taskMetadata, "orchestration_auto_closed_parent");
+  const activeRunStatus = String(runDetail?.run.status || orchestrationStatus || "").toLowerCase();
+  const isLiveOrchestration = isOrchestratedTask(currentTask);
+  const isLiveRunActive = ACTIVE_ORCHESTRATION_RUN_STATUSES.has(activeRunStatus);
 
-  const fetchSubtasks = useCallback(async () => {
-    if (!task) return;
-    setLoadingSubtasks(true);
+  useEffect(() => {
+    setLiveTask(task);
+    refreshFingerprintRef.current = buildTaskRefreshFingerprint(task);
+  }, [task]);
+
+  const fetchSubtasks = useCallback(async ({ silent = false } = {}) => {
+    if (!currentTaskId) return;
+    if (!silent) setLoadingSubtasks(true);
     try {
-      const data = await getSubtasks(task.id);
+      const data = await getSubtasks(currentTaskId);
       setSubtasks(data);
     } catch {
       setSubtasks([]);
     } finally {
-      setLoadingSubtasks(false);
+      if (!silent) setLoadingSubtasks(false);
     }
-  }, [task]);
+  }, [currentTaskId]);
 
-  const fetchRunDetail = useCallback(async () => {
+  const fetchCurrentTask = useCallback(async ({ propagate = false } = {}) => {
+    if (!currentTaskId) return null;
+    const data = await getTask(currentTaskId);
+    const nextFingerprint = buildTaskRefreshFingerprint(data);
+    const changed = nextFingerprint !== refreshFingerprintRef.current;
+    refreshFingerprintRef.current = nextFingerprint;
+    setLiveTask((current) => {
+      if (buildTaskRefreshFingerprint(current) === nextFingerprint) return current;
+      return data;
+    });
+    if (propagate && changed) {
+      onTaskUpdated();
+    }
+    return data;
+  }, [currentTaskId, onTaskUpdated]);
+
+  const fetchRunDetail = useCallback(async ({ silent = false } = {}) => {
     if (!orchestrationRunId) {
       setRunDetail(null);
       return;
     }
-    setLoadingRun(true);
+    if (!silent) setLoadingRun(true);
     setRunError(null);
     try {
       const data = await getOrchestrationRun(orchestrationRunId);
@@ -629,33 +686,86 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
       setRunDetail(null);
       setRunError(error instanceof Error ? error.message : "Failed to load orchestration run");
     } finally {
-      setLoadingRun(false);
+      if (!silent) setLoadingRun(false);
     }
   }, [orchestrationRunId]);
 
   useEffect(() => {
-    if (open && task) {
-      fetchSubtasks();
-      if (isOrchestratedTask(task)) {
+    if (open && currentTaskId) {
+      void fetchCurrentTask();
+      void fetchSubtasks();
+      if (isLiveOrchestration) {
         void fetchRunDetail();
       } else {
         setRunDetail(null);
         setRunError(null);
       }
     } else {
+      setLiveTask(task);
       setSubtasks([]);
       setNewSubtaskTitle("");
       setRunDetail(null);
       setRunError(null);
     }
-  }, [open, task, fetchSubtasks, fetchRunDetail]);
+  }, [open, task, currentTaskId, isLiveOrchestration, fetchCurrentTask, fetchSubtasks, fetchRunDetail]);
+
+  useEffect(() => {
+    if (!open || !currentTaskId || !isLiveOrchestration) return;
+
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshLiveState = async () => {
+      await Promise.allSettled([
+        fetchCurrentTask({ propagate: true }),
+        fetchRunDetail({ silent: true }),
+        fetchSubtasks({ silent: true }),
+      ]);
+    };
+
+    const schedule = () => {
+      if (cancelled) return;
+      const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      const intervalMs = isLiveRunActive
+        ? (hidden ? 6000 : 2000)
+        : (hidden ? 12000 : 5000);
+      timeoutId = setTimeout(async () => {
+        await refreshLiveState();
+        schedule();
+      }, intervalMs);
+    };
+
+    const handleAttention = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void refreshLiveState();
+    };
+
+    schedule();
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleAttention);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleAttention);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", handleAttention);
+      }
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleAttention);
+      }
+    };
+  }, [open, currentTaskId, isLiveOrchestration, isLiveRunActive, fetchCurrentTask, fetchRunDetail, fetchSubtasks]);
 
   const handleAddSubtask = async () => {
-    if (!newSubtaskTitle.trim() || !task) return;
+    if (!newSubtaskTitle.trim() || !currentTask) return;
     setAddingSubtask(true);
     try {
-      const defaultAssignee = task && task.assignee && assignees.includes(task.assignee)
-        ? task.assignee
+      const defaultAssignee = currentTask.assignee && assignees.includes(currentTask.assignee)
+        ? currentTask.assignee
         : assignees[0] || DEFAULT_ASSIGNEE;
       const payload: CreateTaskPayload = {
         title: newSubtaskTitle.trim(),
@@ -665,7 +775,7 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
         assignee: defaultAssignee,
         due_date: "",
       };
-      await createSubtask(task.id, payload);
+      await createSubtask(currentTask.id, payload);
       setNewSubtaskTitle("");
       await fetchSubtasks();
       onTaskUpdated();
@@ -711,7 +821,11 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
       } else if (action === "cancel") {
         await cancelOrchestrationRun(orchestrationRunId);
       }
-      await fetchRunDetail();
+      await Promise.allSettled([
+        fetchCurrentTask({ propagate: true }),
+        fetchRunDetail(),
+        fetchSubtasks(),
+      ]);
       onTaskUpdated();
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Run action failed");
@@ -728,7 +842,7 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
   const canResume = ["blocked", "waiting_on_tasks", "sleeping", "running", "planning"].includes(String(runDetail?.run.status || ""));
   const canCancel = Boolean(runDetail && !["completed", "failed", "cancelled", "timed_out"].includes(String(runDetail.run.status || "")));
 
-  if (!task) return null;
+  if (!currentTask) return null;
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -740,13 +854,18 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
           <div className="flex items-start justify-between gap-3 pr-6">
             <div className="flex-1 min-w-0">
               <SheetTitle className="text-white text-lg leading-snug break-words">
-                {task.title}
+                {currentTask.title}
               </SheetTitle>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
-                <StatusBadge status={task.status} />
-                <PriorityBadge priority={task.priority} />
-                <OrchestrationBadge task={task} />
-                <SniparaIndicator task={task} />
+                <StatusBadge status={currentTask.status} />
+                <PriorityBadge priority={currentTask.priority} />
+                <OrchestrationBadge task={currentTask} />
+                <SniparaIndicator task={currentTask} />
+                {isLiveOrchestration && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] border border-white/10 text-[#94a3b8] bg-white/5">
+                    Auto refresh {isLiveRunActive ? "2s" : "5s"}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -754,11 +873,11 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
           {/* Task Info */}
-          {task.description && (
+          {currentTask.description && (
             <div>
               <p className="text-xs text-[#6b7280] uppercase tracking-wider mb-1.5">Description</p>
               <p className="text-sm text-[#9ca3af] leading-relaxed whitespace-pre-wrap">
-                {task.description}
+                {currentTask.description}
               </p>
             </div>
           )}
@@ -767,17 +886,17 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
             <div>
               <p className="text-xs text-[#6b7280] uppercase tracking-wider mb-1.5">Assignee</p>
               <div className="flex items-center gap-2">
-                <AssigneeAvatar name={task.assignee || task.assigned_agent} />
+                <AssigneeAvatar name={currentTask.assignee || currentTask.assigned_agent} />
                 <span className="text-sm text-white">
-                  {task.assignee || task.assigned_agent || "Unassigned"}
+                  {currentTask.assignee || currentTask.assigned_agent || "Unassigned"}
                 </span>
               </div>
             </div>
-            {task.due_date && (
+            {currentTask.due_date && (
               <div>
                 <p className="text-xs text-[#6b7280] uppercase tracking-wider mb-1.5">Due Date</p>
                 <p className="text-sm text-white">
-                  {new Date(task.due_date).toLocaleDateString(undefined, {
+                  {new Date(currentTask.due_date).toLocaleDateString(undefined, {
                     month: "short",
                     day: "numeric",
                     year: "numeric",
@@ -785,40 +904,40 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees }: Task
                 </p>
               </div>
             )}
-            {task.source && (
+            {currentTask.source && (
               <div>
                 <p className="text-xs text-[#6b7280] uppercase tracking-wider mb-1.5">Source</p>
-                <p className="text-sm text-[#9ca3af]">{task.source}</p>
+                <p className="text-sm text-[#9ca3af]">{currentTask.source}</p>
               </div>
             )}
-            {task.assigned_agent && task.assigned_agent !== task.assignee && (
+            {currentTask.assigned_agent && currentTask.assigned_agent !== currentTask.assignee && (
               <div>
                 <p className="text-xs text-[#6b7280] uppercase tracking-wider mb-1.5">Agent</p>
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
-                  <span className="text-sm text-white">{task.assigned_agent}</span>
+                  <span className="text-sm text-white">{currentTask.assigned_agent}</span>
                 </div>
               </div>
             )}
           </div>
 
           {/* Snipara detail */}
-          {(task.snipara_task_id || task.swarm_task_id) && (
+          {(currentTask.snipara_task_id || currentTask.swarm_task_id) && (
             <div className="p-3 rounded-lg bg-violet-500/5 border border-violet-500/15">
               <p className="text-xs text-violet-400 font-medium mb-1">Synced with Snipara</p>
               <p className="text-[11px] text-[#6b7280] font-mono break-all">
-                {task.snipara_task_id || task.swarm_task_id}
+                {currentTask.snipara_task_id || currentTask.swarm_task_id}
               </p>
             </div>
           )}
 
-          {isOrchestratedTask(task) && (
+          {isLiveOrchestration && (
             <div className="p-4 rounded-xl bg-sky-500/5 border border-sky-500/15 space-y-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs text-sky-300 font-medium uppercase tracking-wider">Orchestration Run</p>
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    <OrchestrationBadge task={task} />
+                    <OrchestrationBadge task={currentTask} />
                     {runDetail?.current_step && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] border border-white/10 text-[#cbd5e1] bg-white/5">
                         {humanizeStatus(runDetail.current_step.step_type)}
