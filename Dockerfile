@@ -1,6 +1,6 @@
 # Vutler API - AI Agent Extensions
 # Lightweight Express API for agent management, email, and chat
-FROM node:18-alpine
+FROM node:20-alpine
 RUN apk add --no-cache curl docker-cli
 WORKDIR /app
 COPY package.json package-lock.json ./
