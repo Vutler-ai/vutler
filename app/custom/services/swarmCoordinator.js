@@ -18,6 +18,7 @@ const {
   buildAgentDrivePlacementInstruction,
   resolveAgentDriveRoot,
 } = require('../../../services/agentDriveService');
+const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -542,7 +543,14 @@ class SwarmCoordinator {
          RETURNING *`,
         [swarmTaskId, title, description, priority, status, assignedTo, source, parentId, metaJson, existing.rows[0].id]
       );
-      return updated.rows[0];
+      const taskRow = updated.rows[0];
+      await signalRunFromTask(taskRow, {
+        reason: source || 'swarm_upsert',
+        eventType: source && source.startsWith('snipara-webhook:')
+          ? `delegate.${source.slice('snipara-webhook:'.length)}`
+          : 'delegate.task_status_changed',
+      }).catch(() => {});
+      return taskRow;
     }
 
     const inserted = await pool.query(
@@ -552,7 +560,14 @@ class SwarmCoordinator {
        RETURNING *`,
       [title || 'Nouvelle tache', description || '', status, priority, assignedTo, ws, source, parentId, metaJson, swarmTaskId]
     );
-    return inserted.rows[0];
+    const taskRow = inserted.rows[0];
+    await signalRunFromTask(taskRow, {
+      reason: source || 'swarm_insert',
+      eventType: source && source.startsWith('snipara-webhook:')
+        ? `delegate.${source.slice('snipara-webhook:'.length)}`
+        : 'delegate.task_status_changed',
+    }).catch(() => {});
+    return taskRow;
   }
 
   async resolveLocalParentIdFromRemote(remoteParentId, workspaceId = DEFAULT_WORKSPACE) {

@@ -10,6 +10,11 @@ const { getSwarmCoordinator } = require('../../../services/swarmCoordinator');
 const { insertChatMessage } = require('../../../services/chatMessages');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
+const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
+const {
+  ensureRunForTask,
+  isMissingOrchestrationSchemaError,
+} = require('../../../services/orchestration/runStore');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 10_000;
@@ -85,6 +90,29 @@ function parseMetadata(value) {
     }
   }
   return value;
+}
+
+function resolveTaskWorkflowMode(task) {
+  const metadata = parseMetadata(task?.metadata);
+  const mode = String(
+    metadata.workflow_mode
+    || metadata.workflowMode
+    || task?.workflow_mode
+    || ''
+  ).trim().toUpperCase();
+
+  if (mode === 'FULL') return 'FULL';
+  if (mode === 'LITE') return 'LITE';
+  return null;
+}
+
+function shouldUseAutonomousRun(task) {
+  const metadata = parseMetadata(task?.metadata);
+  if (resolveTaskWorkflowMode(task) === 'FULL') return true;
+  return metadata.execution_mode === 'autonomous'
+    || metadata.execution_backend === 'orchestration_run'
+    || metadata.autonomous === true
+    || metadata.orchestration_required === true;
 }
 
 async function postTaskChatResult(task, content, senderId, senderName) {
@@ -165,11 +193,24 @@ async function claimPendingTasks(limit = BATCH_SIZE) {
 
 async function failTask(task, err, extraMetadata = {}) {
   const message = String(err?.message || err || 'Unknown error');
-  await updateTask(task.id, 'failed', null, {
+  const mergedMetadata = {
+    ...(parseMetadata(task.metadata) || {}),
     error: message,
     ...(task.snipara_task_id ? { snipara_sync_status: 'not_completed' } : {}),
     ...extraMetadata
+  };
+  await updateTask(task.id, 'failed', null, {
+    ...mergedMetadata
   });
+
+  await signalRunFromTask({
+    ...task,
+    status: 'failed',
+    metadata: mergedMetadata,
+  }, {
+    reason: 'task_executor_failed',
+    eventType: 'delegate.task_failed',
+  }).catch(() => {});
 
   await postTaskChatResult(
     task,
@@ -204,6 +245,80 @@ async function buildExecutionPrompt(agent, task, workspaceId) {
   };
 }
 
+function buildInitialRunPlan(task, executionAgent) {
+  const metadata = parseMetadata(task?.metadata);
+  return {
+    goal: task?.title || 'Autonomous task execution',
+    strategy: 'pending_planner',
+    requested_workflow_mode: resolveTaskWorkflowMode(task) || 'FULL',
+    created_by: 'task_executor',
+    root_task: {
+      id: task?.id || null,
+      title: task?.title || '',
+      description: task?.description || '',
+      assigned_agent: task?.assigned_agent || task?.assignee || executionAgent?.username || null,
+    },
+    workflow_reasons: Array.isArray(metadata.workflow_reasons) ? metadata.workflow_reasons : [],
+  };
+}
+
+function buildInitialRunContext(task, executionAgent, workspaceId) {
+  const metadata = parseMetadata(task?.metadata);
+  return {
+    workspace_id: workspaceId,
+    source: metadata.origin || 'task',
+    root_task: {
+      id: task?.id || null,
+      title: task?.title || '',
+      description: task?.description || '',
+      priority: task?.priority || null,
+      snipara_task_id: task?.snipara_task_id || null,
+      swarm_task_id: task?.swarm_task_id || null,
+    },
+    requested_agent: {
+      id: executionAgent?.id || null,
+      username: executionAgent?.username || null,
+      role: executionAgent?.role || null,
+    },
+  };
+}
+
+async function queueAutonomousRunForTask(task, executionAgent, workspaceId) {
+  const metadata = parseMetadata(task.metadata);
+  const runSeed = await ensureRunForTask({
+    db: pool,
+    workspaceId,
+    task,
+    requestedAgent: {
+      id: executionAgent.id,
+      username: executionAgent.username,
+    },
+    displayAgent: {
+      id: executionAgent.id,
+      username: executionAgent.username,
+    },
+    orchestratedBy: 'jarvis',
+    summary: `Autonomous FULL-mode run for task "${task.title || task.id}".`,
+    plan: buildInitialRunPlan(task, executionAgent),
+    context: buildInitialRunContext(task, executionAgent, workspaceId),
+  });
+
+  await updateTask(task.id, 'in_progress', null, {
+    ...metadata,
+    execution_backend: 'orchestration_run',
+    execution_mode: 'autonomous',
+    workflow_mode: resolveTaskWorkflowMode(task) || 'FULL',
+    orchestration_run_id: runSeed.run?.id || null,
+    orchestration_step_id: runSeed.step?.id || null,
+    orchestration_status: runSeed.run?.status || 'queued',
+    orchestrated_by: runSeed.run?.orchestrated_by || 'jarvis',
+    requested_agent_id: runSeed.run?.requested_agent_id || executionAgent.id || null,
+    display_agent_id: runSeed.run?.display_agent_id || executionAgent.id || null,
+  });
+
+  return runSeed;
+}
+
 async function executeTask(task) {
   const workspaceId = normalizeWorkspaceId(task.workspace_id);
   const agents = await loadAgents(workspaceId);
@@ -225,6 +340,19 @@ async function executeTask(task) {
   try {
     if (task.snipara_task_id) {
       await swarmCoordinator.claimTask(task.snipara_task_id, agentRef, workspaceId);
+    }
+
+    if (shouldUseAutonomousRun(task)) {
+      try {
+        const runSeed = await queueAutonomousRunForTask(task, executionAgent, workspaceId);
+        console.log(
+          `[TaskExecutor] Queued autonomous run ${runSeed.run?.id || 'unknown'} for "${task.title}" (${runSeed.created ? 'created' : 'reused'})`
+        );
+        return;
+      } catch (err) {
+        if (!isMissingOrchestrationSchemaError(err)) throw err;
+        console.warn('[TaskExecutor] orchestration run schema missing, falling back to direct LLM execution:', err.message);
+      }
     }
 
     const executionPrompt = await buildExecutionPrompt(executionAgent, task, workspaceId);
@@ -288,7 +416,21 @@ async function executeTask(task) {
       console.warn('[TaskExecutor] memory task persistence failed:', err.message);
     });
 
-    await updateTask(task.id, 'completed', response.content, successMeta);
+    const completedMetadata = {
+      ...(parseMetadata(task.metadata) || {}),
+      ...successMeta,
+    };
+    await updateTask(task.id, 'completed', response.content, completedMetadata);
+    if (!task.snipara_task_id) {
+      await signalRunFromTask({
+        ...task,
+        status: 'completed',
+        metadata: completedMetadata,
+      }, {
+        reason: 'task_executor_completed',
+        eventType: 'delegate.task_completed',
+      }).catch(() => {});
+    }
     await postTaskChatResult(task, response.content, String(executionAgent.id), executionAgent.name).catch((chatErr) => {
       console.error('[TaskExecutor] Failed to post completion in chat:', chatErr.message);
     });
@@ -360,6 +502,9 @@ module.exports = {
     buildTaskPrompt,
     buildExecutionPrompt,
     failTask,
-    postTaskChatResult
+    postTaskChatResult,
+    queueAutonomousRunForTask,
+    resolveTaskWorkflowMode,
+    shouldUseAutonomousRun,
   }
 };

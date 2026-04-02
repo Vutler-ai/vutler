@@ -2,6 +2,7 @@
 
 const path = require('path');
 const { pool } = require('../lib/postgres');
+const { signalRunFromTask } = require('./orchestration/runSignals');
 
 const ROUTING_RULES = [
   { patterns: ['bug', 'fix', 'error', 'crash', 'broken', '500', 'fail'], agent: 'bug-hunter', priority: 'P1' },
@@ -247,6 +248,22 @@ async function updateTask(taskId, updates, workspaceId) {
         task.workspace_id || workspaceId
       );
       console.log('[TaskRouter] Completed task in Snipara swarm:', task.snipara_task_id || task.swarm_task_id);
+    }
+
+    const remoteCompletionHandled = shouldSyncRemote
+      && task
+      && (updates.status === 'done' || updates.status === 'completed')
+      && (task.snipara_task_id || task.swarm_task_id);
+
+    if (!remoteCompletionHandled) {
+      await signalRunFromTask(task, {
+        reason: 'task_router_update',
+        eventType: updates.status === 'done' || updates.status === 'completed'
+          ? 'delegate.task_completed'
+          : updates.status === 'failed'
+            ? 'delegate.task_failed'
+            : 'delegate.task_status_changed',
+      }).catch(() => {});
     }
 
     return task || null;

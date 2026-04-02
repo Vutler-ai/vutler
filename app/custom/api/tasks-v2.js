@@ -8,6 +8,7 @@ const express = require('express');
 const { authenticateAgent } = require('../lib/auth');
 const pool = require('../../../lib/vaultbrix');
 const { getSwarmCoordinator } = require('../services/swarmCoordinator');
+const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
@@ -462,6 +463,20 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
         workspaceId
       ]
     );
+
+    const remoteCompletionHandled = updates.status === 'completed' && task.snipara_task_id;
+    if (!remoteCompletionHandled) {
+      await signalRunFromTask(saved.rows[0], {
+        reason: 'tasks_v2_patch',
+        eventType: updates.status === 'completed'
+          ? 'delegate.task_completed'
+          : updates.status === 'failed'
+            ? 'delegate.task_failed'
+            : updates.status === 'blocked'
+              ? 'delegate.task_blocked'
+              : 'delegate.task_status_changed',
+      }).catch(() => {});
+    }
 
     res.json({ success: true, data: saved.rows[0] });
   } catch (error) {

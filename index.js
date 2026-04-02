@@ -1067,6 +1067,16 @@ async function start() {
     taskExecutor.start();
     app.locals.taskExecutor = taskExecutor;
 
+    // Durable orchestration run engine
+    try {
+      const { getRunEngine } = require('./services/orchestration/runEngine');
+      const runEngine = getRunEngine();
+      runEngine.start();
+      app.locals.runEngine = runEngine;
+    } catch (e) {
+      console.warn('[BOOT] Run engine skipped:', e.message);
+    }
+
     // Memory maintenance — periodic cleanup / compaction of short-lived memories
     try {
       const { MemoryMaintenanceService } = require('./services/memoryMaintenanceService');
@@ -1153,6 +1163,7 @@ async function start() {
     // Graceful shutdown
     const shutdown = (signal) => {
       console.log(`${signal} received, shutting down...`);
+      if (app.locals.runEngine?.stop) app.locals.runEngine.stop();
       watchdog.stop();
       sniparaSyncLoop.stop();
       server.close(() => process.exit(0));
