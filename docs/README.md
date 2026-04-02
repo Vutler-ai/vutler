@@ -7,9 +7,21 @@
 - [Staging Deploy and Validation Runbook](runbooks/staging-deploy-validation.md) is the operational path for migrations, deploy, smoke, and e2e checks on the Vutler staging VPS.
 - [Production Deploy From Clean Artifact](runbooks/production-deploy-clean-artifact.md) is the canonical production deploy path from an exact pushed commit.
 - [Production Rollback From Rollback Note](runbooks/production-rollback-clean-artifact.md) explains how to roll back to the previous Docker images without using the dirty VPS checkout.
+- [Production Ops Hardening Plan](runbooks/production-ops-hardening-plan.md) tracks the current release, backup, deploy-gate, observability, and secret-hygiene priorities.
+- [Database Backup And Restore](runbooks/database-backup-restore.md) documents verified logical backups, retention, and restore drill expectations.
 - [VUTLER_API_KEY Rotation Runbook](runbooks/vutler-api-key-rotation.md) covers runtime API key rotation without breaking smoke validation.
 - [Security Actions Required](runbooks/security-actions-required.md) tracks remediation items left open after security reviews.
 - [Workspace / Google Skills Refactor](workspace-google-skills-refactor.md) documents the explicit `workspace_drive`, `google_drive`, and `google_calendar` skill split, template sync, and validation coverage.
+
+### Quick command index
+
+Use these first for production ops:
+
+```bash
+npm run ops:prod:audit
+npm run db:backup
+./scripts/production-state-audit.sh --strict
+```
 
 ## Orchestrator Notes
 

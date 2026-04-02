@@ -313,6 +313,29 @@ cd api && pnpm dev
 pnpm test
 ```
 
+### Operations commands
+
+For production/Vaultbrix operational checks, prefer these entry points first:
+
+```bash
+npm run ops:prod:audit
+npm run db:backup
+./scripts/production-state-audit.sh --strict
+```
+
+Meaning:
+- `npm run ops:prod:audit` → standard production state audit wrapper
+- `npm run db:backup` → logical database backup entry point
+- `./scripts/production-state-audit.sh --strict` → hard gate for unhealthy API, pending migrations, or mixed owners
+
+Primary references:
+- `scripts/production-state-audit.sh`
+- `scripts/backup-db.sh`
+- `docs/runbooks/production-ops-hardening-plan.md`
+- `docs/runbooks/database-backup-restore.md`
+- `docs/runbooks/production-deploy-clean-artifact.md`
+- `docs/runbooks/production-rollback-clean-artifact.md`
+
 ---
 
 ## Conventions
