@@ -51,7 +51,7 @@ const clientTools = [
     },
     async handler({ name, email, notes }) {
       const payload = { name };
-      if (email !== undefined) payload.email = email;
+      if (email !== undefined) payload.contact_email = email;
       if (notes !== undefined) payload.notes = notes;
       const result = await api.post('/api/v1/clients', payload);
       return result;
@@ -89,7 +89,7 @@ const clientTools = [
     async handler({ client_id, name, email, notes }) {
       const payload = {};
       if (name  !== undefined) payload.name  = name;
-      if (email !== undefined) payload.email = email;
+      if (email !== undefined) payload.contact_email = email;
       if (notes !== undefined) payload.notes = notes;
       const result = await api.put(`/api/v1/clients/${client_id}`, payload);
       return result;

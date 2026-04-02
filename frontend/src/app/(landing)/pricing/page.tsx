@@ -30,23 +30,23 @@ const PLANS: Plan[] = [
     tier: 'free',
     price: { monthly: 0, yearly: 0 },
     limits: { agents: 1, storage_gb: 0.5 },
-    features: ['chat', 'dashboard'],
+    features: ['agents', 'chat', 'dashboard'],
   },
   {
     id: 'office_starter',
     label: 'Office Starter',
     tier: 'office',
     price: { monthly: 2900, yearly: 29000 },
-    limits: { agents: 0, storage_gb: 5 },
-    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'pixel-office'],
+    limits: { agents: 2, storage_gb: 5 },
+    features: ['agents', 'chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'memory', 'pixel-office'],
   },
   {
     id: 'office_team',
     label: 'Office Pro',
     tier: 'office',
     price: { monthly: 7900, yearly: 79000 },
-    limits: { agents: 0, storage_gb: 50 },
-    features: ['chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'goals', 'crm', 'pixel-office'],
+    limits: { agents: 10, storage_gb: 50 },
+    features: ['agents', 'chat', 'drive', 'email', 'tasks', 'calendar', 'integrations', 'dashboard', 'memory', 'goals', 'crm', 'pixel-office'],
   },
   {
     id: 'agents_starter',
@@ -54,7 +54,7 @@ const PLANS: Plan[] = [
     tier: 'agents',
     price: { monthly: 2900, yearly: 29000 },
     limits: { agents: 10, storage_gb: 5 },
-    features: ['agents', 'nexus', 'sandbox', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    features: ['agents', 'memory', 'nexus', 'sandbox', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
   },
   {
     id: 'agents_pro',
@@ -62,7 +62,7 @@ const PLANS: Plan[] = [
     tier: 'agents',
     price: { monthly: 7900, yearly: 79000 },
     limits: { agents: 50, storage_gb: 25 },
-    features: ['agents', 'nexus', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
+    features: ['agents', 'memory', 'nexus', 'sandbox', 'builder', 'swarm', 'automations', 'llm-settings', 'tools', 'runtime', 'deployments', 'templates', 'knowledge', 'providers', 'dashboard'],
     highlight: true,
     badge: 'Most Popular',
   },
@@ -154,7 +154,7 @@ const COMPARISON_ROWS: ComparisonRow[] = [
   { label: 'Sandbox', key: 'sandbox', type: 'feature' },
   { label: 'Swarm (multi-agent)', key: 'swarm', type: 'feature' },
   { label: 'Automations', key: 'automations', type: 'feature' },
-  { label: 'Memory (3-level)', key: 'memory', type: 'feature', getValue: (p) => p.features.includes('*') || p.features.includes('agents') },
+  { label: 'Memory (3-level)', key: 'memory', type: 'feature', getValue: (p) => p.features.includes('*') || p.features.includes('memory') },
 ];
 
 function hasFeature(plan: Plan, key: string): boolean {
@@ -428,7 +428,7 @@ export default function PricingPage() {
         <div className="text-center rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-600/5 to-purple-600/5 p-12">
           <h3 className="text-3xl font-bold mb-4">Start free during Open Beta</h3>
           <p className="text-white/50 mb-8 max-w-lg mx-auto">
-            Full platform access. No credit card required. Upgrade when ready.
+            Open Beta access. No credit card required. Plan limits still apply.
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
             <Button size="lg" className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-8 text-base font-semibold shadow-xl shadow-blue-600/25" asChild>

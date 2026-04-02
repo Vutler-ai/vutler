@@ -20,8 +20,8 @@ const FEATURE_COPY: Record<string, {
     icon: MessageSquare,
     billingTab: 'office',
     planOptions: [
-      { id: 'office_starter', label: 'Office Starter', summary: 'Chat, Drive, Email, Tasks, Calendar et integrations.' },
-      { id: 'office_team', label: 'Office Team', summary: 'Meme surface office avec plus de stockage et de capacite.' },
+      { id: 'office_starter', label: 'Office Starter', summary: '2 agents heberges, chat, email, drive, tasks, calendar et integrations.' },
+      { id: 'office_team', label: 'Office Pro', summary: '10 agents heberges, plus de stockage, CRM et goals pour les equipes actives.' },
     ],
   },
   tasks: {
@@ -31,8 +31,8 @@ const FEATURE_COPY: Record<string, {
     icon: BrainCircuit,
     billingTab: 'office',
     planOptions: [
-      { id: 'office_starter', label: 'Office Starter', summary: 'Debloque tasks, calendar et collaboration office.' },
-      { id: 'office_team', label: 'Office Team', summary: 'Version office etendue pour les equipes plus actives.' },
+      { id: 'office_starter', label: 'Office Starter', summary: '2 agents heberges, tasks, calendar et collaboration workspace.' },
+      { id: 'office_team', label: 'Office Pro', summary: '10 agents heberges et une surface office etendue pour les equipes actives.' },
     ],
   },
   email: {
@@ -42,8 +42,8 @@ const FEATURE_COPY: Record<string, {
     icon: Mail,
     billingTab: 'office',
     planOptions: [
-      { id: 'office_starter', label: 'Office Starter', summary: 'Email, routage agent, domaines et groupes internes.' },
-      { id: 'office_team', label: 'Office Team', summary: 'Meme surface email avec plus de capacite workspace.' },
+      { id: 'office_starter', label: 'Office Starter', summary: '2 agents heberges, email, routage agent, domaines et groupes internes.' },
+      { id: 'office_team', label: 'Office Pro', summary: '10 agents heberges avec la meme surface email et plus de capacite workspace.' },
     ],
   },
   drive: {
@@ -53,8 +53,8 @@ const FEATURE_COPY: Record<string, {
     icon: FolderOpen,
     billingTab: 'office',
     planOptions: [
-      { id: 'office_starter', label: 'Office Starter', summary: 'Drive partage et documents internes du workspace.' },
-      { id: 'office_team', label: 'Office Team', summary: 'Davantage de stockage pour les flux documentaires.' },
+      { id: 'office_starter', label: 'Office Starter', summary: '2 agents heberges, drive partage et documents internes du workspace.' },
+      { id: 'office_team', label: 'Office Pro', summary: '10 agents heberges et davantage de stockage pour les flux documentaires.' },
     ],
   },
   calendar: {
@@ -64,8 +64,8 @@ const FEATURE_COPY: Record<string, {
     icon: CalendarDays,
     billingTab: 'office',
     planOptions: [
-      { id: 'office_starter', label: 'Office Starter', summary: 'Calendar, tasks et coordinations de planning.' },
-      { id: 'office_team', label: 'Office Team', summary: 'Capacite office renforcee pour plusieurs utilisateurs.' },
+      { id: 'office_starter', label: 'Office Starter', summary: '2 agents heberges, calendar, tasks et coordinations de planning.' },
+      { id: 'office_team', label: 'Office Pro', summary: '10 agents heberges et une capacite office renforcee pour plusieurs utilisateurs.' },
     ],
   },
   agents: {
@@ -75,8 +75,8 @@ const FEATURE_COPY: Record<string, {
     icon: Wrench,
     billingTab: 'agents',
     planOptions: [
-      { id: 'agents_starter', label: 'Agents Starter', summary: 'Jusqu’a 25 agents avec builder, tools et runtime.' },
-      { id: 'agents_pro', label: 'Agents Pro', summary: 'Jusqu’a 100 agents et plus de capacite Nexus.' },
+      { id: 'agents_starter', label: 'Agents Starter', summary: 'Jusqu’a 10 agents avec builder, tools et runtime.' },
+      { id: 'agents_pro', label: 'Agents Pro', summary: 'Jusqu’a 50 agents et plus de capacite Nexus.' },
     ],
   },
   nexus: {
@@ -120,7 +120,7 @@ const FEATURE_COPY: Record<string, {
     icon: PlugZap,
     billingTab: 'office',
     planOptions: [
-      { id: 'office_starter', label: 'Office Starter', summary: 'Integrations workspace et outils office connectes.' },
+      { id: 'office_starter', label: 'Office Starter', summary: '2 agents heberges, integrations workspace et outils office connectes.' },
       { id: 'full', label: 'Full Platform', summary: 'Office + Agents sur une seule offre.' },
     ],
   },

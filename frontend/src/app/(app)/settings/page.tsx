@@ -1029,14 +1029,14 @@ curl https://app.vutler.ai/api/v1/agents \\
             </pre>
           </div>
           <div className="space-y-2">
-            <p className="text-[#9ca3af] text-sm font-medium">MCP Integration (Claude Code, Cursor)</p>
-            <p className="text-[#6b7280] text-xs">Add to your <code className="text-purple-400">.mcp.json</code> to connect AI tools to your Vutler agents:</p>
+            <p className="text-[#9ca3af] text-sm font-medium">MCP Integration (Claude Desktop, Cursor, Claude Code)</p>
+            <p className="text-[#6b7280] text-xs">Add to your <code className="text-purple-400">.mcp.json</code> to connect AI tools to your Vutler workspace:</p>
             <pre className="bg-[#0a0b14] border border-purple-500/10 rounded-lg p-4 text-xs text-purple-300/70 font-mono overflow-x-auto">
               {`{
   "mcpServers": {
-    "vutler-nexus": {
+    "vutler": {
       "command": "npx",
-      "args": ["-y", "@vutler/mcp-nexus"],
+      "args": ["-y", "@vutler/mcp"],
       "env": {
         "VUTLER_API_URL": "https://app.vutler.ai",
         "VUTLER_API_KEY": "vt_your_key_here"

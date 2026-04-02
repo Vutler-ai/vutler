@@ -64,6 +64,7 @@ async function queryWithWorkspace(workspaceId, text, params) {
 async function checkWorkspaceLimits(workspaceId, plan) {
   try {
     const pool = getPool();
+    const { getPlan } = require('../packages/core/middleware/featureGate');
 
     // Count agents
     const agentsRes = await pool.query(
@@ -113,14 +114,29 @@ async function checkWorkspaceLimits(workspaceId, plan) {
     const storageBytes   = parseInt(storageRes.rows[0].cnt, 10);
     const socialPosts    = parseInt(socialPostsRes.rows[0].cnt, 10);
 
-    // Plan limits — these mirror the values in featureGate.js
-    const LIMITS = {
-      free:       { agents: 3,   tokens_month: 50000,    storage_gb: 1,    social_posts_month: 0 },
-      starter:    { agents: 10,  tokens_month: 500000,   storage_gb: 10,   social_posts_month: 10 },
-      pro:        { agents: 50,  tokens_month: 5000000,  storage_gb: 100,  social_posts_month: 50 },
-      enterprise: { agents: 500, tokens_month: 50000000, storage_gb: 1000, social_posts_month: 500 },
+    const legacyPlanMap = {
+      free: null,
+      starter: {
+        agents: 10,
+        tokens_month: 500000,
+        storage_gb: 10,
+        social_posts_month: 10,
+      },
+      pro: {
+        agents: 50,
+        tokens_month: 5000000,
+        storage_gb: 100,
+        social_posts_month: 50,
+      },
+      enterprise: {
+        agents: 500,
+        tokens_month: 50000000,
+        storage_gb: 1000,
+        social_posts_month: 500,
+      },
     };
-    const limits = LIMITS[plan] || LIMITS.free;
+    const legacyPlan = legacyPlanMap[String(plan || '').toLowerCase()];
+    const limits = legacyPlan || getPlan(plan).limits;
     const storageGb = storageBytes / (1024 ** 3);
 
     const usage = {

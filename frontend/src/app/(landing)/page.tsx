@@ -369,9 +369,9 @@ function FeaturesSection() {
 
 const MCP_CONFIG = `{
   "mcpServers": {
-    "vutler-nexus": {
+    "vutler": {
       "command": "npx",
-      "args": ["-y", "@vutler/mcp-nexus"],
+      "args": ["-y", "@vutler/mcp"],
       "env": {
         "VUTLER_API_URL": "https://app.vutler.ai",
         "VUTLER_API_KEY": "vt_your_key_here"
@@ -382,9 +382,9 @@ const MCP_CONFIG = `{
 
 const NEXUS_BRIDGE_CONFIG = `{
   "mcpServers": {
-    "vutler-nexus": {
+    "vutler": {
       "command": "npx",
-      "args": ["-y", "@vutler/mcp-nexus"],
+      "args": ["-y", "@vutler/mcp"],
       "env": {
         "VUTLER_API_URL": "https://app.vutler.ai",
         "VUTLER_API_KEY": "vt_your_key_here"
@@ -404,13 +404,12 @@ const MCP_TOOLS = [
 ];
 
 const NEXUS_TOOLS = [
-  { name: 'nexus_delegate_task', desc: 'Delegate work to an agent' },
-  { name: 'nexus_list_agents', desc: 'Discover available agents' },
-  { name: 'nexus_resolve_routing', desc: 'Auto-pick the right agent' },
-  { name: 'nexus_wait_task', desc: 'Wait for task completion' },
-  { name: 'nexus_get_task', desc: 'Check task status & output' },
-  { name: 'nexus_list_tasks', desc: 'Browse delegated tasks' },
-  { name: 'nexus_cancel_task', desc: 'Abort a running task' },
+  { name: 'list_agents', desc: 'Discover available agents in the workspace' },
+  { name: 'run_agent', desc: 'Delegate work to a Vutler agent' },
+  { name: 'stop_agent', desc: 'Stop a running agent task or runtime' },
+  { name: 'list_tasks', desc: 'Browse delegated tasks' },
+  { name: 'update_task', desc: 'Adjust an in-flight task' },
+  { name: 'search_memory', desc: 'Recall workspace context before delegating' },
 ];
 
 const DELEGATION_FLOW = [
@@ -458,8 +457,9 @@ function MCPSection() {
           <div>
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">Connect your AI tools</h2>
             <p className="text-white/50 text-lg mb-6 leading-relaxed">
-              Vutler exposes a full MCP server. Connect Claude Desktop, Cursor, or any MCP-compatible client
-              and let your tools control your AI workforce directly.
+              Vutler exposes one MCP server for the native Vutler workspace. Connect Claude Desktop,
+              Cursor, or any MCP-compatible client and let it operate inside your workspace.
+              Tools appear according to your plan and workspace capabilities.
             </p>
             <div className="grid grid-cols-2 gap-2">
               {MCP_TOOLS.map((tool) => (
@@ -493,9 +493,9 @@ function MCPSection() {
                 Delegate from <span className="text-purple-400">Claude Code</span> to your agents
               </h2>
               <p className="text-white/50 text-lg mb-6 leading-relaxed">
-                The Nexus Bridge MCP connects Claude Code directly to your Vutler agents.
-                Delegate code tasks, reviews, deployments, and migrations to specialized agents
-                running locally, in the cloud, or sandboxed on Codex.
+                The same Vutler MCP also lets Claude Code discover agents, delegate work,
+                and follow execution through the Vutler runtime. Use it for code tasks,
+                reviews, deployments, and governed agent ops.
               </p>
 
               {/* Delegation flow */}
@@ -721,7 +721,7 @@ function PricingPreview() {
       period: '/mo',
       description: 'For teams using AI in day-to-day ops.',
       color: 'blue',
-      features: ['Chat, Email, Drive, Tasks', 'Calendar, CRM & Goals', 'BYOK — no token limits', '5–50GB Swiss storage'],
+      features: ['2–10 hosted agents included', 'Chat, Email, Drive, Tasks', 'Calendar, CRM & Goals', '5–50GB Swiss storage'],
     },
     {
       name: 'Agents',
@@ -847,7 +847,7 @@ function CTASection() {
           today
         </h2>
         <p className="text-xl text-white/50 mb-10 max-w-2xl mx-auto">
-          Free to try. No credit card required. Full access during Open Beta.
+          Free to try during Open Beta. No credit card required. Plan limits apply.
         </p>
         <div className="flex flex-wrap gap-4 justify-center">
           <Button size="lg" className="bg-blue-600 hover:bg-blue-500 text-white h-13 px-10 text-lg font-semibold shadow-xl shadow-blue-600/25" asChild>

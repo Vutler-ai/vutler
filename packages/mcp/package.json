@@ -1,0 +1,21 @@
+{
+  "name": "@vutler/mcp",
+  "version": "1.0.0",
+  "description": "Unified MCP server for the Vutler workspace and agent operations",
+  "main": "index.js",
+  "bin": {
+    "vutler-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": ["mcp", "vutler", "workspace", "agents", "office", "claude", "chatgpt"],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
