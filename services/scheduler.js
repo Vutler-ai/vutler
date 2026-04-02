@@ -11,6 +11,8 @@
 const pool = require('../lib/vaultbrix');
 const { chat: llmChat } = require('./llmRouter');
 const { getSwarmCoordinator } = require('./swarmCoordinator');
+const { getRunEngine } = require('./orchestration/runEngine');
+const { ensureRunForTask } = require('./orchestration/runStore');
 const { assertColumnsExist, assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
@@ -40,6 +42,7 @@ const SCHEDULED_TASK_RUN_COLUMNS = [
   'started_at',
   'completed_at',
 ];
+const MAX_SCHEDULE_JITTER_MS = Number(process.env.SCHEDULER_MAX_JITTER_MS) || 5_000;
 
 // ── In-memory cron registry ──────────────────────────────────────────────────
 // Map<scheduleId, { timer: NodeJS.Timeout, schedule: Object }>
@@ -142,6 +145,41 @@ function msUntilNextRun(cronExpr) {
   const next = getNextRun(cronExpr);
   if (!next) return null;
   return Math.max(next.getTime() - Date.now(), 60_000);
+}
+
+function parseTaskTemplate(template) {
+  if (!template) return {};
+  if (typeof template === 'string') {
+    try {
+      return JSON.parse(template);
+    } catch (_) {
+      return {};
+    }
+  }
+  return template && typeof template === 'object' ? template : {};
+}
+
+function computeScheduleJitterMs(scheduleId, maxMs = MAX_SCHEDULE_JITTER_MS) {
+  const raw = String(scheduleId || '');
+  if (!raw || maxMs <= 0) return 0;
+  let hash = 0;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (hash * 31 + raw.charCodeAt(i)) >>> 0;
+  }
+  return hash % maxMs;
+}
+
+function resolveScheduleTarget(template = {}) {
+  const target = template?.target && typeof template.target === 'object' ? template.target : {};
+  const kind = String(target.kind || template.target_kind || 'task').trim().toLowerCase();
+  return {
+    kind,
+    runId: target.run_id || target.runId || template.run_id || null,
+    requestedAgentId: target.requested_agent_id || template.requested_agent_id || null,
+    requestedAgentUsername: target.requested_agent_username || template.requested_agent_username || null,
+    displayAgentId: target.display_agent_id || template.display_agent_id || null,
+    displayAgentUsername: target.display_agent_username || template.display_agent_username || null,
+  };
 }
 
 // ── DB helpers ───────────────────────────────────────────────────────────────
@@ -330,6 +368,7 @@ function activateSchedule(schedule) {
       console.warn(`[Scheduler] Cannot compute next run for schedule ${id}`);
       return;
     }
+    const jitterMs = computeScheduleJitterMs(id);
 
     const timer = setTimeout(async () => {
       try {
@@ -348,7 +387,7 @@ function activateSchedule(schedule) {
         const stillActive = _activeTimers.get(id);
         if (stillActive) scheduleNextTick();
       }
-    }, ms);
+    }, ms + jitterMs);
 
     _activeTimers.set(id, { timer, schedule });
   }
@@ -524,9 +563,8 @@ async function loadActiveSchedules(workspaceId) {
 async function _executeScheduledTask(schedule) {
   console.log(`[Scheduler] Executing schedule ${schedule.id}: "${schedule.description}"`);
 
-  const template = typeof schedule.task_template === 'string'
-    ? JSON.parse(schedule.task_template)
-    : schedule.task_template;
+  const template = parseTaskTemplate(schedule.task_template);
+  const target = resolveScheduleTarget(template);
 
   // Insert a run record
   const runResult = await pool.query(
@@ -542,24 +580,107 @@ async function _executeScheduledTask(schedule) {
   let resultPayload = {};
 
   try {
-    const coordinator = getSwarmCoordinator();
-    const task = await coordinator.createTask({
-      title:        template.title       || schedule.description,
-      description:  template.description || schedule.description,
-      priority:     template.priority    || 'medium',
-      skill_key:    template.skill_key   || undefined,
-      metadata:     {
+    if (target.kind === 'run_resume') {
+      if (!target.runId) {
+        throw new Error('run_resume schedule target requires target.run_id');
+      }
+      const resumed = await getRunEngine().wakeRun(target.runId, 'scheduler');
+      if (!resumed) {
+        throw new Error(`Run ${target.runId} could not be resumed`);
+      }
+      getRunEngine().requestImmediatePoll();
+      resultPayload = {
+        run_id: target.runId,
+        resumed: true,
+      };
+    } else {
+      const coordinator = getSwarmCoordinator();
+      const taskMetadata = {
         ...(template.metadata || {}),
-        scheduled:      true,
-        schedule_id:    schedule.id,
+        scheduled: true,
+        schedule_id: schedule.id,
         schedule_run_id: runId,
-      },
-      workspace_id: schedule.workspace_id,
-      for_agent_id: schedule.agent_id || undefined,
-    });
+        schedule_target_kind: target.kind,
+      };
 
-    taskId = task?.id || task?.pgTaskId || null;
-    resultPayload = { task_id: taskId, created: true };
+      if (target.kind === 'run_template') {
+        taskMetadata.origin = taskMetadata.origin || 'schedule';
+        taskMetadata.workflow_mode = taskMetadata.workflow_mode || 'FULL';
+        taskMetadata.execution_backend = 'orchestration_run';
+        taskMetadata.execution_mode = 'autonomous';
+        taskMetadata.autonomous = true;
+      }
+
+      const task = await coordinator.createTask({
+        title: template.title || schedule.description,
+        description: template.description || schedule.description,
+        priority: template.priority || 'medium',
+        skill_key: template.skill_key || undefined,
+        metadata: taskMetadata,
+        workspace_id: schedule.workspace_id,
+        for_agent_id: schedule.agent_id || target.requestedAgentUsername || undefined,
+      });
+
+      taskId = task?.id || task?.pgTaskId || null;
+      resultPayload = { task_id: taskId, created: true };
+
+      if (target.kind === 'run_template' && task?.id) {
+        const runSeed = await ensureRunForTask({
+          db: pool,
+          workspaceId: schedule.workspace_id,
+          task,
+          requestedAgent: {
+            id: target.requestedAgentId || null,
+            username: target.requestedAgentUsername || schedule.agent_id || task.assigned_agent || null,
+          },
+          displayAgent: {
+            id: target.displayAgentId || target.requestedAgentId || null,
+            username: target.displayAgentUsername || target.requestedAgentUsername || schedule.agent_id || task.assigned_agent || null,
+          },
+          orchestratedBy: 'scheduler',
+          summary: `Scheduled autonomous run for "${template.title || schedule.description}".`,
+          plan: {
+            goal: template.title || schedule.description,
+            strategy: 'scheduled_run_template',
+            requested_workflow_mode: 'FULL',
+            created_by: 'scheduler',
+            schedule_id: schedule.id,
+          },
+          context: {
+            workspace_id: schedule.workspace_id,
+            source: 'schedule',
+            schedule_id: schedule.id,
+            schedule_run_id: runId,
+          },
+        });
+
+        await pool.query(
+          `UPDATE ${SCHEMA}.tasks
+           SET status = 'in_progress',
+               metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [
+            task.id,
+            JSON.stringify({
+              orchestration_run_id: runSeed.run?.id || null,
+              orchestration_step_id: runSeed.step?.id || null,
+              orchestration_status: runSeed.run?.status || 'queued',
+              orchestrated_by: runSeed.run?.orchestrated_by || 'scheduler',
+              execution_backend: 'orchestration_run',
+              execution_mode: 'autonomous',
+              workflow_mode: 'FULL',
+            }),
+          ]
+        );
+
+        resultPayload = {
+          ...resultPayload,
+          orchestration_run_id: runSeed.run?.id || null,
+          orchestration_step_id: runSeed.step?.id || null,
+        };
+      }
+    }
   } catch (err) {
     console.error(`[Scheduler] Task creation failed for schedule ${schedule.id}:`, err.message);
     status = 'failed';

@@ -8,6 +8,11 @@
  */
 
 const { pool } = require('../lib/postgres');
+const {
+  appendRunEventForTask,
+  signalRunFromTask,
+  wakeRunFromTask,
+} = require('./orchestration/runSignals');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -62,7 +67,7 @@ class AgentWatchdog {
 
     for (const task of result.rows) {
       // FULL mode tasks get more time before being considered stalled
-      const meta = typeof task.metadata === 'string' ? JSON.parse(task.metadata || '{}') : (task.metadata || {});
+      const meta = this._parseMetadata(task);
       if (meta.workflow_mode === 'FULL') {
         const fullThreshold = this.stallThresholdMs * 3; // 30 min for FULL vs 10 min for LITE
         const elapsed = Date.now() - new Date(task.updated_at).getTime();
@@ -79,6 +84,28 @@ class AgentWatchdog {
         this._nudgeCounts.delete(task.id);
       }
     }
+  }
+
+  _parseMetadata(task) {
+    if (!task?.metadata) return {};
+    if (typeof task.metadata === 'string') {
+      try {
+        return JSON.parse(task.metadata || '{}');
+      } catch (_) {
+        return {};
+      }
+    }
+    return task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  }
+
+  _isOrchestrationChildTask(task) {
+    const meta = this._parseMetadata(task);
+    return Boolean(meta.orchestration_parent_run_id);
+  }
+
+  _isOrchestrationRootTask(task) {
+    const meta = this._parseMetadata(task);
+    return Boolean(meta.orchestration_run_id && meta.execution_backend === 'orchestration_run');
   }
 
   /**
@@ -177,6 +204,15 @@ class AgentWatchdog {
       `UPDATE ${SCHEMA}.tasks SET updated_at = NOW() WHERE id = $1`,
       [task.id]
     );
+
+    await appendRunEventForTask(task, {
+      eventType: 'watchdog.nudged',
+      actor: 'watchdog',
+      payload: {
+        nudge_number: nudgeNumber,
+        max_nudges: this.maxNudges,
+      },
+    }).catch(() => {});
   }
 
   /**
@@ -184,6 +220,63 @@ class AgentWatchdog {
    */
   async _redispatch(task) {
     console.log(`[Watchdog] Re-dispatching task ${task.id} (was assigned to ${task.assigned_agent})`);
+
+    if (this._isOrchestrationChildTask(task)) {
+      const meta = this._parseMetadata(task);
+      const nextMetadata = {
+        ...meta,
+        watchdog_status: 'failed_for_redispatch',
+        watchdog_failed_at: new Date().toISOString(),
+        watchdog_failed_reason: 'stalled_child_task',
+      };
+
+      await pool.query(
+        `UPDATE ${SCHEMA}.tasks
+         SET status = 'failed',
+             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [task.id, JSON.stringify(nextMetadata)]
+      );
+
+      await signalRunFromTask({
+        ...task,
+        status: 'failed',
+        metadata: nextMetadata,
+      }, {
+        reason: 'watchdog_redispatch',
+        eventType: 'delegate.task_watchdog_failed',
+        force: true,
+      }).catch(() => {});
+
+      return;
+    }
+
+    if (this._isOrchestrationRootTask(task)) {
+      const meta = this._parseMetadata(task);
+      await pool.query(
+        `UPDATE ${SCHEMA}.tasks
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [task.id, JSON.stringify({
+          ...meta,
+          watchdog_status: 'woken',
+          watchdog_woken_at: new Date().toISOString(),
+        })]
+      );
+
+      await wakeRunFromTask(task, {
+        reason: 'watchdog_root_stall',
+        eventType: 'run.watchdog_woken',
+        actor: 'watchdog',
+        extraPayload: {
+          task_kind: 'root_task',
+        },
+      }).catch(() => {});
+
+      return;
+    }
 
     // Mark the stalled task
     await pool.query(

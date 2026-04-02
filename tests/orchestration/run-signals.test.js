@@ -28,7 +28,7 @@ describe('runSignals', () => {
 
     expect(result).toEqual(expect.objectContaining({
       signaled: false,
-      reason: 'not_orchestration_child',
+      reason: 'not_orchestration_task',
       status: 'completed',
     }));
     expect(getRunById).not.toHaveBeenCalled();
