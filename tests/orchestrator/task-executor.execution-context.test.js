@@ -188,6 +188,16 @@ describe('taskExecutor execution context', () => {
       }),
     }));
     jest.doMock('../../services/executionOverlayService', () => ({
+      buildOverlaySuggestionMessages: jest.fn((overlay) => {
+        const blocked = overlay?.blocked || {};
+        return [
+          ...(Array.isArray(blocked.providers) ? blocked.providers : []),
+          ...(Array.isArray(blocked.skills) ? blocked.skills : []),
+          ...(Array.isArray(blocked.toolCapabilities) ? blocked.toolCapabilities : []),
+        ]
+          .map((entry) => entry?.reason)
+          .filter(Boolean);
+      }),
       filterExecutionOverlay,
       isOverlayEmpty: jest.requireActual('../../services/executionOverlayService').isOverlayEmpty,
     }));

@@ -11,7 +11,11 @@ const { createMemoryRuntimeService } = require('../../../services/memory/runtime
 const { createSniparaGateway } = require('../../../services/snipara/gateway');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 const { resolveOrchestrationCapabilities } = require('../../../services/orchestrationCapabilityResolver');
-const { filterExecutionOverlay, isOverlayEmpty } = require('../../../services/executionOverlayService');
+const {
+  buildOverlaySuggestionMessages,
+  filterExecutionOverlay,
+  isOverlayEmpty,
+} = require('../../../services/executionOverlayService');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 3000;
@@ -658,6 +662,10 @@ async function handleMessage(message) {
       orchestration_overlay_skills: executionAgent.execution_overlay.skillKeys || [],
       orchestration_overlay_providers: executionAgent.execution_overlay.integrationProviders || [],
       orchestration_overlay_tool_capabilities: executionAgent.execution_overlay.toolCapabilities || [],
+      orchestration_blocked_overlay_providers: filteredExecutionOverlay.blocked?.providers || [],
+      orchestration_blocked_overlay_skills: filteredExecutionOverlay.blocked?.skills || [],
+      orchestration_blocked_overlay_tool_capabilities: filteredExecutionOverlay.blocked?.toolCapabilities || [],
+      orchestration_autonomy_suggestions: buildOverlaySuggestionMessages(filteredExecutionOverlay),
       orchestration_delegated_agents: orchestration.delegatedAgents || [],
       available_runtime_providers: orchestration.availability?.availableProviders || [],
       unavailable_runtime_providers: orchestration.availability?.unavailableProviders || [],

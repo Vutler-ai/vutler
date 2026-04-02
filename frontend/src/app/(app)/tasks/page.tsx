@@ -135,6 +135,35 @@ function getMetadataObject(metadata: TaskMetadata, key: string): Record<string, 
   return value as Record<string, unknown>;
 }
 
+function getMetadataArray(metadata: TaskMetadata, key: string): unknown[] {
+  const value = metadata[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function getMetadataStringArray(metadata: TaskMetadata, key: string): string[] {
+  return getMetadataArray(metadata, key)
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+}
+
+type OverlayBlockedItem = {
+  key?: string | null;
+  reason?: string | null;
+  capability?: string | null;
+  provider?: string | null;
+};
+
+function getMetadataBlockedItems(metadata: TaskMetadata, key: string): OverlayBlockedItem[] {
+  return getMetadataArray(metadata, key)
+    .filter((value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value)))
+    .map((value) => ({
+      key: typeof value.key === "string" ? value.key : null,
+      reason: typeof value.reason === "string" ? value.reason : null,
+      capability: typeof value.capability === "string" ? value.capability : null,
+      provider: typeof value.provider === "string" ? value.provider : null,
+    }));
+}
+
 function getTaskOrchestrationRunId(task: Task | null | undefined): string | null {
   const metadata = asTaskMetadata(task);
   return getMetadataString(metadata, "orchestration_run_id")
@@ -411,10 +440,28 @@ function summarizeRunEvent(event: OrchestrationRunEvent): string {
   if (event.event_type === "delegate.phase_queued") {
     return String(payload.phase_title || "Next phase queued");
   }
+  if (event.event_type === "overlay.resolved") {
+    const blockedOverlay = payload.blocked_overlay as Record<string, unknown> | undefined;
+    const blockedCount = [
+      ...(Array.isArray(blockedOverlay?.providers) ? blockedOverlay.providers : []),
+      ...(Array.isArray(blockedOverlay?.skills) ? blockedOverlay.skills : []),
+      ...(Array.isArray(blockedOverlay?.toolCapabilities) ? blockedOverlay.toolCapabilities : []),
+    ].length;
+    return blockedCount > 0 ? "Autonomy limited by capabilities" : "Autonomy overlay applied";
+  }
   if (event.event_type === "delegate.task_created") {
     return String(payload.delegated_task_agent || "Delegated task created");
   }
   return humanizeStatus(event.event_type);
+}
+
+function humanizeOverlayValues(values: string[]): string {
+  return values.map((value) => humanizeStatus(value)).join(", ");
+}
+
+function formatBlockedOverlayItem(item: OverlayBlockedItem): string {
+  const label = humanizeStatus(item.key || item.capability || item.provider || "Capability");
+  return item.reason ? `${label}: ${item.reason}` : label;
 }
 
 function describeRunEvent(event: OrchestrationRunEvent): string | null {
@@ -427,6 +474,11 @@ function describeRunEvent(event: OrchestrationRunEvent): string | null {
   const summary = typeof payload.summary === "string" ? payload.summary.trim() : "";
   const autoClosedParent = typeof payload.auto_closed_parent === "string" ? payload.auto_closed_parent.trim() : "";
   const closedWithWaiver = typeof payload.closed_with_waiver === "boolean" ? payload.closed_with_waiver : null;
+  const appliedOverlay = (payload.applied_overlay || {}) as Record<string, unknown>;
+  const blockedOverlay = (payload.blocked_overlay || {}) as Record<string, unknown>;
+  const suggestions = Array.isArray(payload.suggestions)
+    ? payload.suggestions.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    : [];
 
   if (event.event_type === "delegate.task_blocked") {
     const parts = [blockerReason, blockerType ? `Type: ${humanizeStatus(blockerType)}` : ""].filter(Boolean);
@@ -447,6 +499,25 @@ function describeRunEvent(event: OrchestrationRunEvent): string | null {
   if (event.event_type === "run.failed") return message || null;
   if (event.event_type === "run.cancelled" || event.event_type === "run.resumed") return note || null;
   if (event.event_type === "verify.failed") return message || summary || null;
+  if (event.event_type === "overlay.resolved") {
+    const appliedParts = [
+      ...(Array.isArray(appliedOverlay.providers) ? appliedOverlay.providers : []),
+      ...(Array.isArray(appliedOverlay.skills) ? appliedOverlay.skills : []),
+      ...(Array.isArray(appliedOverlay.toolCapabilities) ? appliedOverlay.toolCapabilities : []),
+    ]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    const blockedParts = [
+      ...((Array.isArray(blockedOverlay.providers) ? blockedOverlay.providers : []) as OverlayBlockedItem[]),
+      ...((Array.isArray(blockedOverlay.skills) ? blockedOverlay.skills : []) as OverlayBlockedItem[]),
+      ...((Array.isArray(blockedOverlay.toolCapabilities) ? blockedOverlay.toolCapabilities : []) as OverlayBlockedItem[]),
+    ];
+    const segments = [
+      appliedParts.length > 0 ? `Applied: ${humanizeOverlayValues(appliedParts)}` : "",
+      blockedParts.length > 0 ? `Blocked: ${blockedParts.map(formatBlockedOverlayItem).join(" · ")}` : "",
+      suggestions.length > 0 ? `Suggestions: ${suggestions.join(" · ")}` : "",
+    ].filter(Boolean);
+    return segments.join(" | ") || null;
+  }
   return null;
 }
 
@@ -645,6 +716,21 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
   const closureReady = getMetadataBoolean(taskMetadata, "orchestration_closure_ready");
   const closedWithWaiver = getMetadataBoolean(taskMetadata, "orchestration_closed_with_waiver");
   const autoClosedParent = getMetadataString(taskMetadata, "orchestration_auto_closed_parent");
+  const overlaySkills = getMetadataStringArray(taskMetadata, "orchestration_overlay_skills");
+  const overlayProviders = getMetadataStringArray(taskMetadata, "orchestration_overlay_providers");
+  const overlayToolCapabilities = getMetadataStringArray(taskMetadata, "orchestration_overlay_tool_capabilities");
+  const blockedOverlayProviders = getMetadataBlockedItems(taskMetadata, "orchestration_blocked_overlay_providers");
+  const blockedOverlaySkills = getMetadataBlockedItems(taskMetadata, "orchestration_blocked_overlay_skills");
+  const blockedOverlayToolCapabilities = getMetadataBlockedItems(taskMetadata, "orchestration_blocked_overlay_tool_capabilities");
+  const autonomySuggestions = getMetadataStringArray(taskMetadata, "orchestration_autonomy_suggestions");
+  const autonomyLimited = getMetadataBoolean(taskMetadata, "orchestration_autonomy_limited") === true;
+  const hasAutonomyTelemetry = overlaySkills.length > 0
+    || overlayProviders.length > 0
+    || overlayToolCapabilities.length > 0
+    || blockedOverlayProviders.length > 0
+    || blockedOverlaySkills.length > 0
+    || blockedOverlayToolCapabilities.length > 0
+    || autonomySuggestions.length > 0;
   const activeRunStatus = String(runDetail?.run.status || orchestrationStatus || "").toLowerCase();
   const isLiveOrchestration = isOrchestratedTask(currentTask);
   const isLiveRunActive = ACTIVE_ORCHESTRATION_RUN_STATUSES.has(activeRunStatus);
@@ -1073,6 +1159,56 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
                   {lastResolution ? (
                     <p className="text-sm text-[#cbd5e1] mt-1">Resolution: {lastResolution}</p>
                   ) : null}
+                </div>
+              )}
+
+              {hasAutonomyTelemetry && (
+                <div className={`p-3 rounded-lg border ${autonomyLimited ? "bg-amber-500/8 border-amber-500/20" : "bg-indigo-500/8 border-indigo-500/20"}`}>
+                  <p className={`text-xs font-medium mb-2 ${autonomyLimited ? "text-amber-300" : "text-indigo-300"}`}>
+                    Autonomy
+                  </p>
+                  {(overlayProviders.length > 0 || overlaySkills.length > 0 || overlayToolCapabilities.length > 0) && (
+                    <div className="space-y-1">
+                      <p className="text-[11px] uppercase tracking-wider text-[#94a3b8]">Applied overlay</p>
+                      {overlayProviders.length > 0 && (
+                        <p className="text-sm text-[#e5e7eb]">
+                          Providers: {humanizeOverlayValues(overlayProviders)}
+                        </p>
+                      )}
+                      {overlaySkills.length > 0 && (
+                        <p className="text-sm text-[#cbd5e1]">
+                          Skills: {humanizeOverlayValues(overlaySkills)}
+                        </p>
+                      )}
+                      {overlayToolCapabilities.length > 0 && (
+                        <p className="text-sm text-[#cbd5e1]">
+                          Tools: {humanizeOverlayValues(overlayToolCapabilities)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {(blockedOverlayProviders.length > 0 || blockedOverlaySkills.length > 0 || blockedOverlayToolCapabilities.length > 0) && (
+                    <div className="space-y-1 mt-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#94a3b8]">Blocked overlay</p>
+                      {[...blockedOverlayProviders, ...blockedOverlaySkills, ...blockedOverlayToolCapabilities].map((item, index) => (
+                        <p key={`${item.key || item.capability || item.provider || "blocked"}-${index}`} className="text-sm text-[#f8fafc]">
+                          {formatBlockedOverlayItem(item)}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  {autonomySuggestions.length > 0 && (
+                    <div className="space-y-1 mt-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#94a3b8]">Suggested fixes</p>
+                      {autonomySuggestions.map((suggestion, index) => (
+                        <p key={`${suggestion}-${index}`} className="text-sm text-[#cbd5e1]">
+                          {suggestion}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

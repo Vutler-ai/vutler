@@ -11,7 +11,11 @@ const { insertChatMessage } = require('../../../services/chatMessages');
 const { createMemoryRuntimeService } = require('../../../services/memory/runtime');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
-const { filterExecutionOverlay, isOverlayEmpty } = require('../../../services/executionOverlayService');
+const {
+  buildOverlaySuggestionMessages,
+  filterExecutionOverlay,
+  isOverlayEmpty,
+} = require('../../../services/executionOverlayService');
 const {
   ensureRunForTask,
   isMissingOrchestrationSchemaError,
@@ -300,13 +304,21 @@ async function resolveTaskExecutionOverlay(task, executionAgent, workspaceId) {
     skillKeys: [],
     integrationProviders: [],
     toolCapabilities: [],
+    blocked: {
+      providers: [],
+      skills: [],
+      toolCapabilities: [],
+    },
   }));
 
-  return isOverlayEmpty(filtered) ? null : {
-    skillKeys: filtered.skillKeys || [],
-    integrationProviders: filtered.integrationProviders || [],
-    toolCapabilities: filtered.toolCapabilities || [],
-  };
+  if (isOverlayEmpty(filtered)
+    && !(Array.isArray(filtered.blocked?.providers) && filtered.blocked.providers.length > 0)
+    && !(Array.isArray(filtered.blocked?.skills) && filtered.blocked.skills.length > 0)
+    && !(Array.isArray(filtered.blocked?.toolCapabilities) && filtered.blocked.toolCapabilities.length > 0)) {
+    return null;
+  }
+
+  return filtered;
 }
 
 async function queueAutonomousRunForTask(task, executionAgent, workspaceId) {
@@ -382,7 +394,14 @@ async function executeTask(task) {
     }
 
     const executionPrompt = await buildExecutionPrompt(executionAgent, task, workspaceId);
-    const executionOverlay = await resolveTaskExecutionOverlay(task, executionAgent, workspaceId);
+    const filteredExecutionOverlay = await resolveTaskExecutionOverlay(task, executionAgent, workspaceId);
+    const executionOverlay = filteredExecutionOverlay && !isOverlayEmpty(filteredExecutionOverlay)
+      ? {
+          skillKeys: filteredExecutionOverlay.skillKeys || [],
+          integrationProviders: filteredExecutionOverlay.integrationProviders || [],
+          toolCapabilities: filteredExecutionOverlay.toolCapabilities || [],
+        }
+      : null;
     const llmAgent = {
       ...executionAgent,
       ...(executionOverlay ? { execution_overlay: executionOverlay } : {}),
@@ -426,7 +445,18 @@ async function executeTask(task) {
       latency_ms: latencyMs,
       usage: response.usage || null,
       executed_by: executionAgent.name,
-      execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct'
+      execution_mode: wsConnections ? 'llm_with_nexus' : 'llm_direct',
+      ...(executionOverlay ? {
+        orchestration_overlay_skills: executionOverlay.skillKeys || [],
+        orchestration_overlay_providers: executionOverlay.integrationProviders || [],
+        orchestration_overlay_tool_capabilities: executionOverlay.toolCapabilities || [],
+      } : {}),
+      ...(filteredExecutionOverlay ? {
+        orchestration_blocked_overlay_providers: filteredExecutionOverlay.blocked?.providers || [],
+        orchestration_blocked_overlay_skills: filteredExecutionOverlay.blocked?.skills || [],
+        orchestration_blocked_overlay_tool_capabilities: filteredExecutionOverlay.blocked?.toolCapabilities || [],
+        orchestration_autonomy_suggestions: buildOverlaySuggestionMessages(filteredExecutionOverlay),
+      } : {}),
     };
 
     if (task.snipara_task_id) {

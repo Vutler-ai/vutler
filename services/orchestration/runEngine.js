@@ -7,7 +7,11 @@ const { getSwarmCoordinator } = require('../swarmCoordinator');
 const { getVerificationEngine } = require('../verificationEngine');
 const { publishTaskEvent } = require('../workspaceRealtime');
 const { resolveOrchestrationCapabilities } = require('../orchestrationCapabilityResolver');
-const { filterExecutionOverlay, isOverlayEmpty } = require('../executionOverlayService');
+const {
+  buildOverlaySuggestionMessages,
+  filterExecutionOverlay,
+  isOverlayEmpty,
+} = require('../executionOverlayService');
 const {
   DEFAULT_LEASE_MS,
   TERMINAL_RUN_STATUSES,
@@ -152,6 +156,66 @@ function buildDelegatedTaskTitle(run, rootTask, step = null) {
     return `[Run ${prefix}] ${phaseTitle}`;
   }
   return `[Run ${prefix}] ${rootTask?.title || 'Autonomous execution'}`;
+}
+
+function extractPhaseOverlayTelemetry(phase = null) {
+  const executionOverlay = phase?.execution_overlay && typeof phase.execution_overlay === 'object'
+    ? phase.execution_overlay
+    : {};
+  const blockedOverlay = phase?.execution_overlay_blocked && typeof phase.execution_overlay_blocked === 'object'
+    ? phase.execution_overlay_blocked
+    : {};
+  const suggestions = Array.isArray(phase?.execution_overlay_suggestions)
+    ? phase.execution_overlay_suggestions.filter((value) => typeof value === 'string' && value.trim())
+    : [];
+
+  return {
+    applied: {
+      skills: Array.isArray(executionOverlay.skillKeys) ? executionOverlay.skillKeys : [],
+      providers: Array.isArray(executionOverlay.integrationProviders) ? executionOverlay.integrationProviders : [],
+      toolCapabilities: Array.isArray(executionOverlay.toolCapabilities) ? executionOverlay.toolCapabilities : [],
+    },
+    blocked: {
+      providers: Array.isArray(blockedOverlay.providers) ? blockedOverlay.providers : [],
+      skills: Array.isArray(blockedOverlay.skills) ? blockedOverlay.skills : [],
+      toolCapabilities: Array.isArray(blockedOverlay.toolCapabilities) ? blockedOverlay.toolCapabilities : [],
+    },
+    suggestions,
+  };
+}
+
+function buildPhaseOverlayMetadataPatch(phase = null) {
+  const telemetry = extractPhaseOverlayTelemetry(phase);
+  return {
+    orchestration_overlay_skills: telemetry.applied.skills,
+    orchestration_overlay_providers: telemetry.applied.providers,
+    orchestration_overlay_tool_capabilities: telemetry.applied.toolCapabilities,
+    orchestration_blocked_overlay_providers: telemetry.blocked.providers,
+    orchestration_blocked_overlay_skills: telemetry.blocked.skills,
+    orchestration_blocked_overlay_tool_capabilities: telemetry.blocked.toolCapabilities,
+    orchestration_autonomy_suggestions: telemetry.suggestions,
+    orchestration_autonomy_limited: telemetry.blocked.providers.length > 0
+      || telemetry.blocked.skills.length > 0
+      || telemetry.blocked.toolCapabilities.length > 0,
+  };
+}
+
+function hasOverlayTelemetry(phase = null) {
+  const telemetry = extractPhaseOverlayTelemetry(phase);
+  return telemetry.applied.skills.length > 0
+    || telemetry.applied.providers.length > 0
+    || telemetry.applied.toolCapabilities.length > 0
+    || telemetry.blocked.providers.length > 0
+    || telemetry.blocked.skills.length > 0
+    || telemetry.blocked.toolCapabilities.length > 0;
+}
+
+function hasBlockedOverlayEntries(filteredOverlay = null) {
+  return Boolean(
+    Array.isArray(filteredOverlay?.blocked?.providers) && filteredOverlay.blocked.providers.length > 0
+    || Array.isArray(filteredOverlay?.blocked?.skills) && filteredOverlay.blocked.skills.length > 0
+    || Array.isArray(filteredOverlay?.blocked?.toolCapabilities) && filteredOverlay.blocked.toolCapabilities.length > 0
+  );
 }
 
 function formatVerificationFeedback(verdict, threshold) {
@@ -841,6 +905,22 @@ class OrchestrationRunEngine {
       ).catch(() => {});
     }
 
+    if (hasOverlayTelemetry(firstPhase)) {
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: step.id,
+        eventType: 'overlay.resolved',
+        actor: 'run-engine',
+        payload: {
+          phase_index: firstPhase?.index || 0,
+          phase_title: firstPhase?.title || rootTask.title || null,
+          applied_overlay: extractPhaseOverlayTelemetry(firstPhase).applied,
+          blocked_overlay: extractPhaseOverlayTelemetry(firstPhase).blocked,
+          suggestions: extractPhaseOverlayTelemetry(firstPhase).suggestions,
+        },
+      });
+    }
+
     let delegateStep = steps.find((entry) => entry.step_type === 'delegate_task');
     if (!delegateStep) {
       delegateStep = await createRunStep(pool, {
@@ -869,6 +949,8 @@ class OrchestrationRunEngine {
           snipara_swarm_id: plan.snipara?.swarm_id || null,
           snipara_root_task_id: plan.snipara?.root_task_id || null,
           execution_overlay: firstPhase?.execution_overlay || null,
+          execution_overlay_blocked: firstPhase?.execution_overlay_blocked || null,
+          execution_overlay_suggestions: firstPhase?.execution_overlay_suggestions || [],
           proactive: true,
         },
       });
@@ -905,6 +987,8 @@ class OrchestrationRunEngine {
           snipara_swarm_id: existingInput.snipara_swarm_id || plan.snipara?.swarm_id || null,
           snipara_root_task_id: existingInput.snipara_root_task_id || plan.snipara?.root_task_id || null,
           execution_overlay: existingInput.execution_overlay || firstPhase?.execution_overlay || null,
+          execution_overlay_blocked: existingInput.execution_overlay_blocked || firstPhase?.execution_overlay_blocked || null,
+          execution_overlay_suggestions: existingInput.execution_overlay_suggestions || firstPhase?.execution_overlay_suggestions || [],
           proactive: true,
         },
       });
@@ -960,15 +1044,16 @@ class OrchestrationRunEngine {
         orchestration_next_wake_at: wakeAt.toISOString(),
         orchestration_phase_index: firstPhase?.index || 0,
         orchestration_phase_title: firstPhase?.title || rootTask.title || null,
-          orchestration_phase_count: phaseCount || 1,
-          orchestration_plan_strategy: plan.strategy,
-          orchestration_planning_source: plan.planning_source,
-          orchestration_delegated_agents: delegatedAgents,
-          orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
-          orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
-          orchestration_proactive: true,
-        },
-      });
+        orchestration_phase_count: phaseCount || 1,
+        orchestration_plan_strategy: plan.strategy,
+        orchestration_planning_source: plan.planning_source,
+        orchestration_delegated_agents: delegatedAgents,
+        orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
+        orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
+        ...buildPhaseOverlayMetadataPatch(firstPhase),
+        orchestration_proactive: true,
+      },
+    });
 
     await appendRunEvent(pool, {
       runId: run.id,
@@ -1095,16 +1180,26 @@ class OrchestrationRunEngine {
       db: pool,
     }).catch(() => desiredOverlay);
 
-    if (isOverlayEmpty(filteredOverlay)) {
+    if (isOverlayEmpty(filteredOverlay) && !hasBlockedOverlayEntries(filteredOverlay)) {
       delete nextPhase.execution_overlay;
+      delete nextPhase.execution_overlay_blocked;
+      delete nextPhase.execution_overlay_suggestions;
       return nextPhase;
     }
 
-    nextPhase.execution_overlay = {
-      skillKeys: filteredOverlay.skillKeys || [],
-      integrationProviders: filteredOverlay.integrationProviders || [],
-      toolCapabilities: filteredOverlay.toolCapabilities || [],
+    nextPhase.execution_overlay = isOverlayEmpty(filteredOverlay)
+      ? null
+      : {
+          skillKeys: filteredOverlay.skillKeys || [],
+          integrationProviders: filteredOverlay.integrationProviders || [],
+          toolCapabilities: filteredOverlay.toolCapabilities || [],
+        };
+    nextPhase.execution_overlay_blocked = {
+      providers: Array.isArray(filteredOverlay.blocked?.providers) ? filteredOverlay.blocked.providers : [],
+      skills: Array.isArray(filteredOverlay.blocked?.skills) ? filteredOverlay.blocked.skills : [],
+      toolCapabilities: Array.isArray(filteredOverlay.blocked?.toolCapabilities) ? filteredOverlay.blocked.toolCapabilities : [],
     };
+    nextPhase.execution_overlay_suggestions = buildOverlaySuggestionMessages(filteredOverlay);
     return nextPhase;
   }
 
@@ -1870,6 +1965,12 @@ class OrchestrationRunEngine {
     const executionOverlay = input.execution_overlay && typeof input.execution_overlay === 'object'
       ? input.execution_overlay
       : null;
+    const blockedOverlay = input.execution_overlay_blocked && typeof input.execution_overlay_blocked === 'object'
+      ? input.execution_overlay_blocked
+      : null;
+    const overlaySuggestions = Array.isArray(input.execution_overlay_suggestions)
+      ? input.execution_overlay_suggestions.filter((value) => typeof value === 'string' && value.trim())
+      : [];
     const childTask = await coordinator.createTask({
       title: buildDelegatedTaskTitle(run, rootTask, step),
       description: buildDelegatedTaskDescription(run, rootTask, step),
@@ -1901,6 +2002,17 @@ class OrchestrationRunEngine {
           orchestration_overlay_skills: Array.isArray(executionOverlay.skillKeys) ? executionOverlay.skillKeys : [],
           orchestration_overlay_providers: Array.isArray(executionOverlay.integrationProviders) ? executionOverlay.integrationProviders : [],
           orchestration_overlay_tool_capabilities: Array.isArray(executionOverlay.toolCapabilities) ? executionOverlay.toolCapabilities : [],
+        } : {}),
+        ...(blockedOverlay ? {
+          orchestration_blocked_overlay_providers: Array.isArray(blockedOverlay.providers) ? blockedOverlay.providers : [],
+          orchestration_blocked_overlay_skills: Array.isArray(blockedOverlay.skills) ? blockedOverlay.skills : [],
+          orchestration_blocked_overlay_tool_capabilities: Array.isArray(blockedOverlay.toolCapabilities) ? blockedOverlay.toolCapabilities : [],
+          orchestration_autonomy_suggestions: overlaySuggestions,
+          orchestration_autonomy_limited: (
+            (Array.isArray(blockedOverlay.providers) && blockedOverlay.providers.length > 0)
+            || (Array.isArray(blockedOverlay.skills) && blockedOverlay.skills.length > 0)
+            || (Array.isArray(blockedOverlay.toolCapabilities) && blockedOverlay.toolCapabilities.length > 0)
+          ),
         } : {}),
         verification_required: true,
         orchestration_proactive: true,
@@ -1997,6 +2109,8 @@ class OrchestrationRunEngine {
         snipara_swarm_id: parseJsonLike(run.context_json).snipara?.swarm_id || null,
         snipara_root_task_id: parseJsonLike(run.context_json).snipara?.root_task_id || null,
         execution_overlay: phase.execution_overlay || null,
+        execution_overlay_blocked: phase.execution_overlay_blocked || null,
+        execution_overlay_suggestions: phase.execution_overlay_suggestions || [],
         proactive: true,
       },
     });
@@ -2013,6 +2127,22 @@ class OrchestrationRunEngine {
         selected_agent_username: delegateStep.selected_agent_username || null,
       },
     });
+
+    if (hasOverlayTelemetry(phase)) {
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: delegateStep.id,
+        eventType: 'overlay.resolved',
+        actor: 'run-engine',
+        payload: {
+          phase_index: phase.index,
+          phase_title: phase.title || null,
+          applied_overlay: extractPhaseOverlayTelemetry(phase).applied,
+          blocked_overlay: extractPhaseOverlayTelemetry(phase).blocked,
+          suggestions: extractPhaseOverlayTelemetry(phase).suggestions,
+        },
+      });
+    }
 
     const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
     const wakeAt = buildWakeAt(this.resumeDelayMs);
@@ -2039,6 +2169,7 @@ class OrchestrationRunEngine {
         orchestration_phase_index: phase.index,
         orchestration_phase_title: phase.title || null,
         orchestration_phase_count: phaseCount,
+        ...buildPhaseOverlayMetadataPatch(phase),
         orchestration_proactive: true,
       },
     });
@@ -2095,6 +2226,8 @@ class OrchestrationRunEngine {
         snipara_swarm_id: parseJsonLike(run.context_json).snipara?.swarm_id || null,
         snipara_root_task_id: parseJsonLike(run.context_json).snipara?.root_task_id || null,
         execution_overlay: phase?.execution_overlay || parseJsonLike(sourceStep?.input_json).execution_overlay || null,
+        execution_overlay_blocked: phase?.execution_overlay_blocked || parseJsonLike(sourceStep?.input_json).execution_overlay_blocked || null,
+        execution_overlay_suggestions: phase?.execution_overlay_suggestions || parseJsonLike(sourceStep?.input_json).execution_overlay_suggestions || [],
         escalation,
         proactive: true,
       },
@@ -2113,6 +2246,31 @@ class OrchestrationRunEngine {
         escalation,
       },
     });
+
+    if (hasOverlayTelemetry(phase) || parseJsonLike(sourceStep?.input_json).execution_overlay) {
+      const overlayPhase = phase || {
+        execution_overlay: parseJsonLike(sourceStep?.input_json).execution_overlay || null,
+        execution_overlay_blocked: parseJsonLike(sourceStep?.input_json).execution_overlay_blocked || null,
+        execution_overlay_suggestions: parseJsonLike(sourceStep?.input_json).execution_overlay_suggestions || [],
+        index: phase?.index || 0,
+        title: phase?.title || rootTask.title || null,
+      };
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: delegateStep.id,
+        eventType: 'overlay.resolved',
+        actor: 'run-engine',
+        payload: {
+          phase_index: overlayPhase.index || 0,
+          phase_title: overlayPhase.title || null,
+          applied_overlay: extractPhaseOverlayTelemetry(overlayPhase).applied,
+          blocked_overlay: extractPhaseOverlayTelemetry(overlayPhase).blocked,
+          suggestions: extractPhaseOverlayTelemetry(overlayPhase).suggestions,
+          retry_count: retryCount || 0,
+          escalation,
+        },
+      });
+    }
 
     const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
     const wakeAt = buildWakeAt(this.resumeDelayMs);
@@ -2143,6 +2301,11 @@ class OrchestrationRunEngine {
         orchestration_phase_count: phaseCount,
         escalation_active: escalation,
         escalation_agent: escalation ? (delegateStep.selected_agent_username || 'mike') : null,
+        ...buildPhaseOverlayMetadataPatch(phase || {
+          execution_overlay: parseJsonLike(sourceStep?.input_json).execution_overlay || null,
+          execution_overlay_blocked: parseJsonLike(sourceStep?.input_json).execution_overlay_blocked || null,
+          execution_overlay_suggestions: parseJsonLike(sourceStep?.input_json).execution_overlay_suggestions || [],
+        }),
         orchestration_proactive: true,
       },
     });

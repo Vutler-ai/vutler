@@ -382,10 +382,26 @@ describe('runEngine claim/resume loop', () => {
       }),
     }));
     jest.doMock('../../services/executionOverlayService', () => ({
+      buildOverlaySuggestionMessages: jest.fn((overlay) => {
+        const blocked = overlay?.blocked || {};
+        const reasons = [
+          ...(Array.isArray(blocked.providers) ? blocked.providers : []),
+          ...(Array.isArray(blocked.skills) ? blocked.skills : []),
+          ...(Array.isArray(blocked.toolCapabilities) ? blocked.toolCapabilities : []),
+        ]
+          .map((entry) => entry?.reason)
+          .filter(Boolean);
+        return reasons;
+      }),
       filterExecutionOverlay: jest.fn().mockImplementation(async ({ overlay }) => ({
         skillKeys: Array.isArray(overlay?.skillKeys) ? overlay.skillKeys : [],
         integrationProviders: Array.isArray(overlay?.integrationProviders) ? overlay.integrationProviders : [],
         toolCapabilities: Array.isArray(overlay?.toolCapabilities) ? overlay.toolCapabilities : [],
+        blocked: {
+          providers: [],
+          skills: [],
+          toolCapabilities: [],
+        },
       })),
       isOverlayEmpty: jest.requireActual('../../services/executionOverlayService').isOverlayEmpty,
     }));

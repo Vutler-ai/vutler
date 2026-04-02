@@ -47,6 +47,41 @@ function isOverlayEmpty(overlay = {}) {
     && uniqueStrings(overlay.toolCapabilities).length === 0;
 }
 
+function buildOverlaySuggestionMessages(overlay = {}) {
+  const blocked = overlay?.blocked || {};
+  const capabilitySuggestions = {
+    email: 'Provision email for this agent or route the step to an email-enabled agent.',
+    social: 'Connect a social account and allow social access for this agent to enable autonomous publishing.',
+    drive: 'Allow shared drive access for this agent to let the run write files autonomously.',
+    calendar: 'Connect calendar access and allow it for this agent to enable autonomous scheduling.',
+    tasks: 'Allow task access for this agent to enable autonomous task operations.',
+    sandbox: 'Use a technical agent type and enable sandbox to allow proactive code execution.',
+    memory: 'Enable persistent memory for this agent to let the run recall prior context autonomously.',
+  };
+
+  const suggestions = [];
+  const seenCapabilities = new Set();
+  const allBlocked = [
+    ...(Array.isArray(blocked.providers) ? blocked.providers : []),
+    ...(Array.isArray(blocked.skills) ? blocked.skills : []),
+    ...(Array.isArray(blocked.toolCapabilities) ? blocked.toolCapabilities : []),
+  ];
+
+  for (const entry of allBlocked) {
+    const capability = String(entry?.capability || '').trim().toLowerCase();
+    if (capability && capabilitySuggestions[capability] && !seenCapabilities.has(capability)) {
+      seenCapabilities.add(capability);
+      suggestions.push(capabilitySuggestions[capability]);
+      continue;
+    }
+
+    const reason = String(entry?.reason || '').trim();
+    if (reason) suggestions.push(reason);
+  }
+
+  return uniqueStrings(suggestions);
+}
+
 async function resolveRuntimeAvailability({ workspaceId, db = pool } = {}) {
   if (!workspaceId) {
     return {
@@ -198,6 +233,7 @@ async function filterExecutionOverlay({
 }
 
 module.exports = {
+  buildOverlaySuggestionMessages,
   capabilityKeyForProvider,
   capabilityKeyForToolCapability,
   filterExecutionOverlay,
