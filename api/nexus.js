@@ -5,6 +5,7 @@ const express = require('express');
 const { requireApiKey } = require('../lib/auth');
 const pool = require('../lib/vaultbrix');
 const { normalizeStoredAvatar, buildSpriteAvatar } = require('../lib/avatarPath');
+const { assertColumnsExist, assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 const {
   createApiKey,
   listApiKeys,
@@ -38,6 +39,80 @@ const HEARTBEAT_ONLINE_SECONDS = 90;
 const NODE_COMMAND_DEFAULT_TTL_MS = Number.parseInt(process.env.NEXUS_COMMAND_TTL_MS || '600000', 10);
 const NODE_COMMAND_DEFAULT_LEASE_MS = Number.parseInt(process.env.NEXUS_COMMAND_LEASE_MS || '45000', 10);
 const NODE_COMMAND_DEFAULT_MAX_ATTEMPTS = Number.parseInt(process.env.NEXUS_COMMAND_MAX_ATTEMPTS || '3', 10);
+const NEXUS_DEPLOYMENT_COLUMNS = [
+  'id',
+  'workspace_id',
+  'created_by_user_id',
+  'agent_id',
+  'mode',
+  'status',
+  'api_key_id',
+  'client_company',
+  'command_context',
+  'last_heartbeat_at',
+  'last_heartbeat_payload',
+  'runtime_version',
+  'created_at',
+  'updated_at',
+];
+const NEXUS_HEARTBEAT_COLUMNS = [
+  'id',
+  'deployment_id',
+  'workspace_id',
+  'runtime_id',
+  'runtime_version',
+  'status',
+  'payload',
+  'received_at',
+];
+const NEXUS_NODE_COLUMNS = [
+  'id',
+  'workspace_id',
+  'name',
+  'type',
+  'status',
+  'host',
+  'port',
+  'api_key',
+  'config',
+  'last_heartbeat',
+  'agents_deployed',
+  'mode',
+  'clone_source_agent_id',
+  'client_name',
+  'snipara_instance_id',
+  'filesystem_root',
+  'allowed_dirs',
+  'offline_config',
+  'deploy_token_hash',
+  'activated_at',
+  'role',
+];
+const NEXUS_COMMAND_COLUMNS = [
+  'id',
+  'workspace_id',
+  'node_id',
+  'command_type',
+  'status',
+  'payload',
+  'progress',
+  'result',
+  'error',
+  'timeout_ms',
+  'lease_ms',
+  'expires_at',
+  'lease_expires_at',
+  'attempt_count',
+  'max_attempts',
+  'created_by_user_id',
+  'created_at',
+  'started_at',
+  'completed_at',
+  'updated_at',
+];
+let nexusTablesPromise = null;
+let nexusNodesPromise = null;
+let nexusCommandsPromise = null;
 
 function cleanObject(input = {}) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== ''));
@@ -54,127 +129,195 @@ function getApiBaseUrl(req) {
 }
 
 async function ensureNexusTables() {
-  try {
-    const check1 = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_deployments'`
-    );
-    if (check1.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID NOT NULL,
-          created_by_user_id UUID NULL,
-          agent_id TEXT NOT NULL,
-          mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
-          status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
-          api_key_id UUID NULL,
-          client_company TEXT NULL,
-          command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
-          last_heartbeat_at TIMESTAMPTZ NULL,
-          last_heartbeat_payload JSONB NULL,
-          runtime_version TEXT NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-    }
-    const check2 = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_runtime_heartbeats'`
-    );
-    if (check2.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
-          id BIGSERIAL PRIMARY KEY,
-          deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
-          workspace_id UUID NOT NULL,
-          runtime_id TEXT NULL,
-          runtime_version TEXT NULL,
-          status TEXT NOT NULL DEFAULT 'online',
-          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-          received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-    }
-  } catch (err) {
-    console.warn('[NEXUS] ensureNexusTables warning (tables may already exist):', err.message);
+  if (!nexusTablesPromise) {
+    nexusTablesPromise = (async () => {
+      try {
+        if (!runtimeSchemaMutationsAllowed()) {
+          await assertTableExists(pool, SCHEMA, 'nexus_deployments', {
+            label: 'Nexus deployments table',
+          });
+          await assertColumnsExist(pool, SCHEMA, 'nexus_deployments', NEXUS_DEPLOYMENT_COLUMNS, {
+            label: 'Nexus deployments table',
+          });
+          await assertTableExists(pool, SCHEMA, 'nexus_runtime_heartbeats', {
+            label: 'Nexus runtime heartbeats table',
+          });
+          await assertColumnsExist(pool, SCHEMA, 'nexus_runtime_heartbeats', NEXUS_HEARTBEAT_COLUMNS, {
+            label: 'Nexus runtime heartbeats table',
+          });
+          return;
+        }
+
+        const check1 = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_deployments'`
+        );
+        if (check1.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_deployments (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id UUID NOT NULL,
+              created_by_user_id UUID NULL,
+              agent_id TEXT NOT NULL,
+              mode TEXT NOT NULL CHECK (mode IN ('local', 'docker')),
+              status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'online', 'offline', 'error')),
+              api_key_id UUID NULL,
+              client_company TEXT NULL,
+              command_context JSONB NOT NULL DEFAULT '{}'::jsonb,
+              last_heartbeat_at TIMESTAMPTZ NULL,
+              last_heartbeat_payload JSONB NULL,
+              runtime_version TEXT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+          `);
+        }
+        const check2 = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_runtime_heartbeats'`
+        );
+        if (check2.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_runtime_heartbeats (
+              id BIGSERIAL PRIMARY KEY,
+              deployment_id UUID NOT NULL REFERENCES ${SCHEMA}.nexus_deployments(id) ON DELETE CASCADE,
+              workspace_id UUID NOT NULL,
+              runtime_id TEXT NULL,
+              runtime_version TEXT NULL,
+              status TEXT NOT NULL DEFAULT 'online',
+              payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+              received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+          `);
+        }
+      } catch (err) {
+        if (!runtimeSchemaMutationsAllowed()) throw err;
+        console.warn('[NEXUS] ensureNexusTables warning (tables may already exist):', err.message);
+      }
+    })().catch((err) => {
+      nexusTablesPromise = null;
+      throw err;
+    });
   }
+
+  return nexusTablesPromise;
 }
 
 
 async function ensureNexusNodesTable() {
-  try {
-    const check = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_nodes'`
-    );
-    if (check.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_nodes (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID NOT NULL,
-          name TEXT NOT NULL,
-          type TEXT DEFAULT 'local',
-          status TEXT DEFAULT 'offline',
-          host TEXT,
-          port INTEGER,
-          api_key TEXT,
-          config JSONB DEFAULT '{}'::jsonb,
-          last_heartbeat TIMESTAMPTZ,
-          agents_deployed JSONB DEFAULT '[]'::jsonb,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-    }
-    // Columns are migrated on Vaultbrix by SQL migration; avoid ALTER here to prevent owner conflicts.
-  } catch (err) {
-    console.warn('[NEXUS] ensureNexusNodesTable warning (table may already exist):', err.message);
+  if (!nexusNodesPromise) {
+    nexusNodesPromise = (async () => {
+      try {
+        if (!runtimeSchemaMutationsAllowed()) {
+          await assertTableExists(pool, SCHEMA, 'nexus_nodes', {
+            label: 'Nexus nodes table',
+          });
+          await assertColumnsExist(pool, SCHEMA, 'nexus_nodes', NEXUS_NODE_COLUMNS, {
+            label: 'Nexus nodes table',
+          });
+          return;
+        }
+
+        const check = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_nodes'`
+        );
+        if (check.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_nodes (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id UUID NOT NULL,
+              name TEXT NOT NULL,
+              type TEXT DEFAULT 'local',
+              status TEXT DEFAULT 'offline',
+              host TEXT,
+              port INTEGER,
+              api_key TEXT,
+              config JSONB DEFAULT '{}'::jsonb,
+              last_heartbeat TIMESTAMPTZ,
+              agents_deployed JSONB DEFAULT '[]'::jsonb,
+              mode TEXT DEFAULT 'local',
+              clone_source_agent_id TEXT,
+              client_name TEXT,
+              snipara_instance_id TEXT,
+              filesystem_root TEXT,
+              allowed_dirs JSONB DEFAULT '[]'::jsonb,
+              offline_config JSONB DEFAULT '{}'::jsonb,
+              deploy_token_hash TEXT,
+              activated_at TIMESTAMPTZ,
+              role TEXT,
+              created_at TIMESTAMPTZ DEFAULT NOW(),
+              updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+          `);
+        }
+      } catch (err) {
+        if (!runtimeSchemaMutationsAllowed()) throw err;
+        console.warn('[NEXUS] ensureNexusNodesTable warning (table may already exist):', err.message);
+      }
+    })().catch((err) => {
+      nexusNodesPromise = null;
+      throw err;
+    });
   }
+
+  return nexusNodesPromise;
 }
 
 async function ensureNexusCommandsTable() {
-  try {
-    const check = await pool.query(
-      `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_commands'`
-    );
-    if (check.rows.length === 0) {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_commands (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          workspace_id UUID NOT NULL,
-          node_id UUID NOT NULL,
-          command_type TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'expired')),
-          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-          progress JSONB NULL,
-          result JSONB NULL,
-          error TEXT NULL,
-          timeout_ms INTEGER NOT NULL DEFAULT 600000,
-          lease_ms INTEGER NOT NULL DEFAULT 45000,
-          expires_at TIMESTAMPTZ NULL,
-          lease_expires_at TIMESTAMPTZ NULL,
-          attempt_count INTEGER NOT NULL DEFAULT 0,
-          max_attempts INTEGER NOT NULL DEFAULT 3,
-          created_by_user_id UUID NULL,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          started_at TIMESTAMPTZ NULL,
-          completed_at TIMESTAMPTZ NULL,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-      `);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_node_status ON ${SCHEMA}.nexus_commands (node_id, status, created_at ASC)`);
-      await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_workspace_created ON ${SCHEMA}.nexus_commands (workspace_id, created_at DESC)`);
-    }
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS progress JSONB NULL`);
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS timeout_ms INTEGER NOT NULL DEFAULT 600000`);
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS lease_ms INTEGER NOT NULL DEFAULT 45000`);
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ NULL`);
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NULL`);
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0`);
-    await pool.query(`ALTER TABLE ${SCHEMA}.nexus_commands ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_expiry ON ${SCHEMA}.nexus_commands (workspace_id, node_id, status, expires_at, lease_expires_at)`);
-  } catch (err) {
-    console.warn('[NEXUS] ensureNexusCommandsTable warning:', err.message);
+  if (!nexusCommandsPromise) {
+    nexusCommandsPromise = (async () => {
+      try {
+        if (!runtimeSchemaMutationsAllowed()) {
+          await assertTableExists(pool, SCHEMA, 'nexus_commands', {
+            label: 'Nexus commands table',
+          });
+          await assertColumnsExist(pool, SCHEMA, 'nexus_commands', NEXUS_COMMAND_COLUMNS, {
+            label: 'Nexus commands table',
+          });
+          return;
+        }
+
+        const check = await pool.query(
+          `SELECT 1 FROM information_schema.tables WHERE table_schema='tenant_vutler' AND table_name='nexus_commands'`
+        );
+        if (check.rows.length === 0) {
+          await pool.query(`
+            CREATE TABLE IF NOT EXISTS ${SCHEMA}.nexus_commands (
+              id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+              workspace_id UUID NOT NULL,
+              node_id UUID NOT NULL,
+              command_type TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'expired')),
+              payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+              progress JSONB NULL,
+              result JSONB NULL,
+              error TEXT NULL,
+              timeout_ms INTEGER NOT NULL DEFAULT 600000,
+              lease_ms INTEGER NOT NULL DEFAULT 45000,
+              expires_at TIMESTAMPTZ NULL,
+              lease_expires_at TIMESTAMPTZ NULL,
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              max_attempts INTEGER NOT NULL DEFAULT 3,
+              created_by_user_id UUID NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              started_at TIMESTAMPTZ NULL,
+              completed_at TIMESTAMPTZ NULL,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+          `);
+          await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_node_status ON ${SCHEMA}.nexus_commands (node_id, status, created_at ASC)`);
+          await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_workspace_created ON ${SCHEMA}.nexus_commands (workspace_id, created_at DESC)`);
+          await pool.query(`CREATE INDEX IF NOT EXISTS idx_nexus_commands_expiry ON ${SCHEMA}.nexus_commands (workspace_id, node_id, status, expires_at, lease_expires_at)`);
+        }
+      } catch (err) {
+        if (!runtimeSchemaMutationsAllowed()) throw err;
+        console.warn('[NEXUS] ensureNexusCommandsTable warning:', err.message);
+      }
+    })().catch((err) => {
+      nexusCommandsPromise = null;
+      throw err;
+    });
   }
+
+  return nexusCommandsPromise;
 }
 
 function clampInteger(value, fallback, min, max) {

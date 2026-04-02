@@ -11,13 +11,40 @@
 const pool = require('../lib/vaultbrix');
 const { chat: llmChat } = require('./llmRouter');
 const { getSwarmCoordinator } = require('./swarmCoordinator');
+const { assertColumnsExist, assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+const SCHEDULED_TASK_COLUMNS = [
+  'id',
+  'workspace_id',
+  'agent_id',
+  'cron_expression',
+  'description',
+  'task_template',
+  'is_active',
+  'last_run_at',
+  'next_run_at',
+  'run_count',
+  'created_by',
+  'created_at',
+  'updated_at',
+];
+const SCHEDULED_TASK_RUN_COLUMNS = [
+  'id',
+  'schedule_id',
+  'workspace_id',
+  'task_id',
+  'status',
+  'result',
+  'started_at',
+  'completed_at',
+];
 
 // ── In-memory cron registry ──────────────────────────────────────────────────
 // Map<scheduleId, { timer: NodeJS.Timeout, schedule: Object }>
 const _activeTimers = new Map();
+let schedulerSchemaPromise = null;
 
 // ── Cron parsing / next-run computation ─────────────────────────────────────
 
@@ -123,37 +150,62 @@ function msUntilNextRun(cronExpr) {
  * Ensure the scheduler tables exist.
  */
 async function ensureSchedulerTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.scheduled_tasks (
-      id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id     UUID        NOT NULL,
-      agent_id         TEXT,
-      cron_expression  TEXT        NOT NULL,
-      description      TEXT        NOT NULL,
-      task_template    JSONB       NOT NULL,
-      is_active        BOOLEAN     DEFAULT TRUE,
-      last_run_at      TIMESTAMPTZ,
-      next_run_at      TIMESTAMPTZ,
-      run_count        INTEGER     DEFAULT 0,
-      created_by       TEXT,
-      created_at       TIMESTAMPTZ DEFAULT NOW(),
-      updated_at       TIMESTAMPTZ DEFAULT NOW()
-    );
-  `);
+  if (!schedulerSchemaPromise) {
+    schedulerSchemaPromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, SCHEMA, 'scheduled_tasks', {
+          label: 'Scheduled tasks table',
+        });
+        await assertColumnsExist(pool, SCHEMA, 'scheduled_tasks', SCHEDULED_TASK_COLUMNS, {
+          label: 'Scheduled tasks table',
+        });
+        await assertTableExists(pool, SCHEMA, 'scheduled_task_runs', {
+          label: 'Scheduled task runs table',
+        });
+        await assertColumnsExist(pool, SCHEMA, 'scheduled_task_runs', SCHEDULED_TASK_RUN_COLUMNS, {
+          label: 'Scheduled task runs table',
+        });
+        return;
+      }
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.scheduled_task_runs (
-      id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-      schedule_id  UUID        REFERENCES ${SCHEMA}.scheduled_tasks(id) ON DELETE CASCADE,
-      workspace_id UUID        NOT NULL,
-      task_id      UUID,
-      status       TEXT        DEFAULT 'pending'
-                               CHECK (status IN ('pending','running','completed','failed')),
-      result       JSONB,
-      started_at   TIMESTAMPTZ DEFAULT NOW(),
-      completed_at TIMESTAMPTZ
-    );
-  `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.scheduled_tasks (
+          id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id     UUID        NOT NULL,
+          agent_id         TEXT,
+          cron_expression  TEXT        NOT NULL,
+          description      TEXT        NOT NULL,
+          task_template    JSONB       NOT NULL,
+          is_active        BOOLEAN     DEFAULT TRUE,
+          last_run_at      TIMESTAMPTZ,
+          next_run_at      TIMESTAMPTZ,
+          run_count        INTEGER     DEFAULT 0,
+          created_by       TEXT,
+          created_at       TIMESTAMPTZ DEFAULT NOW(),
+          updated_at       TIMESTAMPTZ DEFAULT NOW()
+        );
+      `);
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.scheduled_task_runs (
+          id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+          schedule_id  UUID        REFERENCES ${SCHEMA}.scheduled_tasks(id) ON DELETE CASCADE,
+          workspace_id UUID        NOT NULL,
+          task_id      UUID,
+          status       TEXT        DEFAULT 'pending'
+                                 CHECK (status IN ('pending','running','completed','failed')),
+          result       JSONB,
+          started_at   TIMESTAMPTZ DEFAULT NOW(),
+          completed_at TIMESTAMPTZ
+        );
+      `);
+    })().catch((err) => {
+      schedulerSchemaPromise = null;
+      throw err;
+    });
+  }
+
+  return schedulerSchemaPromise;
 }
 
 // ── LLM schedule parser ──────────────────────────────────────────────────────

@@ -1,6 +1,23 @@
 'use strict';
 
+const {
+  assertColumnsExist,
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../lib/schemaReadiness');
+
 const DEFAULT_SCHEMA = 'tenant_vutler';
+const CHAT_PREFERENCE_COLUMNS = [
+  'id',
+  'workspace_id',
+  'channel_id',
+  'user_id',
+  'pinned',
+  'muted',
+  'archived',
+  'created_at',
+  'updated_at',
+];
 
 const TECHNICAL_DM_PATTERNS = [
   /^dm__agent__/i,
@@ -35,7 +52,7 @@ const TECHNICAL_CHANNEL_PATTERNS = [
   /^[0-9a-f]{8,}$/i,
 ];
 
-let chatPreferencesSchemaEnsured = false;
+let chatPreferencesSchemaPromise = null;
 
 function slugifyContactToken(value) {
   return String(value || '')
@@ -167,27 +184,43 @@ function shouldNormalizeLegacyDm(row) {
 }
 
 async function ensureChatPreferencesTable(pg, schema = DEFAULT_SCHEMA) {
-  if (chatPreferencesSchemaEnsured) return;
+  if (!chatPreferencesSchemaPromise) {
+    chatPreferencesSchemaPromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pg, schema, 'chat_channel_preferences', {
+          label: 'Chat channel preferences table',
+        });
+        await assertColumnsExist(pg, schema, 'chat_channel_preferences', CHAT_PREFERENCE_COLUMNS, {
+          label: 'Chat channel preferences table',
+        });
+        return;
+      }
 
-  await pg.query(`
-    CREATE TABLE IF NOT EXISTS ${schema}.chat_channel_preferences (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id UUID NOT NULL,
-      channel_id TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      pinned BOOLEAN NOT NULL DEFAULT FALSE,
-      muted BOOLEAN NOT NULL DEFAULT FALSE,
-      archived BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (workspace_id, channel_id, user_id)
-    )
-  `);
-  await pg.query(`
-    CREATE INDEX IF NOT EXISTS idx_chat_channel_preferences_workspace_user
-    ON ${schema}.chat_channel_preferences (workspace_id, user_id)
-  `);
-  chatPreferencesSchemaEnsured = true;
+      await pg.query(`
+        CREATE TABLE IF NOT EXISTS ${schema}.chat_channel_preferences (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id UUID NOT NULL,
+          channel_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          pinned BOOLEAN NOT NULL DEFAULT FALSE,
+          muted BOOLEAN NOT NULL DEFAULT FALSE,
+          archived BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (workspace_id, channel_id, user_id)
+        )
+      `);
+      await pg.query(`
+        CREATE INDEX IF NOT EXISTS idx_chat_channel_preferences_workspace_user
+        ON ${schema}.chat_channel_preferences (workspace_id, user_id)
+      `);
+    })().catch((err) => {
+      chatPreferencesSchemaPromise = null;
+      throw err;
+    });
+  }
+
+  return chatPreferencesSchemaPromise;
 }
 
 async function findExistingDmChannelId(pg, { schema = DEFAULT_SCHEMA, workspaceId, currentUserId, contactId }) {

@@ -1,6 +1,11 @@
 'use strict';
 const express = require('express');
 const router = express.Router();
+const {
+  assertColumnsExist,
+  assertTableExists,
+  runtimeSchemaMutationsAllowed,
+} = require('../lib/schemaReadiness');
 
 function getPool() {
   try { return require('../lib/postgres'); } catch(e) {}
@@ -9,6 +14,15 @@ function getPool() {
 }
 
 const SCHEMA = 'tenant_vutler';
+const CLIENT_COMPANY_COLUMNS = [
+  'id',
+  'workspace_id',
+  'name',
+  'logo_url',
+  'contact_email',
+  'notes',
+  'created_at',
+];
 
 // SECURITY: workspace from JWT only (audit 2026-03-29)
 router.use((req, res, next) => {
@@ -16,22 +30,38 @@ router.use((req, res, next) => {
   next();
 });
 
-let tableReady = false;
+let tableReadyPromise = null;
 async function ensureTable(pool) {
-  if (tableReady) return;
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${SCHEMA}.client_companies (
-      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      workspace_id  UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
-      name          TEXT NOT NULL,
-      logo_url      TEXT,
-      contact_email TEXT,
-      notes         TEXT,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-  tableReady = true;
+  if (!tableReadyPromise) {
+    tableReadyPromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(pool, SCHEMA, 'client_companies', {
+          label: 'Client companies table',
+        });
+        await assertColumnsExist(pool, SCHEMA, 'client_companies', CLIENT_COMPANY_COLUMNS, {
+          label: 'Client companies table',
+        });
+        return;
+      }
+
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${SCHEMA}.client_companies (
+          id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          workspace_id  UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000001',
+          name          TEXT NOT NULL,
+          logo_url      TEXT,
+          contact_email TEXT,
+          notes         TEXT,
+          created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+    })().catch((err) => {
+      tableReadyPromise = null;
+      throw err;
+    });
+  }
+
+  return tableReadyPromise;
 }
 
 // GET /api/v1/clients
