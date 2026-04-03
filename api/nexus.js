@@ -2700,17 +2700,25 @@ router.get('/nodes/:nodeId/capabilities', async (req, res) => {
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
     const providerSources = await getNodeProviderSources(workspaceId, node);
 
-    res.json({
-      platform: node.type || 'nexus',
-      providers: Object.keys(providerSources),
-      providerSources,
-      permissions: {
-        allowedFolders: node.config?.permissions?.allowedFolders || [],
-      },
-    });
+    res.json(buildNodeCapabilitiesPayload(node, providerSources));
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
+function buildNodeCapabilitiesPayload(node, providerSources = {}) {
+  return {
+    platform: node.type || 'nexus',
+    providers: Object.keys(providerSources),
+    providerSources,
+    permissions: {
+      allowedFolders: node.config?.permissions?.allowedFolders || [],
+      allowedActions: node.config?.permissions?.allowedActions || [],
+    },
+  };
+}
+
 module.exports = router;
+router._private = {
+  buildNodeCapabilitiesPayload,
+};

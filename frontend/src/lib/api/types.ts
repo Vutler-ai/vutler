@@ -1022,10 +1022,28 @@ export interface NexusStatusResponse {
   commandStats?: NexusCommandStats | null;
 }
 
+export interface NexusLocalPermissions {
+  filesystem?: boolean | Record<string, unknown>;
+  shell?: boolean | Record<string, unknown>;
+  mail?: boolean | Record<string, unknown>;
+  calendar?: boolean | Record<string, unknown>;
+  contacts?: boolean | Record<string, unknown>;
+  clipboard?: boolean | Record<string, unknown>;
+  env?: boolean | Record<string, unknown>;
+  network?: boolean | Record<string, unknown>;
+  llm?: boolean | Record<string, unknown>;
+  av?: boolean | Record<string, unknown>;
+  allowedFolders?: string[];
+  allowedActions?: string[];
+  [key: string]: unknown;
+}
+
 export interface DeployLocalPayload {
   agentIds: string[];
+  nodeName?: string;
   routingRules?: Array<{ pattern: string; agentId: string }>;
   ollamaEndpoint?: string;
+  permissions?: NexusLocalPermissions;
 }
 
 export interface AutoSpawnRule {
@@ -1407,7 +1425,10 @@ export interface NexusCapabilities {
   platform: string;
   providers: string[];
   providerSources?: Record<string, NexusProviderSource>;
-  permissions?: { allowedFolders: string[] };
+  permissions?: {
+    allowedFolders: string[];
+    allowedActions: string[];
+  };
 }
 
 // ─── Marketplace ──────────────────────────────────────────────────────────────

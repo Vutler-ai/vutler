@@ -235,7 +235,7 @@ function DeployModal({
           agentIds: ['local-node'],
           nodeName: localNodeName.trim() || undefined,
           permissions,
-        } as any);
+        });
         setToken(result.token);
         setEnterpriseDriveRepo(null);
         setStep('local-token');
