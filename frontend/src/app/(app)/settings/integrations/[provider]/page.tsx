@@ -4,31 +4,8 @@ import { authFetch } from "@/lib/authFetch";
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-
-const META: Record<string, { icon: string; name: string }> = {
-  slack: { icon: "💬", name: "Slack" },
-  google: { icon: "🔵", name: "Google Workspace" },
-  github: { icon: "🐙", name: "GitHub" },
-  notion: { icon: "📝", name: "Notion" },
-  jira: { icon: "🔷", name: "Jira" },
-  linear: { icon: "🟣", name: "Linear" },
-  n8n: { icon: "⚡", name: "n8n" },
-};
-
-interface Detail {
-  provider: string;
-  status: string;
-  connected_at: string;
-  scopes: string[];
-  connected?: boolean;
-  config?: {
-    baseUrl?: string;
-    email?: string;
-    connectMode?: string;
-  };
-  usage: { api_calls_today: number; rate_limit_remaining: number };
-  webhook_url?: string;
-}
+import { CONNECTOR_META } from "@/lib/integrations/catalog";
+import type { IntegrationCapabilityEntry, IntegrationDetail } from "@/lib/api/types";
 
 interface Agent {
   id: string;
@@ -39,7 +16,7 @@ interface Agent {
 export default function IntegrationDetailPage() {
   const { provider } = useParams<{ provider: string }>();
   const router = useRouter();
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<IntegrationDetail | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -52,7 +29,7 @@ export default function IntegrationDetailPage() {
   const [jiraConnecting, setJiraConnecting] = useState(false);
   const [jiraValidation, setJiraValidation] = useState<{ projectCount?: number; sampleProjects?: Array<{ key?: string; name?: string }> } | null>(null);
 
-const meta = META[provider] || { icon: "🔌", name: provider };
+  const meta = CONNECTOR_META[provider] || { icon: "🔌", name: provider, description: "" };
   const isOauthProvider = ["google", "github", "microsoft365"].includes(provider);
   const isJiraProvider = provider === "jira";
 
@@ -65,16 +42,45 @@ const meta = META[provider] || { icon: "🔌", name: provider };
       else
         setDetail({
           provider,
+          id: provider,
+          name: meta.name,
+          description: meta.description || "",
+          icon: meta.icon,
+          category: "workspace",
+          source: "internal",
+          connected: false,
           status: "disconnected",
           connected_at: "",
+          connected_by: "",
           scopes: ["read", "write"],
+          readiness: "coming_soon",
+          readiness_label: "Coming soon",
+          readiness_description: "Connector readiness has not been classified yet.",
+          access_model: "cloud-required",
+          access_model_label: "Cloud-required",
+          access_model_description: "This connector depends on the remote provider API path.",
+          runtime_state: {
+            workspace_available: false,
+            provisioned: false,
+            effective: false,
+            reason: "The workspace has not connected this connector yet.",
+          },
+          consent: {
+            requested_scopes: [],
+            granted_scopes: [],
+            validated_scopes: [],
+            missing_scopes: [],
+          },
+          capabilities: [],
+          unsupported_capabilities: [],
+          health: null,
           usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
           webhook_url: `https://app.vutler.ai/api/v1/webhooks/${provider}`,
         });
       setAgents(a.agents || []);
       setLoading(false);
     });
-  }, [provider]);
+  }, [meta.description, meta.icon, meta.name, provider]);
 
   useEffect(() => {
     if (!isJiraProvider) return;
@@ -94,7 +100,7 @@ const meta = META[provider] || { icon: "🔌", name: provider };
         window.location.href = data.authUrl;
         return;
       }
-      setDetail((prev) => prev ? { ...prev, status: data?.integration?.status || "connected", connected_at: data?.integration?.connected_at || new Date().toISOString() } : prev);
+        setDetail((prev) => prev ? { ...prev, status: data?.integration?.status || "connected", connected_at: data?.integration?.connected_at || new Date().toISOString() } : prev);
     } catch {
       setError("Failed to reconnect");
     }
@@ -132,9 +138,38 @@ const meta = META[provider] || { icon: "🔌", name: provider };
         setDetail((prev) => ({
           ...(prev || {
             provider,
+            id: provider,
+            name: meta.name,
+            description: meta.description || "",
+            icon: meta.icon,
+            category: "workspace",
+            source: "internal",
+            connected: false,
             status: "connected",
             connected_at: new Date().toISOString(),
+            connected_by: "",
             scopes: [],
+            readiness: "operational" as const,
+            readiness_label: "Operational",
+            readiness_description: "Connector readiness has not been classified yet.",
+            access_model: "cloud-required" as const,
+            access_model_label: "Cloud-required",
+            access_model_description: "This connector depends on the remote provider API path.",
+            runtime_state: {
+              workspace_available: true,
+              provisioned: true,
+              effective: true,
+              reason: "The connector is connected and validated.",
+            },
+            consent: {
+              requested_scopes: [],
+              granted_scopes: [],
+              validated_scopes: [],
+              missing_scopes: [],
+            },
+            capabilities: [],
+            unsupported_capabilities: [],
+            health: null,
             usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
           }),
           provider,
@@ -211,14 +246,45 @@ const meta = META[provider] || { icon: "🔌", name: provider };
           <span className="text-4xl">{meta.icon}</span>
           <div className="flex-1">
             <h1 className="text-xl font-bold text-white">{meta.name}</h1>
-            <div className="flex items-center gap-3 mt-1">
-              <span className={`text-xs px-2 py-0.5 rounded-full ${detail?.status === "connected" ? "bg-green-500/10 text-green-400" : "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"}`}>
-                {detail?.status === "connected" ? "✅ Connected" : "⚪ Disconnected"}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                detail?.status === "connected" || detail?.status === "degraded"
+                  ? "bg-green-500/10 text-green-400"
+                  : detail?.status === "failed"
+                    ? "bg-red-500/10 text-red-300"
+                    : "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"
+              }`}>
+                {detail?.status === "connected"
+                  ? "Connected"
+                  : detail?.status === "degraded"
+                    ? "Degraded"
+                    : detail?.status === "failed"
+                      ? "Validation failed"
+                      : "Disconnected"}
+              </span>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                detail?.readiness === "operational"
+                  ? "bg-emerald-500/10 text-emerald-300"
+                  : detail?.readiness === "partial"
+                    ? "bg-amber-500/10 text-amber-300"
+                    : "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"
+              }`}>
+                {detail?.readiness_label}
+              </span>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                detail?.access_model === "local-first"
+                  ? "bg-[#3b82f6]/10 text-[#93c5fd]"
+                  : "bg-[rgba(255,255,255,0.05)] text-[#d1d5db]"
+              }`}>
+                {detail?.access_model_label}
               </span>
               {detail?.connected_at && (
                 <span className="text-xs text-[#6b7280]">Connected since {new Date(detail.connected_at).toLocaleDateString()}</span>
               )}
             </div>
+            <p className="mt-3 text-sm leading-relaxed text-[#9ca3af]">
+              {detail?.access_model_description}
+            </p>
           </div>
           <div className="flex gap-2">
             {!isJiraProvider && (
@@ -229,6 +295,27 @@ const meta = META[provider] || { icon: "🔌", name: provider };
             )}
           </div>
         </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <StateCard
+          label="Workspace available"
+          value={detail?.runtime_state.workspace_available ? "Yes" : "No"}
+          active={detail?.runtime_state.workspace_available}
+          description="The workspace has a connector path provisioned at all."
+        />
+        <StateCard
+          label="Provisioned"
+          value={detail?.runtime_state.provisioned ? "Yes" : "No"}
+          active={detail?.runtime_state.provisioned}
+          description="Tokens or credentials are saved with enough setup to route work."
+        />
+        <StateCard
+          label="Effective"
+          value={detail?.runtime_state.effective ? "Yes" : "No"}
+          active={detail?.runtime_state.effective}
+          description={detail?.runtime_state.reason || "No runtime explanation available."}
+        />
       </div>
 
       {isJiraProvider && (
@@ -322,12 +409,118 @@ const meta = META[provider] || { icon: "🔌", name: provider };
       )}
 
       <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.07)] p-6">
-        <h2 className="text-white font-semibold mb-3">Permissions & Scopes</h2>
-        <div className="flex flex-wrap gap-2">
-          {(detail?.scopes || []).map((s) => (
-            <span key={s} className="px-3 py-1 text-xs rounded-full bg-[#3b82f6]/10 text-[#3b82f6]">{s}</span>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-white font-semibold">Consent, scopes, and validation</h2>
+            <p className="mt-1 text-sm text-[#9ca3af]">
+              Separate what Vutler requested, what the provider granted, and what the runtime actually validated.
+            </p>
+          </div>
+          <span className="text-xs text-[#6b7280]">
+            {detail?.health?.checked_at ? `Last check ${new Date(detail.health.checked_at).toLocaleString()}` : "No post-connect check yet"}
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <ScopeColumn
+            title="Requested scopes"
+            tone="border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] text-[#d1d5db]"
+            values={detail?.consent.requested_scopes || []}
+            empty="No requested scopes declared for this connector."
+          />
+          <ScopeColumn
+            title="Granted scopes"
+            tone="border-[#3b82f6]/20 bg-[#3b82f6]/10 text-[#93c5fd]"
+            values={detail?.consent.granted_scopes || []}
+            empty="The workspace has not granted any scope yet."
+          />
+          <ScopeColumn
+            title="Validated scopes"
+            tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+            values={detail?.consent.validated_scopes || []}
+            empty="No validated scope yet. The connector may still be connected without a probe."
+          />
+        </div>
+
+        {detail?.consent.missing_scopes && detail.consent.missing_scopes.length > 0 && (
+          <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+            <p className="text-sm font-medium text-white">Missing from granted set</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {detail.consent.missing_scopes.map((scope) => (
+                <code key={scope} className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-300">
+                  {scope}
+                </code>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {detail?.health && (
+          <div className="mt-4 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0e0f1a] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-white">Validation checks</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                detail.health.status === "connected"
+                  ? "bg-green-500/10 text-green-400"
+                  : detail.health.status === "degraded"
+                    ? "bg-amber-500/10 text-amber-300"
+                    : "bg-red-500/10 text-red-300"
+              }`}>
+                {detail.health.status}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-[#9ca3af]">{detail.health.summary}</p>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              {detail.health.checks.map((check) => (
+                <div key={check.key} className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[rgba(255,255,255,0.03)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-white">{check.label}</p>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
+                      check.status === "ok"
+                        ? "bg-green-500/10 text-green-400"
+                        : "bg-red-500/10 text-red-300"
+                    }`}>
+                      {check.status === "ok" ? "Validated" : "Failed"}
+                    </span>
+                  </div>
+                  {(check.error || check.code) && (
+                    <p className="mt-2 text-[11px] leading-relaxed text-[#6b7280]">
+                      {[check.code, check.error].filter(Boolean).join(" · ")}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.07)] p-6">
+        <div>
+          <h2 className="text-white font-semibold">Effective capability</h2>
+          <p className="mt-1 text-sm text-[#9ca3af]">
+            This connector can expose supported, consented, validated, unsupported, or local fallback capability paths.
+          </p>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {(detail?.capabilities || []).map((capability) => (
+            <CapabilityCard key={capability.key} capability={capability} />
           ))}
         </div>
+
+        {detail?.unsupported_capabilities && detail.unsupported_capabilities.length > 0 && (
+          <div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+            <p className="text-sm font-medium text-white">Unsupported capability blocks</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {detail.unsupported_capabilities.map((capability) => (
+                <span key={capability.key} className="rounded-full border border-red-500/20 bg-red-500/10 px-2.5 py-1 text-xs text-red-300">
+                  {capability.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.07)] p-6">
@@ -376,6 +569,97 @@ const meta = META[provider] || { icon: "🔌", name: provider };
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function StateCard({
+  label,
+  value,
+  active,
+  description,
+}: {
+  label: string;
+  value: string;
+  active: boolean | undefined;
+  description: string;
+}) {
+  return (
+    <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#14151f] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-white">{label}</p>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+          active
+            ? "bg-green-500/10 text-green-400"
+            : "bg-[rgba(255,255,255,0.05)] text-[#9ca3af]"
+        }`}>
+          {value}
+        </span>
+      </div>
+      <p className="mt-3 text-xs leading-relaxed text-[#9ca3af]">{description}</p>
+    </div>
+  );
+}
+
+function ScopeColumn({
+  title,
+  tone,
+  values,
+  empty,
+}: {
+  title: string;
+  tone: string;
+  values: string[];
+  empty: string;
+}) {
+  return (
+    <div className="rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0e0f1a] p-4">
+      <p className="text-sm font-medium text-white">{title}</p>
+      {values.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {values.map((value) => (
+            <code key={value} className={`rounded-full border px-2.5 py-1 text-xs ${tone}`}>
+              {value}
+            </code>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-[#6b7280]">{empty}</p>
+      )}
+    </div>
+  );
+}
+
+function CapabilityCard({ capability }: { capability: IntegrationCapabilityEntry }) {
+  const tone = capability.status === "validated"
+    ? "bg-green-500/10 text-green-400 border-green-500/20"
+    : capability.status === "consented"
+      ? "bg-[#3b82f6]/10 text-[#93c5fd] border-[#3b82f6]/20"
+      : capability.status === "local_fallback"
+        ? "bg-violet-500/10 text-violet-300 border-violet-500/20"
+        : capability.status === "unsupported"
+          ? "bg-red-500/10 text-red-300 border-red-500/20"
+          : "bg-[rgba(255,255,255,0.05)] text-[#d1d5db] border-[rgba(255,255,255,0.08)]";
+
+  const label = capability.status === "validated"
+    ? "Validated"
+    : capability.status === "consented"
+      ? "Consented"
+      : capability.status === "local_fallback"
+        ? "Local fallback"
+        : capability.status === "unsupported"
+          ? "Unsupported"
+          : "Supported";
+
+  return (
+    <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0e0f1a] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-white">{capability.label}</p>
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${tone}`}>
+          {label}
+        </span>
+      </div>
+      <p className="mt-2 text-xs leading-relaxed text-[#9ca3af]">{capability.description}</p>
     </div>
   );
 }

@@ -58,6 +58,74 @@ const CONNECTOR_READINESS_BY_PROVIDER = {
   linear: { readiness: 'coming_soon', label: 'Coming soon', description: 'Catalog only. No runtime connector is wired yet.' },
   n8n: { readiness: 'coming_soon', label: 'Coming soon', description: 'Workflow list and trigger routes are still stubs.' },
 };
+const CONNECTOR_ACCESS_MODEL_BY_PROVIDER = {
+  google: {
+    access_model: 'local-first',
+    label: 'Local-first',
+    description: 'Nexus Local can cover part of the mail, calendar, and document path on the customer workstation.',
+  },
+  microsoft365: {
+    access_model: 'local-first',
+    label: 'Local-first',
+    description: 'Nexus Local can cover part of the Outlook, calendar, and contacts path on the customer workstation.',
+  },
+};
+const CONNECTOR_SCOPE_VALIDATION_RULES = {
+  google: {
+    calendar: [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events',
+    ],
+    gmail: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/gmail.modify',
+    ],
+    contacts: [
+      'https://www.googleapis.com/auth/contacts.readonly',
+    ],
+  },
+  microsoft365: {
+    mail: ['Mail.Read'],
+    calendar: ['Calendars.Read'],
+    contacts: ['Contacts.Read'],
+  },
+};
+const CONNECTOR_CAPABILITIES_BY_PROVIDER = {
+  chatgpt: [
+    { key: 'responses_api', label: 'Codex responses runtime', description: 'Use the connected ChatGPT identity through the Codex provider path.' },
+    { key: 'provider_refresh', label: 'OAuth token refresh', description: 'Keep the workspace provider token refreshed when Codex is invoked.' },
+  ],
+  google: [
+    { key: 'gmail', label: 'Gmail mailbox access', description: 'Read, search, and act on Gmail content through Google APIs.', validationKey: 'gmail' },
+    { key: 'calendar', label: 'Google Calendar access', description: 'Read and create calendar events when the required scopes remain valid.', validationKey: 'calendar' },
+    { key: 'drive', label: 'Google Drive access', description: 'Use Drive files through the workspace connector. This page does not run a dedicated Drive probe yet.' },
+    { key: 'contacts', label: 'Google contacts access', description: 'Read Google contacts for workspace-assisted actions.', validationKey: 'contacts' },
+    { key: 'desktop_fallback', label: 'Desktop fallback via Nexus Local', description: 'If Nexus Local is deployed, part of the file, mail, and calendar path can stay on the customer machine.', status: 'local_fallback' },
+  ],
+  github: [
+    { key: 'repos', label: 'Repository context', description: 'Read repositories and pull request context through GitHub OAuth.' },
+    { key: 'issues', label: 'Issue workflows', description: 'Use the workspace GitHub identity for issue and development workflows.' },
+  ],
+  jira: [
+    { key: 'projects', label: 'Project visibility', description: 'Project listing is validated during Jira API token connection.', validatedWhenConnected: true },
+    { key: 'issues', label: 'Issue workflows', description: 'Search, create, and comment on Jira issues through the saved API token.', validatedWhenConnected: true },
+    { key: 'transitions', label: 'Workflow transitions', description: 'Use Jira transition endpoints for ticket progression.', validatedWhenConnected: true },
+  ],
+  microsoft365: [
+    { key: 'mail', label: 'Outlook mail access', description: 'Read mailbox content through Microsoft Graph.', validationKey: 'mail' },
+    { key: 'calendar', label: 'Calendar access', description: 'Read calendar events through Microsoft Graph.', validationKey: 'calendar' },
+    { key: 'contacts', label: 'Contacts access', description: 'Read personal contacts through Microsoft Graph.', validationKey: 'contacts' },
+    { key: 'desktop_fallback', label: 'Desktop fallback via Nexus Local', description: 'If Nexus Local is deployed, part of the Outlook, calendar, and contacts path can stay on the customer machine.', status: 'local_fallback' },
+    { key: 'teams', label: 'Teams', description: 'Teams runtime is not wired yet.', status: 'unsupported' },
+    { key: 'onedrive', label: 'OneDrive', description: 'OneDrive runtime is not wired yet.', status: 'unsupported' },
+    { key: 'sharepoint', label: 'SharePoint', description: 'SharePoint runtime is not wired yet.', status: 'unsupported' },
+  ],
+  social_media: [
+    { key: 'publishing', label: 'Publishing', description: 'Publishing and account sync are wired through the Post for Me path.' },
+    { key: 'analytics', label: 'Analytics', description: 'Detailed analytics and engagement workflows are not wired yet.', status: 'unsupported' },
+  ],
+};
 
 // In-memory store for pending device auth sessions: workspaceId → { device_auth_id, user_code, interval, expires_at }
 const deviceAuthSessions = new Map();
@@ -207,7 +275,7 @@ const INTERNAL_CATALOG = [
   {
     provider: 'chatgpt',
     name: 'ChatGPT',
-    description: 'Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex models',
+    description: 'Use your ChatGPT subscription to power agents with GPT-5.4, o3, and Codex models',
     icon: '🤖',
     category: 'ai',
     actions: ['llm_chat', 'code_generation'],
@@ -1544,6 +1612,154 @@ function getConnectorReadiness(provider) {
   };
 }
 
+function getConnectorAccessModel(provider) {
+  return CONNECTOR_ACCESS_MODEL_BY_PROVIDER[provider] || {
+    access_model: 'cloud-required',
+    label: 'Cloud-required',
+    description: 'This connector depends on the remote provider API path.',
+  };
+}
+
+function getRequestedScopes(provider, defaultScopes) {
+  if (provider === 'google') return GOOGLE_INTEGRATION_SCOPES.split(' ');
+  if (provider === 'github') return GITHUB_INTEGRATION_SCOPES.split(' ');
+  if (provider === 'microsoft365') return MICROSOFT_INTEGRATION_SCOPES.split(' ');
+  return Array.isArray(defaultScopes) ? defaultScopes : [];
+}
+
+function getValidatedScopes(provider, grantedScopes, health, connected) {
+  if (!connected) return [];
+
+  if (provider === 'jira') {
+    return Array.isArray(grantedScopes) ? grantedScopes : [];
+  }
+
+  const checks = Array.isArray(health?.checks) ? health.checks : [];
+  const okKeys = new Set(
+    checks
+      .filter((check) => check && check.status === 'ok')
+      .map((check) => check.key)
+  );
+
+  const rules = CONNECTOR_SCOPE_VALIDATION_RULES[provider] || {};
+  const validated = new Set();
+  for (const [key, scopes] of Object.entries(rules)) {
+    if (okKeys.has(key)) {
+      for (const scope of scopes) validated.add(scope);
+    }
+  }
+
+  return Array.from(validated);
+}
+
+function buildIntegrationCapabilities(provider, health, connected) {
+  const checks = Array.isArray(health?.checks) ? health.checks : [];
+  const okKeys = new Set(
+    checks
+      .filter((check) => check && check.status === 'ok')
+      .map((check) => check.key)
+  );
+
+  return (CONNECTOR_CAPABILITIES_BY_PROVIDER[provider] || []).map((capability) => {
+    if (capability.status === 'unsupported' || capability.status === 'local_fallback') {
+      return {
+        key: capability.key,
+        label: capability.label,
+        status: capability.status,
+        description: capability.description,
+      };
+    }
+
+    let status = 'supported';
+    if (connected) {
+      if (capability.validatedWhenConnected) {
+        status = 'validated';
+      } else if (capability.validationKey && okKeys.has(capability.validationKey)) {
+        status = 'validated';
+      } else {
+        status = 'consented';
+      }
+    }
+
+    return {
+      key: capability.key,
+      label: capability.label,
+      status,
+      description: capability.description,
+    };
+  });
+}
+
+function buildRuntimeState({ row, readiness, health, capabilities }) {
+  const workspaceAvailable = Boolean(row.connected);
+  const provisioned = workspaceAvailable && (
+    Boolean(row.connected_at)
+    || Boolean((row.config && Object.keys(row.config).length))
+    || Boolean((row.credentials && Object.keys(row.credentials).length))
+    || (Array.isArray(row.scopes) && row.scopes.length > 0)
+  );
+  const validatedCount = capabilities.filter((capability) => capability.status === 'validated').length;
+  const consentedCount = capabilities.filter((capability) => capability.status === 'consented').length;
+
+  if (readiness.readiness === 'coming_soon') {
+    return {
+      workspace_available: workspaceAvailable,
+      provisioned,
+      effective: false,
+      reason: 'This connector is still catalog-only and should not be treated as runtime-ready.',
+    };
+  }
+
+  if (!workspaceAvailable) {
+    return {
+      workspace_available: false,
+      provisioned: false,
+      effective: false,
+      reason: 'The workspace has not connected this connector yet.',
+    };
+  }
+
+  if (!provisioned) {
+    return {
+      workspace_available: true,
+      provisioned: false,
+      effective: false,
+      reason: 'The connector is visible but lacks enough saved credentials or configuration.',
+    };
+  }
+
+  if (row.status === 'failed') {
+    return {
+      workspace_available: true,
+      provisioned: true,
+      effective: false,
+      reason: 'The latest post-connect validation failed. Reconnect or review scopes before routing work here.',
+    };
+  }
+
+  if (row.status === 'degraded') {
+    return {
+      workspace_available: true,
+      provisioned: true,
+      effective: true,
+      reason: validatedCount > 0
+        ? `The connector is partially effective. ${validatedCount} capability probe(s) passed, but some requested scope paths are still failing.`
+        : 'The connector is partially effective, but the validated capability set is incomplete.',
+    };
+  }
+
+  return {
+    workspace_available: true,
+    provisioned: true,
+    effective: true,
+    reason: validatedCount > 0
+      ? `${validatedCount} capability probe(s) passed and the connector is effective for supported runtime paths.`
+      : consentedCount > 0
+        ? 'The connector is connected, but no dedicated post-connect capability probe is configured yet.'
+        : 'The connector is connected and ready for its supported runtime path.',
+  };
+}
+
 async function persistJiraIntegrationConnection({
   workspaceId,
   normalizedUrl,
@@ -1588,8 +1804,24 @@ async function persistJiraIntegrationConnection({
 
 function buildIntegrationDetailPayload(row) {
   const readiness = getConnectorReadiness(row?.provider);
+  const accessModel = getConnectorAccessModel(row?.provider);
   const config = row?.config && typeof row.config === 'object' ? { ...row.config } : {};
   const credentials = row?.credentials && typeof row.credentials === 'object' ? row.credentials : {};
+  const health = row?.metadata && typeof row.metadata === 'object' && row.metadata.health
+    ? row.metadata.health
+    : null;
+  const requestedScopes = getRequestedScopes(row?.provider, row?.default_scopes);
+  const grantedScopes = Array.isArray(row?.scopes) ? row.scopes : [];
+  const validatedScopes = getValidatedScopes(row?.provider, grantedScopes, health, row?.connected);
+  const capabilities = buildIntegrationCapabilities(row?.provider, health, row?.connected);
+  const unsupportedCapabilities = capabilities.filter((capability) => capability.status === 'unsupported');
+  const runtimeState = buildRuntimeState({
+    row,
+    readiness,
+    health,
+    capabilities,
+  });
+  const missingScopes = requestedScopes.filter((scope) => !grantedScopes.includes(scope));
 
   if (row?.provider === 'jira') {
     if (typeof credentials.baseUrl === 'string' && credentials.baseUrl) {
@@ -1618,6 +1850,19 @@ function buildIntegrationDetailPayload(row) {
     readiness: readiness.readiness,
     readiness_label: readiness.label,
     readiness_description: readiness.description,
+    access_model: accessModel.access_model,
+    access_model_label: accessModel.label,
+    access_model_description: accessModel.description,
+    runtime_state: runtimeState,
+    consent: {
+      requested_scopes: requestedScopes,
+      granted_scopes: grantedScopes,
+      validated_scopes: validatedScopes,
+      missing_scopes: missingScopes,
+    },
+    capabilities,
+    unsupported_capabilities: unsupportedCapabilities,
+    health,
     usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
     webhook_url: `/api/v1/webhooks/${row.provider}`,
   };
@@ -1898,11 +2143,14 @@ router.get('/:provider', async (req, res) => {
         c.icon,
         c.category,
         c.source,
+        c.actions,
+        c.default_scopes,
         COALESCE(wi.connected, FALSE) AS connected,
         COALESCE(wi.status, 'disconnected') AS status,
         COALESCE(wi.scopes, c.default_scopes, '[]'::jsonb) AS scopes,
         COALESCE(wi.credentials, '{}'::jsonb) AS credentials,
         COALESCE(wi.config, '{}'::jsonb) AS config,
+        COALESCE(wi.metadata, '{}'::jsonb) AS metadata,
         wi.connected_at,
         wi.connected_by,
         wi.updated_at

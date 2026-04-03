@@ -1559,6 +1559,85 @@ export interface Integration {
   status?: string;
 }
 
+export type IntegrationReadiness = 'operational' | 'partial' | 'coming_soon';
+export type IntegrationAccessModel = 'cloud-required' | 'local-first';
+export type IntegrationCapabilityStatus =
+  | 'supported'
+  | 'consented'
+  | 'validated'
+  | 'unsupported'
+  | 'local_fallback';
+
+export interface IntegrationRuntimeState {
+  workspace_available: boolean;
+  provisioned: boolean;
+  effective: boolean;
+  reason: string | null;
+}
+
+export interface IntegrationHealthCheck {
+  key: string;
+  label: string;
+  status: 'ok' | 'error' | string;
+  code?: string;
+  error?: string;
+}
+
+export interface IntegrationHealthState {
+  provider: string;
+  status: string;
+  summary: string;
+  checked_at?: string;
+  checks: IntegrationHealthCheck[];
+}
+
+export interface IntegrationConsentState {
+  requested_scopes: string[];
+  granted_scopes: string[];
+  validated_scopes: string[];
+  missing_scopes: string[];
+}
+
+export interface IntegrationCapabilityEntry {
+  key: string;
+  label: string;
+  status: IntegrationCapabilityStatus;
+  description: string;
+}
+
+export interface IntegrationDetail extends Integration {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  source: string;
+  status: string;
+  scopes: string[];
+  config?: {
+    baseUrl?: string;
+    email?: string;
+    connectMode?: string;
+    [key: string]: unknown;
+  };
+  readiness: IntegrationReadiness;
+  readiness_label: string;
+  readiness_description: string;
+  access_model: IntegrationAccessModel;
+  access_model_label: string;
+  access_model_description: string;
+  runtime_state: IntegrationRuntimeState;
+  consent: IntegrationConsentState;
+  capabilities: IntegrationCapabilityEntry[];
+  unsupported_capabilities: IntegrationCapabilityEntry[];
+  health: IntegrationHealthState | null;
+  usage: {
+    api_calls_today: number;
+    rate_limit_remaining: number;
+  };
+  webhook_url?: string;
+}
+
 export interface AvailableProvider {
   provider: string;
   name: string;
