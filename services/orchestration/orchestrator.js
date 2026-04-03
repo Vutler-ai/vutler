@@ -305,10 +305,37 @@ function buildSocialOrchestrationDecision(args = {}, context = {}) {
 
 function buildMemoryBindingsPayload(memoryBindings = null) {
   if (!memoryBindings?.instance) return null;
+  const instanceAgentId = memoryBindings.agentId || memoryBindings.sniparaInstanceId || memoryBindings.agentRef || null;
   return {
     scope: memoryBindings.instance.scope || null,
     category: memoryBindings.instance.category || null,
-    agent_id: memoryBindings.agentId || memoryBindings.sniparaInstanceId || memoryBindings.agentRef || null,
+    agent_id: instanceAgentId,
+    user_id: memoryBindings.humanId || null,
+    user_name: memoryBindings.humanName || null,
+    instance: {
+      scope: memoryBindings.instance.scope || null,
+      category: memoryBindings.instance.category || null,
+      agent_id: instanceAgentId,
+    },
+    human: memoryBindings.human
+      ? {
+          scope: memoryBindings.human.scope || null,
+          category: memoryBindings.human.category || null,
+          user_id: memoryBindings.humanId || null,
+          user_name: memoryBindings.humanName || null,
+        }
+      : null,
+    human_agent: memoryBindings.human_agent
+      ? {
+          scope: memoryBindings.human_agent.scope || null,
+          category: memoryBindings.human_agent.category || null,
+          agent_id: instanceAgentId,
+          user_id: memoryBindings.humanId || null,
+          user_name: memoryBindings.humanName || null,
+        }
+      : null,
+    default_scope_key: memoryBindings.human ? 'human' : 'instance',
+    recall_scope_order: memoryBindings.human ? ['human', 'human_agent', 'instance'] : ['instance'],
   };
 }
 

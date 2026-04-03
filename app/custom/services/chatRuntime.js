@@ -50,6 +50,29 @@ function getSoulCacheKey(agent, workspaceId = DEFAULT_WORKSPACE) {
   return `${ws}:${agentName}`;
 }
 
+function buildHumanContext(message = {}) {
+  const id = String(message.sender_id || '').trim() || null;
+  const name = String(message.sender_name || '').trim() || null;
+  if (!id && !name) return null;
+  return { id, name };
+}
+
+function buildChatMemoryQuery(message = {}, history = [], humanContext = null) {
+  const recentUserText = history
+    .filter((entry) => entry && entry.role === 'user')
+    .slice(-3)
+    .map((entry) => entry.content)
+    .filter(Boolean)
+    .join('\n');
+  const humanName = humanContext?.name ? `User ${humanContext.name}` : 'Current user';
+  return [
+    humanName,
+    'preferences language timezone style goals current context',
+    String(message.content || '').trim(),
+    recentUserText,
+  ].filter(Boolean).join('\n').trim();
+}
+
 async function hydrateAgent(agent, workspaceId = DEFAULT_WORKSPACE) {
   if (!agent) return agent;
   const ws = normalizeWorkspaceId(workspaceId || agent.workspace_id);
@@ -262,23 +285,12 @@ async function getAgentSoul(agent) {
     return cached.soul;
   }
 
-  const [memoryBundle, context] = await Promise.all([
-    memoryRuntime.preparePromptContext({
-      db: pool,
-      workspaceId,
-      agent: hydratedAgent,
-      query: `${agentName} personality soul role instructions behavior preferences`,
-      runtime: 'chat',
-      includeSummaries: true,
-    }).catch(() => ({ prompt: '', stats: null })),
-    sniparaCall('rlm_context_query', {
-      query: `${agentName} agent role responsibilities at Starbox Group`,
-      max_tokens: 1000
-    }, workspaceId)
-  ]);
+  const context = await sniparaCall('rlm_context_query', {
+    query: `${agentName} agent role responsibilities at Starbox Group`,
+    max_tokens: 1000
+  }, workspaceId);
 
   let soul = '';
-  if (memoryBundle.prompt && memoryBundle.prompt.trim()) soul += `${memoryBundle.prompt}\n\n`;
   if (context && String(context).trim()) soul += `## Context\n${context}\n\n`;
   soul += `## Identity\nYou are ${hydratedAgent.name}, an AI agent at Starbox Group.\n`;
   soul += `Your username in the swarm is "${agentName}".\n`;
@@ -287,23 +299,11 @@ async function getAgentSoul(agent) {
   soul += 'Be concise, helpful, and stay in character.\n';
   if (hydratedAgent.system_prompt) soul += `\n## Additional Instructions\n${hydratedAgent.system_prompt}\n`;
 
-  if (memoryBundle.stats) {
-    console.info('[ChatRuntime] memory bundle', {
-      agent: agentName,
-      workspaceId,
-      mode: memoryBundle.mode?.mode || null,
-      mode_source: memoryBundle.mode?.source || null,
-      runtime: memoryBundle.stats.runtime,
-      selected: memoryBundle.stats.selected,
-      tokens: memoryBundle.stats.tokens || 0,
-    });
-  }
-
   soulCache.set(cacheKey, { soul, time: now });
   return soul;
 }
 
-function rememberInteraction(agent, workspaceId, userMessage, agentResponse, userName) {
+function rememberInteraction(agent, workspaceId, userMessage, agentResponse, humanContext = null) {
   if (String(userMessage || '').length < 20 && String(agentResponse || '').length < 50) return;
   soulCache.delete(getSoulCacheKey(agent, workspaceId));
   memoryRuntime.recordConversation({
@@ -312,7 +312,8 @@ function rememberInteraction(agent, workspaceId, userMessage, agentResponse, use
     agent,
     userMessage,
     assistantMessage: agentResponse,
-    userName,
+    userId: humanContext?.id || null,
+    userName: humanContext?.name || null,
   }).catch((err) => {
     console.warn('[ChatRuntime] memory conversation persistence failed:', err.message);
   });
@@ -598,10 +599,6 @@ async function handleMessage(message) {
         integrationProviders: filteredExecutionOverlay.integrationProviders || [],
         toolCapabilities: filteredExecutionOverlay.toolCapabilities || [],
       };
-  const soul = appendPlacementInstruction(
-    await getAgentSoul(executionAgent),
-    executionAgent.workspaceToolPolicy?.placementInstruction
-  );
   const effectiveHistory = !message.id
     ? [
       ...history,
@@ -611,6 +608,35 @@ async function handleMessage(message) {
       },
     ]
     : history;
+  const humanContext = buildHumanContext(message);
+  const memoryBundle = await memoryRuntime.preparePromptContext({
+    db: pool,
+    workspaceId,
+    agent: executionAgent,
+    humanContext,
+    query: buildChatMemoryQuery(message, effectiveHistory, humanContext),
+    runtime: 'chat',
+    includeSummaries: true,
+  }).catch(() => ({ prompt: '', stats: null, mode: null }));
+  if (memoryBundle.stats) {
+    console.info('[ChatRuntime] memory bundle', {
+      agent: executionAgent.username || executionAgent.id,
+      workspaceId,
+      humanId: humanContext?.id || null,
+      mode: memoryBundle.mode?.mode || null,
+      mode_source: memoryBundle.mode?.source || null,
+      runtime: memoryBundle.stats.runtime,
+      selected: memoryBundle.stats.selected,
+      tokens: memoryBundle.stats.tokens || 0,
+    });
+  }
+  const baseSoul = await getAgentSoul(executionAgent);
+  const soul = appendPlacementInstruction(
+    memoryBundle.prompt
+      ? `${baseSoul}\n\n${memoryBundle.prompt}`
+      : baseSoul,
+    executionAgent.workspaceToolPolicy?.placementInstruction
+  );
 
   const response = await llmChat(
     {
@@ -635,6 +661,7 @@ async function handleMessage(message) {
         displayAgentId: String(executionAgent.id),
         orchestratedBy: 'jarvis',
       },
+      humanContext,
     }
   );
 
@@ -685,7 +712,7 @@ async function handleMessage(message) {
     }
   });
 
-  rememberInteraction(executionAgent, workspaceId, message.content, response.content, message.sender_name || null);
+  rememberInteraction(executionAgent, workspaceId, message.content, response.content, humanContext);
 }
 
 async function processMessageById(messageId, workspaceId = DEFAULT_WORKSPACE) {

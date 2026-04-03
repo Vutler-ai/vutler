@@ -134,6 +134,7 @@ describe('memory runtime e2e', () => {
       agent: agents[0],
       userMessage: 'My name is Alex and I prefer concise answers in French.',
       assistantMessage: 'Understood, I will answer briefly in French.',
+      userId: 'user-1',
       userName: 'Alex',
     });
 
@@ -141,6 +142,7 @@ describe('memory runtime e2e', () => {
       db,
       workspaceId: 'ws-1',
       agent: agents[0],
+      humanContext: { id: 'user-1', name: 'Alex' },
       query: 'concise answers in French',
       runtime: 'chat',
     });
@@ -157,6 +159,7 @@ describe('memory runtime e2e', () => {
       agent: agents[0],
       userMessage: 'On utilise toujours Codex pour les taches engineering.',
       assistantMessage: 'Compris, always use Codex for engineering tasks.',
+      userId: 'user-1',
       userName: 'Alex',
     });
 
@@ -166,6 +169,7 @@ describe('memory runtime e2e', () => {
       agent: agents[0],
       userMessage: 'Rappel: on utilise toujours Codex pour les taches engineering.',
       assistantMessage: 'Compris, always use Codex for engineering tasks.',
+      userId: 'user-1',
       userName: 'Alex',
     });
 
@@ -173,6 +177,7 @@ describe('memory runtime e2e', () => {
       db,
       workspaceId: 'ws-1',
       agent: agents[1],
+      humanContext: { id: 'user-1', name: 'Alex' },
       query: 'engineering tasks codex standard',
       runtime: 'task',
     });
@@ -210,5 +215,52 @@ describe('memory runtime e2e', () => {
 
     expect(maintenance.deleted).toBeGreaterThan(0);
     expect(mockMemoryStore.some((memory) => /^\[DELETED memory /.test(memory.text))).toBe(true);
+  });
+
+  test('separates human memories for multiple users speaking to the same agent', async () => {
+    const db = createDb(agents);
+
+    await extractConversationMemories({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[0],
+      userMessage: 'My name is Alex and I prefer concise answers in French.',
+      assistantMessage: 'Understood.',
+      userId: 'user-alex',
+      userName: 'Alex',
+    });
+
+    await extractConversationMemories({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[0],
+      userMessage: 'My name is Sam and I prefer detailed answers in English.',
+      assistantMessage: 'Understood.',
+      userId: 'user-sam',
+      userName: 'Sam',
+    });
+
+    const alexBundle = await buildRuntimeMemoryBundle({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[1],
+      humanContext: { id: 'user-alex', name: 'Alex' },
+      query: 'language style preferences',
+      runtime: 'chat',
+    });
+
+    const samBundle = await buildRuntimeMemoryBundle({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[1],
+      humanContext: { id: 'user-sam', name: 'Sam' },
+      query: 'language style preferences',
+      runtime: 'chat',
+    });
+
+    expect(alexBundle.sections.human.some((memory) => /Alex/.test(memory.text))).toBe(true);
+    expect(alexBundle.sections.human.some((memory) => /Sam/.test(memory.text))).toBe(false);
+    expect(samBundle.sections.human.some((memory) => /Sam/.test(memory.text))).toBe(true);
+    expect(samBundle.sections.human.some((memory) => /Alex/.test(memory.text))).toBe(false);
   });
 });

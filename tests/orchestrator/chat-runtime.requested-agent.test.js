@@ -196,6 +196,10 @@ describe('chatRuntime requested agent resolution', () => {
           displayAgentId: 'agent-1',
           orchestratedBy: 'jarvis',
         }),
+        humanContext: {
+          id: 'user-1',
+          name: 'User',
+        },
       })
     );
     expect(preparePromptContext).toHaveBeenCalledWith(expect.objectContaining({
@@ -203,6 +207,10 @@ describe('chatRuntime requested agent resolution', () => {
         id: 'agent-1',
         username: 'jarvis',
       }),
+      humanContext: {
+        id: 'user-1',
+        name: 'User',
+      },
     }));
 
     expect(inserts).toHaveLength(1);

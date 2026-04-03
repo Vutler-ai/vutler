@@ -29,10 +29,12 @@ describe('memoryExtractionService', () => {
     const memories = deriveMemoriesFromConversation({
       userMessage: 'Je m\'appelle Alex et je prefere des reponses courtes. On utilise toujours Codex pour le dev.',
       assistantMessage: 'Compris, on garde Codex comme standard.',
+      userId: 'user-1',
       userName: 'Alex',
     });
 
     expect(memories.some((memory) => memory.type === 'user_profile' && /Alex/.test(memory.text))).toBe(true);
+    expect(memories.some((memory) => memory.type === 'user_profile' && memory.scopeKey === 'human')).toBe(true);
     expect(memories.some((memory) => memory.type === 'decision' && memory.scopeKey === 'template')).toBe(true);
   });
 
@@ -41,9 +43,10 @@ describe('memoryExtractionService', () => {
       { role: 'assistant', content: 'Hello' },
       { role: 'user', content: "Hi, I'm Mike and I prefer concise answers in English." },
       { role: 'user', content: 'My timezone is Europe/Zurich and I work in operations.' },
-    ], 'Mike');
+    ], 'Mike', 'user-1');
 
     expect(memories.some((memory) => memory.type === 'user_profile' && /Mike/.test(memory.text))).toBe(true);
+    expect(memories.every((memory) => memory.scopeKey === 'human')).toBe(true);
     expect(memories.some((memory) => memory.type === 'user_profile' && /timezone/i.test(memory.text))).toBe(true);
   });
 
@@ -88,6 +91,7 @@ describe('memoryExtractionService', () => {
       agent: { username: 'mike', role: 'engineering' },
       userMessage: 'My name is Alex and I prefer concise answers.',
       assistantMessage: 'Understood.',
+      userId: 'user-1',
       userName: 'Alex',
     });
 

@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { callSniparaTool } = require('./sniparaResolver');
+const { callSniparaTool, serializeSniparaError } = require('./sniparaResolver');
 const {
   normalizeType,
   normalizeScopeKey,
@@ -49,7 +49,26 @@ function deriveAgentRef(value) {
   return raw;
 }
 
-function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
+function normalizeMemoryRef(value, fallback = '') {
+  return String(value || '').trim().toLowerCase()
+    .replace(/[^a-z0-9-_]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || fallback;
+}
+
+function normalizeHumanContext(humanContext = {}) {
+  if (!humanContext || typeof humanContext !== 'object') return null;
+  const id = String(humanContext.id || humanContext.userId || humanContext.senderId || '').trim() || null;
+  const name = String(humanContext.name || humanContext.userName || humanContext.senderName || '').trim() || null;
+  if (!id && !name) return null;
+  return {
+    id,
+    name,
+    ref: normalizeMemoryRef(id || name, 'unknown-human'),
+  };
+}
+
+function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE, humanContext = null) {
   const ws = normalizeWorkspaceId(workspaceId);
   const agentRef = deriveAgentRef(
     agent.username ||
@@ -60,12 +79,31 @@ function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
     'unknown-agent'
   );
   const role = normalizeRole(agent.role);
+  const normalizedHuman = normalizeHumanContext(humanContext);
   const canonicalAgentCategory = String(agent.snipara_instance_id || '').trim();
   const aliasAgentCategory = `${ws}-agent-${agentRef}`;
   const instanceCategories = [...new Set([
     canonicalAgentCategory,
     aliasAgentCategory,
   ].filter(Boolean))];
+  const humanBindings = normalizedHuman
+    ? {
+        id: normalizedHuman.id,
+        name: normalizedHuman.name,
+        ref: normalizedHuman.ref,
+        scope: 'project',
+        category: `${ws}-human-${normalizedHuman.ref}`,
+      }
+    : null;
+  const relationshipBindings = normalizedHuman
+    ? {
+        id: normalizedHuman.id,
+        name: normalizedHuman.name,
+        ref: normalizedHuman.ref,
+        scope: 'agent',
+        category: `${ws}-agent-${agentRef}-human-${normalizedHuman.ref}`,
+      }
+    : null;
 
   return {
     workspaceId: ws,
@@ -73,6 +111,9 @@ function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
     sniparaInstanceId: agent.snipara_instance_id || null,
     agentRef,
     role,
+    humanId: normalizedHuman?.id || null,
+    humanName: normalizedHuman?.name || null,
+    humanRef: normalizedHuman?.ref || null,
     instance: {
       scope: 'agent',
       category: instanceCategories[0] || aliasAgentCategory,
@@ -80,6 +121,8 @@ function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE) {
     },
     template: { scope: 'project', category: `${ws}-template-${role}` },
     global: { scope: 'project', category: `${ws}-platform-standards` },
+    human: humanBindings,
+    human_agent: relationshipBindings,
   };
 }
 
@@ -227,6 +270,8 @@ function toScopeName(scopeKey) {
   if (scopeKey === 'instance') return 'agent';
   if (scopeKey === 'template') return 'template';
   if (scopeKey === 'global') return 'global';
+  if (scopeKey === 'human') return 'human';
+  if (scopeKey === 'human_agent') return 'human_agent';
   return scopeKey || 'agent';
 }
 
@@ -341,6 +386,23 @@ function computeUsageScore(memory) {
   return (usage * 0.5) + (duplicates * 0.2) + (promotion * 0.3);
 }
 
+function memoryMatchesHumanContext(memory, humanContext = null) {
+  const normalizedHuman = normalizeHumanContext(humanContext);
+  if (!normalizedHuman) return true;
+
+  const metadata = memory?.metadata || {};
+  const memoryUserId = String(metadata.user_id || memory?.user_id || '').trim();
+  if (memoryUserId) return memoryUserId === normalizedHuman.id;
+
+  const memoryUserName = String(metadata.user_name || memory?.user_name || '').trim().toLowerCase();
+  if (memoryUserName && normalizedHuman.name) return memoryUserName === normalizedHuman.name.toLowerCase();
+
+  const memoryText = String(memory?.text || '').toLowerCase();
+  if (normalizedHuman.name && memoryText.includes(normalizedHuman.name.toLowerCase())) return true;
+
+  return false;
+}
+
 function scoreMemoryForRuntime(memory, { query = '', runtime = 'chat', scopeKey } = {}) {
   if (!memory || isDeletedMemory(memory) || isMemoryExpired(memory)) return -1;
   if (runtime !== 'dashboard' && !isInjectableMemory(memory)) return -1;
@@ -385,19 +447,32 @@ function compactRankedMemories(memories = []) {
 
 async function listStoredMemories({ db, workspaceId, search, limit = 50, offset = 0 }) {
   const pageSize = Math.max(1, Math.min(50, limit));
-  const raw = await callSniparaTool({
-    db,
-    workspaceId,
-    toolName: 'rlm_memories',
-    args: {
+  let raw = null;
+  let error = null;
+
+  try {
+    raw = await callSniparaTool({
+      db,
+      workspaceId,
+      toolName: 'rlm_memories',
+      args: {
+        search,
+        limit: pageSize,
+        offset,
+      },
+    });
+  } catch (err) {
+    error = serializeSniparaError(err);
+    console.warn('[SniparaMemory] listStoredMemories failed:', {
+      workspaceId: normalizeWorkspaceId(workspaceId),
       search,
-      limit: pageSize,
-      offset,
-    },
-  }).catch(() => null);
+      status_code: error?.status_code || null,
+      message: error?.message || String(err?.message || err),
+    });
+  }
 
   if (!raw) {
-    return { memories: [], has_more: false, raw_count: 0 };
+    return { memories: [], has_more: false, raw_count: 0, error };
   }
 
   const memories = getRawMemoryArray(raw).map((memory, index) => normalizeListedMemory(memory, 'agent', index));
@@ -405,6 +480,7 @@ async function listStoredMemories({ db, workspaceId, search, limit = 50, offset 
     memories,
     has_more: Boolean(raw.has_more),
     raw_count: memories.length,
+    error,
   };
 }
 
@@ -420,6 +496,7 @@ async function collectStoredScopeMemories({
   const pageSize = Math.max(1, Math.min(50, limit));
   let offset = 0;
   let hasMore = true;
+  let error = null;
 
   while (hasMore && collected.length < limit) {
     const page = await listStoredMemories({
@@ -430,9 +507,19 @@ async function collectStoredScopeMemories({
       offset,
     });
 
+    if (page.error && !error) error = page.error;
+    if (page.error) break;
+
     const batch = (page.memories || []).filter((memory) => {
       if (scopeKey === 'instance') {
         return memory.scope === 'agent' && memoryCategoryMatches(memory, bindings.instance.categories, bindings.agentRef, bindings.agentId);
+      }
+      if (scopeKey === 'human' && bindings.human) {
+        return memory.scope === 'project' && memoryCategoryMatches(memory, [bindings.human.category], bindings.human.ref, bindings.human.id);
+      }
+      if (scopeKey === 'human_agent' && bindings.human_agent) {
+        return memory.scope === 'agent'
+          && memoryCategoryMatches(memory, [bindings.human_agent.category], bindings.human_agent.ref, bindings.agentId);
       }
       if (scopeKey === 'template') {
         return memory.scope === 'project' && memoryCategoryMatches(memory, [bindings.template.category], bindings.role, bindings.role);
@@ -453,6 +540,7 @@ async function collectStoredScopeMemories({
   return {
     memories: collected.slice(0, limit),
     has_more: hasMore || collected.length >= limit,
+    error,
   };
 }
 
@@ -502,20 +590,32 @@ async function loadDocumentFromCandidates({ db, workspaceId, paths = [] }) {
   return '';
 }
 
-function selectRuntimeMemories({ instance = [], template = [], global = [], query = '', runtime = 'chat' }) {
+function selectRuntimeMemories({
+  human = [],
+  human_agent = [],
+  instance = [],
+  template = [],
+  global = [],
+  query = '',
+  runtime = 'chat',
+}) {
   const budget = getRuntimeBudget(runtime);
   const rankedByScope = {
+    human: compactRankedMemories(rankMemories(human, { query, runtime, scopeKey: 'human' })).slice(0, budget.human || 0),
+    human_agent: compactRankedMemories(rankMemories(human_agent, { query, runtime, scopeKey: 'human_agent' })).slice(0, budget.human_agent || 0),
     instance: compactRankedMemories(rankMemories(instance, { query, runtime, scopeKey: 'instance' })).slice(0, budget.instance),
     template: compactRankedMemories(rankMemories(template, { query, runtime, scopeKey: 'template' })).slice(0, budget.template),
     global: compactRankedMemories(rankMemories(global, { query, runtime, scopeKey: 'global' })).slice(0, budget.global),
   };
 
-  const combined = [...rankedByScope.instance, ...rankedByScope.template, ...rankedByScope.global]
+  const combined = [...rankedByScope.human, ...rankedByScope.human_agent, ...rankedByScope.instance, ...rankedByScope.template, ...rankedByScope.global]
     .sort((left, right) => right.retrieval_score - left.retrieval_score)
     .slice(0, budget.total);
 
   const selectedIds = new Set(combined.map((memory) => memory.id));
   const selectedByScope = {
+    human: rankedByScope.human.filter((memory) => selectedIds.has(memory.id)),
+    human_agent: rankedByScope.human_agent.filter((memory) => selectedIds.has(memory.id)),
     instance: rankedByScope.instance.filter((memory) => selectedIds.has(memory.id)),
     template: rankedByScope.template.filter((memory) => selectedIds.has(memory.id)),
     global: rankedByScope.global.filter((memory) => selectedIds.has(memory.id)),
@@ -529,12 +629,16 @@ function selectRuntimeMemories({ instance = [], template = [], global = [], quer
       query,
       budget,
       recalled: {
+        human: human.length,
+        human_agent: human_agent.length,
         instance: instance.length,
         template: template.length,
         global: global.length,
       },
       selected: {
         total: combined.length,
+        human: selectedByScope.human.length,
+        human_agent: selectedByScope.human_agent.length,
         instance: selectedByScope.instance.length,
         template: selectedByScope.template.length,
         global: selectedByScope.global.length,
@@ -546,6 +650,7 @@ function selectRuntimeMemories({ instance = [], template = [], global = [], quer
 async function recallWithBindings({ db, workspaceId, bindings, query, limit = 20, scopeKey = 'instance' }) {
   const normalizedScope = normalizeScopeKey(scopeKey);
   const target = bindings[normalizedScope];
+  if (!target) return [];
   const categories = [...new Set([
     ...(Array.isArray(target?.categories) ? target.categories : []),
     target?.category,
@@ -557,6 +662,7 @@ async function recallWithBindings({ db, workspaceId, bindings, query, limit = 20
   for (const category of categories) {
     const args = { query, scope: target.scope, category, limit };
     if (normalizedScope === 'instance' && agentId) args.agent_id = agentId;
+    if (normalizedScope === 'human_agent' && agentId) args.agent_id = agentId;
 
     const raw = await callSniparaTool({ db, workspaceId, toolName: 'rlm_recall', args }).catch(() => []);
     const normalized = normalizeMemories(raw, normalizedScope);
@@ -584,15 +690,21 @@ async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, ro
     limit,
   });
   let rawMemories = stored.memories || [];
+  let sniparaError = stored.error || null;
   if (rawMemories.length === 0) {
-    rawMemories = await recallWithBindings({
-      db,
-      workspaceId,
-      bindings,
-      query: query || `agent ${bindings.agentRef} memories`,
-      limit,
-      scopeKey: 'instance',
-    });
+    try {
+      rawMemories = await recallWithBindings({
+        db,
+        workspaceId,
+        bindings,
+        query: query || `agent ${bindings.agentRef} memories`,
+        limit,
+        scopeKey: 'instance',
+      });
+    } catch (error) {
+      sniparaError = sniparaError || serializeSniparaError(error);
+      rawMemories = [];
+    }
   }
   const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
   return {
@@ -608,6 +720,7 @@ async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, ro
     deleted_count: summary.deleted_count,
     has_more: stored.has_more || rawMemories.length >= limit,
     count_is_estimate: stored.has_more || rawMemories.length >= limit,
+    snipara_error: sniparaError,
   };
 }
 
@@ -623,15 +736,21 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
     limit,
   });
   let rawMemories = stored.memories || [];
+  let sniparaError = stored.error || null;
   if (rawMemories.length === 0) {
-    rawMemories = await recallWithBindings({
-      db,
-      workspaceId,
-      bindings,
-      query: query || `${bindings.role} knowledge best practices`,
-      limit,
-      scopeKey: 'template',
-    });
+    try {
+      rawMemories = await recallWithBindings({
+        db,
+        workspaceId,
+        bindings,
+        query: query || `${bindings.role} knowledge best practices`,
+        limit,
+        scopeKey: 'template',
+      });
+    } catch (error) {
+      sniparaError = sniparaError || serializeSniparaError(error);
+      rawMemories = [];
+    }
   }
   const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
   return {
@@ -647,6 +766,7 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
     deleted_count: summary.deleted_count,
     has_more: stored.has_more || rawMemories.length >= limit,
     count_is_estimate: stored.has_more || rawMemories.length >= limit,
+    snipara_error: sniparaError,
   };
 }
 
@@ -675,17 +795,46 @@ async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, inc
   ];
 
   const [storedInstance, storedTemplate, storedGlobal, soulDoc] = await Promise.all([
-    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'instance', search: getMemorySearchTerms(agent, bindings, bindings.agentRef), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
-    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'template', search: getMemorySearchTerms(agent, bindings, bindings.role), limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
-    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'global', search: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT }).catch(() => ({ memories: [] })),
+    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'instance', search: getMemorySearchTerms(agent, bindings, bindings.agentRef), limit: DEFAULT_COUNT_LIMIT }).catch((error) => ({ memories: [], error: serializeSniparaError(error) })),
+    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'template', search: getMemorySearchTerms(agent, bindings, bindings.role), limit: DEFAULT_COUNT_LIMIT }).catch((error) => ({ memories: [], error: serializeSniparaError(error) })),
+    collectStoredScopeMemories({ db, workspaceId, bindings, scopeKey: 'global', search: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT }).catch((error) => ({ memories: [], error: serializeSniparaError(error) })),
     loadDocumentFromCandidates({ db, workspaceId, paths: agentSoulPaths }),
   ]);
 
-  const [instanceRaw, templateRaw, globalRaw] = await Promise.all([
-    storedInstance.memories.length > 0 ? storedInstance.memories : recallWithBindings({ db, workspaceId, bindings, query: bindings.agentRef, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'instance' }).catch(() => []),
-    storedTemplate.memories.length > 0 ? storedTemplate.memories : recallWithBindings({ db, workspaceId, bindings, query: bindings.role, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'template' }).catch(() => []),
-    storedGlobal.memories.length > 0 ? storedGlobal.memories : recallWithBindings({ db, workspaceId, bindings, query: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT, scopeKey: 'global' }).catch(() => []),
-  ]);
+  const sniparaErrors = {
+    instance: storedInstance.error || null,
+    template: storedTemplate.error || null,
+    global: storedGlobal.error || null,
+  };
+
+  let instanceRaw = storedInstance.memories || [];
+  let templateRaw = storedTemplate.memories || [];
+  let globalRaw = storedGlobal.memories || [];
+
+  if (instanceRaw.length === 0) {
+    try {
+      instanceRaw = await recallWithBindings({ db, workspaceId, bindings, query: bindings.agentRef, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'instance' });
+    } catch (error) {
+      sniparaErrors.instance = sniparaErrors.instance || serializeSniparaError(error);
+      instanceRaw = [];
+    }
+  }
+  if (templateRaw.length === 0) {
+    try {
+      templateRaw = await recallWithBindings({ db, workspaceId, bindings, query: bindings.role, limit: DEFAULT_COUNT_LIMIT, scopeKey: 'template' });
+    } catch (error) {
+      sniparaErrors.template = sniparaErrors.template || serializeSniparaError(error);
+      templateRaw = [];
+    }
+  }
+  if (globalRaw.length === 0) {
+    try {
+      globalRaw = await recallWithBindings({ db, workspaceId, bindings, query: 'platform standards guardrails policies defaults', limit: DEFAULT_COUNT_LIMIT, scopeKey: 'global' });
+    } catch (error) {
+      sniparaErrors.global = sniparaErrors.global || serializeSniparaError(error);
+      globalRaw = [];
+    }
+  }
 
   const instanceSummary = summarizeMemoryCollection(instanceRaw, includeInternal);
   const templateSummary = summarizeMemoryCollection(templateRaw, includeInternal);
@@ -710,6 +859,7 @@ async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, inc
     instance_count_is_estimate: instanceRaw.length >= DEFAULT_COUNT_LIMIT,
     template_count_is_estimate: templateRaw.length >= DEFAULT_COUNT_LIMIT,
     global_count_is_estimate: globalRaw.length >= DEFAULT_COUNT_LIMIT,
+    snipara_errors: Object.values(sniparaErrors).some(Boolean) ? sniparaErrors : null,
   };
 }
 
@@ -717,6 +867,7 @@ async function rememberScopedMemory({
   db,
   workspaceId,
   agent,
+  humanContext = null,
   scopeKey = 'instance',
   text,
   type = 'fact',
@@ -727,7 +878,15 @@ async function rememberScopedMemory({
 }) {
   const normalizedType = normalizeType(type);
   const effectiveScopeKey = normalizeScopeKey(scopeKey || metadata.memory_scope_key || getDefaultScopeKey(normalizedType));
-  const bindings = buildAgentMemoryBindings(agent, workspaceId);
+  const effectiveHumanContext = humanContext || (
+    metadata && (metadata.user_id || metadata.user_name)
+      ? {
+          id: metadata.user_id || null,
+          name: metadata.user_name || null,
+        }
+      : null
+  );
+  const bindings = buildAgentMemoryBindings(agent, workspaceId, effectiveHumanContext);
   const target = bindings[effectiveScopeKey] || bindings.instance;
   const normalizedImportance = normalizeImportance(importance);
   const baseMetadata = buildGovernanceMetadata({
@@ -752,6 +911,8 @@ async function rememberScopedMemory({
       memory_type: normalizedType,
       agent_id: bindings.agentId || baseMetadata.agent_id || undefined,
       agent_username: bindings.agentRef,
+      user_id: bindings.humanId || baseMetadata.user_id || undefined,
+      user_name: bindings.humanName || baseMetadata.user_name || undefined,
       promotion_candidate: baseMetadata.promotion_candidate ?? isPromotableMemory({ type: normalizedType }),
       promotion_score: Math.max(
         Number(baseMetadata.promotion_score) || 0,
@@ -760,6 +921,7 @@ async function rememberScopedMemory({
     },
   };
   if (effectiveScopeKey === 'instance') args.agent_id = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
+  if (effectiveScopeKey === 'human_agent') args.agent_id = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
 
   await callSniparaTool({
     db,
@@ -852,25 +1014,85 @@ function stringifyMemoryList(memories = []) {
     .join('\n');
 }
 
-async function buildRuntimeMemoryBundle({ db, workspaceId, agent, query = '', runtime = 'chat' }) {
+function buildHumanMemoryQuery(query, humanContext = null) {
+  const normalizedHuman = normalizeHumanContext(humanContext);
+  return [
+    query,
+    normalizedHuman?.name,
+    normalizedHuman?.id,
+    'user preferences language timezone style goals profile',
+  ].filter(Boolean).join(' ').trim() || 'user preferences profile';
+}
+
+function buildRelationshipMemoryQuery(query, humanContext = null, bindings = null) {
+  const normalizedHuman = normalizeHumanContext(humanContext);
+  return [
+    query,
+    normalizedHuman?.name,
+    bindings?.agentRef,
+    'previous interactions working context open threads',
+  ].filter(Boolean).join(' ').trim() || 'previous interactions';
+}
+
+function filterRuntimeMemoriesForHuman(memories = [], humanContext = null, scopeKey = 'instance') {
+  if (!humanContext || !Array.isArray(memories)) return memories;
+  if (scopeKey !== 'instance' && scopeKey !== 'human' && scopeKey !== 'human_agent') return memories;
+
+  return memories.filter((memory) => {
+    if (memory?.type !== 'user_profile') return true;
+    return memoryMatchesHumanContext(memory, humanContext);
+  });
+}
+
+async function buildRuntimeMemoryBundle({ db, workspaceId, agent, humanContext = null, query = '', runtime = 'chat' }) {
   if (!agent) {
     return {
       prompt: '',
       memories: [],
-      stats: { runtime, query, budget: getRuntimeBudget(runtime), recalled: {}, selected: { total: 0 } },
-      sections: { instance: [], template: [], global: [] },
+      stats: { runtime, query, budget: getRuntimeBudget(runtime), recalled: {}, selected: { total: 0, human: 0, human_agent: 0, instance: 0, template: 0, global: 0 } },
+      sections: { human: [], human_agent: [], instance: [], template: [], global: [] },
     };
   }
 
-  const bindings = buildAgentMemoryBindings(agent, workspaceId);
-  const [instance, template, global] = await Promise.all([
+  const bindings = buildAgentMemoryBindings(agent, workspaceId, humanContext);
+  const [human, humanAgent, instance, template, global] = await Promise.all([
+    bindings.human
+      ? recallWithBindings({
+          db,
+          workspaceId,
+          bindings,
+          query: buildHumanMemoryQuery(query, humanContext),
+          limit: 12,
+          scopeKey: 'human',
+        }).catch(() => [])
+      : Promise.resolve([]),
+    bindings.human_agent
+      ? recallWithBindings({
+          db,
+          workspaceId,
+          bindings,
+          query: buildRelationshipMemoryQuery(query, humanContext, bindings),
+          limit: 8,
+          scopeKey: 'human_agent',
+        }).catch(() => [])
+      : Promise.resolve([]),
     recallWithBindings({ db, workspaceId, bindings, query: query || `${bindings.agentRef} current user context and working memory`, limit: 18, scopeKey: 'instance' }).catch(() => []),
     recallWithBindings({ db, workspaceId, bindings, query: `${bindings.role} template best practices role instructions`, limit: 14, scopeKey: 'template' }).catch(() => []),
     recallWithBindings({ db, workspaceId, bindings, query: 'platform standards guardrails policies defaults', limit: 10, scopeKey: 'global' }).catch(() => []),
   ]);
 
-  const selection = selectRuntimeMemories({ instance, template, global, query, runtime });
+  const selection = selectRuntimeMemories({
+    human: filterRuntimeMemoriesForHuman(human, humanContext, 'human'),
+    human_agent: filterRuntimeMemoriesForHuman(humanAgent, humanContext, 'human_agent'),
+    instance: filterRuntimeMemoriesForHuman(instance, humanContext, 'instance'),
+    template,
+    global,
+    query,
+    runtime,
+  });
   const sections = [];
+  if (selection.selectedByScope.human.length > 0) sections.push(`## Human Memory\n${stringifyMemoryList(selection.selectedByScope.human)}`);
+  if (selection.selectedByScope.human_agent.length > 0) sections.push(`## Relationship Memory\n${stringifyMemoryList(selection.selectedByScope.human_agent)}`);
   if (selection.selectedByScope.instance.length > 0) sections.push(`## Agent Memory\n${stringifyMemoryList(selection.selectedByScope.instance)}`);
   if (selection.selectedByScope.template.length > 0) sections.push(`## Role Memory\n${stringifyMemoryList(selection.selectedByScope.template)}`);
   if (selection.selectedByScope.global.length > 0) sections.push(`## Workspace Memory\n${stringifyMemoryList(selection.selectedByScope.global)}`);
@@ -894,8 +1116,8 @@ async function buildRuntimeMemoryBundle({ db, workspaceId, agent, query = '', ru
   return bundle;
 }
 
-async function buildRuntimeMemoryPrompt({ db, workspaceId, agent, query = '', runtime = 'chat' }) {
-  const bundle = await buildRuntimeMemoryBundle({ db, workspaceId, agent, query, runtime });
+async function buildRuntimeMemoryPrompt({ db, workspaceId, agent, humanContext = null, query = '', runtime = 'chat' }) {
+  const bundle = await buildRuntimeMemoryBundle({ db, workspaceId, agent, humanContext, query, runtime });
   return bundle.prompt;
 }
 
@@ -906,6 +1128,7 @@ module.exports = {
   normalizeRole,
   normalizeImportance,
   buildAgentMemoryBindings,
+  normalizeHumanContext,
   resolveAgentRecord,
   normalizeMemories,
   filterDashboardMemories,

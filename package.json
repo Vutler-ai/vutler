@@ -15,6 +15,7 @@
     "db:owners:sql": "node scripts/generate-owner-normalization-sql.js",
     "ops:prod:audit": "bash scripts/production-state-audit.sh",
     "sandbox:worker": "node workers/sandbox-worker.js",
+    "memory:backfill:human": "node scripts/backfill-human-memory-scopes.js",
     "test": "jest --testPathPattern='tests/' --forceExit 2>/dev/null || bash tests/run-all.sh",
     "test:unit": "jest tests/llm-router.test.js --forceExit",
     "test:llm": "jest tests/llm-router.test.js tests/llm-api.test.js --forceExit",

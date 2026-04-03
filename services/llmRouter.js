@@ -1375,7 +1375,7 @@ async function chat(agent, messages, db, opts = {}) {
       snipara_instance_id: memoryScope,
       username: memoryScope,
       role: agent?.role,
-    }, workspaceId)
+    }, workspaceId, opts.humanContext || null)
     : null;
   const memoryGateway = memoryScope ? createSniparaGateway({ db, workspaceId }) : null;
   const memoryTools = [];

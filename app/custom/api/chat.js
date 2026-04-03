@@ -226,6 +226,12 @@ async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
       db: pg,
       workspaceId,
       agent,
+      humanContext: savedMessage
+        ? {
+            id: savedMessage.sender_id || null,
+            name: savedMessage.sender_name || null,
+          }
+        : null,
       query: messages.map((message) => message.content).join('\n').slice(0, 2000),
       runtime: 'chat',
       includeSummaries: true,
@@ -245,7 +251,15 @@ async function triggerAgentResponse(req, channelId, workspaceId, savedMessage) {
         workspace_id: workspaceId,
       },
       messages,
-      pg
+      pg,
+      {
+        humanContext: savedMessage
+          ? {
+              id: savedMessage.sender_id || null,
+              name: savedMessage.sender_name || null,
+            }
+          : null,
+      }
     );
 
     await insertChatMessage(pg, req.app, SCHEMA, {

@@ -5,7 +5,7 @@ const router = express.Router();
 
 const pool = require('../lib/vaultbrix');
 const { readExistingProvisioning, provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
-const { resolveSniparaConfig } = require('../services/sniparaResolver');
+const { resolveSniparaConfig, probeSniparaHealth } = require('../services/sniparaResolver');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -65,6 +65,21 @@ router.get('/status', async (req, res) => {
   } catch (error) {
     console.error('[SniparaAdmin] status error:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/health', async (req, res) => {
+  try {
+    const workspaceId = String(req.query.workspace_id || getWorkspaceId(req) || '').trim();
+    if (!workspaceId) {
+      return res.status(400).json({ success: false, error: 'workspace_id is required' });
+    }
+
+    const data = await probeSniparaHealth({ db: pool, workspaceId });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[SniparaAdmin] health error:', error);
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 

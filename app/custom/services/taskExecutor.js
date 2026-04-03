@@ -161,12 +161,15 @@ async function updateTask(taskId, status, output, metadata = {}) {
 }
 
 function buildTaskPrompt(task) {
+  const metadata = parseMetadata(task?.metadata);
+  const requester = metadata.origin_chat_user_name || metadata.origin_chat_user_id || null;
   return [
     `## Task: ${task.title}`,
     task.description || '',
+    requester ? `Original requester: ${requester}` : '',
     '',
     'Respond with the completed output. Be concise and actionable.'
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 async function claimPendingTasks(limit = BATCH_SIZE) {
@@ -229,16 +232,25 @@ async function failTask(task, err, extraMetadata = {}) {
 
 async function buildExecutionPrompt(agent, task, workspaceId) {
   const baseSystemPrompt = agent.system_prompt || `You are ${agent.name}, a helpful assistant.`;
+  const metadata = parseMetadata(task?.metadata);
+  const humanContext = metadata.origin_chat_user_id || metadata.origin_chat_user_name
+    ? {
+        id: metadata.origin_chat_user_id || null,
+        name: metadata.origin_chat_user_name || null,
+      }
+    : { id: null, name: null };
   const memoryBundle = await memoryRuntime.preparePromptContext({
     db: pool,
     workspaceId,
     agent,
+    humanContext,
     query: `${task.title} ${task.description || ''}`.trim(),
     runtime: 'task',
     includeSummaries: true,
     }).catch(() => ({ prompt: '', stats: null }));
 
   return {
+    humanContext,
     mode: memoryBundle.mode || null,
     prompt: appendPlacementInstruction(
       memoryBundle.prompt
@@ -272,6 +284,10 @@ function buildInitialRunContext(task, executionAgent, workspaceId) {
   return {
     workspace_id: workspaceId,
     source: metadata.origin || 'task',
+    origin_human: {
+      id: metadata.origin_chat_user_id || null,
+      name: metadata.origin_chat_user_name || null,
+    },
     root_task: {
       id: task?.id || null,
       title: task?.title || '',
@@ -422,7 +438,10 @@ async function executeTask(task) {
       },
       [{ role: 'user', content: buildTaskPrompt(task) }],
       pool,
-      { wsConnections }
+      {
+        wsConnections,
+        humanContext: executionPrompt.humanContext || null,
+      }
     );
 
     const latencyMs = Date.now() - startedAt;

@@ -16,6 +16,7 @@ class MemoryRuntimeService {
     db,
     workspaceId,
     agent,
+    humanContext = null,
     query = '',
     runtime = 'chat',
     includeSharedContext = true,
@@ -32,20 +33,20 @@ class MemoryRuntimeService {
         stats: {
           runtime,
           query,
-          selected: { total: 0, instance: 0, template: 0, global: 0 },
+          selected: { total: 0, human: 0, human_agent: 0, instance: 0, template: 0, global: 0 },
           tokens: 0,
         },
-        sections: { instance: [], template: [], global: [] },
+        sections: { human: [], human_agent: [], instance: [], template: [], global: [] },
       };
     }
 
     const gateway = this.gatewayFactory({ db, workspaceId });
     const [runtimeBundle, sharedContext, summaries] = await Promise.all([
-      buildRuntimeMemoryBundle({ db, workspaceId, agent, query, runtime }).catch(() => ({
+      buildRuntimeMemoryBundle({ db, workspaceId, agent, humanContext, query, runtime }).catch(() => ({
         prompt: '',
         memories: [],
-        stats: { runtime, query, selected: { total: 0, instance: 0, template: 0, global: 0 } },
-        sections: { instance: [], template: [], global: [] },
+        stats: { runtime, query, selected: { total: 0, human: 0, human_agent: 0, instance: 0, template: 0, global: 0 } },
+        sections: { human: [], human_agent: [], instance: [], template: [], global: [] },
       })),
       includeSharedContext ? gateway.knowledge.sharedContext({}).catch(() => '') : Promise.resolve(''),
       includeSummaries ? gateway.summaries.list(summaryArgs || {}).catch(() => []) : Promise.resolve([]),
@@ -53,6 +54,8 @@ class MemoryRuntimeService {
 
     const prompt = buildMemoryPrompt({
       sharedContext: typeof sharedContext === 'string' ? sharedContext : '',
+      humanMemories: runtimeBundle.sections?.human || [],
+      humanAgentMemories: runtimeBundle.sections?.human_agent || [],
       instanceMemories: runtimeBundle.sections?.instance || [],
       templateMemories: runtimeBundle.sections?.template || [],
       globalMemories: runtimeBundle.sections?.global || [],
@@ -78,6 +81,7 @@ class MemoryRuntimeService {
     agent,
     userMessage,
     assistantMessage,
+    userId,
     userName,
   } = {}) {
     const mode = await resolveMemoryMode({ db, workspaceId, agent });
@@ -88,6 +92,7 @@ class MemoryRuntimeService {
       agent,
       userMessage,
       assistantMessage,
+      userId,
       userName,
     });
   }

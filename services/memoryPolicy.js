@@ -5,9 +5,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MEMORY_TYPE_POLICIES = {
   user_profile: {
     visibility: 'reviewable',
-    scopeKey: 'instance',
+    scopeKey: 'human',
     ttlDays: 365,
-    retrievalWeight: 1.25,
+    retrievalWeight: 1.35,
     promotionWeight: 0.6,
     injectable: true,
     promotable: false,
@@ -98,19 +98,25 @@ const DEFAULT_POLICY = {
 
 const RUNTIME_BUDGETS = {
   chat: {
-    total: 10,
+    total: 12,
+    human: 3,
+    human_agent: 1,
     instance: 5,
     template: 3,
-    global: 2,
+    global: 1,
   },
   task: {
-    total: 12,
+    total: 14,
+    human: 3,
+    human_agent: 1,
     instance: 5,
     template: 4,
-    global: 3,
+    global: 1,
   },
   dashboard: {
     total: 50,
+    human: 50,
+    human_agent: 50,
     instance: 50,
     template: 50,
     global: 50,
@@ -119,16 +125,22 @@ const RUNTIME_BUDGETS = {
 
 const SCOPE_WEIGHTS = {
   chat: {
+    human: 1.45,
+    human_agent: 1.2,
     instance: 1.25,
     template: 1,
     global: 0.85,
   },
   task: {
+    human: 1.4,
+    human_agent: 1.15,
     instance: 1.15,
     template: 1.1,
     global: 0.95,
   },
   dashboard: {
+    human: 1,
+    human_agent: 1,
     instance: 1,
     template: 1,
     global: 1,
@@ -149,12 +161,15 @@ const PROMOTION_THRESHOLDS = {
 };
 
 function normalizeType(type) {
-  return String(type || 'fact').toLowerCase();
+  const normalized = String(type || 'fact').toLowerCase();
+  if (normalized === 'preference') return 'user_profile';
+  return normalized;
 }
 
 function normalizeScopeKey(scopeKey) {
   if (scopeKey === 'agent') return 'instance';
   if (scopeKey === 'project') return 'template';
+  if (scopeKey === 'human-agent') return 'human_agent';
   return String(scopeKey || 'instance').toLowerCase();
 }
 

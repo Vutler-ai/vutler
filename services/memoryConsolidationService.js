@@ -50,9 +50,9 @@ function isNearDuplicate(candidate, existing) {
   return overlapScore(left, right) >= 0.82;
 }
 
-async function recallScopeMemories({ db, workspaceId, agent, scopeKey, query, limit = 12 }) {
+async function recallScopeMemories({ db, workspaceId, agent, humanContext = null, scopeKey, query, limit = 12 }) {
   const resolvedAgent = await resolveAgentRecord(db, workspaceId, agent?.id || agent?.username || agent?.agent_id, agent || {});
-  const bindings = buildAgentMemoryBindings(resolvedAgent, workspaceId);
+  const bindings = buildAgentMemoryBindings(resolvedAgent, workspaceId, humanContext);
   const target = bindings[scopeKey] || bindings.instance;
   const args = {
     query,
@@ -61,6 +61,7 @@ async function recallScopeMemories({ db, workspaceId, agent, scopeKey, query, li
     limit,
   };
   if (scopeKey === 'instance') args.agent_id = bindings.agentRef;
+  if (scopeKey === 'human_agent') args.agent_id = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
 
   const raw = await callSniparaTool({
     db,
@@ -78,6 +79,9 @@ async function findRecentDuplicate({ db, workspaceId, agent, memory }) {
     db,
     workspaceId,
     agent,
+    humanContext: memory.metadata?.user_id || memory.metadata?.user_name
+      ? { id: memory.metadata?.user_id || null, name: memory.metadata?.user_name || null }
+      : null,
     scopeKey: memory.scopeKey || getDefaultScopeKey(memory.type),
     query,
     limit: 12,

@@ -65,10 +65,17 @@ async function _triggerAgentResponse(req, channelId, wsId) {
       }
     } catch (crErr) {
       console.log('[Chat] ChatRuntime fallback to llmRouter:', crErr.message);
+      const latestHumanMessage = historyResult.rows.find((row) => row.sender_id !== agent.id.toString()) || null;
       const memoryBundle = await memoryRuntime.preparePromptContext({
         db: pool,
         workspaceId: wsId,
         agent,
+        humanContext: latestHumanMessage
+          ? {
+              id: latestHumanMessage.sender_id || null,
+              name: latestHumanMessage.sender_name || null,
+            }
+          : null,
         query: messages.map((message) => message.content).join('\n').slice(0, 2000),
         runtime: 'chat',
         includeSummaries: true,
@@ -83,8 +90,18 @@ async function _triggerAgentResponse(req, channelId, wsId) {
             : (agent.system_prompt || `You are ${agent.name}, a helpful AI assistant. Respond concisely and helpfully.`),
           temperature: agent.temperature != null ? parseFloat(agent.temperature) : 0.7,
           max_tokens: agent.max_tokens || 4096,
+          workspace_id: wsId,
         },
-        messages
+        messages,
+        pool,
+        {
+          humanContext: latestHumanMessage
+            ? {
+                id: latestHumanMessage.sender_id || null,
+                name: latestHumanMessage.sender_name || null,
+              }
+            : null,
+        }
       );
     }
 

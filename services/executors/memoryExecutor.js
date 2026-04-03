@@ -1,6 +1,7 @@
 'use strict';
 
 const { createSniparaGateway } = require('../snipara/gateway');
+const { getDefaultVisibility, normalizeType } = require('../memoryPolicy');
 
 function extractMemoryText(response) {
   if (!response) return '';
@@ -39,18 +40,50 @@ async function executeMemoryPlan(plan = {}, context = {}) {
   });
 
   const operation = String(params.operation || '').trim().toLowerCase();
-  if (operation === 'remember') {
-    await gateway.memory.remember({
-      text: params.content || '',
-      type: params.memory_type || 'fact',
-      importance: params.importance || 5,
+  const resolveBindingTarget = (scopeKey) => {
+    if (scopeKey === 'human' && bindings.human?.scope && bindings.human?.category) {
+      return bindings.human;
+    }
+    if (scopeKey === 'human_agent' && bindings.human_agent?.scope && bindings.human_agent?.category && bindings.human_agent?.agent_id) {
+      return bindings.human_agent;
+    }
+    if (bindings.instance?.scope && bindings.instance?.category && bindings.instance?.agent_id) {
+      return bindings.instance;
+    }
+    return {
       scope: bindings.scope,
       category: bindings.category,
-      agentId: bindings.agent_id,
+      agent_id: bindings.agent_id,
+      user_id: bindings.user_id || null,
+      user_name: bindings.user_name || null,
+    };
+  };
+
+  const recallScopes = Array.isArray(bindings.recall_scope_order) && bindings.recall_scope_order.length > 0
+    ? bindings.recall_scope_order
+    : ['instance'];
+  if (operation === 'remember') {
+    const memoryType = normalizeType(params.memory_type || 'fact');
+    const preferredScope = String(params.scope_key || '').trim().toLowerCase()
+      || (memoryType === 'user_profile' && bindings.human ? 'human' : '')
+      || ((memoryType === 'action_log' || memoryType === 'context') && bindings.human_agent ? 'human_agent' : '')
+      || bindings.default_scope_key
+      || 'instance';
+    const target = resolveBindingTarget(preferredScope);
+    await gateway.memory.remember({
+      text: params.content || '',
+      type: memoryType,
+      importance: params.importance || 5,
+      scope: target.scope,
+      category: target.category,
+      agentId: target.agent_id,
       metadata: {
-        visibility: 'internal',
+        visibility: getDefaultVisibility(memoryType),
         source: 'orchestration',
         created_at: new Date().toISOString(),
+        user_id: target.user_id || null,
+        user_name: target.user_name || null,
+        memory_scope_key: preferredScope || 'instance',
       },
     });
 
@@ -58,19 +91,43 @@ async function executeMemoryPlan(plan = {}, context = {}) {
       success: true,
       data: {
         stored: true,
-        type: params.memory_type || 'fact',
+        type: memoryType,
         importance: params.importance || 5,
+        scope_key: preferredScope || 'instance',
       },
     };
   }
 
   if (operation === 'recall') {
-    const recallResult = await gateway.memory.recall({
-      query: params.query || '',
-      scope: bindings.scope,
-      category: bindings.category,
-      agentId: bindings.agent_id,
-    });
+    const recallResults = [];
+    const seen = new Set();
+
+    for (const scopeKey of recallScopes) {
+      const target = resolveBindingTarget(scopeKey);
+      if (!target?.scope || !target?.category) continue;
+      const recallResult = await gateway.memory.recall({
+        query: params.query || '',
+        scope: target.scope,
+        category: target.category,
+        agentId: target.agent_id,
+      });
+      const items = Array.isArray(recallResult)
+        ? recallResult
+        : Array.isArray(recallResult?.memories)
+          ? recallResult.memories
+          : Array.isArray(recallResult?.results)
+            ? recallResult.results
+            : [];
+
+      for (const item of items) {
+        const key = item?.id || item?.memory_id || item?.text || item?.content;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        recallResults.push(item);
+      }
+    }
+
+    const recallResult = recallResults;
 
     return {
       success: true,

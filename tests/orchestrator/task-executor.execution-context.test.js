@@ -117,7 +117,12 @@ describe('taskExecutor execution context', () => {
       }),
       expect.any(Array),
       expect.anything(),
-      expect.any(Object)
+      expect.objectContaining({
+        humanContext: {
+          id: null,
+          name: null,
+        },
+      })
     );
     expect(updates).toHaveLength(1);
     expect(updates[0].params[1]).toBe('completed');
@@ -241,7 +246,12 @@ describe('taskExecutor execution context', () => {
       }),
       expect.any(Array),
       expect.anything(),
-      expect.any(Object)
+      expect.objectContaining({
+        humanContext: {
+          id: null,
+          name: null,
+        },
+      })
     );
   });
 });

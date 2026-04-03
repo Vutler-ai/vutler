@@ -8,6 +8,7 @@ const {
   rankMemories,
   summarizeMemoryCollection,
 } = require('../services/sniparaMemoryService');
+const { normalizeType } = require('../services/memoryPolicy');
 
 describe('sniparaMemoryService', () => {
   test('namespaces agent and template categories by workspace', () => {
@@ -40,6 +41,29 @@ describe('sniparaMemoryService', () => {
   test('normalizes llm tool importance scale from 1-10 to 0-1', () => {
     expect(normalizeImportance(7)).toBe(0.7);
     expect(normalizeImportance(0.4)).toBe(0.4);
+  });
+
+  test('builds dedicated human and relationship bindings when a human context is present', () => {
+    const bindings = buildAgentMemoryBindings(
+      { id: 'agent-1', username: 'mike', role: 'Engineering' },
+      'ws-1',
+      { id: 'user-42', name: 'Alex' }
+    );
+
+    expect(bindings.human).toMatchObject({
+      scope: 'project',
+      category: 'ws-1-human-user-42',
+    });
+    expect(bindings.human_agent).toMatchObject({
+      scope: 'agent',
+      category: 'ws-1-agent-mike-human-user-42',
+    });
+    expect(bindings.humanId).toBe('user-42');
+    expect(bindings.humanName).toBe('Alex');
+  });
+
+  test('maps llm preference memories to the internal user_profile type', () => {
+    expect(normalizeType('preference')).toBe('user_profile');
   });
 
   test('summarizes visible, hidden and expired counts separately', () => {

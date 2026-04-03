@@ -46,6 +46,8 @@ function trimSectionsToBudget(sections = [], budgetTokens = 1200) {
 
 function buildMemoryPrompt({
   sharedContext = '',
+  humanMemories = [],
+  humanAgentMemories = [],
   instanceMemories = [],
   templateMemories = [],
   globalMemories = [],
@@ -56,6 +58,8 @@ function buildMemoryPrompt({
 } = {}) {
   const rawSections = [
     stringifyTextSection('Shared Context', sharedContext),
+    stringifyMemorySection('Human Memory', humanMemories),
+    stringifyMemorySection('Relationship Memory', humanAgentMemories),
     stringifyMemorySection('Agent Memory', instanceMemories),
     stringifyMemorySection('Role Memory', templateMemories),
     stringifyMemorySection('Workspace Memory', globalMemories),

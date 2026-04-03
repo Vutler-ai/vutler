@@ -65,6 +65,7 @@ router.get('/agents/:agentId/memories', async (req, res) => {
       count_is_estimate: result.count_is_estimate,
       visibility: includeInternal ? 'all' : 'reviewable',
       include_expired: includeExpired,
+      snipara_error: result.snipara_error || null,
       agent: {
         id: result.agent.id,
         username: result.agent.username,
@@ -111,6 +112,7 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
       count_is_estimate: result.count_is_estimate,
       visibility: includeInternal ? 'all' : 'reviewable',
       include_expired: includeExpired,
+      snipara_error: result.snipara_error || null,
     });
   } catch (error) {
     console.error('[Memory API] template recall failed:', error.message);
@@ -132,7 +134,7 @@ router.get('/agents/:agentId/memories/context', async (req, res) => {
       includeInternal: false,
     });
 
-    return res.json({ success: true, ...context });
+    return res.json({ success: true, ...context, snipara_errors: context.snipara_errors || null });
   } catch (error) {
     console.error('[Memory API] context failed:', error.message);
     return res.status(500).json({ success: false, error: error.message });

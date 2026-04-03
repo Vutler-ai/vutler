@@ -105,6 +105,10 @@ describe('taskExecutor Snipara sync', () => {
     expect(preparePromptContext).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws-1',
       agent: expect.objectContaining({ username: 'mike' }),
+      humanContext: {
+        id: null,
+        name: null,
+      },
       runtime: 'task',
     }));
     expect(recordTaskEpisode).toHaveBeenCalledWith(expect.objectContaining({
@@ -114,6 +118,12 @@ describe('taskExecutor Snipara sync', () => {
     }));
     expect(llmChat).toHaveBeenCalledTimes(1);
     expect(llmChat.mock.calls[0][0].system_prompt).toContain('## Agent Memory');
+    expect(llmChat.mock.calls[0][3]).toMatchObject({
+      humanContext: {
+        id: null,
+        name: null,
+      },
+    });
     expect(writes.some((call) => String(call.params[1]) === 'completed')).toBe(true);
     expect(claimTask.mock.invocationCallOrder[0]).toBeLessThan(completeTask.mock.invocationCallOrder[0]);
   });

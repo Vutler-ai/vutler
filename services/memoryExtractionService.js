@@ -31,19 +31,34 @@ function buildMemory(scopeKey, type, visibility, importance, text, metadata = {}
   return { scopeKey, type, visibility, importance, text: compact, metadata };
 }
 
-function extractUserProfileMemoriesFromText(userText, userName) {
+function getUserMemoryScope(userId, userName) {
+  return userId || userName ? 'human' : 'instance';
+}
+
+function getConversationScope(userId, userName) {
+  return userId || userName ? 'human_agent' : 'instance';
+}
+
+function extractUserProfileMemoriesFromText(userText, userName, userId = null) {
   const text = compactText(userText, 500);
   if (!text) return [];
 
   const memories = [];
+  const scopeKey = getUserMemoryScope(userId, userName);
   const add = (importance, textValue, metadata = {}) => {
     const memory = buildMemory(
-      'instance',
+      scopeKey,
       'user_profile',
       'reviewable',
       importance,
       textValue,
-      { memory_lane: 'user_profile', source_kind: 'conversation', user_name: userName || null, ...metadata }
+      {
+        memory_lane: 'user_profile',
+        source_kind: 'conversation',
+        user_id: userId || null,
+        user_name: userName || null,
+        ...metadata,
+      }
     );
     if (memory) memories.push(memory);
   };
@@ -83,22 +98,22 @@ function extractUserProfileMemoriesFromText(userText, userName) {
   return deduped;
 }
 
-function extractUserProfileMemoriesFromMessages(messages = [], userName) {
+function extractUserProfileMemoriesFromMessages(messages = [], userName, userId = null) {
   const memories = [];
   for (const message of messages || []) {
     const content = typeof message === 'string' ? message : message?.content;
     const role = typeof message === 'object' ? message?.role : null;
     if (role && role !== 'user') continue;
-    memories.push(...extractUserProfileMemoriesFromText(content, userName));
+    memories.push(...extractUserProfileMemoriesFromText(content, userName, userId));
   }
   return dedupeMemories(memories);
 }
 
-function deriveMemoriesFromConversation({ userMessage, assistantMessage, userName }) {
+function deriveMemoriesFromConversation({ userMessage, assistantMessage, userId, userName }) {
   const userText = compactText(userMessage, 500);
   const assistantText = compactText(assistantMessage, 500);
   const memories = [];
-  memories.push(...extractUserProfileMemoriesFromText(userText, userName));
+  memories.push(...extractUserProfileMemoriesFromText(userText, userName, userId));
 
   const decisionSource = [userText, assistantText].find((text) => /(decision|décision|we will|we'll|on utilise|always use|standard|policy|default|desormais|désormais|dorénavant)/i.test(text));
   if (decisionSource) {
@@ -120,12 +135,17 @@ function deriveMemoriesFromConversation({ userMessage, assistantMessage, userNam
 
   if (userText.length >= 20 && assistantText.length >= 20) {
     memories.push(buildMemory(
-      'instance',
+      getConversationScope(userId, userName),
       'action_log',
       'internal',
       0.25,
       `Conversation note: User said "${compactText(userText, 180)}" and agent replied "${compactText(assistantText, 180)}"`,
-      { memory_lane: 'conversation_log', source_kind: 'conversation', user_name: userName || null }
+      {
+        memory_lane: 'conversation_log',
+        source_kind: 'conversation',
+        user_id: userId || null,
+        user_name: userName || null,
+      }
     ));
   }
 
@@ -229,8 +249,8 @@ async function persistMemories({ db, workspaceId, agent, memories }) {
   return novelMemories;
 }
 
-async function extractConversationMemories({ db, workspaceId, agent, userMessage, assistantMessage, userName }) {
-  const memories = deriveMemoriesFromConversation({ userMessage, assistantMessage, userName });
+async function extractConversationMemories({ db, workspaceId, agent, userMessage, assistantMessage, userId, userName }) {
+  const memories = deriveMemoriesFromConversation({ userMessage, assistantMessage, userId, userName });
   if (memories.length === 0) return [];
   return persistMemories({ db, workspaceId, agent, memories });
 }
