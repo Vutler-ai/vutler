@@ -87,6 +87,32 @@ function normalizeDefaultProviderValue(value: unknown, providers: Provider[]): s
   return byType?.id || raw;
 }
 
+function buildSniparaHttpConfigSnippet({
+  name,
+  url,
+  apiKey,
+}: {
+  name: string;
+  url: string;
+  apiKey: string;
+}) {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        [name]: {
+          type: "http",
+          url,
+          headers: {
+            "X-API-Key": apiKey,
+          },
+        },
+      },
+    },
+    null,
+    2
+  );
+}
+
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
 
 function ProfileTab({
@@ -320,6 +346,16 @@ function WorkspaceTab({
   const [sniparaProjectId, setSniparaProjectId] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_id));
   const [sniparaProjectSlug, setSniparaProjectSlug] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
   const [saving, setSaving] = useState(false);
+  const sniparaApiUrl = getStr((settings as Record<string, unknown>)?.snipara_api_url)
+    || (sniparaProjectSlug ? `https://api.snipara.com/mcp/${sniparaProjectSlug}` : "");
+  const sniparaKeyForSnippet = sniparaKey && !sniparaKey.includes("••") ? sniparaKey : "rlm_xxx";
+  const sniparaHttpConfigSnippet = sniparaApiUrl
+    ? buildSniparaHttpConfigSnippet({
+        name: "snipara-vutler",
+        url: sniparaApiUrl,
+        apiKey: sniparaKeyForSnippet,
+      })
+    : "";
 
   useEffect(() => {
     if (settings) {
@@ -490,6 +526,29 @@ function WorkspaceTab({
               <p className="text-sm text-white">Snipara is provisioned automatically on Vutler Cloud.</p>
               <p className="text-xs text-[#9ca3af] mt-1">
                 No manual setup is required here. The editable Snipara section is reserved for the open-source edition.
+              </p>
+            </div>
+          )}
+
+          {sniparaApiUrl && (
+            <div className="mt-4 space-y-2">
+              <p className="text-[#9ca3af] text-sm font-medium">Claude Code MCP</p>
+              <p className="text-[#6b7280] text-xs">
+                Claude Code needs a native HTTP MCP entry in <code className="text-purple-400">~/.claude/config.json</code>.
+                Do not use <code className="text-purple-400">claude mcp add -- curl ...</code> for this endpoint.
+              </p>
+              <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0a0b14] px-3 py-2">
+                <p className="text-[11px] uppercase tracking-wide text-[#4b5563]">MCP Endpoint</p>
+                <code className="mt-1 block break-all text-xs text-[#9ca3af]">{sniparaApiUrl}</code>
+                {sniparaProjectId && (
+                  <p className="mt-2 text-[11px] text-[#4b5563]">Project ID: {sniparaProjectId}</p>
+                )}
+              </div>
+              <pre className="bg-[#0a0b14] border border-purple-500/10 rounded-lg p-4 text-xs text-purple-300/70 font-mono overflow-x-auto">
+                {sniparaHttpConfigSnippet}
+              </pre>
+              <p className="text-[#4b5563] text-[11px]">
+                If your Snipara project key is masked here, keep the URL as-is and replace only <code className="text-purple-400">rlm_xxx</code> with your real project key.
               </p>
             </div>
           )}
