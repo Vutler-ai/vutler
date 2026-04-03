@@ -65,7 +65,7 @@ const PROVIDERS: Provider[] = [
   {
     provider: "microsoft365",
     name: "Microsoft 365",
-    description: "Outlook, calendar, contacts, OneDrive, and SharePoint.",
+    description: "Outlook mail, calendar, and contacts today. Teams, OneDrive, and SharePoint stay disabled until their dedicated runtime ships.",
     category: "productivity",
     mode: "oauth",
     icon: "🟦",

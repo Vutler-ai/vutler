@@ -175,10 +175,10 @@ const INTERNAL_CATALOG = [
   {
     provider: 'microsoft365',
     name: 'Microsoft 365',
-    description: 'Outlook, Teams, OneDrive, and SharePoint',
+    description: 'Outlook mail, calendar, and contacts via Microsoft Graph. Teams, OneDrive, and SharePoint stay disabled until their dedicated runtime ships.',
     icon: '🟦',
     category: 'productivity',
-    actions: ['send_mail', 'list_events'],
+    actions: ['read_mail', 'list_events', 'list_contacts'],
     scopes: ['mail.read', 'calendars.read'],
   },
   {

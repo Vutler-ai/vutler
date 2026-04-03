@@ -36,7 +36,7 @@ const INTEGRATIONS_META: Record<string, { icon: string; name: string; descriptio
   jira: { icon: "🔷", name: "Jira", description: "Project tracking, sprints, issues, and team boards" },
   linear: { icon: "🟣", name: "Linear", description: "Issue tracking, cycles, and product roadmaps" },
   n8n: { icon: "⚡", name: "n8n", description: "Workflow automation and custom integrations" },
-  microsoft365: { icon: "🟦", name: "Microsoft 365", description: "Outlook, Teams, OneDrive, and SharePoint" },
+  microsoft365: { icon: "🟦", name: "Microsoft 365", description: "Outlook mail, calendar, and contacts today. Teams, OneDrive, and SharePoint stay disabled until their own runtime is shipped." },
   chatgpt: { icon: "🤖", name: "ChatGPT", description: "Use your ChatGPT subscription to power agents with GPT-4o, o3, and Codex" },
   social_media: { icon: "📱", name: "Social Media", description: "Post to LinkedIn, X, Instagram, TikTok, and 5+ more platforms" },
 };

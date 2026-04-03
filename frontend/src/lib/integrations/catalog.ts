@@ -174,7 +174,7 @@ export const CONNECTOR_META: Record<string, { icon: string; name: string; descri
   microsoft365: {
     icon: "🟦",
     name: "Microsoft 365",
-    description: "Outlook, calendar, contacts, OneDrive, and SharePoint.",
+    description: "Outlook mail, calendar, and contacts via Microsoft Graph. Teams, OneDrive, and SharePoint remain future capability blocks.",
   },
   social_media: {
     icon: "📱",
