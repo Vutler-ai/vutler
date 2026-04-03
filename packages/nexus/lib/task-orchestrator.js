@@ -125,6 +125,10 @@ class TaskOrchestrator {
         fs.writeFile(params.path, params.content);
         return { written: true, path: params.path };
 
+      case 'read_binary_file':
+        this._require(params.path, 'params.path');
+        return fs.readBinaryFile(params.path);
+
       case 'shell_exec':
         this._require(params.command, 'params.command');
         return { output: shell.exec(params.command) };

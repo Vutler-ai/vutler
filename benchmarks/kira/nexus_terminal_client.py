@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shlex
 import time
 import uuid
 from dataclasses import dataclass
@@ -99,6 +101,15 @@ class NexusTerminalClient:
             )
         )
 
+    def read_binary_file(self, path: str) -> dict[str, Any]:
+        return self._unwrap(
+            self._request(
+                "POST",
+                f"/api/v1/nexus/nodes/{self.node_id}/files/base64",
+                {"path": path},
+            )
+        )
+
     def run_command_with_marker(
         self,
         session_id: str,
@@ -111,10 +122,10 @@ class NexusTerminalClient:
         marker = f"__CMDEND__{uuid.uuid4().hex}__"
         payload = f"{command}\nprintf '\\n{marker}\\n'\n"
         result = self.exec_session(
-          session_id,
-          input_text=payload,
-          wait_ms=wait_ms,
-          append_newline=False,
+            session_id,
+            input_text=payload,
+            wait_ms=wait_ms,
+            append_newline=False,
         )
 
         output = result.get("output", "")
@@ -155,6 +166,49 @@ class NexusTerminalClient:
             "printf '\\n---PYTHON---\\n' && (python3 --version || python --version || true)",
         ]
         return self.run_command_with_marker(session_id, "\n".join(commands), wait_ms=400)
+
+    def read_file_base64_via_terminal(
+        self,
+        session_id: str,
+        path: str,
+        *,
+        timeout_sec: float = DEFAULT_TIMEOUT_SEC,
+    ) -> dict[str, Any]:
+        start_marker = f"__FILEBASE64_START__{uuid.uuid4().hex}__"
+        end_marker = f"__FILEBASE64_END__{uuid.uuid4().hex}__"
+        quoted_path = shlex.quote(path)
+        python_snippet = (
+            "import base64, pathlib, sys; "
+            "print(base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode(), end='')"
+        )
+        quoted_python = shlex.quote(python_snippet)
+        command = (
+            f"printf '%s\\n' {shlex.quote(start_marker)}\n"
+            f"(python3 -c {quoted_python} {quoted_path} "
+            f"|| python -c {quoted_python} {quoted_path} "
+            f"|| (base64 < {quoted_path} | tr -d '\\n'))\n"
+            f"printf '\\n%s\\n' {shlex.quote(end_marker)}"
+        )
+        result = self.run_command_with_marker(
+            session_id,
+            command,
+            wait_ms=400,
+            timeout_sec=timeout_sec,
+        )
+        output = str(result.get("output", "") or "")
+        match = re.search(
+            rf"(?:^|\r?\n){re.escape(start_marker)}\r?\n(?P<body>[\s\S]*?)(?:\r?\n){re.escape(end_marker)}(?:\r?\n|$)",
+            output,
+        )
+        if not match:
+            raise NexusTerminalError(f"Failed to extract base64 payload for '{path}' from terminal output")
+
+        content_b64 = "".join(match.group("body").splitlines()).strip()
+        if not content_b64:
+            raise NexusTerminalError(f"Failed to read file '{path}': empty base64 payload")
+
+        result["contentBase64"] = content_b64
+        return result
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         body = None

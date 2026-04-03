@@ -2667,6 +2667,31 @@ router.delete('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
   }
 });
 
+router.post('/nodes/:nodeId/files/base64', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const outcome = await dispatchNodeAction({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      action: 'read_binary_file',
+      args: {
+        path: req.body?.path,
+      },
+      userId: req.userId || req.user?.id || null,
+      timing: req.body || {},
+      wait: shouldWaitForNodeDispatch(req),
+    });
+
+    return sendDispatchedNodeAction(res, outcome);
+  } catch (err) {
+    res.status(500).json({ taskId: '', status: 'error', error: err.message });
+  }
+});
+
 router.get('/nodes/:nodeId/capabilities', async (req, res) => {
   try {
     await ensureNexusNodesTable();

@@ -18,7 +18,7 @@ The intended split is:
   - thin adapter class that subclasses `TerminusKira`
   - keeps KIRA's tool-calling loop but swaps command execution to Nexus terminal sessions
   - closes the Nexus session automatically after each run
-  - currently returns a clear error for `image_read`, because this adapter does not yet provide a file/image bridge
+  - supports `image_read` through the Nexus `/files/base64` bridge, with a terminal-based fallback when the HTTP bridge is unavailable
 
 ## Required environment
 
@@ -75,6 +75,6 @@ export VUTLER_NEXUS_NODE_ID="..."
 export VUTLER_TASK_CWD="/opt/acme-app"
 ```
 
-## Recommended next step
+## Current limitation
 
-If we want to push this further, the next gap is `image_read`: either add a Nexus file/image retrieval bridge, or keep a local Harbor environment for multimodal tasks only.
+The bridge and adapter live in this repo. To smoke-test the full HTTP round-trip, the backend serving `/api/v1/nexus/nodes/:nodeId/files/base64` must run this codebase or a deployment that already includes it.
