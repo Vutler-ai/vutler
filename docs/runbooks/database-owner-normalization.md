@@ -107,6 +107,34 @@ COMMIT;
 ./scripts/production-state-audit.sh --strict
 ```
 
+### SSH And Tunnel Shortcuts Used In Production
+
+Vaultbrix host:
+
+```bash
+ssh -i ~/.ssh/vaultbrix_ed25519 ubuntu@84.234.19.42
+```
+
+Optional local tunnel for direct psql work:
+
+```bash
+ssh -i ~/.ssh/vaultbrix_ed25519 -L 15432:localhost:5433 ubuntu@84.234.19.42
+```
+
+Example direct session through the tunnel:
+
+```bash
+PGPASSWORD="..." psql -h localhost -p 15432 -U tenant_vutler -d postgres
+```
+
+Important current-state note:
+
+- `tenant_vutler` is the app role
+- it is not sufficient to change owners on objects owned by another role
+- owner normalization still requires an admin or owner-capable role such as `supabase_admin`
+
+Use the tunnel path for inspection and targeted SQL only if you already have the correct password and role.
+
 ## 5. Verify
 
 ```bash

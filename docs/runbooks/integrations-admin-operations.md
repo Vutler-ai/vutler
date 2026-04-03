@@ -43,6 +43,18 @@ Use these terms consistently:
 - `failed`
   - The runtime path is not currently usable.
 
+### What To Check On The Detail Page
+
+After a cloud connector is connected, the detail page should confirm:
+
+- requested scopes
+- granted scopes
+- validated scopes
+- unsupported capability blocks
+- effective runtime reason
+
+If a connector is `connected` but not `effective`, treat it as not production-ready for agents.
+
 ## 3. Nexus Local Setup Flow
 
 1. Deploy or pair the Nexus node.
@@ -51,6 +63,18 @@ Use these terms consistently:
 4. Apply consent by source, app, action, and folder.
 5. Validate node detail status.
 6. Check whether the target agent sees the capability as `effective`.
+
+### Nexus Diagnostic Categories
+
+The Nexus node detail should classify blockers into:
+
+- `needs_discovery`
+- `denied_consent`
+- `missing_app`
+- `missing_sync_folder`
+- `missing_os_permission`
+
+Use these categories for triage before escalating.
 
 ## 4. Decision Rules
 
@@ -93,6 +117,17 @@ Check in this order:
 4. synced folder visibility
 5. agent policy allowance
 
+Typical interpretation:
+
+- `denied_consent`
+  - fix in Nexus Local consent
+- `missing_app`
+  - install or open the compatible desktop app
+- `missing_sync_folder`
+  - allow folders or enable a synced drive on the client PC
+- `missing_os_permission`
+  - review macOS / Windows permission prompts, then rerun discovery
+
 ## 6. Escalation Evidence
 
 Before escalating, collect:
@@ -127,3 +162,17 @@ After integration-related deploys:
 4. confirm `owner_count=1`
 
 If the audit fails only on owners, use [database-owner-normalization.md](/Users/alopez/Devs/Vutler/docs/runbooks/database-owner-normalization.md).
+
+## 9. Agent-Side Validation
+
+Before declaring an integration rollout complete for a customer workspace:
+
+1. open the agent integrations page
+2. confirm the capability matrix state
+3. confirm at least one relevant connector is `effective`
+4. record the blocking reason if the connector is still unavailable
+
+Admin rule:
+
+- a workspace connector alone is not enough
+- the target agent must also resolve to `effective`
