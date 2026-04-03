@@ -45,7 +45,15 @@ export interface ConnectorReadinessMeta {
   description: string;
 }
 
-export type OAuthConnectorAccessModel = "cloud-required" | "local-first";
+export type ConnectorAccessModel = "cloud-required" | "local-first";
+
+export interface ConnectorAccessModelMeta {
+  accessModel: ConnectorAccessModel;
+  label: string;
+  description: string;
+}
+
+export type OAuthConnectorAccessModel = ConnectorAccessModel;
 
 export interface OAuthConnectorConsentMeta {
   provider: "google" | "github" | "microsoft365";
@@ -254,6 +262,69 @@ export const CONNECTOR_READINESS_META: Record<string, ConnectorReadinessMeta> = 
   },
 };
 
+export const CONNECTOR_ACCESS_MODEL_META: Record<string, ConnectorAccessModelMeta> = {
+  chatgpt: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "ChatGPT auth and Codex execution run through the remote provider path.",
+  },
+  google: {
+    accessModel: "local-first",
+    label: "Local-first",
+    description: "Core document, mail, and calendar access can stay on the client machine when Nexus Local is deployed.",
+  },
+  github: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Repository and workflow access depends on the GitHub API.",
+  },
+  jira: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Ticket search and workflow execution depend on the Jira API.",
+  },
+  microsoft365: {
+    accessModel: "local-first",
+    label: "Local-first",
+    description: "Outlook, calendar, and contacts can shift to the desktop path when Nexus Local is available.",
+  },
+  social_media: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Account sync and publishing rely on remote social platform providers.",
+  },
+  slack: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Messaging and channel actions require the provider API.",
+  },
+  telegram: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Bot commands and messaging require the provider API.",
+  },
+  discord: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Community and channel automation require the provider API.",
+  },
+  notion: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Pages and databases depend on the Notion API.",
+  },
+  linear: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Issue and roadmap workflows depend on the Linear API.",
+  },
+  n8n: {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "Workflow orchestration depends on a remote n8n runtime.",
+  },
+};
+
 export const WORKSPACE_CONNECTOR_ORDER = [
   "chatgpt",
   "google",
@@ -294,5 +365,23 @@ export function getConnectorReadinessMeta(value: string | null | undefined): Con
     readiness: "coming_soon",
     label: "Coming soon",
     description: "Connector readiness has not been classified yet.",
+  };
+}
+
+export function getConnectorAccessModelMeta(value: string | null | undefined): ConnectorAccessModelMeta {
+  const normalized = normalizeIntegrationKey(value);
+  const oauthMeta = getOauthConnectorConsentMeta(normalized);
+  if (oauthMeta) {
+    return {
+      accessModel: oauthMeta.accessModel,
+      label: oauthMeta.accessModelLabel,
+      description: oauthMeta.accessModelDescription,
+    };
+  }
+
+  return CONNECTOR_ACCESS_MODEL_META[normalized] || {
+    accessModel: "cloud-required",
+    label: "Cloud-required",
+    description: "This connector depends on a remote provider path.",
   };
 }

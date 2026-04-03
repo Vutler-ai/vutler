@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   CONNECTOR_META,
+  getConnectorAccessModelMeta,
   getConnectorReadinessMeta,
   getOauthConnectorConsentMeta,
   SOCIAL_PLATFORM_PROVIDERS,
@@ -454,15 +455,91 @@ export default function IntegrationsPage() {
   const pendingOauthConsent = pendingOauthProvider
     ? getOauthConnectorConsentMeta(pendingOauthProvider.provider)
     : null;
+  const readinessCounts = filteredProviders.reduce<Record<Provider["readiness"], number>>(
+    (counts, provider) => {
+      counts[provider.readiness] += 1;
+      return counts;
+    },
+    { operational: 0, partial: 0, coming_soon: 0 }
+  );
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white mb-2">Integrations</h1>
         <p className="text-[#9ca3af]">
-          Connect workspace-level connectors. Multi-surface suites like Google Workspace and Social Media are grouped once, then managed inside their dedicated flows.
+          Audit and connect workspace-level connectors. Multi-surface suites like Google Workspace and Social Media are grouped once, then managed inside their dedicated flows.
         </p>
       </div>
+
+      {!loading && (
+        <div className="mb-8 grid gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <div className="rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[#0f1117] p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-white">Admin audit snapshot</p>
+                <p className="mt-1 text-sm text-[#9ca3af]">
+                  Separate catalog truth from tenant state: readiness tells you what Vutler actually supports, while connection status tells you what this workspace already provisioned.
+                </p>
+              </div>
+              <div className="rounded-full border border-[rgba(59,130,246,0.2)] bg-[#3b82f6]/10 px-3 py-1 text-xs font-medium text-[#93c5fd]">
+                {connectedProviders.length} connected
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-emerald-300">Operational</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{readinessCounts.operational}</p>
+                <p className="mt-1 text-xs leading-relaxed text-[#9ca3af]">Implemented, connectable, and usable now.</p>
+              </div>
+              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-amber-300">Partial</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{readinessCounts.partial}</p>
+                <p className="mt-1 text-xs leading-relaxed text-[#9ca3af]">Only a subset of the promised capability is effective.</p>
+              </div>
+              <div className="rounded-xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-[#9ca3af]">Coming soon</p>
+                <p className="mt-2 text-2xl font-semibold text-white">{readinessCounts.coming_soon}</p>
+                <p className="mt-1 text-xs leading-relaxed text-[#9ca3af]">Visible in the catalog, but not yet usable at runtime.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[rgba(255,255,255,0.08)] bg-[#0f1117] p-5">
+            <p className="text-sm font-medium text-white">Execution model</p>
+            <p className="mt-1 text-sm text-[#9ca3af]">
+              Use this to decide whether the client can stay on a Nexus Local path or still needs a cloud connector.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-[#3b82f6]/20 bg-[#3b82f6]/5 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-white">Local-first</p>
+                  <span className="rounded-full bg-[#3b82f6]/10 px-2.5 py-1 text-xs font-medium text-[#93c5fd]">
+                    Google, Microsoft 365
+                  </span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-[#9ca3af]">
+                  Core file, mail, calendar, and contacts access can stay on the client machine when Nexus Local is deployed and consented.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-white">Cloud-required</p>
+                  <span className="rounded-full bg-[rgba(255,255,255,0.05)] px-2.5 py-1 text-xs font-medium text-[#d1d5db]">
+                    Jira, GitHub, social, messaging
+                  </span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-[#9ca3af]">
+                  The runtime depends on the provider API, so a connected workspace credential remains mandatory even if Nexus Local is present.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deviceAuth && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -687,6 +764,7 @@ export default function IntegrationsPage() {
             {connectedProviders.map((provider) => {
               const info = getConnectedInfo(provider);
               const socialBadges = provider.provider === "social_media" ? connectedSocialPlatforms : [];
+              const accessModel = getConnectorAccessModelMeta(provider.provider);
               return (
                 <div
                   key={provider.provider}
@@ -715,6 +793,17 @@ export default function IntegrationsPage() {
                   </div>
 
                   <p className="text-xs text-[#6b7280] leading-relaxed">{provider.description}</p>
+                  <div className="flex items-center justify-between gap-3 rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
+                    <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#6b7280]">Execution</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      accessModel.accessModel === "local-first"
+                        ? "bg-[#3b82f6]/10 text-[#93c5fd]"
+                        : "bg-[rgba(255,255,255,0.06)] text-[#d1d5db]"
+                    }`}>
+                      {accessModel.label}
+                    </span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-[#6b7280]">{accessModel.description}</p>
 
                   {socialBadges.length > 0 && (
                     <div className="flex flex-wrap gap-2">
@@ -824,6 +913,7 @@ function ProviderCard({ provider, categoryColor, iconBg, connecting, socialPlatf
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
   const readiness = getConnectorReadinessMeta(provider.provider);
+  const accessModel = getConnectorAccessModelMeta(provider.provider);
 
   return (
     <div className="bg-[#0f1117] border border-[rgba(255,255,255,0.06)] rounded-xl p-5 flex flex-col gap-3 hover:border-[rgba(255,255,255,0.12)] transition-colors">
@@ -858,6 +948,17 @@ function ProviderCard({ provider, categoryColor, iconBg, connecting, socialPlatf
       </div>
 
       <p className="text-xs text-[#9ca3af] leading-relaxed">{provider.description}</p>
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.03)] px-3 py-2">
+        <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-[#6b7280]">Execution</span>
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+          accessModel.accessModel === "local-first"
+            ? "bg-[#3b82f6]/10 text-[#93c5fd]"
+            : "bg-[rgba(255,255,255,0.06)] text-[#d1d5db]"
+        }`}>
+          {accessModel.label}
+        </span>
+      </div>
+      <p className="text-[11px] leading-relaxed text-[#6b7280]">{accessModel.description}</p>
       {readiness.readiness !== "operational" && (
         <p className="text-[11px] text-[#6b7280] leading-relaxed">{readiness.description}</p>
       )}
