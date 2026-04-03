@@ -2039,7 +2039,10 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
 
           {caps.providerSources && Object.keys(caps.providerSources).length > 0 && (
             <div>
-              <p className="text-xs text-[#6b7280] mb-2">Active sources</p>
+              <p className="text-xs text-[#6b7280] mb-1">Effective runtime sources</p>
+              <p className="text-[11px] text-[#4b5563] mb-2">
+                Each capability uses one effective source at runtime. Fallbacks remain available if the primary source becomes unavailable.
+              </p>
               <div className="space-y-2">
                 {Object.entries(caps.providerSources).map(([provider, source]) => (
                   <div
@@ -2054,14 +2057,14 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
                     </div>
                     <div className="flex flex-wrap justify-end gap-1.5">
                       <span className="px-2 py-0.5 rounded-full text-xs border bg-blue-900/20 text-blue-300 border-blue-500/30">
-                        {formatProviderLabel(source.active)}
+                        Primary: {formatProviderLabel(source.active)}
                       </span>
                       {source.fallbacks.map((fallback) => (
                         <span
                           key={`${provider}-${fallback}`}
                           className="px-2 py-0.5 rounded-full text-xs border bg-[#111827] text-[#9ca3af] border-[rgba(255,255,255,0.08)]"
                         >
-                          {formatProviderLabel(fallback)}
+                          Fallback: {formatProviderLabel(fallback)}
                         </span>
                       ))}
                     </div>
@@ -2083,6 +2086,28 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {caps.permissions?.allowedActions && caps.permissions.allowedActions.length > 0 && (
+            <div>
+              <p className="text-xs text-[#6b7280] mb-2">Allowed actions</p>
+              <div className="flex flex-wrap gap-1.5">
+                {caps.permissions.allowedActions.map((action) => (
+                  <code
+                    key={action}
+                    className="px-2 py-0.5 rounded-full text-xs border bg-amber-900/20 text-amber-300 border-amber-500/30"
+                  >
+                    {action}
+                  </code>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {caps.permissions && (!caps.permissions.allowedFolders?.length && !caps.permissions.allowedActions?.length) && (
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2 text-xs text-[#6b7280]">
+              No local ACL restrictions are currently reported for this node.
             </div>
           )}
         </div>
