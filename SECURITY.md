@@ -69,6 +69,7 @@ If you deploy Vutler yourself:
 - Always use HTTPS in production
 - Rotate `JWT_SECRET` and API keys regularly
 - Use [docs/runbooks/vutler-api-key-rotation.md](docs/runbooks/vutler-api-key-rotation.md) for runtime `VUTLER_API_KEY` rotation
+- Use [docs/runbooks/postal-inbound-webhook.md](docs/runbooks/postal-inbound-webhook.md) to configure Postal inbound signature verification before exposing `/api/v1/email/incoming`
 - Keep Node.js and dependencies updated
 - Use environment variables for secrets — never commit `.env` files
 - Enable rate limiting in production
@@ -80,6 +81,7 @@ If you deploy Vutler yourself:
 Before a full production rollout, double-check the following items so the platform ships with the expected security posture:
 
 - **Secrets guardrails:** `JWT_SECRET`, `POSTAL_API_KEY`, `STRIPE_ACCOUNT_ID`, `VUTLER_API_KEY` and any other credentials must be supplied via environment variables and must not use placeholder strings. The bootstrap (`index.js`) already fails in production if `JWT_SECRET` is missing or weak, so keep that gate active.
+- **Postal inbound security:** keep `POSTAL_REQUIRE_WEBHOOK_SIGNATURE=true` in production and set `POSTAL_INBOUND_WEBHOOK_KEY` from Postal's public key body. If you enable the optional shared secret layer, require it end-to-end and avoid exposing `/api/v1/email/incoming` through a proxy that strips `X-Postal-Signature`.
 - **Provider credentials:** `tenant_vutler.llm_providers` stores raw API keys, and the `CryptoService`/Vault pipeline (see `api/providers.js`) still needs to be exercised by every runtime. Ensure workspace role segregation and never leak the unmasked key in logs or responses.
 - **Runtime telemetry:** `/api/v1/runtime/status` now aggregates workspace agent statuses, uptime (since the server started), and the last restart record stored under `workspace_settings.runtime_last_restart`; `/runtime/restart` records the requesting user and reason. Continue to guard these tables so the UI shows accurate health.
 - **Usage analytics:** `/api/v1/usage` is provided by `api/usage-pg.js` and normalizes `usage_logs`, `agent_executions`, and `credit_transactions`. Keep those tables trimmed and indexed so Usage dashboards stay performant.
