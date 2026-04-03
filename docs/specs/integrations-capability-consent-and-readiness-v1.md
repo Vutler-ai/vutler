@@ -150,6 +150,26 @@ Each integration detail page must show:
 - what is promised but not implemented
 - what is replaced by Nexus local when available
 
+The detail contract is:
+
+- `requested scopes`
+  - the scope set Vutler asks for at connect time
+- `granted scopes`
+  - the scope set the workspace actually granted
+- `validated scopes`
+  - the subset Vutler proved usable through a post-connect check or validated credential test
+- `unsupported capabilities`
+  - capability blocks still visible in product language but not yet wired in runtime
+
+Examples:
+
+- `Microsoft 365`
+  - Outlook mail, calendar, and contacts may be validated
+  - Teams, OneDrive, and SharePoint stay unsupported until their runtime path exists
+- `Google Workspace`
+  - Gmail, calendar, contacts, and Drive may not all have the same validation depth
+  - local desktop or synced-folder fallback must be explained when Nexus local is relevant
+
 ### Agent Integration UI
 
 The agent view must show:
@@ -163,6 +183,20 @@ It should answer:
 
 - “Can this agent use it now?”
 - “If not, what is missing?”
+
+The agent view is read-only.
+
+It must not:
+
+- pretend connectors belong to the agent
+- offer per-agent connector setup as the primary model
+- merge agent policy and workspace connection into one ambiguous status
+
+Instead it should expose:
+
+- the global capability matrix
+- connector entry points back to workspace integrations
+- a connector-level explanation of why the agent is blocked or effective
 
 ## Nexus Local UI Rules
 
@@ -181,6 +215,45 @@ It should distinguish at least:
 - OS permission missing
 - consent denied
 - agent blocked by policy
+
+The first remediation layer must stay non-destructive.
+
+This means the UI may:
+
+- explain the blocker
+- point to the next action
+- ask the admin to rerun discovery
+
+It must not:
+
+- deep-link into OS automation without a dedicated native implementation
+- silently grant consent
+- claim a local path is effective before discovery and consent agree
+
+Canonical local blocker categories:
+
+- `needs_discovery`
+- `denied_consent`
+- `missing_app`
+- `missing_sync_folder`
+- `missing_os_permission`
+
+These categories are UX-facing diagnostics. They are not replacements for raw technical logs.
+
+## Current Product Surfaces
+
+The current rollout expects four complementary admin surfaces:
+
+- workspace integrations catalog
+  - readiness legend, execution model, and tenant connection state
+- integration detail
+  - effective capability, scopes, validation, unsupported blocks
+- agent integrations page
+  - capability matrix plus connector entry points
+- Nexus node detail
+  - discovery, consent, effective local source, remediation hints
+
+The same connector must read consistently across those surfaces.
 
 ## Tool Exposure Rules
 
