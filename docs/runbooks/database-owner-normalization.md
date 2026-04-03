@@ -65,6 +65,48 @@ Do not apply with the app role if objects are owned by other roles.
 psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f tenant_vutler-owner-normalization.sql
 ```
 
+### Current Vaultbrix Production Path
+
+Current production uses a split operational model:
+
+- Vutler app host: `83.228.222.180`
+- Vaultbrix/Supabase DB host: `84.234.19.42`
+
+When `production-state-audit.sh --strict` reports mixed owners, the fix may need to run on the Vaultbrix side, not on the Vutler app host.
+
+Operational path used successfully in production:
+
+1. Connect to Vaultbrix:
+
+```bash
+ssh -i ~/.ssh/vaultbrix_ed25519 ubuntu@84.234.19.42
+```
+
+2. Use the Supabase Postgres container with an admin role:
+
+```bash
+docker exec -e PGPASSWORD="$SUPABASE_ADMIN_PASSWORD" supabase-db \
+  psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 \
+  -f tenant_vutler-owner-normalization.sql
+```
+
+3. For targeted fixes, apply only the drifting objects:
+
+```sql
+BEGIN;
+ALTER TABLE tenant_vutler.orchestration_run_events OWNER TO tenant_vutler_owner;
+ALTER TABLE tenant_vutler.orchestration_run_steps OWNER TO tenant_vutler_owner;
+ALTER TABLE tenant_vutler.orchestration_runs OWNER TO tenant_vutler_owner;
+ALTER SEQUENCE tenant_vutler.orchestration_run_events_id_seq OWNER TO tenant_vutler_owner;
+COMMIT;
+```
+
+4. Re-run the strict audit from the Vutler repo:
+
+```bash
+./scripts/production-state-audit.sh --strict
+```
+
 ## 5. Verify
 
 ```bash
