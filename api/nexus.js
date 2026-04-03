@@ -637,6 +637,94 @@ function getNodeConsentState(node) {
     || buildNodeConsentState(node?.config?.permissions || {});
 }
 
+function mapConsentAppToDiscoveryKey(appKey = '') {
+  const mapping = {
+    apple_mail: 'mail',
+    apple_calendar: 'calendar',
+    apple_contacts: 'contacts',
+    outlook: 'outlook',
+    outlook_calendar: 'outlook',
+    outlook_contacts: 'outlook',
+    terminal: 'terminal',
+  };
+  return mapping[appKey] || appKey;
+}
+
+function buildNodeLocalDiagnostics(node, providerSources = {}) {
+  const consentState = getNodeConsentState(node);
+  const snapshot = getNodeDiscoverySnapshot(node);
+  const detectedAppKeys = new Set((snapshot?.detectedApps || []).map((app) => app.key));
+  const syncedFolders = snapshot?.syncedFolders || [];
+
+  return Object.keys(CONSENT_SOURCE_CATALOG).map((sourceKey) => {
+    const template = CONSENT_SOURCE_CATALOG[sourceKey] || { apps: [], actions: [] };
+    const consent = consentState?.sources?.[sourceKey] || {
+      enabled: false,
+      apps: [],
+      actions: [],
+      allowedFolders: [],
+    };
+    const selectedApps = consent.apps.length > 0 ? consent.apps : template.apps;
+    const selectedDiscoveryApps = selectedApps.map((appKey) => mapConsentAppToDiscoveryKey(appKey));
+    const providerState = snapshot?.providers?.[sourceKey] || null;
+    const effectiveSource = providerSources?.[sourceKey]?.active || null;
+
+    let blocker = null;
+    let status = 'effective';
+    let reason = 'Local runtime is effective for this source.';
+    let nextAction = 'No remediation needed.';
+
+    if (!snapshot) {
+      blocker = 'needs_discovery';
+      status = 'attention';
+      reason = 'No discovery snapshot is available for this node yet.';
+      nextAction = 'Run a discovery scan from this node detail page before reviewing local readiness.';
+    } else if (!consent.enabled) {
+      blocker = 'denied_consent';
+      status = 'blocked';
+      reason = 'The customer has not enabled consent for this local source.';
+      nextAction = `Enable ${sourceKey === 'filesystem' ? 'Files & Search' : sourceKey} in the Nexus Local consent screen and sync permissions.`;
+    } else if (sourceKey === 'filesystem' && normalizeTextArray(consent.allowedFolders).length === 0) {
+      blocker = 'missing_sync_folder';
+      status = 'blocked';
+      reason = 'Files & Search is enabled, but no folder scope is allowed yet.';
+      nextAction = 'Select at least one folder or synced drive in Nexus Local, then rerun discovery.';
+    } else if (sourceKey === 'filesystem' && syncedFolders.length === 0) {
+      blocker = 'missing_sync_folder';
+      status = 'attention';
+      reason = 'No synced cloud folders were detected on this machine.';
+      nextAction = 'Use a local folder, or enable Google Drive / OneDrive / Dropbox sync on the client machine.';
+    } else if (['mail', 'calendar', 'contacts'].includes(sourceKey) && !selectedDiscoveryApps.some((appKey) => detectedAppKeys.has(appKey))) {
+      blocker = 'missing_app';
+      status = 'blocked';
+      reason = 'No compatible local desktop app was detected for this source.';
+      nextAction = `Install or open a supported ${sourceKey} application on the client machine, then rerun discovery.`;
+    } else if (['mail', 'calendar', 'contacts'].includes(sourceKey) && providerState?.available && effectiveSource && effectiveSource !== 'desktop' && effectiveSource !== 'local') {
+      blocker = 'missing_os_permission';
+      status = 'attention';
+      reason = `A compatible local app is present, but the effective runtime source is still ${effectiveSource}.`;
+      nextAction = `If you expect desktop access here, review the OS permission prompt for ${sourceKey} on the client machine and rerun discovery.`;
+    } else if (['clipboard', 'shell'].includes(sourceKey) && !providerState?.available) {
+      blocker = 'missing_app';
+      status = 'blocked';
+      reason = providerState?.reason || 'The local runtime provider is unavailable.';
+      nextAction = 'Reinstall or relaunch Nexus Local so the local runtime provider loads correctly.';
+    }
+
+    return {
+      key: sourceKey,
+      label: sourceKey.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()),
+      status,
+      blocker,
+      reason,
+      nextAction,
+      effectiveSource,
+      consentEnabled: Boolean(consent.enabled),
+      discoveryAvailable: Boolean(providerState?.available),
+    };
+  });
+}
+
 function mapNodeListItem(row) {
   const node = mapNode(row);
   return {
@@ -2942,6 +3030,9 @@ function buildNodeCapabilitiesPayload(node, providerSources = {}) {
     platform: node.type || 'nexus',
     providers: Object.keys(providerSources),
     providerSources,
+    consentState: getNodeConsentState(node),
+    discoverySnapshot: getNodeDiscoverySnapshot(node),
+    diagnostics: buildNodeLocalDiagnostics(node, providerSources),
     permissions: {
       allowedFolders: node.config?.permissions?.allowedFolders || [],
       allowedActions: node.config?.permissions?.allowedActions || [],

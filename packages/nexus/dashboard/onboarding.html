@@ -70,6 +70,7 @@
       <div class="folder-list" id="folder-list"></div>
       <button class="btn btn-secondary" onclick="addCustomFolder()">+ Add custom folder</button>
       <p class="consent-note">Files & Search stays scoped by explicit folders. Other sources stay scoped by the apps and actions you select here.</p>
+      <p class="consent-note">Mail, Calendar, and Contacts may still require macOS or Windows permission prompts after consent. If Vutler later shows an OS permission review warning, grant that system permission and rerun discovery from the dashboard.</p>
       <br>
       <button class="btn btn-primary" onclick="goToStep('step-verify')" style="margin-top: 1.5rem;">Continue</button>
     </div>
@@ -77,7 +78,7 @@
     <!-- Step 3: Health Check -->
     <div class="step" id="step-verify">
       <h1>Verifying connection</h1>
-      <p class="subtitle">Running a quick health check...</p>
+      <p class="subtitle">Running a quick health check. The dashboard can later run a deeper discovery scan for apps, synced folders, and local readiness.</p>
       <div style="margin: 2rem 0;"><span class="spinner" id="verify-spinner"></span></div>
       <div id="verify-result"></div>
     </div>

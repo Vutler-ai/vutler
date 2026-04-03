@@ -89,6 +89,24 @@ interface NodeDetail {
   consentState?: NodeConsentState;
 }
 
+interface NodeLocalDiagnostic {
+  key: string;
+  label: string;
+  status: 'effective' | 'attention' | 'blocked';
+  blocker: 'needs_discovery' | 'denied_consent' | 'missing_app' | 'missing_sync_folder' | 'missing_os_permission' | null;
+  reason: string;
+  nextAction: string;
+  effectiveSource?: string | null;
+  consentEnabled: boolean;
+  discoveryAvailable: boolean;
+}
+
+interface EnhancedNexusCapabilities extends NexusCapabilities {
+  consentState?: NodeConsentState;
+  discoverySnapshot?: NexusDiscoverySnapshot;
+  diagnostics?: NodeLocalDiagnostic[];
+}
+
 type ActionType =
   | 'search'
   | 'read_document'
@@ -171,6 +189,29 @@ function shortId(value?: string | null): string {
   if (!value) return '—';
   if (value.length <= 12) return value;
   return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function getDiagnosticTone(status: NodeLocalDiagnostic['status']): string {
+  if (status === 'effective') return 'bg-emerald-900/20 text-emerald-300 border-emerald-500/30';
+  if (status === 'blocked') return 'bg-red-900/20 text-red-300 border-red-500/30';
+  return 'bg-amber-900/20 text-amber-300 border-amber-500/30';
+}
+
+function getDiagnosticBadgeLabel(blocker: NodeLocalDiagnostic['blocker']): string {
+  switch (blocker) {
+    case 'denied_consent':
+      return 'Consent denied';
+    case 'missing_app':
+      return 'Missing app';
+    case 'missing_sync_folder':
+      return 'Missing sync folder';
+    case 'missing_os_permission':
+      return 'OS permission review';
+    case 'needs_discovery':
+      return 'Run discovery';
+    default:
+      return 'Effective';
+  }
 }
 
 function buildSubscriptionPackage(subscription: NexusEnterpriseEventSubscription) {
@@ -2000,17 +2041,19 @@ function ActionDispatchPanel({
 
 // ─── Capabilities card ────────────────────────────────────────────────────────
 
-function CapabilitiesCard({ nodeId }: { nodeId: string }) {
-  const [caps, setCaps] = useState<NexusCapabilities | null>(null);
+function CapabilitiesCard({ nodeId, node }: { nodeId: string; node: NodeDetail }) {
+  const [caps, setCaps] = useState<EnhancedNexusCapabilities | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     getNodeCapabilities(nodeId)
-      .then(setCaps)
+      .then((result) => setCaps(result as EnhancedNexusCapabilities))
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load capabilities'))
       .finally(() => setLoading(false));
   }, [nodeId]);
+
+  const diagnostics = caps?.diagnostics || [];
 
   return (
     <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
@@ -2092,6 +2135,74 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
               </div>
             </div>
           )}
+
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs text-[#6b7280] mb-1">Local readiness diagnostics</p>
+                <p className="text-[11px] text-[#4b5563]">
+                  This combines discovery, consent, and the effective local runtime path in one place.
+                </p>
+              </div>
+              <span className="text-[11px] text-[#6b7280]">
+                {node.discoverySnapshot?.persistedAt
+                  ? `Snapshot ${formatDateTime(node.discoverySnapshot.persistedAt)}`
+                  : 'No stored snapshot'}
+              </span>
+            </div>
+
+            {diagnostics.length === 0 ? (
+              <div className="mt-3 rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2 text-xs text-[#6b7280]">
+                Run discovery to classify local blockers and remediation hints.
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {diagnostics.map((diagnostic) => (
+                  <div
+                    key={diagnostic.key}
+                    className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm text-white">{diagnostic.label}</p>
+                        <p className="mt-1 text-xs text-[#6b7280]">{diagnostic.reason}</p>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] border whitespace-nowrap ${getDiagnosticTone(diagnostic.status)}`}>
+                        {getDiagnosticBadgeLabel(diagnostic.blocker)}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] border ${
+                        diagnostic.consentEnabled
+                          ? 'bg-emerald-900/20 text-emerald-300 border-emerald-500/30'
+                          : 'bg-[#111827] text-[#9ca3af] border-[rgba(255,255,255,0.08)]'
+                      }`}>
+                        Consent: {diagnostic.consentEnabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] border ${
+                        diagnostic.discoveryAvailable
+                          ? 'bg-blue-900/20 text-blue-300 border-blue-500/30'
+                          : 'bg-[#111827] text-[#9ca3af] border-[rgba(255,255,255,0.08)]'
+                      }`}>
+                        Discovery: {diagnostic.discoveryAvailable ? 'Ready' : 'Missing'}
+                      </span>
+                      {diagnostic.effectiveSource && (
+                        <span className="px-2 py-0.5 rounded-full text-[11px] border bg-violet-900/20 text-violet-200 border-violet-500/30">
+                          Effective source: {formatProviderLabel(diagnostic.effectiveSource)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-3 rounded-lg border border-[rgba(255,255,255,0.06)] bg-[#11131d] px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Next action</p>
+                      <p className="mt-1 text-xs text-[#d1d5db]">{diagnostic.nextAction}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Allowed folders */}
           {caps.permissions?.allowedFolders && caps.permissions.allowedFolders.length > 0 && (
@@ -2736,7 +2847,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
       </section>
 
       {/* Capabilities */}
-      <CapabilitiesCard nodeId={id} />
+      <CapabilitiesCard nodeId={id} node={node} />
 
       <DiscoverySnapshotCard
         node={node}
