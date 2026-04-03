@@ -8,6 +8,7 @@ const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const SYNC_INTERVAL_MS = Number(process.env.SNIPARA_SYNC_INTERVAL_MS || 120000);
 const EVENT_LIMIT = Number(process.env.SNIPARA_SYNC_EVENT_LIMIT || 100);
 const MAX_TRACKED_EVENTS = 500;
+const FAILURE_LOG_TTL_MS = Number(process.env.SNIPARA_SYNC_FAILURE_LOG_TTL_MS || 15 * 60_000);
 
 class SniparaSyncLoop {
   constructor(options = {}) {
@@ -16,6 +17,7 @@ class SniparaSyncLoop {
     this._timer = null;
     this._running = false;
     this._seenEvents = new Map();
+    this._failureLogCache = new Map();
   }
 
   start() {
@@ -87,23 +89,25 @@ class SniparaSyncLoop {
 
     try {
       const result = await coordinator.syncFromSnipara(workspaceId);
+      this.clearFailureLog(workspaceId, 'task');
       console.log('[SniparaSyncLoop] synced tasks', {
         workspaceId,
         synced: result?.synced || 0,
         errors: result?.errors || 0,
       });
     } catch (err) {
-      console.warn(`[SniparaSyncLoop] task reconcile failed for ${workspaceId}:`, err.message);
+      this.logFailureOnce('task', workspaceId, err);
     }
 
     try {
       const data = await coordinator.listEvents(this.eventLimit, workspaceId);
+      this.clearFailureLog(workspaceId, 'event');
       const events = Array.isArray(data?.events) ? data.events : [];
       for (const event of events.slice().reverse()) {
         await this.projectEvent(workspaceId, event, coordinator);
       }
     } catch (err) {
-      console.warn(`[SniparaSyncLoop] event reconcile failed for ${workspaceId}:`, err.message);
+      this.logFailureOnce('event', workspaceId, err);
     }
   }
 
@@ -147,6 +151,27 @@ class SniparaSyncLoop {
     while (seen.size > Math.floor(MAX_TRACKED_EVENTS / 2)) {
       seen.delete(iter.next().value);
     }
+  }
+
+  getFailureLogKey(kind, workspaceId, err) {
+    return `${kind}:${workspaceId}:${err?.code || ''}:${err?.statusCode || ''}:${err?.message || 'unknown'}`;
+  }
+
+  clearFailureLog(workspaceId, kind) {
+    for (const key of this._failureLogCache.keys()) {
+      if (key.startsWith(`${kind}:${workspaceId}:`)) this._failureLogCache.delete(key);
+    }
+  }
+
+  logFailureOnce(kind, workspaceId, err) {
+    const key = this.getFailureLogKey(kind, workspaceId, err);
+    const now = Date.now();
+    const existing = this._failureLogCache.get(key);
+    if (existing && existing > now) return;
+
+    this._failureLogCache.set(key, now + FAILURE_LOG_TTL_MS);
+    const action = err?.code === 'circuit_open' ? 'skipped' : 'failed';
+    console.warn(`[SniparaSyncLoop] ${kind} reconcile ${action} for ${workspaceId}:`, err.message);
   }
 }
 
