@@ -28,6 +28,12 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // Public paths (no auth needed)
+const WORKSPACE_INTEGRATION_CALLBACK_PATHS = [
+  '/api/v1/integrations/google/callback',
+  '/api/v1/integrations/github/callback',
+  '/api/v1/integrations/microsoft365/callback',
+];
+
 const PUBLIC_FULL_PATHS = [
   '/api/v1/health',
   '/api/v1/auth/login',
@@ -49,6 +55,8 @@ const PUBLIC_FULL_PATHS = [
   '/api/v1/billing/plans',
   '/api/v1/email/incoming',
   '/downloads', // Nexus installer downloads (public, no auth)
+  // Workspace integration callbacks rely on OAuth state, not an Authorization header.
+  ...WORKSPACE_INTEGRATION_CALLBACK_PATHS,
   // SECURITY: sandbox, drive/download, nexus/register removed from public paths (audit 2026-03-28)
   // '/api/v1/sandbox',        — RCE without auth
   // '/api/v1/drive/download', — cross-tenant file access

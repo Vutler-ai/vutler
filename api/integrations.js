@@ -102,6 +102,7 @@ function generateCodeChallenge(verifier) {
 // In-memory state store for CSRF protection (keyed by state param)
 // In production this should be Redis or DB-backed
 const oauthStateStore = new Map();
+const DEDICATED_GET_CALLBACK_PROVIDERS = ['google', 'github', 'microsoft365'];
 
 let initPromise = null;
 
@@ -1810,8 +1811,8 @@ router.post('/n8n/workflows/:id/trigger', async (req, res) => {
 // POST /api/v1/integrations/:provider/callback (fallback for other providers)
 router.post('/:provider/callback', async (req, res) => {
   const { provider } = req.params;
-  // google and github have dedicated GET callback routes above; chatgpt uses device auth (no callback)
-  if (['google', 'github', 'chatgpt'].includes(provider)) {
+  // OAuth workspace providers use dedicated GET callback routes; chatgpt uses device auth (no callback)
+  if (DEDICATED_GET_CALLBACK_PROVIDERS.includes(provider) || provider === 'chatgpt') {
     return res.status(405).json({ success: false, error: `Use GET /api/v1/integrations/${provider}/callback` });
   }
   return res.status(409).json({
