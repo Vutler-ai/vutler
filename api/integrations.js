@@ -44,6 +44,20 @@ const CHATGPT_CLIENT_ID = process.env.CHATGPT_CLIENT_ID || '';
 const CHATGPT_API_BASE = 'https://auth.openai.com/api/accounts';
 const CHATGPT_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const CHATGPT_DEVICE_CALLBACK = 'https://auth.openai.com/deviceauth/callback';
+const CONNECTOR_READINESS_BY_PROVIDER = {
+  chatgpt: { readiness: 'operational', label: 'Operational', description: 'Device auth is wired and usable today.' },
+  google: { readiness: 'operational', label: 'Operational', description: 'OAuth, health checks, and runtime adapters are wired.' },
+  github: { readiness: 'operational', label: 'Operational', description: 'OAuth is wired for workspace connection.' },
+  jira: { readiness: 'operational', label: 'Operational', description: 'API-token connection and runtime actions are wired.' },
+  microsoft365: { readiness: 'partial', label: 'Partial', description: 'Outlook mail, calendar, and contacts are wired. Teams, OneDrive, and SharePoint are not.' },
+  social_media: { readiness: 'partial', label: 'Partial', description: 'Publishing and account sync are wired. Full analytics and engagement workflows are not.' },
+  slack: { readiness: 'coming_soon', label: 'Coming soon', description: 'Catalog only. No runtime connector is wired yet.' },
+  telegram: { readiness: 'coming_soon', label: 'Coming soon', description: 'Catalog only. No runtime connector is wired yet.' },
+  discord: { readiness: 'coming_soon', label: 'Coming soon', description: 'Catalog only. No runtime connector is wired yet.' },
+  notion: { readiness: 'coming_soon', label: 'Coming soon', description: 'Catalog only. No runtime connector is wired yet.' },
+  linear: { readiness: 'coming_soon', label: 'Coming soon', description: 'Catalog only. No runtime connector is wired yet.' },
+  n8n: { readiness: 'coming_soon', label: 'Coming soon', description: 'Workflow list and trigger routes are still stubs.' },
+};
 
 // In-memory store for pending device auth sessions: workspaceId → { device_auth_id, user_code, interval, expires_at }
 const deviceAuthSessions = new Map();
@@ -112,7 +126,7 @@ const INTERNAL_CATALOG = [
   {
     provider: 'slack',
     name: 'Slack',
-    description: 'Team messaging and channel automations',
+    description: 'Team messaging and channel automations (catalog only, connector not yet wired)',
     icon: '💬',
     category: 'communication',
     actions: ['send_message', 'list_channels', 'get_user_info'],
@@ -139,7 +153,7 @@ const INTERNAL_CATALOG = [
   {
     provider: 'notion',
     name: 'Notion',
-    description: 'Pages, databases, and knowledge base sync',
+    description: 'Pages, databases, and knowledge base sync (catalog only, connector not yet wired)',
     icon: '📝',
     category: 'knowledge',
     actions: ['search_pages', 'read_database'],
@@ -157,7 +171,7 @@ const INTERNAL_CATALOG = [
   {
     provider: 'linear',
     name: 'Linear',
-    description: 'Issue tracking, cycles, and product roadmaps',
+    description: 'Issue tracking, cycles, and product roadmaps (catalog only, connector not yet wired)',
     icon: '🟣',
     category: 'project-management',
     actions: ['list_issues', 'create_issue'],
@@ -166,7 +180,7 @@ const INTERNAL_CATALOG = [
   {
     provider: 'n8n',
     name: 'n8n',
-    description: 'Workflow automation and custom integrations',
+    description: 'Workflow automation and custom integrations (workflow endpoints are still stubs)',
     icon: '⚡',
     category: 'automation',
     actions: ['trigger_workflow', 'list_workflows'],
@@ -184,7 +198,7 @@ const INTERNAL_CATALOG = [
   {
     provider: 'social_media',
     name: 'Social Media',
-    description: 'Post to LinkedIn, X, Instagram, TikTok, and more via Post for Me',
+    description: 'Post to LinkedIn, X, Instagram, TikTok, and more via Post for Me (publishing wired, analytics still partial)',
     icon: '📱',
     category: 'marketing',
     actions: ['post_content', 'schedule_post', 'list_accounts'],
@@ -500,6 +514,9 @@ router.get('/', async (req, res) => {
     );
 
     const integrations = result.rows.map((row) => ({
+      constReadiness: getConnectorReadiness(row.provider),
+      row,
+    })).map(({ row, constReadiness }) => ({
       provider: row.provider,
       id: row.provider,
       name: row.name,
@@ -512,6 +529,9 @@ router.get('/', async (req, res) => {
       connected_at: row.connected_at,
       connected_by: row.connected_by,
       updated_at: row.updated_at,
+      readiness: constReadiness.readiness,
+      readiness_label: constReadiness.label,
+      readiness_description: constReadiness.description,
     }));
 
     res.json({ success: true, integrations });
@@ -534,6 +554,9 @@ router.get('/available', async (req, res) => {
     );
 
     const providers = result.rows.map((row) => ({
+      constReadiness: getConnectorReadiness(row.provider),
+      row,
+    })).map(({ row, constReadiness }) => ({
       provider: row.provider,
       id: row.provider,
       name: row.name,
@@ -542,6 +565,9 @@ router.get('/available', async (req, res) => {
       category: row.category,
       source: row.source,
       actions: row.actions || [],
+      readiness: constReadiness.readiness,
+      readiness_label: constReadiness.label,
+      readiness_description: constReadiness.description,
     }));
 
     res.json({ success: true, providers, integrations: providers });
@@ -1510,6 +1536,14 @@ async function validateJiraCredentials({ baseUrl, email, apiToken }) {
   };
 }
 
+function getConnectorReadiness(provider) {
+  return CONNECTOR_READINESS_BY_PROVIDER[provider] || {
+    readiness: 'coming_soon',
+    label: 'Coming soon',
+    description: 'Connector readiness has not been classified yet.',
+  };
+}
+
 async function persistJiraIntegrationConnection({
   workspaceId,
   normalizedUrl,
@@ -1553,6 +1587,7 @@ async function persistJiraIntegrationConnection({
 }
 
 function buildIntegrationDetailPayload(row) {
+  const readiness = getConnectorReadiness(row?.provider);
   const config = row?.config && typeof row.config === 'object' ? { ...row.config } : {};
   const credentials = row?.credentials && typeof row.credentials === 'object' ? row.credentials : {};
 
@@ -1580,6 +1615,9 @@ function buildIntegrationDetailPayload(row) {
     connected_by: row.connected_by,
     scopes: row.scopes || [],
     config,
+    readiness: readiness.readiness,
+    readiness_label: readiness.label,
+    readiness_description: readiness.description,
     usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
     webhook_url: `/api/v1/webhooks/${row.provider}`,
   };

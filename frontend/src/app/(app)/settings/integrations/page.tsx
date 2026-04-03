@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  getConnectorReadinessMeta,
   getOauthConnectorConsentMeta,
   getSocialPlatformMeta,
   normalizeIntegrationKey,
@@ -24,6 +25,7 @@ interface Integration {
   icon: string;
   description: string;
   status: "connected" | "disconnected" | "coming_soon";
+  readiness: "operational" | "partial" | "coming_soon";
   connected?: boolean;
   connected_at?: string;
 }
@@ -63,14 +65,22 @@ export default function IntegrationsPage() {
         (data.integrations || []).forEach((i: Integration) => {
           connected[i.provider] = i;
         });
-        const all = Object.entries(INTEGRATIONS_META).map(([key, meta]) => ({
-          provider: key,
-          name: meta.name,
-          icon: meta.icon,
-          description: meta.description,
-          status: connected[key]?.connected ? "connected" as const : "disconnected" as const,
-          connected_at: connected[key]?.connected_at,
-        }));
+        const all = Object.entries(INTEGRATIONS_META).map(([key, meta]) => {
+          const readiness = getConnectorReadinessMeta(key);
+          return {
+            provider: key,
+            name: meta.name,
+            icon: meta.icon,
+            description: readiness.readiness === "operational"
+              ? meta.description
+              : `${meta.description} ${readiness.description}`,
+            readiness: readiness.readiness,
+            status: readiness.readiness === "coming_soon"
+              ? "coming_soon" as const
+              : connected[key]?.connected ? "connected" as const : "disconnected" as const,
+            connected_at: connected[key]?.connected_at,
+          };
+        });
         setIntegrations(all);
         setSocialPlatforms(Array.from(new Set(
           (Array.isArray(socialData?.data) ? socialData.data : [])
@@ -80,13 +90,19 @@ export default function IntegrationsPage() {
         setLoading(false);
       })
       .catch(() => {
-        const all = Object.entries(INTEGRATIONS_META).map(([key, meta]) => ({
-          provider: key,
-          name: meta.name,
-          icon: meta.icon,
-          description: meta.description,
-          status: "disconnected" as const,
-        }));
+        const all = Object.entries(INTEGRATIONS_META).map(([key, meta]) => {
+          const readiness = getConnectorReadinessMeta(key);
+          return {
+            provider: key,
+            name: meta.name,
+            icon: meta.icon,
+            description: readiness.readiness === "operational"
+              ? meta.description
+              : `${meta.description} ${readiness.description}`,
+            readiness: readiness.readiness,
+            status: readiness.readiness === "coming_soon" ? "coming_soon" as const : "disconnected" as const,
+          };
+        });
         setIntegrations(all);
         setLoading(false);
       });
@@ -306,15 +322,34 @@ export default function IntegrationsPage() {
             >
               <div className="flex items-start justify-between mb-4">
                 <span className="text-3xl">{integration.icon}</span>
-                <span
-                  className={`text-xs px-2 py-1 rounded-full font-medium ${
-                    integration.status === "connected"
-                      ? "bg-green-500/10 text-green-400"
-                      : "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"
-                  }`}
-                >
-                  {integration.status === "connected" ? "✅ Connected" : "⚪ Disconnected"}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span
+                    className={`text-xs px-2 py-1 rounded-full font-medium ${
+                      integration.status === "connected"
+                        ? "bg-green-500/10 text-green-400"
+                        : integration.status === "coming_soon"
+                          ? "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"
+                          : "bg-[rgba(255,255,255,0.05)] text-[#9ca3af]"
+                    }`}
+                  >
+                    {integration.status === "connected"
+                      ? "Connected"
+                      : integration.status === "coming_soon"
+                        ? "Coming soon"
+                        : "Disconnected"}
+                  </span>
+                  <span
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                      integration.readiness === "operational"
+                        ? "bg-emerald-500/10 text-emerald-300"
+                        : integration.readiness === "partial"
+                          ? "bg-amber-500/10 text-amber-300"
+                          : "bg-[rgba(255,255,255,0.05)] text-[#6b7280]"
+                    }`}
+                  >
+                    {getConnectorReadinessMeta(integration.provider).label}
+                  </span>
+                </div>
               </div>
               <h3 className="text-white font-semibold mb-1">{integration.name}</h3>
               <p className="text-[#9ca3af] text-sm mb-4 line-clamp-2">{integration.description}</p>
@@ -366,6 +401,11 @@ export default function IntegrationsPage() {
                   >
                     Connect
                   </button>
+                )}
+                {integration.status === "coming_soon" && (
+                  <div className="px-4 py-1.5 text-sm rounded-lg bg-[rgba(255,255,255,0.05)] text-[#6b7280] select-none">
+                    Coming soon
+                  </div>
                 )}
               </div>
             </div>

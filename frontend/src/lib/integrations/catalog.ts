@@ -37,6 +37,14 @@ export const SOCIAL_PLATFORM_META: Record<string, { icon: string; name: string }
   pinterest: { icon: "📌", name: "Pinterest" },
 };
 
+export type ConnectorReadiness = "operational" | "partial" | "coming_soon";
+
+export interface ConnectorReadinessMeta {
+  readiness: ConnectorReadiness;
+  label: string;
+  description: string;
+}
+
 export type OAuthConnectorAccessModel = "cloud-required" | "local-first";
 
 export interface OAuthConnectorConsentMeta {
@@ -183,6 +191,69 @@ export const CONNECTOR_META: Record<string, { icon: string; name: string; descri
   },
 };
 
+export const CONNECTOR_READINESS_META: Record<string, ConnectorReadinessMeta> = {
+  chatgpt: {
+    readiness: "operational",
+    label: "Operational",
+    description: "Device auth is wired and usable today.",
+  },
+  google: {
+    readiness: "operational",
+    label: "Operational",
+    description: "OAuth, health checks, and runtime adapters are wired.",
+  },
+  github: {
+    readiness: "operational",
+    label: "Operational",
+    description: "OAuth is wired for workspace connection.",
+  },
+  jira: {
+    readiness: "operational",
+    label: "Operational",
+    description: "API-token connection and runtime actions are wired.",
+  },
+  microsoft365: {
+    readiness: "partial",
+    label: "Partial",
+    description: "Outlook mail, calendar, and contacts are wired. Teams, OneDrive, and SharePoint are not.",
+  },
+  social_media: {
+    readiness: "partial",
+    label: "Partial",
+    description: "Publishing and account sync are wired. Full analytics and engagement workflows are not.",
+  },
+  slack: {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Catalog only. No runtime connector is wired yet.",
+  },
+  telegram: {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Catalog only. No runtime connector is wired yet.",
+  },
+  discord: {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Catalog only. No runtime connector is wired yet.",
+  },
+  notion: {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Catalog only. No runtime connector is wired yet.",
+  },
+  linear: {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Catalog only. No runtime connector is wired yet.",
+  },
+  n8n: {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Workflow list and trigger routes are still stubs.",
+  },
+};
+
 export const WORKSPACE_CONNECTOR_ORDER = [
   "chatgpt",
   "google",
@@ -215,4 +286,13 @@ export function getSocialPlatformMeta(value: string | null | undefined) {
 export function getOauthConnectorConsentMeta(value: string | null | undefined): OAuthConnectorConsentMeta | null {
   const normalized = normalizeIntegrationKey(value);
   return OAUTH_CONNECTOR_CONSENT_META[normalized] || null;
+}
+
+export function getConnectorReadinessMeta(value: string | null | undefined): ConnectorReadinessMeta {
+  const normalized = normalizeIntegrationKey(value);
+  return CONNECTOR_READINESS_META[normalized] || {
+    readiness: "coming_soon",
+    label: "Coming soon",
+    description: "Connector readiness has not been classified yet.",
+  };
 }

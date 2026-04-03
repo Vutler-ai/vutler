@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   CONNECTOR_META,
+  getConnectorReadinessMeta,
   getOauthConnectorConsentMeta,
   SOCIAL_PLATFORM_PROVIDERS,
   WORKSPACE_CONNECTOR_ORDER,
@@ -34,6 +35,7 @@ interface Provider {
   description: string;
   category: string;
   mode: "oauth" | "device_auth" | "manage" | "coming_soon";
+  readiness: "operational" | "partial" | "coming_soon";
   icon: string;
 }
 
@@ -44,6 +46,7 @@ const PROVIDERS: Provider[] = [
     description: "Use your ChatGPT subscription to power agents with GPT-5.4, o3, and Codex.",
     category: "ai",
     mode: "device_auth",
+    readiness: "operational",
     icon: "🤖",
   },
   {
@@ -52,6 +55,7 @@ const PROVIDERS: Provider[] = [
     description: "One connector for Gmail, Calendar, Drive, and Google contacts.",
     category: "productivity",
     mode: "oauth",
+    readiness: "operational",
     icon: "🔵",
   },
   {
@@ -60,6 +64,7 @@ const PROVIDERS: Provider[] = [
     description: "Manage repos, issues, and pull requests from your workspace.",
     category: "development",
     mode: "oauth",
+    readiness: "operational",
     icon: "🐙",
   },
   {
@@ -68,6 +73,7 @@ const PROVIDERS: Provider[] = [
     description: "Outlook mail, calendar, and contacts today. Teams, OneDrive, and SharePoint stay disabled until their dedicated runtime ships.",
     category: "productivity",
     mode: "oauth",
+    readiness: "partial",
     icon: "🟦",
   },
   {
@@ -76,6 +82,7 @@ const PROVIDERS: Provider[] = [
     description: "Manage LinkedIn, X, Instagram, TikTok, and other publishing accounts from one connector.",
     category: "social-media",
     mode: "manage",
+    readiness: "partial",
     icon: "📱",
   },
   {
@@ -84,6 +91,7 @@ const PROVIDERS: Provider[] = [
     description: "Channels, notifications, and messaging automations.",
     category: "communication",
     mode: "coming_soon",
+    readiness: "coming_soon",
     icon: "💬",
   },
   {
@@ -92,6 +100,7 @@ const PROVIDERS: Provider[] = [
     description: "Telegram Bot API messaging and command flows.",
     category: "communication",
     mode: "coming_soon",
+    readiness: "coming_soon",
     icon: "✈️",
   },
   {
@@ -100,6 +109,7 @@ const PROVIDERS: Provider[] = [
     description: "Community, channel, and bot interactions.",
     category: "communication",
     mode: "coming_soon",
+    readiness: "coming_soon",
     icon: "🎮",
   },
   {
@@ -108,6 +118,7 @@ const PROVIDERS: Provider[] = [
     description: "Pages, databases, and team knowledge.",
     category: "knowledge",
     mode: "coming_soon",
+    readiness: "coming_soon",
     icon: "📝",
   },
   {
@@ -116,6 +127,7 @@ const PROVIDERS: Provider[] = [
     description: "Issue tracking, cycles, and roadmap workflows.",
     category: "project-management",
     mode: "coming_soon",
+    readiness: "coming_soon",
     icon: "🟣",
   },
   {
@@ -123,7 +135,8 @@ const PROVIDERS: Provider[] = [
     name: "Jira",
     description: "Projects, tickets, and sprint operations.",
     category: "project-management",
-    mode: "coming_soon",
+    mode: "manage",
+    readiness: "operational",
     icon: "🔷",
   },
   {
@@ -132,6 +145,7 @@ const PROVIDERS: Provider[] = [
     description: "Workflow automation and custom orchestrations.",
     category: "automation",
     mode: "coming_soon",
+    readiness: "coming_soon",
     icon: "⚡",
   },
 ];
@@ -301,7 +315,9 @@ export default function IntegrationsPage() {
       setSuccessMsg(null);
 
       if (provider.mode === "manage") {
-        window.location.href = "/settings/integrations/social-media";
+        window.location.href = provider.provider === "jira"
+          ? "/settings/integrations/jira"
+          : "/settings/integrations/social-media";
         return;
       }
 
@@ -807,6 +823,7 @@ function ProviderCard({ provider, categoryColor, iconBg, connecting, socialPlatf
     .split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+  const readiness = getConnectorReadinessMeta(provider.provider);
 
   return (
     <div className="bg-[#0f1117] border border-[rgba(255,255,255,0.06)] rounded-xl p-5 flex flex-col gap-3 hover:border-[rgba(255,255,255,0.12)] transition-colors">
@@ -827,14 +844,23 @@ function ProviderCard({ provider, categoryColor, iconBg, connecting, socialPlatf
           </div>
         </div>
 
-        {provider.mode === "coming_soon" && (
-          <span className="flex-shrink-0 text-xs px-2 py-0.5 rounded-full bg-[rgba(255,255,255,0.06)] text-[#6b7280] border border-[rgba(255,255,255,0.08)]">
-            Soon
-          </span>
-        )}
+        <span
+          className={`flex-shrink-0 text-xs px-2 py-0.5 rounded-full border ${
+            readiness.readiness === "operational"
+              ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+              : readiness.readiness === "partial"
+                ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                : "bg-[rgba(255,255,255,0.06)] text-[#6b7280] border-[rgba(255,255,255,0.08)]"
+          }`}
+        >
+          {readiness.label}
+        </span>
       </div>
 
       <p className="text-xs text-[#9ca3af] leading-relaxed">{provider.description}</p>
+      {readiness.readiness !== "operational" && (
+        <p className="text-[11px] text-[#6b7280] leading-relaxed">{readiness.description}</p>
+      )}
 
       {provider.provider === "social_media" && socialPlatforms.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -862,7 +888,7 @@ function ProviderCard({ provider, categoryColor, iconBg, connecting, socialPlatf
           onClick={() => onConnect(provider)}
           className="w-full text-xs px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
         >
-          Manage accounts
+          {provider.provider === "jira" ? "Configure connector" : "Manage accounts"}
         </button>
       ) : (
         <button
