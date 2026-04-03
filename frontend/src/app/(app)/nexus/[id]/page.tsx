@@ -54,6 +54,22 @@ interface CommandHistoryResponse {
   summary: NexusCommandStats | null;
 }
 
+interface NodeConsentSourceState {
+  enabled: boolean;
+  apps: string[];
+  actions: string[];
+  allowedFolders?: string[];
+}
+
+interface NodeConsentState {
+  sources: Record<string, NodeConsentSourceState>;
+  summary: {
+    enabledSources: number;
+    enabledApps: number;
+    enabledActions: number;
+  };
+}
+
 interface NodeDetail {
   id: string;
   name: string;
@@ -70,6 +86,7 @@ interface NodeDetail {
   poolAgentIds?: string[];
   providerSources?: Record<string, NexusProviderSource>;
   discoverySnapshot?: NexusDiscoverySnapshot;
+  consentState?: NodeConsentState;
 }
 
 type ActionType =
@@ -2337,6 +2354,130 @@ function DiscoverySnapshotCard({
   );
 }
 
+function ConsentStateCard({ consentState }: { consentState?: NodeConsentState | null }) {
+  const sourceEntries = consentState
+    ? Object.entries(consentState.sources).filter(([, source]) => source.enabled || source.apps.length || source.actions.length || source.allowedFolders?.length)
+    : [];
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5 space-y-4">
+      <div>
+        <h2 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider">Consent state</h2>
+        <p className="text-xs text-[#6b7280] mt-1">
+          Effective local consent grouped by source, app, and runtime action.
+        </p>
+      </div>
+
+      {!consentState && (
+        <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2 text-xs text-[#6b7280]">
+          This node has not reported a structured local consent state yet.
+        </div>
+      )}
+
+      {consentState && (
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Sources</p>
+              <p className="mt-1 text-sm text-white">{consentState.summary.enabledSources}</p>
+            </div>
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Apps</p>
+              <p className="mt-1 text-sm text-white">{consentState.summary.enabledApps}</p>
+            </div>
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Actions</p>
+              <p className="mt-1 text-sm text-white">{consentState.summary.enabledActions}</p>
+            </div>
+          </div>
+
+          {sourceEntries.length === 0 ? (
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2 text-xs text-[#6b7280]">
+              No enabled local consent sources are currently reported.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {sourceEntries.map(([sourceKey, source]) => (
+                <div
+                  key={sourceKey}
+                  className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] p-3 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-white">{formatProviderLabel(sourceKey)}</p>
+                      <p className="text-xs text-[#6b7280]">
+                        {source.enabled ? 'Enabled for local runtime use' : 'Configured but currently disabled'}
+                      </p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] border ${
+                      source.enabled
+                        ? 'bg-emerald-900/20 text-emerald-300 border-emerald-500/30'
+                        : 'bg-[#111827] text-[#9ca3af] border-[rgba(255,255,255,0.08)]'
+                    }`}>
+                      {source.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-[#6b7280] mb-2">Apps</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {source.apps.length === 0 ? (
+                          <span className="text-xs text-[#6b7280]">No local apps selected</span>
+                        ) : (
+                          source.apps.map((app) => (
+                            <code
+                              key={app}
+                              className="px-2 py-0.5 rounded-full text-xs border bg-blue-900/20 text-blue-200 border-blue-500/30"
+                            >
+                              {app}
+                            </code>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-[#6b7280] mb-2">Actions</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {source.actions.length === 0 ? (
+                          <span className="text-xs text-[#6b7280]">No runtime actions selected</span>
+                        ) : (
+                          source.actions.map((action) => (
+                            <code
+                              key={action}
+                              className="px-2 py-0.5 rounded-full text-xs border bg-amber-900/20 text-amber-200 border-amber-500/30"
+                            >
+                              {action}
+                            </code>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {source.allowedFolders && source.allowedFolders.length > 0 && (
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-[#6b7280] mb-2">Folders</p>
+                      <div className="space-y-1">
+                        {source.allowedFolders.map((folder) => (
+                          <div key={folder} className="text-xs text-[#d1d5db] font-mono break-all">
+                            {folder}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function RuntimeObservabilityCard({
   summary,
   commands,
@@ -2604,6 +2745,8 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
           fetchCommandHistory();
         }}
       />
+
+      <ConsentStateCard consentState={node.consentState} />
 
       <RuntimeObservabilityCard summary={commandSummary} commands={commandHistory} />
 

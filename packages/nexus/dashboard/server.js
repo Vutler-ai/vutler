@@ -32,6 +32,23 @@ function createDashboardServer(node) {
     return match?.id || null;
   }
 
+  async function syncPermissionsToCloud() {
+    node.permissions = permissionEngine.getPermissions();
+    if (!node.nodeId || typeof node._apiCall !== 'function') return;
+
+    const agents = Array.isArray(node.agents)
+      ? node.agents
+      : (node.agentManager && typeof node.agentManager.getStatus === 'function' ? node.agentManager.getStatus() : []);
+
+    await node._apiCall('POST', `/api/v1/nexus/${node.nodeId}/connect`, {
+      status: 'online',
+      agents,
+      memory: process.memoryUsage(),
+      uptime: process.uptime(),
+      permissions: node.permissions,
+    }).catch(() => {});
+  }
+
   return http.createServer((req, res) => {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -89,10 +106,32 @@ function createDashboardServer(node) {
     } else if (req.url === '/api/permissions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(permissionEngine.getPermissions()));
+    } else if (req.url === '/api/permissions/model' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const current = permissionEngine.getPermissions();
+          const nextPermissions = data.permissions || {
+            ...current,
+            consent: data.consent || current.consent,
+            allowedFolders: data.allowedFolders || current.allowedFolders,
+            allowedActions: data.allowedActions || current.allowedActions,
+          };
+          permissionEngine.replace(nextPermissions);
+          await syncPermissionsToCloud();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, permissions: permissionEngine.getPermissions() }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: error.message }));
+        }
+      });
     } else if ((req.url === '/api/permissions/grant' || req.url === '/api/permissions/revoke') && req.method === 'POST') {
       let body = '';
       req.on('data', (chunk) => { body += chunk; });
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const data = body ? JSON.parse(body) : {};
           const folder = data.folder;
@@ -102,6 +141,7 @@ function createDashboardServer(node) {
           }
           if (req.url.endsWith('/grant')) permissionEngine.grant(folder);
           else permissionEngine.revoke(folder);
+          await syncPermissionsToCloud();
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, permissions: permissionEngine.getPermissions() }));
         } catch (error) {

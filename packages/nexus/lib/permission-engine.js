@@ -11,13 +11,149 @@ const ACCESS_LOG       = path.join(VUTLER_DIR, 'logs', 'access.jsonl');
 const { PermissionDeniedError } = require('./errors');
 const logger = require('./logger');
 
+const CONSENT_SOURCE_TEMPLATES = {
+  filesystem: {
+    apps: ['finder', 'preview', 'synced_drives'],
+    actions: ['search', 'read_document', 'list_dir', 'open_file'],
+  },
+  mail: {
+    apps: ['apple_mail', 'outlook'],
+    actions: ['list_emails', 'search_emails'],
+  },
+  calendar: {
+    apps: ['apple_calendar', 'outlook_calendar'],
+    actions: ['read_calendar'],
+  },
+  contacts: {
+    apps: ['apple_contacts', 'outlook_contacts'],
+    actions: ['read_contacts', 'search_contacts'],
+  },
+  clipboard: {
+    apps: ['system_clipboard'],
+    actions: ['read_clipboard'],
+  },
+  shell: {
+    apps: ['terminal'],
+    actions: ['shell_exec', 'terminal_open', 'terminal_exec', 'terminal_read', 'terminal_snapshot', 'terminal_close'],
+  },
+};
+
+function normalizeStringArray(values, allowed) {
+  if (!Array.isArray(values)) return [];
+  const next = values
+    .filter(Boolean)
+    .map((value) => String(value));
+  if (!Array.isArray(allowed)) return Array.from(new Set(next));
+  const allowedSet = new Set(allowed);
+  return Array.from(new Set(next.filter((value) => allowedSet.has(value))));
+}
+
+function normalizeFolderArray(folders) {
+  if (!Array.isArray(folders)) return [];
+  return Array.from(new Set(
+    folders
+      .filter(Boolean)
+      .map((folder) => path.resolve(String(folder)))
+  ));
+}
+
+function normalizeConsentSource(sourceKey, rawSource = {}, legacyPermissions = {}) {
+  const template = CONSENT_SOURCE_TEMPLATES[sourceKey] || { apps: [], actions: [] };
+  const legacyEnabled = typeof legacyPermissions[sourceKey] === 'boolean'
+    ? legacyPermissions[sourceKey]
+    : undefined;
+  const legacyFolders = sourceKey === 'filesystem'
+    ? normalizeFolderArray(legacyPermissions.allowedFolders)
+    : [];
+  const rawFolders = sourceKey === 'filesystem'
+    ? normalizeFolderArray(rawSource.allowedFolders)
+    : [];
+  const apps = normalizeStringArray(rawSource.apps, template.apps);
+  const actions = normalizeStringArray(rawSource.actions, template.actions);
+  const allowedFolders = sourceKey === 'filesystem'
+    ? (rawFolders.length ? rawFolders : legacyFolders)
+    : [];
+  const enabled = typeof rawSource.enabled === 'boolean'
+    ? rawSource.enabled
+    : legacyEnabled !== undefined
+      ? legacyEnabled
+      : Boolean(apps.length || actions.length || allowedFolders.length);
+
+  return {
+    enabled,
+    apps: enabled ? (apps.length ? apps : template.apps.slice()) : [],
+    actions: enabled ? (actions.length ? actions : template.actions.slice()) : [],
+    ...(sourceKey === 'filesystem' ? { allowedFolders } : {}),
+  };
+}
+
+function normalizeConsentModel(rawConsent = {}, legacyPermissions = {}) {
+  const sourceRoot = rawConsent && typeof rawConsent === 'object' && rawConsent.sources
+    ? rawConsent.sources
+    : rawConsent;
+  const sources = {};
+
+  for (const sourceKey of Object.keys(CONSENT_SOURCE_TEMPLATES)) {
+    sources[sourceKey] = normalizeConsentSource(
+      sourceKey,
+      sourceRoot?.[sourceKey] || {},
+      legacyPermissions
+    );
+  }
+
+  return { sources };
+}
+
+function deriveAllowedActionsFromConsent(consent) {
+  const actions = [];
+  for (const source of Object.values(consent?.sources || {})) {
+    if (!source?.enabled) continue;
+    actions.push(...normalizeStringArray(source.actions));
+  }
+  return Array.from(new Set(actions));
+}
+
+function normalizePermissions(input = {}) {
+  const consent = normalizeConsentModel(input.consent || {}, input);
+  const filesystemFolders = consent.sources.filesystem?.allowedFolders || [];
+  const allowedFolders = normalizeFolderArray(
+    input.allowedFolders && input.allowedFolders.length
+      ? input.allowedFolders
+      : filesystemFolders
+  );
+  consent.sources.filesystem.allowedFolders = allowedFolders;
+
+  const derivedActions = deriveAllowedActionsFromConsent(consent);
+  const allowedActions = normalizeStringArray(
+    input.allowedActions && input.allowedActions.length
+      ? input.allowedActions
+      : derivedActions
+  );
+
+  return {
+    allowedFolders,
+    allowedActions,
+    consent,
+  };
+}
+
 /**
  * PermissionEngine — opt-in folder ACL system.
  *
  * permissions.json shape:
  * {
  *   "allowedFolders": ["/Users/alice/Documents", "/Users/alice/Desktop"],
- *   "allowedActions": ["read_document", "list_dir", "search", "open_file"]
+ *   "allowedActions": ["read_document", "list_dir", "search", "open_file"],
+ *   "consent": {
+ *     "sources": {
+ *       "filesystem": {
+ *         "enabled": true,
+ *         "apps": ["finder", "synced_drives"],
+ *         "actions": ["search", "read_document"],
+ *         "allowedFolders": ["/Users/alice/Documents"]
+ *       }
+ *     }
+ *   }
  * }
  *
  * Usage:
@@ -70,10 +206,12 @@ class PermissionEngine {
    * @param {string} folderPath
    */
   grant(folderPath) {
-    const perms = this._load();
+    const perms = normalizePermissions(this._load());
     const resolved = path.resolve(folderPath);
     if (!perms.allowedFolders.includes(resolved)) {
       perms.allowedFolders.push(resolved);
+      perms.consent.sources.filesystem.enabled = true;
+      perms.consent.sources.filesystem.allowedFolders = perms.allowedFolders.slice();
       this._save(perms);
       logger.info(`[PermissionEngine] Granted: ${resolved}`);
     }
@@ -84,11 +222,12 @@ class PermissionEngine {
    * @param {string} folderPath
    */
   revoke(folderPath) {
-    const perms = this._load();
+    const perms = normalizePermissions(this._load());
     const resolved = path.resolve(folderPath);
     const before = perms.allowedFolders.length;
     perms.allowedFolders = perms.allowedFolders.filter((f) => f !== resolved);
     if (perms.allowedFolders.length !== before) {
+      perms.consent.sources.filesystem.allowedFolders = perms.allowedFolders.slice();
       this._save(perms);
       logger.info(`[PermissionEngine] Revoked: ${resolved}`);
     }
@@ -99,7 +238,7 @@ class PermissionEngine {
    * @returns {{ allowedFolders: string[], allowedActions: string[] }}
    */
   getPermissions() {
-    return this._load();
+    return normalizePermissions(this._load());
   }
 
   /**
@@ -109,14 +248,7 @@ class PermissionEngine {
    * @param {{ allowedFolders?: string[], allowedActions?: string[] }} permissions
    */
   replace(permissions = {}) {
-    const next = {
-      allowedFolders: Array.isArray(permissions.allowedFolders)
-        ? permissions.allowedFolders.map((folder) => path.resolve(folder))
-        : [],
-      allowedActions: Array.isArray(permissions.allowedActions)
-        ? permissions.allowedActions.filter(Boolean).map(String)
-        : [],
-    };
+    const next = normalizePermissions(permissions);
     this._save(next);
     logger.info('[PermissionEngine] Permissions replaced from runtime config');
   }
@@ -127,18 +259,18 @@ class PermissionEngine {
     if (this._cache) return this._cache;
     try {
       const raw = fs.readFileSync(PERMISSIONS_FILE, 'utf8');
-      this._cache = JSON.parse(raw);
+      this._cache = normalizePermissions(JSON.parse(raw));
     } catch (_) {
       // File missing or malformed — start with empty ACLs (deny all)
-      this._cache = { allowedFolders: [], allowedActions: [] };
+      this._cache = normalizePermissions({ allowedFolders: [], allowedActions: [] });
     }
     return this._cache;
   }
 
   _save(perms) {
-    this._cache = perms;
+    this._cache = normalizePermissions(perms);
     // NEVER sync to cloud — write only to local disk
-    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(perms, null, 2), 'utf8');
+    fs.writeFileSync(PERMISSIONS_FILE, JSON.stringify(this._cache, null, 2), 'utf8');
   }
 
   _logAccess({ path: filePath, action, granted }) {
@@ -162,7 +294,7 @@ class PermissionEngine {
       if (!fs.existsSync(PERMISSIONS_FILE)) {
         fs.writeFileSync(
           PERMISSIONS_FILE,
-          JSON.stringify({ allowedFolders: [], allowedActions: [] }, null, 2)
+          JSON.stringify(normalizePermissions({ allowedFolders: [], allowedActions: [] }), null, 2)
         );
       }
     } catch (_) {

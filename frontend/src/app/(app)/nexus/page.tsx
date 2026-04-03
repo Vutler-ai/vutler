@@ -81,6 +81,168 @@ const MODE_BADGE: Record<string, string> = {
 const inputCls =
   'w-full bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-4 py-2.5 text-white text-sm placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors';
 
+type LocalConsentSourceKey = 'filesystem' | 'mail' | 'calendar' | 'contacts' | 'clipboard' | 'shell';
+
+interface LocalConsentChoice {
+  key: string;
+  label: string;
+}
+
+interface LocalConsentDefinition {
+  key: LocalConsentSourceKey;
+  label: string;
+  description: string;
+  icon: string;
+  defaultEnabled: boolean;
+  apps: LocalConsentChoice[];
+  actions: LocalConsentChoice[];
+}
+
+interface LocalConsentSourceState {
+  enabled: boolean;
+  apps: string[];
+  actions: string[];
+}
+
+type LocalConsentState = Record<LocalConsentSourceKey, LocalConsentSourceState>;
+
+const LOCAL_CONSENT_DEFINITIONS: LocalConsentDefinition[] = [
+  {
+    key: 'filesystem',
+    label: 'Files & Search',
+    description: 'Search, read, browse, and open local files.',
+    icon: '📁',
+    defaultEnabled: true,
+    apps: [
+      { key: 'finder', label: 'Finder / Explorer' },
+      { key: 'preview', label: 'Preview / Native openers' },
+      { key: 'synced_drives', label: 'Synced cloud folders' },
+    ],
+    actions: [
+      { key: 'search', label: 'Search files' },
+      { key: 'read_document', label: 'Read documents' },
+      { key: 'list_dir', label: 'Browse folders' },
+      { key: 'open_file', label: 'Open files' },
+    ],
+  },
+  {
+    key: 'mail',
+    label: 'Mail',
+    description: 'Read and search local desktop mailboxes.',
+    icon: '✉️',
+    defaultEnabled: true,
+    apps: [
+      { key: 'apple_mail', label: 'Apple Mail' },
+      { key: 'outlook', label: 'Outlook' },
+    ],
+    actions: [
+      { key: 'list_emails', label: 'List emails' },
+      { key: 'search_emails', label: 'Search emails' },
+    ],
+  },
+  {
+    key: 'calendar',
+    label: 'Calendar',
+    description: 'Read upcoming events from local calendars.',
+    icon: '📅',
+    defaultEnabled: true,
+    apps: [
+      { key: 'apple_calendar', label: 'Apple Calendar' },
+      { key: 'outlook_calendar', label: 'Outlook Calendar' },
+    ],
+    actions: [
+      { key: 'read_calendar', label: 'Read events' },
+    ],
+  },
+  {
+    key: 'contacts',
+    label: 'Contacts',
+    description: 'Search and read local contacts.',
+    icon: '👤',
+    defaultEnabled: true,
+    apps: [
+      { key: 'apple_contacts', label: 'Apple Contacts' },
+      { key: 'outlook_contacts', label: 'Outlook Contacts' },
+    ],
+    actions: [
+      { key: 'read_contacts', label: 'Read contacts' },
+      { key: 'search_contacts', label: 'Search contacts' },
+    ],
+  },
+  {
+    key: 'clipboard',
+    label: 'Clipboard',
+    description: 'Read the current system clipboard.',
+    icon: '📋',
+    defaultEnabled: false,
+    apps: [
+      { key: 'system_clipboard', label: 'System clipboard' },
+    ],
+    actions: [
+      { key: 'read_clipboard', label: 'Read clipboard' },
+    ],
+  },
+  {
+    key: 'shell',
+    label: 'Shell',
+    description: 'Execute terminal commands and interactive sessions.',
+    icon: '⚡',
+    defaultEnabled: false,
+    apps: [
+      { key: 'terminal', label: 'Terminal shell' },
+    ],
+    actions: [
+      { key: 'shell_exec', label: 'Run commands' },
+      { key: 'terminal_open', label: 'Open session' },
+      { key: 'terminal_exec', label: 'Send input' },
+      { key: 'terminal_read', label: 'Read output' },
+    ],
+  },
+];
+
+function createDefaultLocalConsentState(): LocalConsentState {
+  return LOCAL_CONSENT_DEFINITIONS.reduce((acc, source) => {
+    acc[source.key] = {
+      enabled: source.defaultEnabled,
+      apps: source.defaultEnabled ? source.apps.map((app) => app.key) : [],
+      actions: source.defaultEnabled ? source.actions.map((action) => action.key) : [],
+    };
+    return acc;
+  }, {} as LocalConsentState);
+}
+
+function buildLocalPermissionsFromConsent(consent: LocalConsentState) {
+  const allowedActions = Array.from(new Set(
+    Object.values(consent)
+      .filter((source) => source.enabled)
+      .flatMap((source) => source.actions)
+  ));
+
+  return {
+    filesystem: consent.filesystem.enabled,
+    shell: consent.shell.enabled,
+    mail: consent.mail.enabled,
+    calendar: consent.calendar.enabled,
+    contacts: consent.contacts.enabled,
+    clipboard: consent.clipboard.enabled,
+    allowedFolders: [] as string[],
+    allowedActions,
+    consent: {
+      sources: Object.fromEntries(
+        Object.entries(consent).map(([key, state]) => [
+          key,
+          {
+            enabled: state.enabled,
+            apps: state.apps,
+            actions: state.actions,
+            ...(key === 'filesystem' ? { allowedFolders: [] } : {}),
+          },
+        ])
+      ),
+    },
+  };
+}
+
 // ─── Toggle ───────────────────────────────────────────────────────────────────
 
 function Toggle({ on, onToggle, color = '#3b82f6' }: { on: boolean; onToggle: () => void; color?: string }) {
@@ -158,12 +320,7 @@ function DeployModal({
 
   // Local: config
   const [localNodeName, setLocalNodeName] = useState('');
-  const [permFilesystem, setPermFilesystem] = useState(true);
-  const [permShell, setPermShell] = useState(false);
-  const [permMail, setPermMail] = useState(true);
-  const [permCalendar, setPermCalendar] = useState(true);
-  const [permContacts, setPermContacts] = useState(true);
-  const [permClipboard, setPermClipboard] = useState(false);
+  const [localConsent, setLocalConsent] = useState<LocalConsentState>(() => createDefaultLocalConsentState());
 
   // Enterprise: step 1 — basics
   const [nodeName, setNodeName] = useState('');
@@ -183,6 +340,51 @@ function DeployModal({
 
   const toggleAgentId = (id: string, ids: string[], setIds: (v: string[]) => void) => {
     setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  };
+
+  const toggleLocalSourceEnabled = (sourceKey: LocalConsentSourceKey) => {
+    const source = LOCAL_CONSENT_DEFINITIONS.find((entry) => entry.key === sourceKey);
+    if (!source) return;
+    setLocalConsent((current) => {
+      const nextEnabled = !current[sourceKey].enabled;
+      return {
+        ...current,
+        [sourceKey]: {
+          enabled: nextEnabled,
+          apps: nextEnabled
+            ? (current[sourceKey].apps.length ? current[sourceKey].apps : source.apps.map((app) => app.key))
+            : [],
+          actions: nextEnabled
+            ? (current[sourceKey].actions.length ? current[sourceKey].actions : source.actions.map((action) => action.key))
+            : [],
+        },
+      };
+    });
+  };
+
+  const toggleLocalSourceChoice = (
+    sourceKey: LocalConsentSourceKey,
+    kind: 'apps' | 'actions',
+    choiceKey: string
+  ) => {
+    setLocalConsent((current) => {
+      const values = current[sourceKey][kind];
+      const nextValues = values.includes(choiceKey)
+        ? values.filter((value) => value !== choiceKey)
+        : [...values, choiceKey];
+      const nextEnabled = kind === 'actions'
+        ? nextValues.length > 0
+        : current[sourceKey].enabled;
+
+      return {
+        ...current,
+        [sourceKey]: {
+          ...current[sourceKey],
+          enabled: nextEnabled,
+          [kind]: nextValues,
+        },
+      };
+    });
   };
 
   useEffect(() => {
@@ -230,7 +432,7 @@ function DeployModal({
     try {
       let result: NexusTokenResponse;
       if (mode === 'local') {
-        const permissions = { filesystem: permFilesystem, shell: permShell, mail: permMail, calendar: permCalendar, contacts: permContacts, clipboard: permClipboard };
+        const permissions = buildLocalPermissionsFromConsent(localConsent);
         result = await deployLocal({
           agentIds: ['local-node'],
           nodeName: localNodeName.trim() || undefined,
@@ -415,29 +617,82 @@ function DeployModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Permissions</label>
-              <div className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg divide-y divide-[rgba(255,255,255,0.05)]">
-                {([
-                  { label: 'Files & Search', desc: 'Search, read, and browse files', on: permFilesystem, toggle: () => setPermFilesystem(!permFilesystem), icon: '📁' },
-                  { label: 'Mail', desc: 'Read and search emails', on: permMail, toggle: () => setPermMail(!permMail), icon: '✉️' },
-                  { label: 'Calendar', desc: 'Read upcoming events', on: permCalendar, toggle: () => setPermCalendar(!permCalendar), icon: '📅' },
-                  { label: 'Contacts', desc: 'Search contacts', on: permContacts, toggle: () => setPermContacts(!permContacts), icon: '👤' },
-                  { label: 'Clipboard', desc: 'Read clipboard content', on: permClipboard, toggle: () => setPermClipboard(!permClipboard), icon: '📋' },
-                  { label: 'Shell', desc: 'Execute terminal commands', on: permShell, toggle: () => setPermShell(!permShell), icon: '⚡' },
-                ] as const).map(({ label, desc, on, toggle, icon }) => (
-                  <div key={label} className="flex items-center justify-between px-3 py-2.5">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-base">{icon}</span>
-                      <div>
-                        <p className="text-sm text-white">{label}</p>
-                        <p className="text-xs text-[#6b7280]">{desc}</p>
+              <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Local consent</label>
+              <div className="space-y-3">
+                {LOCAL_CONSENT_DEFINITIONS.map((source) => {
+                  const state = localConsent[source.key];
+                  return (
+                    <div
+                      key={source.key}
+                      className="bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-xl p-3 space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5">
+                          <span className="text-base mt-0.5">{source.icon}</span>
+                          <div>
+                            <p className="text-sm text-white">{source.label}</p>
+                            <p className="text-xs text-[#6b7280]">{source.description}</p>
+                          </div>
+                        </div>
+                        <Toggle on={state.enabled} onToggle={() => toggleLocalSourceEnabled(source.key)} />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-[#6b7280] mb-2">Apps</p>
+                          <div className="space-y-2">
+                            {source.apps.map((app) => (
+                              <label
+                                key={app.key}
+                                className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                                  state.enabled
+                                    ? 'border-[rgba(255,255,255,0.08)] bg-[#111827] text-[#d1d5db]'
+                                    : 'border-[rgba(255,255,255,0.05)] bg-[#0f111a] text-[#6b7280]'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={state.apps.includes(app.key)}
+                                  disabled={!state.enabled}
+                                  onChange={() => toggleLocalSourceChoice(source.key, 'apps', app.key)}
+                                  className="accent-[#3b82f6]"
+                                />
+                                <span>{app.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wide text-[#6b7280] mb-2">Actions</p>
+                          <div className="space-y-2">
+                            {source.actions.map((action) => (
+                              <label
+                                key={action.key}
+                                className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-xs ${
+                                  state.enabled
+                                    ? 'border-[rgba(255,255,255,0.08)] bg-[#111827] text-[#d1d5db]'
+                                    : 'border-[rgba(255,255,255,0.05)] bg-[#0f111a] text-[#6b7280]'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={state.actions.includes(action.key)}
+                                  disabled={!state.enabled}
+                                  onChange={() => toggleLocalSourceChoice(source.key, 'actions', action.key)}
+                                  className="accent-[#3b82f6]"
+                                />
+                                <span>{action.label}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <Toggle on={on} onToggle={toggle} />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-              <p className="text-xs text-[#6b7280]">You can change these later in the Nexus app settings.</p>
+              <p className="text-xs text-[#6b7280]">Folder allow-lists stay editable during the local onboarding flow. The selections here define the initial source, app, and action consent sent to Nexus.</p>
             </div>
 
             {error && <p className="text-red-400 text-sm">{error}</p>}

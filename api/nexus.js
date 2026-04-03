@@ -39,6 +39,32 @@ const HEARTBEAT_ONLINE_SECONDS = 90;
 const NODE_COMMAND_DEFAULT_TTL_MS = Number.parseInt(process.env.NEXUS_COMMAND_TTL_MS || '600000', 10);
 const NODE_COMMAND_DEFAULT_LEASE_MS = Number.parseInt(process.env.NEXUS_COMMAND_LEASE_MS || '45000', 10);
 const NODE_COMMAND_DEFAULT_MAX_ATTEMPTS = Number.parseInt(process.env.NEXUS_COMMAND_MAX_ATTEMPTS || '3', 10);
+const CONSENT_SOURCE_CATALOG = {
+  filesystem: {
+    apps: ['finder', 'preview', 'synced_drives'],
+    actions: ['search', 'read_document', 'list_dir', 'open_file'],
+  },
+  mail: {
+    apps: ['apple_mail', 'outlook'],
+    actions: ['list_emails', 'search_emails'],
+  },
+  calendar: {
+    apps: ['apple_calendar', 'outlook_calendar'],
+    actions: ['read_calendar'],
+  },
+  contacts: {
+    apps: ['apple_contacts', 'outlook_contacts'],
+    actions: ['read_contacts', 'search_contacts'],
+  },
+  clipboard: {
+    apps: ['system_clipboard'],
+    actions: ['read_clipboard'],
+  },
+  shell: {
+    apps: ['terminal'],
+    actions: ['shell_exec', 'terminal_open', 'terminal_exec', 'terminal_read', 'terminal_snapshot', 'terminal_close'],
+  },
+};
 const NEXUS_DEPLOYMENT_COLUMNS = [
   'id',
   'workspace_id',
@@ -116,6 +142,11 @@ let nexusCommandsPromise = null;
 
 function cleanObject(input = {}) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+}
+
+function normalizeTextArray(values = []) {
+  if (!Array.isArray(values)) return [];
+  return Array.from(new Set(values.filter(Boolean).map((value) => String(value))));
 }
 
 function normalizeStringArray(value) {
@@ -545,6 +576,65 @@ async function persistNodeDiscoverySnapshot({
   );
 
   return getNodeDiscoverySnapshot(updated.rows[0] || { config: { discovery_snapshot: persistedSnapshot } });
+}
+
+function buildNodeConsentState(permissions = {}) {
+  const rawConsent = permissions && typeof permissions === 'object' && permissions.consent
+    ? (permissions.consent.sources || permissions.consent)
+    : {};
+  const sources = {};
+
+  for (const [sourceKey, template] of Object.entries(CONSENT_SOURCE_CATALOG)) {
+    const rawSource = rawConsent?.[sourceKey] || {};
+    const enabled = typeof rawSource.enabled === 'boolean'
+      ? rawSource.enabled
+      : typeof permissions[sourceKey] === 'boolean'
+        ? permissions[sourceKey]
+        : Boolean(
+            normalizeTextArray(rawSource.actions).length
+            || normalizeTextArray(rawSource.apps).length
+            || (sourceKey === 'filesystem' && normalizeTextArray(rawSource.allowedFolders || permissions.allowedFolders).length)
+          );
+    const apps = enabled
+      ? (normalizeTextArray(rawSource.apps).length ? normalizeTextArray(rawSource.apps) : template.apps.slice())
+      : [];
+    const actions = enabled
+      ? (normalizeTextArray(rawSource.actions).length ? normalizeTextArray(rawSource.actions) : template.actions.slice())
+      : [];
+    const allowedFolders = sourceKey === 'filesystem'
+      ? normalizeTextArray(rawSource.allowedFolders || permissions.allowedFolders)
+      : [];
+
+    sources[sourceKey] = {
+      enabled,
+      apps,
+      actions,
+      ...(sourceKey === 'filesystem' ? { allowedFolders } : {}),
+    };
+  }
+
+  const enabledSources = Object.values(sources).filter((source) => source.enabled).length;
+  const enabledApps = Object.values(sources).reduce((sum, source) => sum + source.apps.length, 0);
+  const enabledActions = new Set(
+    Object.values(sources)
+      .filter((source) => source.enabled)
+      .flatMap((source) => source.actions)
+  ).size;
+
+  return {
+    sources,
+    summary: {
+      enabledSources,
+      enabledApps,
+      enabledActions,
+    },
+  };
+}
+
+function getNodeConsentState(node) {
+  return node?.config?.consent_state
+    || node?.config?.consentState
+    || buildNodeConsentState(node?.config?.permissions || {});
 }
 
 function mapNodeListItem(row) {
@@ -1394,6 +1484,11 @@ router.post('/register', async (req, res) => {
 
     const { name, type = 'local', host = null, port = null, config = {} } = req.body || {};
     const nodeName = name || require('os').hostname();
+    const registrationConfig = {
+      ...(config || {}),
+      ...(config?.permissions ? { permissions: config.permissions } : {}),
+      ...(config?.permissions ? { consent_state: buildNodeConsentState(config.permissions) } : {}),
+    };
 
     let workspaceId = DEFAULT_WORKSPACE;
     let nodeId;
@@ -1424,7 +1519,7 @@ router.post('/register', async (req, res) => {
           `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
            VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
            RETURNING id`,
-          [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+          [workspaceId, nodeName, type, host, port, JSON.stringify(registrationConfig)]
         );
         nodeId = insert.rows[0].id;
       } catch (_) { /* DB down — use random UUID */ }
@@ -1444,7 +1539,7 @@ router.post('/register', async (req, res) => {
         `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
          VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
          RETURNING id`,
-        [workspaceId, nodeName, type, host, port, JSON.stringify(config || {})]
+        [workspaceId, nodeName, type, host, port, JSON.stringify(registrationConfig)]
       );
       nodeId = insert.rows[0].id;
     }
@@ -1638,7 +1733,7 @@ router.post('/:id/connect', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
-    const { status, agents, memory, uptime, api_key } = req.body || {};
+    const { status, agents, memory, uptime, api_key, permissions } = req.body || {};
     const currentNode = await loadNodeForWorkspace(workspaceId, req.params.id);
     if (!currentNode) return res.status(404).json({ success: false, error: 'Node not found' });
     const existingAgents = Array.isArray(currentNode.agents_deployed) ? currentNode.agents_deployed : [];
@@ -1663,6 +1758,15 @@ router.post('/:id/connect', async (req, res) => {
         profile_version: enterpriseProfile?.profile_version || enterpriseProfile?.profileVersion || agent?.profile_version || agent?.profileVersion || existing.profile_version || existing.profileVersion || undefined,
       };
     });
+    const nextPermissions = permissions && typeof permissions === 'object'
+      ? permissions
+      : currentNode.config?.permissions || null;
+    const configPatch = cleanObject({
+      memory,
+      uptime,
+      permissions: nextPermissions || undefined,
+      consent_state: nextPermissions ? buildNodeConsentState(nextPermissions) : undefined,
+    });
     const updated = await pool.query(
       `UPDATE ${SCHEMA}.nexus_nodes
        SET status = $3,
@@ -1678,7 +1782,7 @@ router.post('/:id/connect', async (req, res) => {
         workspaceId,
         status || 'online',
         JSON.stringify(mergedAgents),
-        JSON.stringify({ memory, uptime }),
+        JSON.stringify(configPatch),
         api_key || null,
       ]
     );
@@ -2510,6 +2614,7 @@ router.get('/nodes/:id', async (req, res) => {
         poolAgentIds: Array.isArray(mapped.config?.available_pool) ? mapped.config.available_pool : [],
         providerSources,
         discoverySnapshot: getNodeDiscoverySnapshot(node),
+        consentState: getNodeConsentState(node),
         recentActivity: commandsRes.rows.map((row) => ({
           id: row.id,
           message: describeNodeCommand(row),
@@ -2851,4 +2956,6 @@ router._private = {
   getNodeDiscoverySnapshot,
   extractDiscoverySnapshot,
   persistNodeDiscoverySnapshot,
+  buildNodeConsentState,
+  getNodeConsentState,
 };

@@ -29,6 +29,16 @@
     .folder-list { text-align: left; margin: 1.5rem 0; }
     .folder-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; background: #1a1a1a; border-radius: 8px; margin: 0.5rem 0; }
     .folder-item label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+    .consent-stack { display: grid; gap: 0.75rem; text-align: left; margin: 1rem 0 1.5rem; }
+    .consent-card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 1rem; }
+    .consent-head { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
+    .consent-title { font-size: 0.95rem; color: #fff; }
+    .consent-desc { color: #9ca3af; font-size: 0.8rem; margin-top: 0.25rem; }
+    .consent-group { margin-top: 0.75rem; }
+    .consent-label { color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; }
+    .choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.45rem; }
+    .choice-item { display: flex; align-items: center; gap: 0.45rem; padding: 0.55rem 0.65rem; background: #0f172a; border: 1px solid #1f2937; border-radius: 10px; font-size: 0.8rem; color: #d1d5db; }
+    .consent-note { color: #6b7280; font-size: 0.75rem; text-align: left; margin-top: 0.75rem; }
     .check { color: #22c55e; font-size: 1.5rem; }
     .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid #333; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.6s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -52,12 +62,14 @@
       </p>
     </div>
 
-    <!-- Step 2: Folder Permissions -->
+    <!-- Step 2: Consent Permissions -->
     <div class="step" id="step-permissions">
-      <h1>Choose folders to share</h1>
-      <p class="subtitle">Nexus can only access folders you explicitly allow</p>
+      <h1>Review local consent</h1>
+      <p class="subtitle">Approve sources, apps, actions, and folders before Nexus uses them on this computer</p>
+      <div class="consent-stack" id="consent-sources"></div>
       <div class="folder-list" id="folder-list"></div>
       <button class="btn btn-secondary" onclick="addCustomFolder()">+ Add custom folder</button>
+      <p class="consent-note">Files & Search stays scoped by explicit folders. Other sources stay scoped by the apps and actions you select here.</p>
       <br>
       <button class="btn btn-primary" onclick="goToStep('step-verify')" style="margin-top: 1.5rem;">Continue</button>
     </div>
@@ -124,63 +136,313 @@
         try {
           const res = await fetch(API + `/api/pairing/status?code=${pairingCode}`);
           const data = await res.json();
-          if (data.paired) { goToStep('step-permissions'); loadFolders(); return; }
+          if (data.paired) { goToStep('step-permissions'); loadPermissions(); return; }
         } catch (_) {}
       }
     }
 
-    // ── Step 2: Folder permissions ───────────────────────────────────────────
+    // ── Step 2: Consent model ────────────────────────────────────────────────
+    const consentCatalog = [
+      {
+        key: 'filesystem',
+        label: 'Files & Search',
+        description: 'Search, read, browse, and open local files.',
+        defaultEnabled: true,
+        apps: [
+          { key: 'finder', label: 'Finder / Explorer' },
+          { key: 'preview', label: 'Preview / Native openers' },
+          { key: 'synced_drives', label: 'Synced cloud folders' },
+        ],
+        actions: [
+          { key: 'search', label: 'Search files' },
+          { key: 'read_document', label: 'Read documents' },
+          { key: 'list_dir', label: 'Browse folders' },
+          { key: 'open_file', label: 'Open files' },
+        ],
+      },
+      {
+        key: 'mail',
+        label: 'Mail',
+        description: 'Read and search local desktop mailboxes.',
+        defaultEnabled: true,
+        apps: [
+          { key: 'apple_mail', label: 'Apple Mail' },
+          { key: 'outlook', label: 'Outlook' },
+        ],
+        actions: [
+          { key: 'list_emails', label: 'List emails' },
+          { key: 'search_emails', label: 'Search emails' },
+        ],
+      },
+      {
+        key: 'calendar',
+        label: 'Calendar',
+        description: 'Read upcoming events from local calendars.',
+        defaultEnabled: true,
+        apps: [
+          { key: 'apple_calendar', label: 'Apple Calendar' },
+          { key: 'outlook_calendar', label: 'Outlook Calendar' },
+        ],
+        actions: [
+          { key: 'read_calendar', label: 'Read events' },
+        ],
+      },
+      {
+        key: 'contacts',
+        label: 'Contacts',
+        description: 'Search and read local contacts.',
+        defaultEnabled: true,
+        apps: [
+          { key: 'apple_contacts', label: 'Apple Contacts' },
+          { key: 'outlook_contacts', label: 'Outlook Contacts' },
+        ],
+        actions: [
+          { key: 'read_contacts', label: 'Read contacts' },
+          { key: 'search_contacts', label: 'Search contacts' },
+        ],
+      },
+      {
+        key: 'clipboard',
+        label: 'Clipboard',
+        description: 'Read the current system clipboard.',
+        defaultEnabled: false,
+        apps: [
+          { key: 'system_clipboard', label: 'System clipboard' },
+        ],
+        actions: [
+          { key: 'read_clipboard', label: 'Read clipboard' },
+        ],
+      },
+      {
+        key: 'shell',
+        label: 'Shell',
+        description: 'Execute terminal commands and interactive sessions.',
+        defaultEnabled: false,
+        apps: [
+          { key: 'terminal', label: 'Terminal shell' },
+        ],
+        actions: [
+          { key: 'shell_exec', label: 'Run commands' },
+          { key: 'terminal_open', label: 'Open session' },
+          { key: 'terminal_exec', label: 'Send input' },
+          { key: 'terminal_read', label: 'Read output' },
+        ],
+      },
+    ];
     const defaultFolders = [
       { path: '~/Documents', label: 'Documents' },
       { path: '~/Desktop', label: 'Desktop' },
       { path: '~/Downloads', label: 'Downloads' },
     ];
+    let permissionState = createDefaultPermissionState();
 
-    async function loadFolders() {
-      const list = document.getElementById('folder-list');
+    function unique(values) {
+      return Array.from(new Set((values || []).filter(Boolean).map((value) => String(value))));
+    }
+
+    function collectAllowedActions(sources) {
+      const actions = [];
+      Object.values(sources || {}).forEach((source) => {
+        if (!source || !source.enabled) return;
+        actions.push(...(source.actions || []));
+      });
+      return unique(actions);
+    }
+
+    function createDefaultPermissionState() {
+      const sources = {};
+      consentCatalog.forEach((source) => {
+        sources[source.key] = {
+          enabled: source.defaultEnabled,
+          apps: source.defaultEnabled ? source.apps.map((app) => app.key) : [],
+          actions: source.defaultEnabled ? source.actions.map((action) => action.key) : [],
+          ...(source.key === 'filesystem' ? { allowedFolders: [] } : {}),
+        };
+      });
+
+      return {
+        allowedFolders: [],
+        allowedActions: collectAllowedActions(sources),
+        consent: { sources },
+      };
+    }
+
+    function normalizePermissionState(perms = {}) {
+      const base = createDefaultPermissionState();
+      const rawSources = perms.consent && perms.consent.sources ? perms.consent.sources : perms.consent || {};
+
+      consentCatalog.forEach((source) => {
+        const incoming = rawSources[source.key] || {};
+        const enabled = typeof incoming.enabled === 'boolean'
+          ? incoming.enabled
+          : typeof perms[source.key] === 'boolean'
+            ? perms[source.key]
+            : base.consent.sources[source.key].enabled;
+        const allowedAppKeys = new Set(source.apps.map((app) => app.key));
+        const allowedActionKeys = new Set(source.actions.map((action) => action.key));
+        const apps = unique(incoming.apps).filter((app) => allowedAppKeys.has(app));
+        const actions = unique(incoming.actions).filter((action) => allowedActionKeys.has(action));
+        const next = {
+          enabled,
+          apps: enabled ? (apps.length ? apps : base.consent.sources[source.key].apps.slice()) : [],
+          actions: enabled ? (actions.length ? actions : base.consent.sources[source.key].actions.slice()) : [],
+        };
+        if (source.key === 'filesystem') {
+          next.allowedFolders = unique(
+            incoming.allowedFolders && incoming.allowedFolders.length
+              ? incoming.allowedFolders
+              : perms.allowedFolders
+          );
+        }
+        base.consent.sources[source.key] = next;
+      });
+
+      base.allowedFolders = unique(base.consent.sources.filesystem.allowedFolders || perms.allowedFolders || []);
+      base.consent.sources.filesystem.allowedFolders = base.allowedFolders.slice();
+      base.allowedActions = collectAllowedActions(base.consent.sources);
+      return base;
+    }
+
+    async function persistPermissionState() {
+      permissionState.allowedFolders = unique(permissionState.consent.sources.filesystem.allowedFolders || []);
+      permissionState.allowedActions = collectAllowedActions(permissionState.consent.sources);
+      const res = await fetch(API + '/api/permissions/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions: permissionState }),
+      });
+      const data = await res.json();
+      permissionState = normalizePermissionState(data.permissions || permissionState);
+      renderPermissions();
+    }
+
+    async function loadPermissions() {
       try {
         const res = await fetch(API + '/api/permissions');
         const perms = await res.json();
-        const allowed = new Set(perms.allowedFolders || []);
-        const folders = [...defaultFolders];
-        for (const f of allowed) {
-          if (!folders.find(df => df.path === f)) folders.push({ path: f, label: f });
-        }
-        list.innerHTML = folders.map(f => `
-          <div class="folder-item">
-            <label><input type="checkbox" data-path="${f.path}" ${allowed.has(f.path) ? 'checked' : ''} onchange="toggleFolder(this)"> ${f.label}</label>
-          </div>
-        `).join('');
+        permissionState = normalizePermissionState(perms);
       } catch (_) {
-        list.innerHTML = defaultFolders.map(f => `
-          <div class="folder-item">
-            <label><input type="checkbox" data-path="${f.path}" onchange="toggleFolder(this)"> ${f.label}</label>
-          </div>
-        `).join('');
+        permissionState = createDefaultPermissionState();
       }
+      renderPermissions();
+    }
+
+    function renderPermissions() {
+      const sourcesRoot = document.getElementById('consent-sources');
+      sourcesRoot.innerHTML = consentCatalog.map((source) => {
+        const state = permissionState.consent.sources[source.key];
+        const appsHtml = source.apps.map((app) => `
+          <label class="choice-item">
+            <input type="checkbox" ${state.apps.includes(app.key) ? 'checked' : ''} ${state.enabled ? '' : 'disabled'} onchange="toggleConsentOption('${source.key}', 'apps', '${app.key}', this.checked)">
+            <span>${app.label}</span>
+          </label>
+        `).join('');
+        const actionsHtml = source.actions.map((action) => `
+          <label class="choice-item">
+            <input type="checkbox" ${state.actions.includes(action.key) ? 'checked' : ''} ${state.enabled ? '' : 'disabled'} onchange="toggleConsentOption('${source.key}', 'actions', '${action.key}', this.checked)">
+            <span>${action.label}</span>
+          </label>
+        `).join('');
+
+        return `
+          <div class="consent-card">
+            <div class="consent-head">
+              <div>
+                <div class="consent-title">${source.label}</div>
+                <div class="consent-desc">${source.description}</div>
+              </div>
+              <label><input type="checkbox" ${state.enabled ? 'checked' : ''} onchange="toggleConsentSource('${source.key}', this.checked)"> Allow</label>
+            </div>
+            <div class="consent-group">
+              <div class="consent-label">Apps</div>
+              <div class="choice-grid">${appsHtml}</div>
+            </div>
+            <div class="consent-group">
+              <div class="consent-label">Actions</div>
+              <div class="choice-grid">${actionsHtml}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      renderFolderList();
+    }
+
+    function renderFolderList() {
+      const list = document.getElementById('folder-list');
+      const allowed = new Set(permissionState.allowedFolders || []);
+      const folders = [...defaultFolders];
+      allowed.forEach((folder) => {
+        if (!folders.find((entry) => entry.path === folder)) {
+          folders.push({ path: folder, label: folder });
+        }
+      });
+
+      list.innerHTML = `
+        <div class="consent-card">
+          <div class="consent-head">
+            <div>
+              <div class="consent-title">Filesystem scope</div>
+              <div class="consent-desc">Only the folders below are accessible when Files & Search is enabled.</div>
+            </div>
+          </div>
+          <div class="folder-list">
+            ${folders.map((folder) => `
+              <div class="folder-item">
+                <label><input type="checkbox" data-path="${folder.path}" ${allowed.has(folder.path) ? 'checked' : ''} onchange="toggleFolder(this)" ${permissionState.consent.sources.filesystem.enabled ? '' : 'disabled'}> ${folder.label}</label>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    async function toggleConsentSource(sourceKey, checked) {
+      const source = consentCatalog.find((entry) => entry.key === sourceKey);
+      if (!source) return;
+      permissionState.consent.sources[sourceKey] = {
+        ...permissionState.consent.sources[sourceKey],
+        enabled: checked,
+        apps: checked ? (permissionState.consent.sources[sourceKey].apps.length ? permissionState.consent.sources[sourceKey].apps : source.apps.map((app) => app.key)) : [],
+        actions: checked ? (permissionState.consent.sources[sourceKey].actions.length ? permissionState.consent.sources[sourceKey].actions : source.actions.map((action) => action.key)) : [],
+      };
+      if (!checked && sourceKey === 'filesystem') {
+        permissionState.allowedFolders = [];
+        permissionState.consent.sources.filesystem.allowedFolders = [];
+      }
+      await persistPermissionState();
+    }
+
+    async function toggleConsentOption(sourceKey, kind, optionKey, checked) {
+      const values = new Set(permissionState.consent.sources[sourceKey][kind] || []);
+      if (checked) values.add(optionKey);
+      else values.delete(optionKey);
+      permissionState.consent.sources[sourceKey][kind] = Array.from(values);
+      if (!permissionState.consent.sources[sourceKey].actions.length) {
+        permissionState.consent.sources[sourceKey].enabled = false;
+      }
+      await persistPermissionState();
     }
 
     async function toggleFolder(el) {
       const folder = el.dataset.path;
-      const action = el.checked ? 'grant' : 'revoke';
-      await fetch(API + `/api/permissions/${action}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder }),
-      });
+      const allowed = new Set(permissionState.allowedFolders || []);
+      if (el.checked) allowed.add(folder);
+      else allowed.delete(folder);
+      permissionState.allowedFolders = Array.from(allowed);
+      permissionState.consent.sources.filesystem.allowedFolders = permissionState.allowedFolders.slice();
+      await persistPermissionState();
     }
 
     function addCustomFolder() {
       const folder = prompt('Enter full folder path:');
       if (!folder) return;
-      const list = document.getElementById('folder-list');
-      list.innerHTML += `
-        <div class="folder-item">
-          <label><input type="checkbox" data-path="${folder}" checked onchange="toggleFolder(this)"> ${folder}</label>
-        </div>`;
-      fetch(API + '/api/permissions/grant', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder }),
-      });
+      if (!permissionState.consent.sources.filesystem.enabled) {
+        permissionState.consent.sources.filesystem.enabled = true;
+      }
+      permissionState.allowedFolders = unique([...(permissionState.allowedFolders || []), folder]);
+      permissionState.consent.sources.filesystem.allowedFolders = permissionState.allowedFolders.slice();
+      persistPermissionState();
     }
 
     // ── Step 3: Health check ─────────────────────────────────────────────────
