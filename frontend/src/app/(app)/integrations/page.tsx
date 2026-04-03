@@ -4,7 +4,16 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { authFetch } from "@/lib/authFetch";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   CONNECTOR_META,
+  getOauthConnectorConsentMeta,
   SOCIAL_PLATFORM_PROVIDERS,
   WORKSPACE_CONNECTOR_ORDER,
   getSocialPlatformMeta,
@@ -177,6 +186,7 @@ export default function IntegrationsPage() {
     { id: string; name: string; role: string; current: string; proposed: string; changed: boolean }[]
   >([]);
   const [provisioning, setProvisioning] = useState(false);
+  const [pendingOauthProvider, setPendingOauthProvider] = useState<Provider | null>(null);
 
   const fetchConnected = useCallback(async () => {
     try {
@@ -258,33 +268,11 @@ export default function IntegrationsPage() {
 
   const getConnectedInfo = (provider: Provider) => connectedMap[provider.provider];
 
-  const handleConnect = async (provider: Provider) => {
+  const startOauthConnect = async (provider: Provider) => {
     try {
       setConnecting(provider.provider);
       setError(null);
       setSuccessMsg(null);
-
-      if (provider.mode === "manage") {
-        window.location.href = "/settings/integrations/social-media";
-        return;
-      }
-
-      if (provider.mode === "device_auth") {
-        const response = await authFetch("/api/v1/integrations/chatgpt/connect", { method: "POST" });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(body.error || "Failed to start ChatGPT device auth");
-        }
-        const data = await response.json();
-        if (data.mode === "device_auth" && data.user_code) {
-          setDeviceAuth({
-            user_code: data.user_code,
-            verification_url: data.verification_url || "https://auth.openai.com/codex/device",
-          });
-          void pollDeviceAuth();
-        }
-        return;
-      }
 
       const oauthProvider = OAUTH_PROVIDER_MAP[provider.provider];
       if (!oauthProvider) {
@@ -301,6 +289,44 @@ export default function IntegrationsPage() {
         throw new Error("No auth URL returned from server");
       }
       window.location.href = data.authUrl;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to connect ${provider.name}`);
+      setConnecting(null);
+    }
+  };
+
+  const handleConnect = async (provider: Provider) => {
+    try {
+      setError(null);
+      setSuccessMsg(null);
+
+      if (provider.mode === "manage") {
+        window.location.href = "/settings/integrations/social-media";
+        return;
+      }
+
+      if (provider.mode === "device_auth") {
+        setConnecting(provider.provider);
+        const response = await authFetch("/api/v1/integrations/chatgpt/connect", { method: "POST" });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || "Failed to start ChatGPT device auth");
+        }
+        const data = await response.json();
+        if (data.mode === "device_auth" && data.user_code) {
+          setDeviceAuth({
+            user_code: data.user_code,
+            verification_url: data.verification_url || "https://auth.openai.com/codex/device",
+          });
+          void pollDeviceAuth();
+        }
+        return;
+      }
+
+      if (provider.mode === "oauth") {
+        setPendingOauthProvider(provider);
+        return;
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to connect ${provider.name}`);
       setConnecting(null);
@@ -409,6 +435,9 @@ export default function IntegrationsPage() {
 
   const connectedProviders = filteredProviders.filter((provider) => isConnected(provider));
   const availableProviders = filteredProviders.filter((provider) => !isConnected(provider));
+  const pendingOauthConsent = pendingOauthProvider
+    ? getOauthConnectorConsentMeta(pendingOauthProvider.provider)
+    : null;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -462,6 +491,97 @@ export default function IntegrationsPage() {
           </div>
         </div>
       )}
+
+      <Dialog
+        open={!!pendingOauthProvider && !!pendingOauthConsent}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingOauthProvider(null);
+            setConnecting(null);
+          }
+        }}
+      >
+        <DialogContent className="border border-[rgba(255,255,255,0.1)] bg-[#14151f] text-white sm:max-w-xl">
+          {pendingOauthProvider && pendingOauthConsent && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3 text-xl">
+                  <span className="text-2xl">{pendingOauthConsent.icon}</span>
+                  Connect {pendingOauthConsent.name}
+                </DialogTitle>
+                <DialogDescription className="text-[#9ca3af]">
+                  Review the access Vutler will request before we redirect you to {pendingOauthConsent.name}.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="rounded-xl border border-[rgba(255,255,255,0.08)] bg-[#0f1117] p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-white">Connector model</p>
+                    <span className="rounded-full bg-[#3b82f6]/10 px-2.5 py-1 text-xs font-medium text-[#60a5fa]">
+                      {pendingOauthConsent.accessModelLabel}
+                    </span>
+                  </div>
+                  <p className="text-sm text-[#9ca3af]">{pendingOauthConsent.accessModelDescription}</p>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium text-white">Requested capabilities</p>
+                  <div className="flex flex-wrap gap-2">
+                    {pendingOauthConsent.capabilities.map((capability) => (
+                      <span
+                        key={capability}
+                        className="rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-xs text-[#d1d5db]"
+                      >
+                        {capability}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium text-white">Expected scopes</p>
+                  <div className="flex flex-wrap gap-2">
+                    {pendingOauthConsent.scopes.map((scope) => (
+                      <code
+                        key={scope}
+                        className="rounded-full border border-[rgba(59,130,246,0.2)] bg-[#3b82f6]/10 px-2.5 py-1 text-xs text-[#93c5fd]"
+                      >
+                        {scope}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="text-xs text-[#6b7280]">
+                  You will still review and approve the final consent screen on the provider side before the workspace is connected.
+                </p>
+              </div>
+
+              <DialogFooter className="mt-2 flex gap-3 sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingOauthProvider(null);
+                    setConnecting(null);
+                  }}
+                  className="rounded-lg border border-[rgba(255,255,255,0.12)] px-4 py-2 text-sm text-[#9ca3af] transition-colors hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void startOauthConnect(pendingOauthProvider)}
+                  disabled={connecting === pendingOauthProvider.provider}
+                  className="rounded-lg bg-[#3b82f6] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2563eb] disabled:opacity-60"
+                >
+                  {connecting === pendingOauthProvider.provider ? "Redirecting..." : `Continue to ${pendingOauthProvider.name}`}
+                </button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {showProvisionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">

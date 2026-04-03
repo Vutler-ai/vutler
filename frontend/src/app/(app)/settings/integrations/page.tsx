@@ -4,7 +4,19 @@ import { authFetch } from "@/lib/authFetch";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { getSocialPlatformMeta, normalizeIntegrationKey } from "@/lib/integrations/catalog";
+import {
+  getOauthConnectorConsentMeta,
+  getSocialPlatformMeta,
+  normalizeIntegrationKey,
+} from "@/lib/integrations/catalog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Integration {
   provider: string;
@@ -37,6 +49,8 @@ export default function IntegrationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [pendingOauthProvider, setPendingOauthProvider] = useState<string | null>(null);
+  const [oauthRedirecting, setOauthRedirecting] = useState(false);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -109,16 +123,28 @@ export default function IntegrationsPage() {
     (i) => i.name.toLowerCase().includes(search.toLowerCase()) || i.description.toLowerCase().includes(search.toLowerCase())
   );
 
+  const startOauthConnect = async (provider: string) => {
+    try {
+      setOauthRedirecting(true);
+      setError("");
+      const r = await authFetch(`/api/v1/integrations/${provider}/connect`);
+      const data = await r.json();
+      if (!r.ok || !data?.authUrl) {
+        throw new Error(data?.error || "OAuth init failed");
+      }
+      window.location.href = data.authUrl;
+    } catch (err) {
+      setOauthRedirecting(false);
+      setPendingOauthProvider(null);
+      setError(err instanceof Error ? err.message : "Failed to connect");
+    }
+  };
+
   const handleConnect = async (provider: string) => {
     try {
       setError("");
       if (OAUTH_PROVIDERS.has(provider)) {
-        const r = await authFetch(`/api/v1/integrations/${provider}/connect`);
-        const data = await r.json();
-        if (!r.ok || !data?.authUrl) {
-          throw new Error(data?.error || "OAuth init failed");
-        }
-        window.location.href = data.authUrl;
+        setPendingOauthProvider(provider);
         return;
       }
 
@@ -141,6 +167,7 @@ export default function IntegrationsPage() {
   };
 
   const connectedCount = integrations.filter((i) => i.status === "connected").length;
+  const pendingOauthConsent = pendingOauthProvider ? getOauthConnectorConsentMeta(pendingOauthProvider) : null;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -160,6 +187,97 @@ export default function IntegrationsPage() {
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">{error}</div>
       )}
+
+      <Dialog
+        open={!!pendingOauthProvider && !!pendingOauthConsent}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingOauthProvider(null);
+            setOauthRedirecting(false);
+          }
+        }}
+      >
+        <DialogContent className="border border-[rgba(255,255,255,0.1)] bg-[#14151f] text-white sm:max-w-xl">
+          {pendingOauthProvider && pendingOauthConsent && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3 text-xl">
+                  <span className="text-2xl">{pendingOauthConsent.icon}</span>
+                  Connect {pendingOauthConsent.name}
+                </DialogTitle>
+                <DialogDescription className="text-[#9ca3af]">
+                  Review the access Vutler will request before we redirect you to {pendingOauthConsent.name}.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="rounded-xl border border-[rgba(255,255,255,0.08)] bg-[#0f1117] p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium text-white">Connector model</p>
+                    <span className="rounded-full bg-[#3b82f6]/10 px-2.5 py-1 text-xs font-medium text-[#60a5fa]">
+                      {pendingOauthConsent.accessModelLabel}
+                    </span>
+                  </div>
+                  <p className="text-sm text-[#9ca3af]">{pendingOauthConsent.accessModelDescription}</p>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium text-white">Requested capabilities</p>
+                  <div className="flex flex-wrap gap-2">
+                    {pendingOauthConsent.capabilities.map((capability) => (
+                      <span
+                        key={capability}
+                        className="rounded-full border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] px-2.5 py-1 text-xs text-[#d1d5db]"
+                      >
+                        {capability}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-sm font-medium text-white">Expected scopes</p>
+                  <div className="flex flex-wrap gap-2">
+                    {pendingOauthConsent.scopes.map((scope) => (
+                      <code
+                        key={scope}
+                        className="rounded-full border border-[rgba(59,130,246,0.2)] bg-[#3b82f6]/10 px-2.5 py-1 text-xs text-[#93c5fd]"
+                      >
+                        {scope}
+                      </code>
+                    ))}
+                  </div>
+                </div>
+
+                <p className="text-xs text-[#6b7280]">
+                  You will still approve the final consent screen on the provider side before the workspace is connected.
+                </p>
+              </div>
+
+              <DialogFooter className="mt-2 flex gap-3 sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingOauthProvider(null);
+                    setOauthRedirecting(false);
+                  }}
+                  className="rounded-lg border border-[rgba(255,255,255,0.12)] px-4 py-2 text-sm text-[#9ca3af] transition-colors hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void startOauthConnect(pendingOauthProvider)}
+                  disabled={oauthRedirecting}
+                  className="rounded-lg bg-[#3b82f6] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#2563eb] disabled:opacity-60"
+                >
+                  {oauthRedirecting ? "Redirecting..." : `Continue to ${pendingOauthConsent.name}`}
+                </button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <div className="mb-6">
         <input

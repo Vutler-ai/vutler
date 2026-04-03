@@ -37,6 +37,89 @@ export const SOCIAL_PLATFORM_META: Record<string, { icon: string; name: string }
   pinterest: { icon: "📌", name: "Pinterest" },
 };
 
+export type OAuthConnectorAccessModel = "cloud-required" | "local-first";
+
+export interface OAuthConnectorConsentMeta {
+  provider: "google" | "github" | "microsoft365";
+  icon: string;
+  name: string;
+  accessModel: OAuthConnectorAccessModel;
+  accessModelLabel: string;
+  accessModelDescription: string;
+  capabilities: string[];
+  scopes: string[];
+}
+
+export const OAUTH_CONNECTOR_CONSENT_META: Record<string, OAuthConnectorConsentMeta> = {
+  google: {
+    provider: "google",
+    icon: "🔵",
+    name: "Google Workspace",
+    accessModel: "local-first",
+    accessModelLabel: "Local-first",
+    accessModelDescription: "If the client runs Nexus Local on their machine, part of the document, mail, and calendar access can stay local instead of relying entirely on cloud APIs.",
+    capabilities: [
+      "Read Gmail inbox messages and search mail",
+      "Read and create Google Calendar events",
+      "Read Google Drive files already shared with the workspace",
+      "Read Google contacts for workspace-assisted actions",
+    ],
+    scopes: [
+      "openid",
+      "email",
+      "profile",
+      "calendar.readonly",
+      "calendar.events",
+      "drive.file",
+      "gmail.readonly",
+      "gmail.send",
+      "gmail.modify",
+      "contacts.readonly",
+    ],
+  },
+  github: {
+    provider: "github",
+    icon: "🐙",
+    name: "GitHub",
+    accessModel: "cloud-required",
+    accessModelLabel: "Cloud-required",
+    accessModelDescription: "GitHub operations are provider-native and cannot be replaced by Nexus Local on an end-user workstation.",
+    capabilities: [
+      "Read repositories and pull request context",
+      "Inspect issues and developer workflows",
+      "Use workspace-level GitHub identity for future automations",
+    ],
+    scopes: [
+      "repo",
+      "read:user",
+    ],
+  },
+  microsoft365: {
+    provider: "microsoft365",
+    icon: "🟦",
+    name: "Microsoft 365",
+    accessModel: "local-first",
+    accessModelLabel: "Local-first",
+    accessModelDescription: "If the client runs Nexus Local on their machine, some Outlook, calendar, and contacts access can be handled from the desktop side rather than only through Microsoft Graph.",
+    capabilities: [
+      "Read Outlook mail messages",
+      "Read calendar events",
+      "Read personal and directory contacts",
+      "Refresh workspace tokens for Microsoft-backed data access",
+    ],
+    scopes: [
+      "openid",
+      "email",
+      "profile",
+      "offline_access",
+      "User.Read",
+      "Mail.Read",
+      "Calendars.Read",
+      "Contacts.Read",
+    ],
+  },
+};
+
 export const CONNECTOR_META: Record<string, { icon: string; name: string; description: string }> = {
   chatgpt: {
     icon: "🤖",
@@ -127,4 +210,9 @@ export function isSocialPlatformProvider(value: string | null | undefined): bool
 export function getSocialPlatformMeta(value: string | null | undefined) {
   const normalized = normalizeIntegrationKey(value);
   return SOCIAL_PLATFORM_META[normalized] || { icon: "📱", name: normalized || "Social account" };
+}
+
+export function getOauthConnectorConsentMeta(value: string | null | undefined): OAuthConnectorConsentMeta | null {
+  const normalized = normalizeIntegrationKey(value);
+  return OAUTH_CONNECTOR_CONSENT_META[normalized] || null;
 }
