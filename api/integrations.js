@@ -14,6 +14,8 @@ const {
   assertTableExists,
   runtimeSchemaMutationsAllowed,
 } = require('../lib/schemaReadiness');
+const googleApi = require('../services/google/googleApi');
+const microsoftGraphApi = require('../services/microsoft/graphApi');
 
 const router = express.Router();
 
@@ -389,6 +391,86 @@ async function addLog({ workspaceId, provider, action, status = 'success', durat
   }
 }
 
+async function runWorkspaceIntegrationHealthCheck({ workspaceId, provider }) {
+  try {
+    if (provider === 'google') {
+      return await googleApi.probeGoogleIntegration(workspaceId);
+    }
+
+    if (provider === 'microsoft365') {
+      return await microsoftGraphApi.probeMicrosoftIntegration(workspaceId);
+    }
+
+    return {
+      provider,
+      status: 'connected',
+      summary: `No post-connect health checks configured for ${provider}`,
+      checks: [],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || 'Unknown integration health check error');
+    return {
+      provider,
+      status: 'failed',
+      summary: `${provider} health check failed`,
+      checks: [
+        {
+          key: 'runtime',
+          label: 'Health check runtime',
+          status: 'error',
+          code: 'runtime_error',
+          error: message,
+        },
+      ],
+    };
+  }
+}
+
+async function persistWorkspaceIntegrationHealth({ workspaceId, provider, health }) {
+  const checkedAt = new Date().toISOString();
+  const connected = health.status !== 'failed';
+  const metadata = {
+    health: {
+      ...health,
+      checked_at: checkedAt,
+    },
+  };
+
+  await pool.query(
+    `UPDATE ${SCHEMA}.workspace_integrations
+        SET connected = $3,
+            status = $4,
+            metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+            disconnected_at = CASE WHEN $3 THEN NULL ELSE NOW() END,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND provider = $2`,
+    [workspaceId, provider, connected, health.status, JSON.stringify(metadata)]
+  );
+
+  return {
+    ...health,
+    checked_at: checkedAt,
+    connected,
+  };
+}
+
+async function finalizeWorkspaceIntegrationHealth({ workspaceId, provider }) {
+  const startedAt = Date.now();
+  const health = await runWorkspaceIntegrationHealthCheck({ workspaceId, provider });
+  const persisted = await persistWorkspaceIntegrationHealth({ workspaceId, provider, health });
+  await addLog({
+    workspaceId,
+    provider,
+    action: 'health_check',
+    status: persisted.status === 'connected' ? 'success' : persisted.status,
+    durationMs: Date.now() - startedAt,
+    payload: { health: persisted },
+    errorMessage: persisted.status === 'connected' ? null : persisted.summary,
+  });
+  return persisted;
+}
+
 // GET /api/v1/integrations
 router.get('/', async (req, res) => {
   try {
@@ -734,9 +816,20 @@ router.get('/google/callback', async (req, res) => {
       ]
     );
 
-    await addLog({ workspaceId, provider: 'google', action: 'oauth_connect' });
-    console.log(`[INTEGRATIONS] Google connected for workspace ${workspaceId}`);
-    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=google`);
+    const health = await finalizeWorkspaceIntegrationHealth({ workspaceId, provider: 'google' });
+    await addLog({
+      workspaceId,
+      provider: 'google',
+      action: 'oauth_connect',
+      status: health.status === 'connected' ? 'success' : health.status,
+      payload: { health },
+      errorMessage: health.status === 'connected' ? null : health.summary,
+    });
+    console.log(`[INTEGRATIONS] Google connected for workspace ${workspaceId} (${health.status})`);
+    if (health.status === 'failed') {
+      return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_token_failed&provider=google`);
+    }
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=google${health.status === 'degraded' ? '&status=degraded' : ''}`);
   } catch (err) {
     console.error('[INTEGRATIONS] Google callback error:', err.message);
     res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_server_error&provider=google`);
@@ -940,9 +1033,20 @@ router.get('/microsoft365/callback', async (req, res) => {
       ]
     );
 
-    await addLog({ workspaceId, provider: 'microsoft365', action: 'oauth_connect' });
-    console.log(`[INTEGRATIONS] Microsoft 365 connected for workspace ${workspaceId}`);
-    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=microsoft365`);
+    const health = await finalizeWorkspaceIntegrationHealth({ workspaceId, provider: 'microsoft365' });
+    await addLog({
+      workspaceId,
+      provider: 'microsoft365',
+      action: 'oauth_connect',
+      status: health.status === 'connected' ? 'success' : health.status,
+      payload: { health },
+      errorMessage: health.status === 'connected' ? null : health.summary,
+    });
+    console.log(`[INTEGRATIONS] Microsoft 365 connected for workspace ${workspaceId} (${health.status})`);
+    if (health.status === 'failed') {
+      return res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_token_failed&provider=microsoft365`);
+    }
+    res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?connected=microsoft365${health.status === 'degraded' ? '&status=degraded' : ''}`);
   } catch (err) {
     console.error('[INTEGRATIONS] Microsoft callback error:', err.message);
     res.redirect(`${SETTINGS_INTEGRATIONS_PATH}?error=oauth_server_error&provider=microsoft365`);
@@ -1833,9 +1937,6 @@ router.post('/submissions', async (_req, res) => {
 
 // ─── Google Data Proxy Endpoints ────────────────────────────────────────────
 
-const googleApi = require('../services/google/googleApi');
-const microsoftGraphApi = require('../services/microsoft/graphApi');
-
 // GET /api/v1/integrations/google/calendar/events
 router.get('/google/calendar/events', async (req, res) => {
   try {
@@ -1958,4 +2059,9 @@ router.get('/microsoft365/contacts', async (req, res) => {
 });
 
 module.exports = router;
+router._private = {
+  runWorkspaceIntegrationHealthCheck,
+  persistWorkspaceIntegrationHealth,
+  finalizeWorkspaceIntegrationHealth,
+};
 module.exports.refreshChatGPTToken = refreshChatGPTToken;

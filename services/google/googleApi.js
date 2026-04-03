@@ -26,6 +26,43 @@ function httpsRequest(options, body) {
   });
 }
 
+function classifyProbeError(error) {
+  const message = error instanceof Error ? error.message : String(error || 'Unknown Google probe error');
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('insufficient') ||
+    normalized.includes('scope') ||
+    normalized.includes('permission') ||
+    normalized.includes('access has not been granted')
+  ) {
+    return { code: 'scope_missing', message };
+  }
+
+  if (
+    normalized.includes('token') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('401')
+  ) {
+    return { code: 'auth_failed', message };
+  }
+
+  return { code: 'unavailable', message };
+}
+
+function summarizeProbeResults(provider, checks) {
+  const okCount = checks.filter((check) => check.status === 'ok').length;
+  const total = checks.length;
+  const status = okCount === total ? 'connected' : okCount === 0 ? 'failed' : 'degraded';
+
+  return {
+    provider,
+    status,
+    summary: `${provider} health check ${status} (${okCount}/${total} checks passed)`,
+    checks,
+  };
+}
+
 /**
  * Authenticated Google API request with auto-retry on 401 (token refresh) and 429.
  */
@@ -303,6 +340,50 @@ async function listPeopleConnections(workspaceId, { pageSize = 50, pageToken, pe
   };
 }
 
+async function probeGoogleIntegration(workspaceId) {
+  const checks = [];
+
+  const probes = [
+    {
+      key: 'calendar',
+      label: 'Calendar API',
+      run: async () => listCalendarEvents(workspaceId, { maxResults: 1 }),
+    },
+    {
+      key: 'gmail',
+      label: 'Gmail API',
+      run: async () => listGmailMessages(workspaceId, { maxResults: 1 }),
+    },
+    {
+      key: 'contacts',
+      label: 'People API',
+      run: async () => listPeopleConnections(workspaceId, { pageSize: 1 }),
+    },
+  ];
+
+  for (const probe of probes) {
+    try {
+      await probe.run();
+      checks.push({
+        key: probe.key,
+        label: probe.label,
+        status: 'ok',
+      });
+    } catch (error) {
+      const classified = classifyProbeError(error);
+      checks.push({
+        key: probe.key,
+        label: probe.label,
+        status: 'error',
+        code: classified.code,
+        error: classified.message,
+      });
+    }
+  }
+
+  return summarizeProbeResults('google', checks);
+}
+
 module.exports = {
   // Calendar
   listCalendarEvents,
@@ -322,4 +403,6 @@ module.exports = {
   listGmailLabels,
   // People
   listPeopleConnections,
+  // Health
+  probeGoogleIntegration,
 };

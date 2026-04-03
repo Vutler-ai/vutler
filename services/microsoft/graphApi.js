@@ -3,6 +3,43 @@
 const https = require('https');
 const { getMicrosoftToken, clearTokenCache } = require('./tokenManager');
 
+function classifyProbeError(error) {
+  const message = error instanceof Error ? error.message : String(error || 'Unknown Microsoft probe error');
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('insufficient') ||
+    normalized.includes('scope') ||
+    normalized.includes('permission') ||
+    normalized.includes('forbidden')
+  ) {
+    return { code: 'scope_missing', message };
+  }
+
+  if (
+    normalized.includes('token') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('401')
+  ) {
+    return { code: 'auth_failed', message };
+  }
+
+  return { code: 'unavailable', message };
+}
+
+function summarizeProbeResults(provider, checks) {
+  const okCount = checks.filter((check) => check.status === 'ok').length;
+  const total = checks.length;
+  const status = okCount === total ? 'connected' : okCount === 0 ? 'failed' : 'degraded';
+
+  return {
+    provider,
+    status,
+    summary: `${provider} health check ${status} (${okCount}/${total} checks passed)`,
+    checks,
+  };
+}
+
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
@@ -117,10 +154,55 @@ async function createSubscription(workspaceId, payload = {}) {
   });
 }
 
+async function probeMicrosoftIntegration(workspaceId) {
+  const checks = [];
+
+  const probes = [
+    {
+      key: 'mail',
+      label: 'Mail API',
+      run: async () => listMailMessages(workspaceId, { top: 1 }),
+    },
+    {
+      key: 'calendar',
+      label: 'Calendar API',
+      run: async () => listCalendarEvents(workspaceId, { top: 1 }),
+    },
+    {
+      key: 'contacts',
+      label: 'Contacts API',
+      run: async () => listContacts(workspaceId, { top: 1 }),
+    },
+  ];
+
+  for (const probe of probes) {
+    try {
+      await probe.run();
+      checks.push({
+        key: probe.key,
+        label: probe.label,
+        status: 'ok',
+      });
+    } catch (error) {
+      const classified = classifyProbeError(error);
+      checks.push({
+        key: probe.key,
+        label: probe.label,
+        status: 'error',
+        code: classified.code,
+        error: classified.message,
+      });
+    }
+  }
+
+  return summarizeProbeResults('microsoft365', checks);
+}
+
 module.exports = {
   graphRequest,
   listMailMessages,
   listCalendarEvents,
   listContacts,
   createSubscription,
+  probeMicrosoftIntegration,
 };
