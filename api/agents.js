@@ -38,11 +38,16 @@ const {
   validateSandboxConfiguration,
 } = require('../services/agentAccessPolicyService');
 const { resolveAgentCapabilityMatrix } = require('../services/agentCapabilityMatrixService');
+const {
+  parseEmailDomain,
+  requireManagedAgentEmailAccess,
+  resolveWorkspaceEmailDomain: resolveProvisionedWorkspaceEmailDomain,
+  resolveWorkspaceEmailEntitlements,
+} = require('../services/workspaceEmailService');
 const router = express.Router();
 const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
-const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
 const MAX_SKILLS = 8;
 const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
 
@@ -63,37 +68,11 @@ function deserializeType(type) {
 }
 
 /**
- * Resolve the default email domain for a workspace.
- * Prefers the first fully-verified custom domain; falls back to {slug}.vutler.ai.
- */
-async function resolveWorkspaceEmailDomain(workspaceId) {
-  try {
-    const verified = await pool.query(
-      `SELECT domain FROM ${SCHEMA}.workspace_domains
-       WHERE workspace_id = $1 AND mx_verified = true AND spf_verified = true
-       ORDER BY verified_at DESC LIMIT 1`,
-      [workspaceId]
-    );
-    if (verified.rows[0]) return verified.rows[0].domain;
-  } catch (_) {}
-
-  try {
-    const ws = await pool.query(
-      `SELECT slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
-      [workspaceId]
-    );
-    if (ws.rows[0]?.slug) return `${ws.rows[0].slug}.${FALLBACK_DOMAIN_SUFFIX}`;
-  } catch (_) {}
-
-  return `workspace.${FALLBACK_DOMAIN_SUFFIX}`;
-}
-
-/**
  * Generate a unique agent email address: {username}@{domain}
  * If the address is taken, append a short suffix.
  */
-async function generateAgentEmail(username, workspaceId) {
-  const domain = await resolveWorkspaceEmailDomain(workspaceId);
+async function generateAgentEmail(username, workspaceId, entitlements = null) {
+  const domain = await resolveProvisionedWorkspaceEmailDomain(pool, workspaceId, { entitlements });
   const base = `${username.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${domain}`;
 
   // Check uniqueness in email_routes
@@ -452,16 +431,30 @@ router.post("/", async (req, res) => {
       governance,
     });
 
+    const emailEntitlements = await resolveWorkspaceEmailEntitlements(pool, ws);
+
     // Auto-generate email if not provided
     let finalEmail = email || null;
     if (normalizePlainObject(provisioning.email).provisioned === false) {
       finalEmail = null;
+    } else if (finalEmail && !emailEntitlements.managedAgentEmail) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ success: false, error: `Managed agent email is not available on the "${emailEntitlements.planId}" plan.` });
     } else if (!finalEmail) {
-      try {
-        finalEmail = await generateAgentEmail(username, ws);
-      } catch (emailErr) {
-        console.warn("[AGENTS] Email auto-generation failed (non-fatal):", emailErr.message);
+      if (emailEntitlements.managedAgentEmail) {
+        try {
+          finalEmail = await generateAgentEmail(username, ws, emailEntitlements);
+        } catch (emailErr) {
+          console.warn("[AGENTS] Email auto-generation failed (non-fatal):", emailErr.message);
+        }
       }
+    }
+
+    if (finalEmail) {
+      await resolveProvisionedWorkspaceEmailDomain(pool, ws, {
+        requestedDomain: parseEmailDomain(finalEmail),
+        entitlements: emailEntitlements,
+      });
     }
 
     if (finalEmail) {
@@ -518,7 +511,7 @@ router.post("/", async (req, res) => {
       } catch (_) {}
     }
     console.error("[AGENTS] Create error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   } finally {
     client?.release?.();
   }
@@ -622,6 +615,16 @@ router.put("/:id", async (req, res) => {
     }
 
     const emailProvisioning = normalizePlainObject(provisioning.email);
+    if ((fields.email || emailProvisioning.address) && emailProvisioning.provisioned !== false) {
+      await requireManagedAgentEmailAccess(pool, workspaceId);
+    }
+    if (fields.email && emailProvisioning.provisioned !== false) {
+      const updateEntitlements = await resolveWorkspaceEmailEntitlements(pool, workspaceId);
+      await resolveProvisionedWorkspaceEmailDomain(pool, workspaceId, {
+        requestedDomain: parseEmailDomain(fields.email),
+        entitlements: updateEntitlements,
+      });
+    }
     if (emailProvisioning.provisioned === true && !fields.email) {
       fields.email = emailProvisioning.address || ex.email || null;
     }
@@ -685,7 +688,8 @@ router.put("/:id", async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: "Agent not found" });
     const updatedAgent = result.rows[0];
-    if (normalizePlainObject(provisioning.email).provisioned === false) {
+    const updatedEmailEntitlements = await resolveWorkspaceEmailEntitlements(pool, workspaceId);
+    if (!updatedEmailEntitlements.managedAgentEmail || normalizePlainObject(provisioning.email).provisioned === false) {
       await clearAgentEmailRoutes(pool, workspaceId, updatedAgent.id);
     } else if (updatedAgent.email) {
       await syncAgentEmailRoute(pool, workspaceId, updatedAgent.id, updatedAgent.email).catch((routeErr) => {
@@ -697,7 +701,7 @@ router.put("/:id", async (req, res) => {
     res.json({ success: true, agent: buildAgentResponse(updatedAgent, { drivePath, integrations }) });
   } catch (err) {
     console.error("[AGENTS] Update error:", err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 

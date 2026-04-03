@@ -137,6 +137,7 @@ app.use(globalLimiter);
 
 // Snipara webhook receiver (before auth — uses HMAC signature verification)
 app.use('/api/v1/webhooks/snipara', require('./api/sniparaWebhook'));
+app.use('/api/v1', require('./api/email-incoming'));
 
 // Auth middleware (API key + admin session)
 app.use(require('./api/middleware/auth'));

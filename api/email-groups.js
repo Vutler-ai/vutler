@@ -17,33 +17,25 @@
 
 const express = require('express');
 const router = express.Router();
+const {
+  requireMailboxAdminAccess,
+  resolveWorkspaceEmailDomain,
+} = require('../services/workspaceEmailService');
 
 const SCHEMA = 'tenant_vutler';
-const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
+
+router.use(async (req, res, next) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+    await requireMailboxAdminAccess(pg, req.workspaceId);
+    next();
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-async function getWorkspaceDomain(pg, workspaceId) {
-  try {
-    const verified = await pg.query(
-      `SELECT domain FROM ${SCHEMA}.workspace_domains
-       WHERE workspace_id = $1 AND mx_verified = true AND spf_verified = true
-       ORDER BY verified_at DESC LIMIT 1`,
-      [workspaceId]
-    );
-    if (verified.rows[0]) return verified.rows[0].domain;
-  } catch (_) {}
-
-  try {
-    const ws = await pg.query(
-      `SELECT slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
-      [workspaceId]
-    );
-    if (ws.rows[0]?.slug) return `${ws.rows[0].slug}.${FALLBACK_DOMAIN_SUFFIX}`;
-  } catch (_) {}
-
-  return `workspace.${FALLBACK_DOMAIN_SUFFIX}`;
-}
 
 function formatGroup(row, members = []) {
   return {
@@ -126,7 +118,7 @@ router.post('/', async (req, res) => {
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
     const ws = req.workspaceId;
-    const resolvedDomain = domain || await getWorkspaceDomain(pg, ws);
+    const resolvedDomain = await resolveWorkspaceEmailDomain(pg, ws, { requestedDomain: domain });
     const emailAddress = `${cleanPrefix}@${resolvedDomain}`;
 
     const result = await pg.query(
@@ -145,7 +137,7 @@ router.post('/', async (req, res) => {
     if (err.code === '23505') {
       return res.status(409).json({ success: false, error: 'Email address already in use' });
     }
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 

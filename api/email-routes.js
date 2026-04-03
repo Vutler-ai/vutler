@@ -12,37 +12,23 @@
 
 const express = require('express');
 const router = express.Router();
+const {
+  requireMailboxAdminAccess,
+  resolveWorkspaceEmailDomain,
+} = require('../services/workspaceEmailService');
 
 const SCHEMA = 'tenant_vutler';
-const FALLBACK_DOMAIN_SUFFIX = process.env.VUTLER_FALLBACK_DOMAIN_SUFFIX || 'vutler.ai';
 
-/**
- * Get the default email domain for a workspace.
- * Prefers a fully-verified custom domain; falls back to {slug}.vutler.ai.
- */
-async function getWorkspaceDomain(pg, workspaceId) {
-  // Try to find a fully verified custom domain
+router.use(async (req, res, next) => {
   try {
-    const verified = await pg.query(
-      `SELECT domain FROM ${SCHEMA}.workspace_domains
-       WHERE workspace_id = $1 AND mx_verified = true AND spf_verified = true
-       ORDER BY verified_at DESC LIMIT 1`,
-      [workspaceId]
-    );
-    if (verified.rows[0]) return verified.rows[0].domain;
-  } catch (_) {}
-
-  // Fallback: {workspace_slug}.vutler.ai
-  try {
-    const ws = await pg.query(
-      `SELECT slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
-      [workspaceId]
-    );
-    if (ws.rows[0]?.slug) return `${ws.rows[0].slug}.${FALLBACK_DOMAIN_SUFFIX}`;
-  } catch (_) {}
-
-  return `workspace.${FALLBACK_DOMAIN_SUFFIX}`;
-}
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+    await requireMailboxAdminAccess(pg, req.workspaceId);
+    next();
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // GET / — list email routes for workspace
@@ -114,10 +100,7 @@ router.post('/', async (req, res) => {
     }
 
     // Resolve domain
-    let resolvedDomain = domain;
-    if (!resolvedDomain) {
-      resolvedDomain = await getWorkspaceDomain(pg, ws);
-    }
+    const resolvedDomain = await resolveWorkspaceEmailDomain(pg, ws, { requestedDomain: domain });
 
     const emailAddress = `${cleanPrefix}@${resolvedDomain}`;
 
@@ -135,8 +118,11 @@ router.post('/', async (req, res) => {
 
     // Also update the agent's email column
     await pg.query(
-      `UPDATE ${SCHEMA}.agents SET email = $1, updated_at = NOW() WHERE id = $2`,
-      [emailAddress, agent_id]
+      `UPDATE ${SCHEMA}.agents
+          SET email = $1, updated_at = NOW()
+        WHERE id = $2
+          AND workspace_id = $3`,
+      [emailAddress, agent_id, ws]
     );
 
     const r = result.rows[0];
@@ -156,7 +142,7 @@ router.post('/', async (req, res) => {
     if (err.code === '23505') {
       return res.status(409).json({ success: false, error: 'Email address already assigned' });
     }
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 

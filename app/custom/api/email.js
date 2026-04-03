@@ -8,6 +8,13 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
+const {
+  assignEmailToAgent,
+  moveEmailToFolder,
+  resolveSenderAddress,
+  toggleEmailFlag,
+  updateEmailReadState,
+} = require('../../../services/workspaceEmailService');
 
 // Postal configuration
 const POSTAL_API_URL = process.env.POSTAL_API_URL || 'http://postal-smtp:8080';
@@ -189,20 +196,14 @@ router.post('/email/send', async (req, res) => {
     const pg = req.app.locals.pg;
 
     // Determine sender: prefer explicit from → agent email → authenticated user email → noreply
-    let sender = from;
-    if (!sender && agentId && pg) {
-      try {
-        const agentRow = await pg.query(
-          `SELECT email FROM ${SCHEMA}.agents WHERE id = $1 LIMIT 1`,
-          [agentId]
-        );
-        if (agentRow.rows[0]?.email) sender = agentRow.rows[0].email;
-      } catch (_) {}
-    }
-    if (!sender) {
-      sender = req.user?.email || req.userEmail || null;
-    }
-    sender = sender || `noreply@${EMAIL_DOMAIN}`;
+    const sender = await resolveSenderAddress({
+      db: pg,
+      workspaceId: req.workspaceId,
+      explicitFrom: from,
+      agentRef: agentId,
+      fallbackUserEmail: req.user?.email || req.userEmail || null,
+      defaultDomain: EMAIL_DOMAIN,
+    });
 
     // Send via Postal
     let postalResult;
@@ -243,7 +244,7 @@ router.post('/email/send', async (req, res) => {
     });
   } catch (err) {
     console.error('[EMAIL] Send error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -261,20 +262,14 @@ router.post('/email/draft', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    let sender = from;
-    if (!sender && agentId) {
-      try {
-        const agentRow = await pg.query(
-          `SELECT email FROM ${SCHEMA}.agents WHERE id = $1 LIMIT 1`,
-          [agentId]
-        );
-        if (agentRow.rows[0]?.email) sender = agentRow.rows[0].email;
-      } catch (_) {}
-    }
-    if (!sender) {
-      sender = req.user?.email || req.userEmail || null;
-    }
-    sender = sender || `noreply@${EMAIL_DOMAIN}`;
+    const sender = await resolveSenderAddress({
+      db: pg,
+      workspaceId: req.workspaceId,
+      explicitFrom: from,
+      agentRef: agentId,
+      fallbackUserEmail: req.user?.email || req.userEmail || null,
+      defaultDomain: EMAIL_DOMAIN,
+    });
 
     const r = await pg.query(
       `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
@@ -292,7 +287,7 @@ router.post('/email/draft', async (req, res) => {
     });
   } catch (err) {
     console.error('[EMAIL] Draft error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -436,10 +431,10 @@ router.patch('/email/inbox/:id/read', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1 AND workspace_id = $2`, [req.params.id, req.workspaceId]);
+    await updateEmailReadState(pg, req.workspaceId, req.params.id, true);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -451,10 +446,10 @@ router.put('/email/:uid/read', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = true WHERE id = $1 AND workspace_id = $2`, [req.params.uid, req.workspaceId]);
+    await updateEmailReadState(pg, req.workspaceId, req.params.uid, true);
     res.json({ success: true, uid: req.params.uid, read: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -466,10 +461,10 @@ router.put('/email/:uid/unread', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    await pg.query(`UPDATE ${SCHEMA}.emails SET is_read = false WHERE id = $1`, [req.params.uid]);
+    await updateEmailReadState(pg, req.workspaceId, req.params.uid, false);
     res.json({ success: true, uid: req.params.uid, read: false });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -481,14 +476,11 @@ router.patch('/email/:uid/flag', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    const r = await pg.query(
-      `UPDATE ${SCHEMA}.emails SET flagged = NOT COALESCE(flagged, false) WHERE id = $1 RETURNING flagged`,
-      [req.params.uid]
-    );
-    const flagged = r.rows[0]?.flagged ?? false;
+    const flaggedRow = await toggleEmailFlag(pg, req.workspaceId, req.params.uid);
+    const flagged = flaggedRow.flagged ?? false;
     res.json({ success: true, uid: req.params.uid, flagged });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -506,10 +498,10 @@ router.patch('/email/:uid/move', async (req, res) => {
       return res.status(400).json({ success: false, error: `folder must be one of: ${allowed.join(', ')}` });
     }
 
-    await pg.query(`UPDATE ${SCHEMA}.emails SET folder = $1 WHERE id = $2`, [folder, req.params.uid]);
+    await moveEmailToFolder(pg, req.workspaceId, req.params.uid, folder);
     res.json({ success: true, uid: req.params.uid, folder });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -518,183 +510,6 @@ router.patch('/email/:uid/move', async (req, res) => {
  * Body: { body?: string } — if provided, updates the draft body before sending
  */
 // (existing approve endpoint is above, we add body-update logic via a separate route)
-
-/**
- * POST /api/v1/email/incoming — Postal webhook for inbound emails
- *
- * Postal calls this endpoint when an email arrives at a Vutler-managed address.
- * We look up which agent owns the destination address via email_routes and store
- * the message in the emails table for the agent to process.
- *
- * Postal payload shape (simplified):
- * {
- *   id: number,
- *   rcpt_to: "agent@domain.com",
- *   mail_from: "sender@example.com",
- *   subject: "...",
- *   plain_body: "...",
- *   html_body: "...",
- *   message: { ... }
- * }
- */
-router.post('/email/incoming', async (req, res) => {
-  // Acknowledge Postal immediately to avoid retries
-  res.json({ success: true });
-
-  try {
-    const pg = req.app.locals.pg;
-    if (!pg) {
-      console.warn('[EMAIL/INCOMING] No DB — dropping inbound email');
-      return;
-    }
-
-    const payload = req.body || {};
-    const recipient = (payload.rcpt_to || payload.to || '').toLowerCase().trim();
-    const sender = payload.mail_from || payload.from || '';
-    const subject = payload.subject || '(no subject)';
-    const body = payload.plain_body || payload.body || '';
-    const htmlBody = payload.html_body || null;
-
-    if (!recipient) {
-      console.warn('[EMAIL/INCOMING] Missing recipient — skipping');
-      return;
-    }
-
-    console.log(`[EMAIL/INCOMING] Received from ${sender} → ${recipient}: ${subject}`);
-
-    // ── Step 1: Try direct agent route ──────────────────────────────
-    let agentId = null;
-    let autoReply = false;
-    let approvalRequired = true;
-    let isGroupEmail = false;
-    let incomingWorkspaceId = null;
-
-    try {
-      const routeRow = await pg.query(
-        `SELECT er.agent_id, er.auto_reply, er.approval_required, a.workspace_id
-         FROM tenant_vutler.email_routes er
-         LEFT JOIN tenant_vutler.agents a ON a.id = er.agent_id
-         WHERE LOWER(er.email_address) = $1 LIMIT 1`,
-        [recipient]
-      );
-      if (routeRow.rows[0]) {
-        agentId = routeRow.rows[0].agent_id;
-        autoReply = routeRow.rows[0].auto_reply;
-        approvalRequired = routeRow.rows[0].approval_required;
-        incomingWorkspaceId = routeRow.rows[0].workspace_id;
-      }
-    } catch (routeErr) {
-      console.warn('[EMAIL/INCOMING] Route lookup failed:', routeErr.message);
-    }
-
-    // ── Step 2: Try email group if no direct route ────────────────────
-    if (!agentId) {
-      try {
-        const groupRow = await pg.query(
-          `SELECT g.id, g.auto_reply, g.approval_required, g.workspace_id
-           FROM ${SCHEMA}.email_groups g
-           WHERE LOWER(g.email_address) = $1 LIMIT 1`,
-          [recipient]
-        );
-
-        if (groupRow.rows[0]) {
-          isGroupEmail = true;
-          const group = groupRow.rows[0];
-          autoReply = group.auto_reply;
-          approvalRequired = group.approval_required;
-
-          // Get all group members
-          const membersResult = await pg.query(
-            `SELECT m.*, a.email AS agent_email, a.name AS agent_name
-             FROM ${SCHEMA}.email_group_members m
-             LEFT JOIN ${SCHEMA}.agents a ON a.id = m.agent_id
-             WHERE m.group_id = $1 AND m.notify = true`,
-            [group.id]
-          );
-
-          // Create inbox email for each agent member
-          for (const member of membersResult.rows) {
-            if (member.member_type === 'agent' && member.agent_id) {
-              await pg.query(
-                `INSERT INTO ${SCHEMA}.emails
-                   (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
-                 VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, $7, NOW())`,
-                [sender, recipient, subject, body, htmlBody, member.agent_id, group.workspace_id]
-              );
-              console.log(`[EMAIL/INCOMING] Group delivery → agent ${member.agent_name || member.agent_id}`);
-            }
-
-            // Forward to human members via Postal
-            if (member.member_type === 'human' && member.human_email) {
-              try {
-                await sendViaPostal({
-                  from: recipient,
-                  to: member.human_email,
-                  subject: `[${recipient}] ${subject}`,
-                  body: `Forwarded from ${sender}:\n\n${body}`,
-                  htmlBody,
-                });
-                console.log(`[EMAIL/INCOMING] Group forward → human ${member.human_email}`);
-              } catch (fwdErr) {
-                console.error(`[EMAIL/INCOMING] Forward to ${member.human_email} failed:`, fwdErr.message);
-              }
-            }
-          }
-
-          console.log(`[EMAIL/INCOMING] Group ${recipient}: delivered to ${membersResult.rows.length} members`);
-        }
-      } catch (groupErr) {
-        console.warn('[EMAIL/INCOMING] Group lookup failed:', groupErr.message);
-      }
-    }
-
-    // ── Step 3: Store incoming email (for direct routes or unrouted) ──
-    if (!isGroupEmail) {
-      const insertResult = await pg.query(
-        `INSERT INTO ${SCHEMA}.emails
-           (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, 'inbox', false, $6, $7, NOW())
-         RETURNING id`,
-        [sender, recipient, subject, body, htmlBody, agentId || null, incomingWorkspaceId || null]
-      );
-      const emailId = insertResult.rows[0]?.id;
-      console.log(`[EMAIL/INCOMING] Stored email ${emailId} → agent ${agentId || 'unrouted'}`);
-    }
-
-    // ── Step 4: Auto-reply draft (for direct agent routes only) ──────
-    if (agentId && autoReply && !isGroupEmail) {
-      const replyFolder = approvalRequired ? 'drafts' : 'outbox';
-
-      let agentEmail = recipient;
-      try {
-        const agentRow = await pg.query(
-          `SELECT email FROM tenant_vutler.agents WHERE id = $1 LIMIT 1`,
-          [agentId]
-        );
-        if (agentRow.rows[0]?.email) agentEmail = agentRow.rows[0].email;
-      } catch (_) {}
-
-      await pg.query(
-        `INSERT INTO ${SCHEMA}.emails
-           (from_addr, to_addr, subject, body, folder, is_read, agent_id, workspace_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, false, $6, $7, NOW())`,
-        [
-          agentEmail,
-          sender,
-          `Re: ${subject}`,
-          `Thank you for your email. ${approvalRequired ? 'Your reply is pending approval.' : 'We will be in touch shortly.'}`,
-          replyFolder,
-          agentId,
-          incomingWorkspaceId || null,
-        ]
-      );
-
-      console.log(`[EMAIL/INCOMING] Auto-reply draft created for agent ${agentId} (approval_required=${approvalRequired})`);
-    }
-  } catch (err) {
-    console.error('[EMAIL/INCOMING] Processing error:', err.message);
-  }
-});
 
 /**
  * GET /api/v1/email/pending — drafts pending human approval
@@ -781,35 +596,19 @@ router.post('/email/:id/assign', async (req, res) => {
     const pg = req.app.locals.pg;
     if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
 
-    // Verify agent exists
-    const agentCheck = await pg.query(
-      `SELECT id, name FROM ${SCHEMA}.agents WHERE id = $1 LIMIT 1`,
-      [agent_id]
-    );
-    if (!agentCheck.rows[0]) {
-      return res.status(404).json({ success: false, error: 'Agent not found' });
-    }
-
-    const result = await pg.query(
-      `UPDATE ${SCHEMA}.emails SET agent_id = $1 WHERE id = $2 AND workspace_id = $3 RETURNING id, agent_id`,
-      [agent_id, req.params.id, req.workspaceId]
-    );
-
-    if (!result.rows[0]) {
-      return res.status(404).json({ success: false, error: 'Email not found' });
-    }
+    const assignment = await assignEmailToAgent(pg, req.workspaceId, req.params.id, agent_id);
 
     res.json({
       success: true,
       data: {
-        emailId: req.params.id,
-        agentId: agent_id,
-        agentName: agentCheck.rows[0].name,
+        emailId: assignment.emailId,
+        agentId: assignment.agentId,
+        agentName: assignment.agentName,
       },
     });
   } catch (err) {
     console.error('[EMAIL] Assign error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
   }
 });
 

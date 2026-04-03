@@ -15,11 +15,23 @@
 const express = require('express');
 const dns = require('dns').promises;
 const router = express.Router();
+const { requireCustomDomainAccess } = require('../services/workspaceEmailService');
 
 const SCHEMA = 'tenant_vutler';
 const MAIL_SERVER = process.env.VUTLER_MAIL_SERVER || 'mail.vutler.ai';
 const DKIM_CNAME_TARGET = process.env.VUTLER_DKIM_TARGET || 'dkim.mail.vutler.ai';
 const DMARC_EMAIL = process.env.VUTLER_DMARC_EMAIL || 'dmarc@vutler.ai';
+
+router.use(async (req, res, next) => {
+  try {
+    const pg = req.app.locals.pg;
+    if (!pg) return res.status(503).json({ success: false, error: 'Database not available' });
+    await requireCustomDomainAccess(pg, req.workspaceId);
+    next();
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ success: false, error: err.message });
+  }
+});
 
 /**
  * Build the DNS records a workspace must configure for a given domain.
