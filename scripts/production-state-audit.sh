@@ -121,7 +121,7 @@ container_env_value() {
   local container_name=$1
   local env_name=$2
   docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null \
-    | sed -n "s/^${env_name}=//p" | head -1
+    | sed -n "s/^${env_name}=//p" | tail -1
 }
 
 section "release"

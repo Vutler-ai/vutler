@@ -125,6 +125,13 @@ require_env_var() {
   fi
 }
 
+strip_release_env_vars() {
+  local file_path=$1
+  local sanitized_file="${file_path}.sanitized"
+  grep -v '^VUTLER_RELEASE_' "$file_path" > "$sanitized_file" || true
+  mv "$sanitized_file" "$file_path"
+}
+
 wait_for_health() {
   local container_name=$1
   local attempts=$2
@@ -182,6 +189,7 @@ else
   fail "Cannot resolve API env from running container or /home/ubuntu/vutler/.env"
 fi
 
+strip_release_env_vars "$API_ENV_FILE"
 require_env_var "$API_ENV_FILE" "JWT_SECRET"
 require_env_var "$API_ENV_FILE" "VUTLER_API_KEY"
 
@@ -239,6 +247,7 @@ if [ "$API_ONLY" != "1" ] && [ -n "${FRONTEND_PREVIOUS_IMAGE:-}" ]; then
     docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' vutler-frontend \
       | sed -n '/^\(API_URL\|WS_URL\|PORT\|HOSTNAME\|NEXT_PUBLIC_[A-Z0-9_]*\)=/p' > "$FRONTEND_ENV_FILE"
   fi
+  strip_release_env_vars "$FRONTEND_ENV_FILE"
   grep -q '^API_URL=' "$FRONTEND_ENV_FILE" 2>/dev/null || printf 'API_URL=http://localhost:3001\n' >> "$FRONTEND_ENV_FILE"
   grep -q '^WS_URL=' "$FRONTEND_ENV_FILE" 2>/dev/null || printf 'WS_URL=http://localhost:3001\n' >> "$FRONTEND_ENV_FILE"
   grep -q '^PORT=' "$FRONTEND_ENV_FILE" 2>/dev/null || printf 'PORT=3002\n' >> "$FRONTEND_ENV_FILE"

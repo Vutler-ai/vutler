@@ -266,6 +266,13 @@ require_env_var() {
   fi
 }
 
+strip_release_env_vars() {
+  local file_path=$1
+  local sanitized_file="${file_path}.sanitized"
+  grep -v '^VUTLER_RELEASE_' "$file_path" > "$sanitized_file" || true
+  mv "$sanitized_file" "$file_path"
+}
+
 ensure_frontend_var() {
   local var_name=$1
   local default_value=$2
@@ -305,6 +312,7 @@ else
   fail "Cannot resolve API env from running container or /home/ubuntu/vutler/.env"
 fi
 
+strip_release_env_vars "$API_ENV_FILE"
 require_env_var "$API_ENV_FILE" "JWT_SECRET"
 require_env_var "$API_ENV_FILE" "VUTLER_API_KEY"
 
@@ -366,6 +374,7 @@ if [ "$DEPLOY_FRONTEND" = "1" ]; then
       | sed -n '/^\(API_URL\|WS_URL\|PORT\|HOSTNAME\|NEXT_PUBLIC_[A-Z0-9_]*\)=/p' > "$FRONTEND_ENV_FILE"
   fi
 
+  strip_release_env_vars "$FRONTEND_ENV_FILE"
   ensure_frontend_var "API_URL" "http://localhost:3001"
   ensure_frontend_var "WS_URL" "http://localhost:3001"
   ensure_frontend_var "PORT" "3002"
