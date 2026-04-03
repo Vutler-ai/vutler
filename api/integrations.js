@@ -1483,86 +1483,161 @@ setInterval(() => {
 
 // ── Jira — API Token (Basic Auth) Connect/Disconnect ─────────────────────────
 
+async function validateJiraCredentials({ baseUrl, email, apiToken }) {
+  const normalizedUrl = String(baseUrl || '').replace(/\/+$/, '');
+
+  if (!normalizedUrl || !email || !apiToken) {
+    throw new Error('baseUrl, email and apiToken are required');
+  }
+  if (!/^https:\/\/.+/.test(normalizedUrl)) {
+    throw new Error('baseUrl must start with https://');
+  }
+
+  const { JiraAdapter } = require('../services/integrations/jira');
+  const adapter = new JiraAdapter(normalizedUrl, email, apiToken);
+  const projects = await adapter.listProjects();
+  const projectList = Array.isArray(projects) ? projects : [];
+
+  return {
+    normalizedUrl,
+    projects: projectList,
+    projectCount: projectList.length,
+    sampleProjects: projectList.slice(0, 5).map((project) => ({
+      id: project.id,
+      key: project.key,
+      name: project.name,
+    })),
+  };
+}
+
+async function persistJiraIntegrationConnection({
+  workspaceId,
+  normalizedUrl,
+  email,
+  apiToken,
+  connectedBy,
+}) {
+  const { CryptoService } = require('../services/crypto');
+  const cryptoSvc = new CryptoService();
+  const encryptedToken = cryptoSvc.encrypt(apiToken);
+
+  const credentials = {
+    baseUrl: normalizedUrl,
+    email,
+    apiToken: encryptedToken,
+  };
+
+  await pool.query(
+    `INSERT INTO ${SCHEMA}.workspace_integrations
+      (workspace_id, provider, source, connected, status, credentials, scopes,
+       connected_at, disconnected_at, connected_by, updated_at)
+     VALUES ($1, 'jira', 'apitoken', TRUE, 'connected', $2::jsonb,
+       '["read:jira-user","read:jira-work","write:jira-work"]'::jsonb,
+       NOW(), NULL, $3, NOW())
+     ON CONFLICT (workspace_id, provider) DO UPDATE SET
+       source = 'apitoken',
+       connected = TRUE,
+       status = 'connected',
+       credentials = EXCLUDED.credentials,
+       scopes = EXCLUDED.scopes,
+       connected_at = NOW(),
+       disconnected_at = NULL,
+       connected_by = EXCLUDED.connected_by,
+       updated_at = NOW()`,
+    [
+      workspaceId,
+      JSON.stringify(credentials),
+      connectedBy,
+    ]
+  );
+}
+
+function buildIntegrationDetailPayload(row) {
+  const config = row?.config && typeof row.config === 'object' ? { ...row.config } : {};
+  const credentials = row?.credentials && typeof row.credentials === 'object' ? row.credentials : {};
+
+  if (row?.provider === 'jira') {
+    if (typeof credentials.baseUrl === 'string' && credentials.baseUrl) {
+      config.baseUrl = credentials.baseUrl;
+    }
+    if (typeof credentials.email === 'string' && credentials.email) {
+      config.email = credentials.email;
+    }
+    config.connectMode = 'api_token';
+  }
+
+  return {
+    provider: row.provider,
+    id: row.provider,
+    name: row.name,
+    description: row.description,
+    icon: row.icon,
+    category: row.category,
+    source: row.source,
+    connected: row.connected,
+    status: row.status,
+    connected_at: row.connected_at,
+    connected_by: row.connected_by,
+    scopes: row.scopes || [],
+    config,
+    usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
+    webhook_url: `/api/v1/webhooks/${row.provider}`,
+  };
+}
+
 // POST /api/v1/integrations/jira/connect
 // Body: { baseUrl, email, apiToken }
 router.post('/jira/connect', async (req, res) => {
   try {
     await ensureReady();
     const workspaceId = getWorkspaceId(req);
-    const { baseUrl, email, apiToken } = req.body || {};
+    const { baseUrl, email, apiToken, validateOnly } = req.body || {};
 
     if (!baseUrl || !email || !apiToken) {
       return res.status(400).json({ success: false, error: 'baseUrl, email and apiToken are required' });
     }
-
-    // Normalise base URL
-    const normalizedUrl = baseUrl.replace(/\/+$/, '');
-
-    // Validate URL shape (must start with https://)
-    if (!/^https:\/\/.+/.test(normalizedUrl)) {
-      return res.status(400).json({ success: false, error: 'baseUrl must start with https://' });
-    }
-
-    // Test the connection by listing projects (cheap + validates both URL and credentials)
-    let projects;
     try {
-      const { JiraAdapter } = require('../services/integrations/jira');
-      const { CryptoService } = require('../services/crypto');
-      const adapter = new JiraAdapter(normalizedUrl, email, apiToken);
-      projects = await adapter.listProjects();
+      const validation = await validateJiraCredentials({ baseUrl, email, apiToken });
+
+      if (validateOnly) {
+        return res.json({
+          success: true,
+          provider: 'jira',
+          validated: true,
+          baseUrl: validation.normalizedUrl,
+          email,
+          projectCount: validation.projectCount,
+          sampleProjects: validation.sampleProjects,
+        });
+      }
+
+      const normalizedUrl = validation.normalizedUrl;
+      const projects = validation.projects;
+
+      await persistJiraIntegrationConnection({
+        workspaceId,
+        normalizedUrl,
+        email,
+        apiToken,
+        connectedBy: req.user?.email || req.user?.name || req.userId || 'system',
+      });
+
+      await addLog({ workspaceId, provider: 'jira', action: 'apitoken_connect' });
+      console.log(`[INTEGRATIONS] Jira connected for workspace ${workspaceId}`);
+
+      return res.json({
+        success: true,
+        provider: 'jira',
+        status: 'connected',
+        baseUrl: normalizedUrl,
+        email,
+        projectCount: Array.isArray(projects) ? projects.length : undefined,
+        sampleProjects: validation.sampleProjects,
+      });
     } catch (connErr) {
       console.error('[INTEGRATIONS] Jira connection test failed:', connErr.message);
       return res.status(400).json({ success: false, error: `Connection test failed: ${connErr.message}` });
     }
-
-    // Encrypt the API token before storing
-    const { CryptoService } = require('../services/crypto');
-    const cryptoSvc = new CryptoService();
-    const encryptedToken = cryptoSvc.encrypt(apiToken);
-
-    // Store credentials in the workspace_integrations row
-    const credentials = {
-      baseUrl: normalizedUrl,
-      email,
-      apiToken: encryptedToken,   // encrypted — never return raw token in responses
-    };
-
-    await pool.query(
-      `INSERT INTO ${SCHEMA}.workspace_integrations
-        (workspace_id, provider, source, connected, status, credentials, scopes,
-         connected_at, disconnected_at, connected_by, updated_at)
-       VALUES ($1, 'jira', 'apitoken', TRUE, 'connected', $2::jsonb,
-         '["read:jira-user","read:jira-work","write:jira-work"]'::jsonb,
-         NOW(), NULL, $3, NOW())
-       ON CONFLICT (workspace_id, provider) DO UPDATE SET
-         source = 'apitoken',
-         connected = TRUE,
-         status = 'connected',
-         credentials = EXCLUDED.credentials,
-         scopes = EXCLUDED.scopes,
-         connected_at = NOW(),
-         disconnected_at = NULL,
-         connected_by = EXCLUDED.connected_by,
-         updated_at = NOW()`,
-      [
-        workspaceId,
-        JSON.stringify(credentials),
-        req.user?.email || req.user?.name || req.userId || 'system',
-      ]
-    );
-
-    await addLog({ workspaceId, provider: 'jira', action: 'apitoken_connect' });
-    console.log(`[INTEGRATIONS] Jira connected for workspace ${workspaceId}`);
-
-    res.json({
-      success: true,
-      provider: 'jira',
-      status: 'connected',
-      baseUrl: normalizedUrl,
-      email,
-      // apiToken intentionally omitted
-      projectCount: Array.isArray(projects) ? projects.length : undefined,
-    });
   } catch (err) {
     console.error('[INTEGRATIONS] Jira connect error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1788,6 +1863,7 @@ router.get('/:provider', async (req, res) => {
         COALESCE(wi.connected, FALSE) AS connected,
         COALESCE(wi.status, 'disconnected') AS status,
         COALESCE(wi.scopes, c.default_scopes, '[]'::jsonb) AS scopes,
+        COALESCE(wi.credentials, '{}'::jsonb) AS credentials,
         COALESCE(wi.config, '{}'::jsonb) AS config,
         wi.connected_at,
         wi.connected_by,
@@ -1811,23 +1887,7 @@ router.get('/:provider', async (req, res) => {
 
     res.json({
       success: true,
-      integration: {
-        provider: row.provider,
-        id: row.provider,
-        name: row.name,
-        description: row.description,
-        icon: row.icon,
-        category: row.category,
-        source: row.source,
-        connected: row.connected,
-        status: row.status,
-        connected_at: row.connected_at,
-        connected_by: row.connected_by,
-        scopes: row.scopes || [],
-        config: row.config || {},
-        usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
-        webhook_url: `/api/v1/webhooks/${row.provider}`,
-      },
+      integration: buildIntegrationDetailPayload(row),
     });
   } catch (err) {
     console.error('[INTEGRATIONS] Get error:', err.message);
@@ -2063,5 +2123,8 @@ router._private = {
   runWorkspaceIntegrationHealthCheck,
   persistWorkspaceIntegrationHealth,
   finalizeWorkspaceIntegrationHealth,
+  validateJiraCredentials,
+  persistJiraIntegrationConnection,
+  buildIntegrationDetailPayload,
 };
 module.exports.refreshChatGPTToken = refreshChatGPTToken;

@@ -351,15 +351,15 @@ export default function IntegrationsPage() {
                     </button>
                   </>
                 )}
-                {integration.status === "disconnected" && integration.provider === "social_media" && (
+                {integration.status === "disconnected" && (integration.provider === "social_media" || integration.provider === "jira") && (
                   <Link
-                    href="/settings/integrations/social-media"
+                    href={integration.provider === "social_media" ? "/settings/integrations/social-media" : "/settings/integrations/jira"}
                     className="px-4 py-1.5 text-sm rounded-lg bg-[#3b82f6] text-white hover:bg-[#2563eb] transition-colors"
                   >
                     Configure
                   </Link>
                 )}
-                {integration.status === "disconnected" && integration.provider !== "social_media" && (
+                {integration.status === "disconnected" && integration.provider !== "social_media" && integration.provider !== "jira" && (
                   <button
                     onClick={() => handleConnect(integration.provider)}
                     className="px-4 py-1.5 text-sm rounded-lg bg-[#3b82f6] text-white hover:bg-[#2563eb] transition-colors cursor-pointer"
