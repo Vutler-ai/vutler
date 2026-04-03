@@ -19,6 +19,7 @@ async function executeSkillPlan(plan = {}, context = {}) {
     provider: context.provider || plan.metadata?.provider || null,
     chatActionRunId: context.chatActionRunId || plan.metadata?.chatActionRunId || null,
     chatActionContext: context.chatActionContext || plan.metadata?.chatActionContext || null,
+    latestUserMessage: context.latestUserMessage || plan.metadata?.latestUserMessage || '',
   });
 }
 

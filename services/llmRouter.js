@@ -253,6 +253,17 @@ function safeEmailLink(data = {}, args = {}) {
   return `/email?folder=${encodeURIComponent(folder)}`;
 }
 
+function extractLatestUserMessage(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    if (typeof message.content === 'string' && message.content.trim()) {
+      return message.content.trim();
+    }
+  }
+  return '';
+}
+
 function safeTaskLink(data = {}, args = {}) {
   const taskId = data.taskId || data.task_id || data.id || args.taskId || args.task_id || args.id || null;
   if (data.taskUrl) return String(data.taskUrl);
@@ -567,6 +578,7 @@ async function executeToolThroughOrchestration({
   allowedSocialBrandIds = [],
   memoryBindings = null,
   memoryMode = null,
+  latestUserMessage = '',
 } = {}) {
   const orchestrationInput = {
     toolName,
@@ -619,6 +631,7 @@ async function executeToolThroughOrchestration({
     model,
     provider,
     nexusNodeId,
+    latestUserMessage,
   });
   const actionResult = Array.isArray(actionResults) ? actionResults[0] : null;
 
@@ -1484,8 +1497,16 @@ async function chat(agent, messages, db, opts = {}) {
       const onlineNexusNode = await getOnlineNexusNode(workspaceId, db);
       nexusNodeId = onlineNexusNode?.id || null;
       if (nexusNodeId) {
+        const emailCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'email')
+          && getUnavailableAgentProviders(['email'], { agent, emailProvisioning }).length === 0;
+        const calendarCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar')
+          || isProviderAvailable(runtimeCapabilityAvailability, 'google');
         nexusTools = await getNexusToolsForWorkspace(workspaceId, db, {
           allowTerminalSessions: hasNexusTerminalAccess,
+          emailCapabilityEffective,
+          workspaceMailAvailable: isProviderAvailable(runtimeCapabilityAvailability, 'email'),
+          workspaceCalendarAvailable: calendarCapabilityEffective,
+          workspaceContactsAvailable: true,
         });
       }
     } catch (_) {
@@ -1534,6 +1555,9 @@ async function chat(agent, messages, db, opts = {}) {
   }
   if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += `\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is ${effectiveDriveRoot}. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under ${effectiveDriveRoot} instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.`;
+  }
+  if (isProviderAvailable(runtimeCapabilityAvailability, 'email')) {
+    effectiveSystemPrompt += '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, send it immediately using the agent email capability. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
   }
   if (unavailableOverlayProviders.length > 0) {
     const providerNames = unavailableOverlayProviders.map((entry) => entry.key).join(', ');
@@ -1628,6 +1652,7 @@ async function chat(agent, messages, db, opts = {}) {
 
         // Process each tool call
         let continueLoop = false;
+        const latestUserMessage = extractLatestUserMessage(currentMessages);
         for (const toolCall of llmResult.tool_calls) {
           const agentName = agent?.name || agent?.username || 'agent';
           const args = toolCall.arguments || {};
@@ -1654,6 +1679,7 @@ async function chat(agent, messages, db, opts = {}) {
                 provider: attempt.provider,
                 memoryBindings,
                 memoryMode,
+                latestUserMessage,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Memory remember failed.');
@@ -1698,6 +1724,7 @@ async function chat(agent, messages, db, opts = {}) {
                 provider: attempt.provider,
                 memoryBindings,
                 memoryMode,
+                latestUserMessage,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Memory recall failed.');
@@ -1743,6 +1770,7 @@ async function chat(agent, messages, db, opts = {}) {
                 allowedSocialPlatforms,
                 allowedSocialAccountIds,
                 allowedSocialBrandIds,
+                latestUserMessage,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Social execution failed.');
@@ -1786,6 +1814,7 @@ async function chat(agent, messages, db, opts = {}) {
                 chatActionRunId: actionRun?.id || null,
                 model: attempt.model,
                 provider: attempt.provider,
+                latestUserMessage,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Sandbox execution failed.');
@@ -1862,6 +1891,7 @@ async function chat(agent, messages, db, opts = {}) {
                 chatActionRunId: actionRun?.id || null,
                 model: attempt.model,
                 provider: attempt.provider,
+                latestUserMessage,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Skill execution failed.');
@@ -1914,6 +1944,7 @@ async function chat(agent, messages, db, opts = {}) {
                   model: attempt.model,
                   provider: attempt.provider,
                   nexusNodeId,
+                  latestUserMessage,
                 });
                 if (actionResult && actionResult.success === false) {
                   throw new Error(actionResult.error || 'Nexus execution failed.');

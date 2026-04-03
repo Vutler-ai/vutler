@@ -11,7 +11,15 @@ async function executeNexusPlan(plan = {}, context = {}) {
   }
 
   const { executeNexusTool } = require('../nexusTools');
-  return executeNexusTool(nodeId, toolName, plan.params?.args || plan.input?.params || {}, {
+  const args = {
+    ...(plan.params?.args || plan.input?.params || {}),
+  };
+  const effectiveAgentId = args.agentId || args.agent_id || plan.selectedAgentId || plan.agentId || context.selectedAgentId || null;
+  if (effectiveAgentId && !args.agentId && !args.agent_id) {
+    args.agentId = effectiveAgentId;
+  }
+
+  return executeNexusTool(nodeId, toolName, args, {
     wsConnections: context.wsConnections || null,
     workspaceId: context.workspaceId || null,
     db: context.db || null,

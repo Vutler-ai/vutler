@@ -13,7 +13,7 @@
   },
   "email_outreach": {
     "name": "Email Outreach",
-    "description": "Compose and send personalized prospecting emails with dynamic fields, follow-up sequences, and open/click tracking",
+    "description": "Compose, draft, or send personalized emails. Send immediately when the user explicitly instructs you to do so; otherwise prepare a draft for review when needed.",
     "category": "sales",
     "icon": "mail"
   },

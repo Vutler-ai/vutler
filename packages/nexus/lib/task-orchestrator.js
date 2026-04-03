@@ -176,6 +176,27 @@ class TaskOrchestrator {
         return { content: provider.read() };
       }
 
+      case 'send_email':
+      case 'draft_email': {
+        const email = this.providers.workspaceEmail;
+        if (!email) throw new Error('Workspace email provider is unavailable');
+        this._require(params.to, 'params.to');
+        this._require(params.subject, 'params.subject');
+        this._require(params.body, 'params.body');
+
+        const payload = {
+          to: params.to,
+          subject: params.subject,
+          body: params.body,
+          htmlBody: params.htmlBody || params.html_body || null,
+          agentId: params.agentId || params.agent_id || null,
+        };
+
+        return action === 'send_email'
+          ? await email.sendEmail(payload)
+          : await email.draftEmail(payload);
+      }
+
       case 'list_emails':
       case 'search_emails': {
         const mail = this.providers.mail || require('./providers/mail').getMailProvider();

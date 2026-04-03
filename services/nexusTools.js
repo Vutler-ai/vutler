@@ -2,6 +2,7 @@
 
 const { randomUUID } = require('crypto');
 const { dispatchNodeAction } = require('./nexusCommandService');
+const { getNodeMode } = require('./nexusBilling');
 
 const TOOL_TIMEOUT_MS = 30000;
 const TOOL_CALL_TYPE = 'tool.call';
@@ -24,6 +25,34 @@ const SKILL_EXECUTION_TOOL = {
 
 const NEXUS_BASE_TOOLS = [
   SKILL_EXECUTION_TOOL,
+  {
+    name: 'send_email',
+    description: "Send an email immediately from the current agent's workspace email identity. Use this when the user explicitly tells you to send, reply, or forward an email now. Do not look up contacts if the email address is already provided.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient email address or comma-separated list.' },
+        subject: { type: 'string', description: 'Email subject line.' },
+        body: { type: 'string', description: 'Final plain-text email body.' },
+        htmlBody: { type: 'string', description: 'Optional HTML email body.' },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+  },
+  {
+    name: 'draft_email',
+    description: 'Create an email draft for later review or manual sending. Use this when the user asks for a draft, asks to review before sending, or does not clearly authorize immediate delivery.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient email address or comma-separated list.' },
+        subject: { type: 'string', description: 'Email subject line.' },
+        body: { type: 'string', description: 'Final plain-text email body.' },
+        htmlBody: { type: 'string', description: 'Optional HTML email body.' },
+      },
+      required: ['to', 'subject', 'body'],
+    },
+  },
   {
     name: 'search_files',
     description: "Search for files on the user's local computer by name or content.",
@@ -170,6 +199,63 @@ const NEXUS_TERMINAL_TOOLS = [
 
 const NEXUS_TOOLS = [...NEXUS_BASE_TOOLS, ...NEXUS_TERMINAL_TOOLS];
 const NEXUS_TOOL_NAMES = new Set(NEXUS_TOOLS.map((t) => t.name));
+const LOCAL_TERMINAL_TOOL_NAMES = new Set(NEXUS_TERMINAL_TOOLS.map((tool) => tool.name));
+const TOOL_GATES = {
+  send_email: {
+    runtime: 'workspace_email',
+  },
+  draft_email: {
+    runtime: 'workspace_email',
+  },
+  search_files: {
+    runtime: 'search',
+    localActions: ['search'],
+  },
+  read_document: {
+    runtime: 'documents',
+    localActions: ['read_document'],
+  },
+  list_directory: {
+    runtime: 'filesystem',
+    localActions: ['list_dir'],
+  },
+  read_emails: {
+    runtime: 'mail',
+    localActions: ['list_emails', 'search_emails'],
+  },
+  read_calendar: {
+    runtime: 'calendar',
+    localActions: ['read_calendar'],
+  },
+  read_contacts: {
+    runtime: 'contacts',
+    localActions: ['read_contacts', 'search_contacts'],
+  },
+  read_clipboard: {
+    runtime: 'clipboard',
+    localActions: ['read_clipboard'],
+  },
+  open_terminal_session: {
+    runtime: 'terminal',
+    localActions: ['terminal_open'],
+  },
+  exec_terminal_session: {
+    runtime: 'terminal',
+    localActions: ['terminal_exec'],
+  },
+  read_terminal_session: {
+    runtime: 'terminal',
+    localActions: ['terminal_read'],
+  },
+  snapshot_terminal_session: {
+    runtime: 'terminal',
+    localActions: ['terminal_snapshot'],
+  },
+  close_terminal_session: {
+    runtime: 'terminal',
+    localActions: ['terminal_close'],
+  },
+};
 
 // ── Tool name mapping: LLM tool name → Nexus orchestrator action ─────────────
 
@@ -177,6 +263,8 @@ function mapToolToNexus(toolName, args = {}) {
   const hasQuery = typeof args.query === 'string' && args.query.trim().length > 0;
   switch (toolName) {
     case 'execute_skill':  return 'execute_skill';
+    case 'send_email':    return 'send_email';
+    case 'draft_email':   return 'draft_email';
     case 'search_files':   return 'search';
     case 'read_document':  return 'read_document';
     case 'list_directory':  return 'list_dir';
@@ -218,19 +306,128 @@ function mapToolArgs(toolName, args = {}) {
   }
 }
 
-// ── DB lookup: find online Nexus node for workspace ──────────────────────────
+function normalizeStringArray(values) {
+  if (!Array.isArray(values)) return [];
+  return Array.from(new Set(
+    values
+      .filter((value) => value !== null && value !== undefined && value !== '')
+      .map((value) => String(value).trim())
+      .filter(Boolean)
+  ));
+}
 
-async function getOnlineNexusNode(workspaceId, pool) {
+function getNodeConsentState(node = null) {
+  return node?.config?.consent_state || node?.config?.consentState || null;
+}
+
+function getNodeDiscoverySnapshot(node = null) {
+  return node?.config?.discovery_snapshot || node?.config?.discoverySnapshot || null;
+}
+
+function buildLocalActionGate(node = null) {
+  const allowedActions = normalizeStringArray(node?.config?.permissions?.allowedActions);
+  if (allowedActions.length > 0) {
+    return {
+      restrictive: true,
+      actions: new Set(allowedActions),
+    };
+  }
+
+  const consentSources = getNodeConsentState(node)?.sources;
+  if (!consentSources || typeof consentSources !== 'object') {
+    return {
+      restrictive: false,
+      actions: new Set(),
+    };
+  }
+
+  const sourceEntries = Object.values(consentSources).filter((entry) => entry && typeof entry === 'object');
+  const configured = sourceEntries.some((entry) =>
+    entry.enabled
+    || (Array.isArray(entry.apps) && entry.apps.length > 0)
+    || (Array.isArray(entry.actions) && entry.actions.length > 0)
+    || (Array.isArray(entry.allowedFolders) && entry.allowedFolders.length > 0)
+  );
+  const consentActions = normalizeStringArray(
+    sourceEntries
+      .filter((entry) => entry.enabled)
+      .flatMap((entry) => entry.actions || [])
+  );
+
+  return {
+    restrictive: configured,
+    actions: new Set(consentActions),
+  };
+}
+
+function isWorkspaceBackedNode(node = null) {
+  return getNodeMode(node) === 'enterprise' || node?.type === 'docker';
+}
+
+function isLocalActionAllowed(gate, requiredActions = []) {
+  if (!Array.isArray(requiredActions) || requiredActions.length === 0) return true;
+  if (!gate?.restrictive) return true;
+  return requiredActions.some((action) => gate.actions.has(action));
+}
+
+function isRuntimeAvailable(node, runtimeKey, options = {}) {
+  const workspaceBacked = isWorkspaceBackedNode(node);
+  const discoveryProviders = getNodeDiscoverySnapshot(node)?.providers || {};
+  const discoveryEntry = runtimeKey ? discoveryProviders[runtimeKey] : null;
+
+  if (runtimeKey === 'workspace_email') {
+    if (!workspaceBacked) return false;
+    return options.emailCapabilityEffective !== false;
+  }
+
+  if (runtimeKey === 'mail') {
+    if (workspaceBacked) return options.workspaceMailAvailable !== false;
+    if (discoveryEntry && discoveryEntry.available === false) return false;
+    return true;
+  }
+
+  if (runtimeKey === 'calendar') {
+    if (workspaceBacked) return options.workspaceCalendarAvailable !== false;
+    if (discoveryEntry && discoveryEntry.available === false) return false;
+    return true;
+  }
+
+  if (runtimeKey === 'contacts') {
+    if (workspaceBacked) return options.workspaceContactsAvailable !== false;
+    if (discoveryEntry && discoveryEntry.available === false) return false;
+    return true;
+  }
+
+  if (discoveryEntry && discoveryEntry.available === false) {
+    return false;
+  }
+
+  return true;
+}
+
+async function getOnlineNexusNodeRecord(workspaceId, pool) {
   if (!pool) return null;
   try {
     const result = await pool.query(
-      "SELECT id, name FROM tenant_vutler.nexus_nodes WHERE workspace_id = $1 AND status = 'online' ORDER BY last_heartbeat DESC LIMIT 1",
+      `SELECT id, name, type, mode, config
+         FROM tenant_vutler.nexus_nodes
+        WHERE workspace_id = $1
+          AND status = 'online'
+        ORDER BY last_heartbeat DESC
+        LIMIT 1`,
       [workspaceId]
     );
-    return result.rows[0] ? { id: result.rows[0].id, name: result.rows[0].name } : null;
+    return result.rows[0] || null;
   } catch {
     return null;
   }
+}
+
+// ── DB lookup: find online Nexus node for workspace ──────────────────────────
+
+async function getOnlineNexusNode(workspaceId, pool) {
+  const node = await getOnlineNexusNodeRecord(workspaceId, pool);
+  return node ? { id: node.id, name: node.name } : null;
 }
 
 /**
@@ -238,11 +435,36 @@ async function getOnlineNexusNode(workspaceId, pool) {
  * Otherwise returns an empty array (agents won't see Nexus tools).
  */
 async function getNexusToolsForWorkspace(workspaceId, pool, options = {}) {
-  const node = await getOnlineNexusNode(workspaceId, pool);
+  const node = await getOnlineNexusNodeRecord(workspaceId, pool);
   if (!node) return [];
-  return options.allowTerminalSessions
-    ? [...NEXUS_TOOLS]
-    : [...NEXUS_BASE_TOOLS];
+  const localActionGate = buildLocalActionGate(node);
+  const visibleTools = options.allowTerminalSessions
+    ? NEXUS_TOOLS
+    : NEXUS_BASE_TOOLS;
+
+  return visibleTools.filter((tool) => {
+    if (tool.name === 'execute_skill') return true;
+
+    const gate = TOOL_GATES[tool.name];
+    if (!gate) return true;
+
+    if (LOCAL_TERMINAL_TOOL_NAMES.has(tool.name) && !options.allowTerminalSessions) {
+      return false;
+    }
+
+    if (!isRuntimeAvailable(node, gate.runtime, options)) {
+      return false;
+    }
+
+    const runtimeIsWorkspaceBackedPim = isWorkspaceBackedNode(node)
+      && (gate.runtime === 'mail' || gate.runtime === 'calendar' || gate.runtime === 'contacts');
+
+    if (runtimeIsWorkspaceBackedPim) {
+      return true;
+    }
+
+    return isLocalActionAllowed(localActionGate, gate.localActions);
+  });
 }
 
 // ── WebSocket dispatch: send tool.call to Nexus, wait for tool.result ────────

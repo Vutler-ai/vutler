@@ -182,6 +182,93 @@ It should distinguish at least:
 - consent denied
 - agent blocked by policy
 
+## Tool Exposure Rules
+
+### Effective Tools Only
+
+Kairos must not receive a tool only because a Nexus node is online.
+
+Tool exposure must be filtered by the runtime path actually available for that workspace run:
+
+- node presence
+- node mode
+- discovery snapshot
+- local consent and allowed actions
+- workspace capability availability
+- agent provisioning and policy when relevant
+
+This means:
+
+- local Nexus tools such as file search, document read, clipboard, mail, calendar, contacts, and terminal must shrink when the node discovery or consent model says they are not ready
+- workspace-backed Nexus tools such as agent email send/draft must only appear when the underlying workspace capability is effective for the current agent
+
+### Local Consent Contract
+
+For local Nexus tools, `allowedActions` or the structured consent model must be treated as a real execution contract, not just dashboard telemetry.
+
+If the node only consents to:
+
+- `search`
+- `read_document`
+
+then Kairos must not see unrelated tools such as:
+
+- `read_emails`
+- `read_contacts`
+- `read_clipboard`
+- `terminal_*`
+
+### Discovery Contract
+
+The discovery snapshot is a readiness input.
+
+If a provider is reported unavailable in the discovery snapshot, Kairos must not be offered the corresponding tool unless a workspace-backed runtime path explicitly replaces that local provider.
+
+Example:
+
+- a local node with `mail.available = false` must not expose `read_emails`
+- an enterprise or docker node may still expose workspace-backed mail tools if the workspace path is effective
+
+## Agent Email Execution Rules
+
+### Canonical Email Path
+
+When an agent has an effective email capability, the canonical send path is the agent email identity, not contact lookup and not generic mail-reader probing.
+
+The runtime actions are:
+
+- `send_email`
+- `draft_email`
+
+These actions must route through the workspace email path and preserve the selected agent identity.
+
+### Direct Send Rule
+
+If all of the following are true:
+
+- the user gives a direct send instruction
+- the recipient is already explicit
+- the agent email capability is effective
+
+then approval is implicit and Kairos should send immediately.
+
+Canonical product rule:
+
+- `direct send intent + explicit recipient + effective email capability => execute send_email immediately as the agent identity`
+
+### Draft Rule
+
+Kairos should prefer `draft_email` when:
+
+- the user explicitly asks for a draft
+- the user asks to review first
+- the recipient is still missing
+- runtime policy explicitly requires approval
+
+### Contact Lookup Rule
+
+If the recipient address is already explicit in the user request, Kairos must not call contacts lookup just to send the message.
+
 ## Connector Reality Table
 
 Current expected truth:

@@ -30,6 +30,79 @@ describe('nexusTools terminal support', () => {
     expect(terminalTools.some((tool) => tool.name === 'exec_terminal_session')).toBe(true);
   });
 
+  test('getNexusToolsForWorkspace filters local tools by consented actions and discovery readiness', async () => {
+    const { getNexusToolsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockResolvedValue({
+        rows: [{
+          id: 'node-1',
+          name: 'Nexus Node',
+          type: 'local',
+          mode: 'local',
+          config: {
+            permissions: {
+              allowedActions: ['search', 'read_document'],
+            },
+            discovery_snapshot: {
+              providers: {
+                search: { available: true },
+                documents: { available: true },
+                filesystem: { available: true },
+                mail: { available: false },
+                calendar: { available: true },
+                contacts: { available: true },
+                clipboard: { available: true },
+              },
+            },
+          },
+        }],
+      }),
+    };
+
+    const tools = await getNexusToolsForWorkspace('ws-1', db);
+    const names = tools.map((tool) => tool.name);
+
+    expect(names).toEqual(expect.arrayContaining(['search_files', 'read_document']));
+    expect(names).not.toContain('list_directory');
+    expect(names).not.toContain('read_emails');
+    expect(names).not.toContain('read_calendar');
+    expect(names).not.toContain('read_contacts');
+    expect(names).not.toContain('read_clipboard');
+  });
+
+  test('getNexusToolsForWorkspace only exposes workspace email tools when the agent email capability is effective', async () => {
+    const { getNexusToolsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockResolvedValue({
+        rows: [{
+          id: 'node-1',
+          name: 'Enterprise Node',
+          type: 'docker',
+          mode: 'enterprise',
+          config: {},
+        }],
+      }),
+    };
+
+    const disabledTools = await getNexusToolsForWorkspace('ws-1', db, {
+      emailCapabilityEffective: false,
+    });
+    const enabledTools = await getNexusToolsForWorkspace('ws-1', db, {
+      emailCapabilityEffective: true,
+      workspaceMailAvailable: true,
+      workspaceCalendarAvailable: true,
+      workspaceContactsAvailable: true,
+    });
+
+    expect(disabledTools.some((tool) => tool.name === 'send_email')).toBe(false);
+    expect(disabledTools.some((tool) => tool.name === 'draft_email')).toBe(false);
+    expect(enabledTools.some((tool) => tool.name === 'send_email')).toBe(true);
+    expect(enabledTools.some((tool) => tool.name === 'draft_email')).toBe(true);
+    expect(enabledTools.some((tool) => tool.name === 'read_emails')).toBe(true);
+    expect(enabledTools.some((tool) => tool.name === 'read_calendar')).toBe(true);
+    expect(enabledTools.some((tool) => tool.name === 'read_contacts')).toBe(true);
+  });
+
   test('executeNexusTool uses the Nexus command queue when db and workspace are provided', async () => {
     dispatchNodeActionMock.mockResolvedValue({
       queued: false,

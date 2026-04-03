@@ -38,12 +38,24 @@
     "params_schema": {
       "type": "object",
       "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["draft_message", "send_message"],
+          "description": "Use send_message when the user explicitly asks you to send now. Use draft_message when they only want a draft or review first."
+        },
         "recipient_email": { "type": "string", "format": "email" },
         "recipient_name": { "type": "string" },
         "subject": { "type": "string" },
+        "body": { "type": "string", "description": "Final email body to send or save as a draft." },
+        "content": { "type": "string", "description": "Alias for the final email body." },
+        "message": { "type": "string", "description": "Alias for the final email body." },
         "context": { "type": "string", "description": "Context for personalization" },
         "tone": { "type": "string", "enum": ["professional", "friendly", "direct"], "default": "professional" },
-        "sequence_step": { "type": "integer", "minimum": 1, "default": 1 }
+        "sequence_step": { "type": "integer", "minimum": 1, "default": 1 },
+        "send_immediately": {
+          "type": "boolean",
+          "description": "Set to true only when the user clearly instructed you to send immediately."
+        }
       },
       "required": ["recipient_email"]
     }
