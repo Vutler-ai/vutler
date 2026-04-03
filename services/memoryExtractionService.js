@@ -31,12 +31,42 @@ function buildMemory(scopeKey, type, visibility, importance, text, metadata = {}
   return { scopeKey, type, visibility, importance, text: compact, metadata };
 }
 
+function isEmailLike(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
+
 function getUserMemoryScope(userId, userName) {
   return userId || userName ? 'human' : 'instance';
 }
 
 function getConversationScope(userId, userName) {
   return userId || userName ? 'human_agent' : 'instance';
+}
+
+function extractUserIdentityMemories(userName, userId = null) {
+  const scopeKey = getUserMemoryScope(userId, userName);
+  const normalizedName = compactText(userName, 160);
+  if (!normalizedName) return [];
+
+  const label = isEmailLike(normalizedName)
+    ? `User contact: ${normalizedName}`
+    : `User display name: ${normalizedName}`;
+  const memory = buildMemory(
+    scopeKey,
+    'user_profile',
+    'reviewable',
+    0.82,
+    label,
+    {
+      memory_lane: 'user_profile',
+      source_kind: 'conversation',
+      user_id: userId || null,
+      user_name: userName || null,
+      signal: isEmailLike(normalizedName) ? 'contact' : 'identity',
+    }
+  );
+
+  return memory ? [memory] : [];
 }
 
 function extractUserProfileMemoriesFromText(userText, userName, userId = null) {
@@ -113,6 +143,7 @@ function deriveMemoriesFromConversation({ userMessage, assistantMessage, userId,
   const userText = compactText(userMessage, 500);
   const assistantText = compactText(assistantMessage, 500);
   const memories = [];
+  memories.push(...extractUserIdentityMemories(userName, userId));
   memories.push(...extractUserProfileMemoriesFromText(userText, userName, userId));
 
   const decisionSource = [userText, assistantText].find((text) => /(decision|décision|we will|we'll|on utilise|always use|standard|policy|default|desormais|désormais|dorénavant)/i.test(text));
@@ -270,6 +301,7 @@ async function recordToolObservation({ db, workspaceId, agent, toolName, args, r
 
 module.exports = {
   compactText,
+  extractUserIdentityMemories,
   extractUserProfileMemoriesFromText,
   extractUserProfileMemoriesFromMessages,
   inferDecisionScope,

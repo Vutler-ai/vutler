@@ -14,6 +14,7 @@ const {
   deriveMemoriesFromConversation,
   deriveTaskEpisodeMemory,
   deriveToolObservationMemory,
+  extractUserIdentityMemories,
   extractUserProfileMemoriesFromMessages,
   inferDecisionScope,
   extractConversationMemories,
@@ -48,6 +49,17 @@ describe('memoryExtractionService', () => {
     expect(memories.some((memory) => memory.type === 'user_profile' && /Mike/.test(memory.text))).toBe(true);
     expect(memories.every((memory) => memory.scopeKey === 'human')).toBe(true);
     expect(memories.some((memory) => memory.type === 'user_profile' && /timezone/i.test(memory.text))).toBe(true);
+  });
+
+  test('builds a minimal identity memory from sender identity', () => {
+    const memories = extractUserIdentityMemories('alex@starbox-group.com', 'user-1');
+
+    expect(memories).toHaveLength(1);
+    expect(memories[0]).toMatchObject({
+      scopeKey: 'human',
+      type: 'user_profile',
+    });
+    expect(memories[0].text).toContain('alex@starbox-group.com');
   });
 
   test('creates internal task episode memory from completed task output', () => {
