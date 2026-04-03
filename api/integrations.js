@@ -14,6 +14,7 @@ const {
   assertTableExists,
   runtimeSchemaMutationsAllowed,
 } = require('../lib/schemaReadiness');
+const { resolveAgentCapabilityMatrix } = require('../services/agentCapabilityMatrixService');
 const googleApi = require('../services/google/googleApi');
 const microsoftGraphApi = require('../services/microsoft/graphApi');
 
@@ -125,6 +126,12 @@ const CONNECTOR_CAPABILITIES_BY_PROVIDER = {
     { key: 'publishing', label: 'Publishing', description: 'Publishing and account sync are wired through the Post for Me path.' },
     { key: 'analytics', label: 'Analytics', description: 'Detailed analytics and engagement workflows are not wired yet.', status: 'unsupported' },
   ],
+};
+const CONNECTOR_AGENT_CAPABILITY_MAP = {
+  google: ['email', 'calendar', 'drive'],
+  jira: ['tasks'],
+  microsoft365: ['email', 'calendar'],
+  social_media: ['social'],
 };
 
 // In-memory store for pending device auth sessions: workspaceId → { device_auth_id, user_code, interval, expires_at }
@@ -1760,6 +1767,79 @@ function buildRuntimeState({ row, readiness, health, capabilities }) {
   };
 }
 
+function buildProviderOverrideMap(rows = []) {
+  const providersWithOverrides = new Set();
+  const allowedProviders = new Set();
+
+  for (const row of rows) {
+    if (!row?.provider) continue;
+    providersWithOverrides.add(row.provider);
+    if (row.has_access) {
+      allowedProviders.add(row.provider);
+    }
+  }
+
+  return { providersWithOverrides, allowedProviders };
+}
+
+function buildAgentConnectorState({
+  integration,
+  relatedCapabilities = [],
+  providerAllowed = true,
+  hasProviderOverride = false,
+  matrix,
+}) {
+  const capabilityStates = relatedCapabilities
+    .map((key) => matrix?.capabilities?.[key])
+    .filter(Boolean);
+
+  const workspaceAvailable = Boolean(integration.connected);
+  const agentAllowed = capabilityStates.length > 0
+    ? capabilityStates.some((state) => state.agent_allowed) && providerAllowed
+    : providerAllowed;
+  const provisioned = capabilityStates.length > 0
+    ? capabilityStates.some((state) => state.provisioned)
+    : workspaceAvailable;
+  const effective = workspaceAvailable
+    && agentAllowed
+    && provisioned
+    && integration.readiness !== 'coming_soon'
+    && integration.status !== 'failed';
+
+  let reason = null;
+  if (!workspaceAvailable) {
+    reason = 'This workspace has not connected the provider yet.';
+  } else if (hasProviderOverride && !providerAllowed) {
+    reason = 'This provider is explicitly disabled for this agent through the legacy provider override list.';
+  } else if (capabilityStates.length > 0 && !capabilityStates.some((state) => state.agent_allowed)) {
+    reason = capabilityStates.find((state) => !state.agent_allowed)?.reason || 'Agent access policy blocks the related runtime capability.';
+  } else if (capabilityStates.length > 0 && !capabilityStates.some((state) => state.provisioned)) {
+    reason = capabilityStates.find((state) => !state.provisioned)?.reason || 'The related runtime capability is not provisioned for this agent.';
+  } else if (integration.readiness === 'coming_soon') {
+    reason = integration.readiness_description;
+  } else if (integration.status === 'failed') {
+    reason = 'The latest validation for this connector failed.';
+  } else if (integration.status === 'degraded') {
+    reason = 'The connector is available, but only a subset of its runtime paths validated successfully.';
+  } else if (capabilityStates.length > 0) {
+    const effectiveCapabilities = relatedCapabilities.filter((key) => matrix?.capabilities?.[key]?.effective);
+    reason = effectiveCapabilities.length > 0
+      ? `Effective through ${effectiveCapabilities.join(', ')}.`
+      : 'The connector is connected, but no linked runtime capability is effective yet.';
+  } else {
+    reason = 'No dedicated agent capability gate is modeled for this connector yet; treat it as a workspace-scoped tool path.';
+  }
+
+  return {
+    workspace_available: workspaceAvailable,
+    agent_allowed: agentAllowed,
+    provisioned,
+    effective,
+    reason,
+    scope: relatedCapabilities.length > 0 ? { capabilities: relatedCapabilities } : null,
+  };
+}
+
 async function persistJiraIntegrationConnection({
   workspaceId,
   normalizedUrl,
@@ -2124,6 +2204,109 @@ router.delete('/:provider', async (req, res) => {
     res.json({ success: true, message: `${provider} removed from workspace` });
   } catch (err) {
     console.error('[INTEGRATIONS] Delete error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/agent/:agentId/readiness
+router.get('/agent/:agentId/readiness', async (req, res) => {
+  try {
+    await ensureReady();
+    const workspaceId = getWorkspaceId(req);
+    const { agentId } = req.params;
+
+    const agentResult = await pool.query(
+      `SELECT id, name, type, capabilities, config
+       FROM ${SCHEMA}.agents
+       WHERE workspace_id = $1 AND id = $2::uuid
+       LIMIT 1`,
+      [workspaceId, agentId]
+    );
+
+    if (agentResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Agent not found' });
+    }
+
+    const matrix = await resolveAgentCapabilityMatrix({
+      workspaceId,
+      agent: agentResult.rows[0],
+      db: pool,
+    });
+
+    const integrationsResult = await pool.query(
+      `SELECT
+        c.provider,
+        c.name,
+        c.description,
+        c.icon,
+        COALESCE(wi.connected, FALSE) AS connected,
+        COALESCE(wi.status, 'disconnected') AS status,
+        wi.connected_at
+      FROM ${SCHEMA}.integrations_catalog c
+      LEFT JOIN ${SCHEMA}.workspace_integrations wi
+        ON wi.provider = c.provider AND wi.workspace_id = $1
+      WHERE c.is_enabled = TRUE
+        AND c.source = 'internal'
+      ORDER BY c.name ASC`,
+      [workspaceId]
+    );
+
+    const overridesResult = await pool.query(
+      `SELECT provider, has_access
+       FROM ${SCHEMA}.workspace_integration_agents
+       WHERE workspace_id = $1
+         AND agent_id = $2::uuid`,
+      [workspaceId, agentId]
+    );
+    const { providersWithOverrides, allowedProviders } = buildProviderOverrideMap(overridesResult.rows);
+
+    const connectors = integrationsResult.rows.map((row) => {
+      const readiness = getConnectorReadiness(row.provider);
+      const accessModel = getConnectorAccessModel(row.provider);
+      const relatedCapabilities = CONNECTOR_AGENT_CAPABILITY_MAP[row.provider] || [];
+      const providerAllowed = providersWithOverrides.has(row.provider)
+        ? allowedProviders.has(row.provider)
+        : true;
+
+      return {
+        provider: row.provider,
+        name: row.name,
+        icon: row.icon,
+        description: row.description,
+        connected: row.connected,
+        status: row.status,
+        connected_at: row.connected_at,
+        readiness: readiness.readiness,
+        readiness_label: readiness.label,
+        readiness_description: readiness.description,
+        access_model: accessModel.access_model,
+        access_model_label: accessModel.label,
+        access_model_description: accessModel.description,
+        related_capabilities: relatedCapabilities,
+        state: buildAgentConnectorState({
+          integration: {
+            connected: row.connected,
+            status: row.status,
+            readiness: readiness.readiness,
+            readiness_description: readiness.description,
+          },
+          relatedCapabilities,
+          providerAllowed,
+          hasProviderOverride: providersWithOverrides.has(row.provider),
+          matrix,
+        }),
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        agent_id: agentId,
+        connectors,
+      },
+    });
+  } catch (err) {
+    console.error('[INTEGRATIONS] Agent readiness error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

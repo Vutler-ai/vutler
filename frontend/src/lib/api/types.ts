@@ -1638,6 +1638,29 @@ export interface IntegrationDetail extends Integration {
   webhook_url?: string;
 }
 
+export interface AgentIntegrationReadinessEntry {
+  provider: string;
+  name: string;
+  icon: string;
+  description: string;
+  connected: boolean;
+  status: string;
+  connected_at?: string;
+  readiness: IntegrationReadiness;
+  readiness_label: string;
+  readiness_description: string;
+  access_model: IntegrationAccessModel;
+  access_model_label: string;
+  access_model_description: string;
+  related_capabilities: AgentCapabilityKey[];
+  state: AgentCapabilityState;
+}
+
+export interface AgentIntegrationReadinessPayload {
+  agent_id: string;
+  connectors: AgentIntegrationReadinessEntry[];
+}
+
 export interface AvailableProvider {
   provider: string;
   name: string;
