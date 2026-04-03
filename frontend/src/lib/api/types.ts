@@ -964,6 +964,7 @@ export interface NexusNode {
   agents?: NexusAgentStatus[];
   seats?: NexusSeatsInfo;
   providerSources?: Record<string, NexusProviderSource>;
+  discoverySnapshot?: NexusDiscoverySnapshot;
   poolAgentIds?: string[];
 }
 
@@ -1335,6 +1336,42 @@ export interface NexusCommandStatus<T = unknown> {
 export interface NexusProviderSource {
   active: string;
   fallbacks: string[];
+}
+
+export interface NexusDiscoveryApp {
+  key: string;
+  label: string;
+  location?: string;
+}
+
+export interface NexusDiscoveryFolder {
+  key: string;
+  label: string;
+  path: string;
+}
+
+export interface NexusDiscoveryProviderState {
+  available: boolean;
+  source: string;
+  reason: string;
+}
+
+export interface NexusDiscoverySnapshot {
+  collectedAt: string;
+  platform: string;
+  hostname?: string;
+  homeDirectory?: string;
+  detectedApps: NexusDiscoveryApp[];
+  syncedFolders: NexusDiscoveryFolder[];
+  providers: Record<string, NexusDiscoveryProviderState>;
+  summary: {
+    detectedApps: number;
+    syncedFolders: number;
+    readyProviders: number;
+    totalProviders: number;
+  };
+  persistedAt?: string;
+  lastCommandId?: string;
 }
 
 export interface NexusSearchResult {

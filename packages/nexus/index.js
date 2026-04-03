@@ -97,6 +97,7 @@ class NexusNode {
     this.enterprisePolicyEngine = new EnterprisePolicyEngine(this.profileRegistry);
     this.localIntegrationBridge = new LocalIntegrationBridge(this.providers);
     this.enterpriseActionExecutor = new EnterpriseActionExecutor(this.providers);
+    this.discoverySnapshot = opts.discovery_snapshot || opts.discoverySnapshot || null;
     this._syncPermissionSnapshot();
 
     // Offline monitor (enterprise only)
@@ -407,6 +408,10 @@ class NexusNode {
       );
       error.result = result;
       throw error;
+    }
+
+    if (action === 'discover_local_runtime' && result.status === 'completed') {
+      this.discoverySnapshot = result.data?.snapshot || null;
     }
 
     return result;

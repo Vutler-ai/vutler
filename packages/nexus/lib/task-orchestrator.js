@@ -8,7 +8,7 @@ const MAX_RESULT_BYTES    = 1 * 1024 * 1024; // 1 MB
 const PROGRESS_INTERVAL_MS = 2_000;
 
 // Actions that can take long enough to warrant progress updates
-const LONG_RUNNING_ACTIONS = new Set(['search', 'read_document', 'shell_exec', 'terminal_exec']);
+const LONG_RUNNING_ACTIONS = new Set(['search', 'read_document', 'shell_exec', 'terminal_exec', 'discover_local_runtime']);
 
 /**
  * TaskOrchestrator — validates incoming task messages and routes them to the
@@ -206,6 +206,17 @@ class TaskOrchestrator {
         const { getLocalSkillExecutor } = require('./skill-executor');
         const executor = getLocalSkillExecutor(this.providers);
         return executor.execute(params.skill_key, params);
+      }
+
+      case 'discover_local_runtime': {
+        const { buildLocalDiscoverySnapshot } = require('./providers/discovery');
+        this._emitProgress(taskId, action, {
+          stage: 'discovering',
+          message: 'Inspecting local apps, synced folders, and Nexus provider readiness',
+        }, onProgress);
+        return {
+          snapshot: buildLocalDiscoverySnapshot({ providers: this.providers }),
+        };
       }
 
       default: {

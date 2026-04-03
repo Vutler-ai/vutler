@@ -439,6 +439,114 @@ function mapNode(row) {
   };
 }
 
+function normalizeDiscoverySnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+
+  const detectedApps = Array.isArray(snapshot.detectedApps)
+    ? snapshot.detectedApps
+      .filter((app) => app && typeof app === 'object')
+      .map((app) => ({
+        key: typeof app.key === 'string' ? app.key : 'app',
+        label: typeof app.label === 'string' ? app.label : 'App',
+        location: typeof app.location === 'string' ? app.location : undefined,
+      }))
+    : [];
+
+  const syncedFolders = Array.isArray(snapshot.syncedFolders)
+    ? snapshot.syncedFolders
+      .filter((folder) => folder && typeof folder === 'object')
+      .map((folder) => ({
+        key: typeof folder.key === 'string' ? folder.key : 'folder',
+        label: typeof folder.label === 'string' ? folder.label : 'Folder',
+        path: typeof folder.path === 'string' ? folder.path : '',
+      }))
+      .filter((folder) => folder.path)
+    : [];
+
+  const providers = Object.fromEntries(
+    Object.entries(snapshot.providers || {})
+      .filter(([, provider]) => provider && typeof provider === 'object')
+      .map(([key, provider]) => [
+        key,
+        {
+          available: provider.available !== false,
+          source: typeof provider.source === 'string' ? provider.source : 'local_runtime',
+          reason: typeof provider.reason === 'string'
+            ? provider.reason
+            : provider.available !== false
+              ? 'Available'
+              : 'Unavailable',
+        },
+      ])
+  );
+
+  const readyProviders = Object.values(providers).filter((provider) => provider.available).length;
+
+  return {
+    collectedAt: typeof snapshot.collectedAt === 'string' ? snapshot.collectedAt : new Date().toISOString(),
+    platform: typeof snapshot.platform === 'string' ? snapshot.platform : 'unknown',
+    hostname: typeof snapshot.hostname === 'string' ? snapshot.hostname : undefined,
+    homeDirectory: typeof snapshot.homeDirectory === 'string' ? snapshot.homeDirectory : undefined,
+    detectedApps,
+    syncedFolders,
+    providers,
+    summary: {
+      detectedApps: detectedApps.length,
+      syncedFolders: syncedFolders.length,
+      readyProviders,
+      totalProviders: Object.keys(providers).length,
+    },
+  };
+}
+
+function getNodeDiscoverySnapshot(node) {
+  return normalizeDiscoverySnapshot(
+    node?.config?.discovery_snapshot
+    || node?.config?.discoverySnapshot
+    || null
+  );
+}
+
+function extractDiscoverySnapshot(commandResult) {
+  return normalizeDiscoverySnapshot(
+    commandResult?.data?.snapshot
+    || commandResult?.snapshot
+    || null
+  );
+}
+
+async function persistNodeDiscoverySnapshot({
+  workspaceId,
+  nodeId,
+  snapshot,
+  commandId = null,
+}) {
+  const normalized = normalizeDiscoverySnapshot(snapshot);
+  if (!normalized) return null;
+
+  const persistedSnapshot = {
+    ...normalized,
+    persistedAt: new Date().toISOString(),
+    lastCommandId: commandId || undefined,
+  };
+
+  const updated = await pool.query(
+    `UPDATE ${SCHEMA}.nexus_nodes
+        SET config = COALESCE(config, '{}'::jsonb) || $3::jsonb,
+            updated_at = NOW()
+      WHERE id::text = $1
+        AND workspace_id = $2
+      RETURNING config`,
+    [
+      nodeId,
+      workspaceId,
+      JSON.stringify({ discovery_snapshot: persistedSnapshot }),
+    ]
+  );
+
+  return getNodeDiscoverySnapshot(updated.rows[0] || { config: { discovery_snapshot: persistedSnapshot } });
+}
+
 function mapNodeListItem(row) {
   const node = mapNode(row);
   return {
@@ -1895,7 +2003,7 @@ router.post('/:nodeId/commands/:commandId/result', async (req, res) => {
           AND workspace_id = $2
           AND node_id = $7::uuid
           AND status IN ('queued', 'in_progress')
-        RETURNING id`,
+        RETURNING id, command_type, payload`,
       [
         commandId,
         workspaceId,
@@ -1909,6 +2017,23 @@ router.post('/:nodeId/commands/:commandId/result', async (req, res) => {
 
     if (!updated.rows.length) {
       return res.status(409).json({ success: false, error: 'Command is no longer claimable' });
+    }
+
+    const command = updated.rows[0];
+    if (
+      safeStatus === 'completed'
+      && command.command_type === 'dispatch_action'
+      && command.payload?.action === 'discover_local_runtime'
+    ) {
+      const snapshot = extractDiscoverySnapshot(result);
+      if (snapshot) {
+        await persistNodeDiscoverySnapshot({
+          workspaceId,
+          nodeId,
+          snapshot,
+          commandId,
+        });
+      }
     }
 
     res.json({ success: true, commandId, status: safeStatus });
@@ -2384,6 +2509,7 @@ router.get('/nodes/:id', async (req, res) => {
         clientName: mapped.clientName || undefined,
         poolAgentIds: Array.isArray(mapped.config?.available_pool) ? mapped.config.available_pool : [],
         providerSources,
+        discoverySnapshot: getNodeDiscoverySnapshot(node),
         recentActivity: commandsRes.rows.map((row) => ({
           id: row.id,
           message: describeNodeCommand(row),
@@ -2721,4 +2847,8 @@ function buildNodeCapabilitiesPayload(node, providerSources = {}) {
 module.exports = router;
 router._private = {
   buildNodeCapabilitiesPayload,
+  normalizeDiscoverySnapshot,
+  getNodeDiscoverySnapshot,
+  extractDiscoverySnapshot,
+  persistNodeDiscoverySnapshot,
 };

@@ -35,6 +35,7 @@ import type {
   NexusCommandStatus,
   NexusCommandStats,
   NexusProviderSource,
+  NexusDiscoverySnapshot,
   NexusEnterpriseEventSubscription,
   NexusEnterpriseEventSubscriptionProvider,
   NexusEnterpriseProvisioningMode,
@@ -68,6 +69,7 @@ interface NodeDetail {
   clientName?: string;
   poolAgentIds?: string[];
   providerSources?: Record<string, NexusProviderSource>;
+  discoverySnapshot?: NexusDiscoverySnapshot;
 }
 
 type ActionType =
@@ -2116,6 +2118,225 @@ function CapabilitiesCard({ nodeId }: { nodeId: string }) {
   );
 }
 
+function DiscoverySnapshotCard({
+  node,
+  onDiscoveryUpdated,
+}: {
+  node: NodeDetail;
+  onDiscoveryUpdated?: () => void;
+}) {
+  const snapshot = node.discoverySnapshot || null;
+  const [command, setCommand] = useState<NexusCommandStatus<NexusDispatchResult<{ snapshot: NexusDiscoverySnapshot }>> | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!command?.id) return undefined;
+    if (!['queued', 'in_progress'].includes(command.status)) return undefined;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const next = await getNodeCommand<NexusDispatchResult<{ snapshot: NexusDiscoverySnapshot }>>(node.id, command.id);
+        if (cancelled) return;
+        setCommand(next);
+
+        if (next.status === 'completed') {
+          setRunning(false);
+          setError('');
+          onDiscoveryUpdated?.();
+        } else if (next.status === 'failed' || next.status === 'expired') {
+          setRunning(false);
+          setError(next.error || 'Discovery run failed');
+          onDiscoveryUpdated?.();
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setRunning(false);
+        setError(err instanceof Error ? err.message : 'Failed to read discovery status');
+      }
+    };
+
+    poll();
+    const timer = window.setInterval(poll, 1200);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [command?.id, command?.status, node.id, onDiscoveryUpdated]);
+
+  const handleRun = async () => {
+    setRunning(true);
+    setError('');
+    try {
+      const queued = await queueDispatchAction(node.id, 'discover_local_runtime', {});
+      setCommand(queued as NexusCommandStatus<NexusDispatchResult<{ snapshot: NexusDiscoverySnapshot }>>);
+    } catch (err) {
+      setRunning(false);
+      setError(err instanceof Error ? err.message : 'Failed to start discovery run');
+    }
+  };
+
+  const providerEntries = snapshot
+    ? Object.entries(snapshot.providers).sort(([left], [right]) => left.localeCompare(right))
+    : [];
+
+  const latestCollectedAt = snapshot?.persistedAt || snapshot?.collectedAt;
+  const progressMessage = command?.progress?.message
+    || (command?.status === 'queued'
+      ? 'Discovery queued in the Nexus command channel'
+      : command?.status === 'in_progress'
+        ? 'Discovery is running on the client machine'
+        : '');
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider">Discovery</h2>
+          <p className="text-xs text-[#6b7280] mt-1">
+            Inspect installed apps, synced folders, and local provider readiness on this client machine.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleRun}
+          disabled={running || node.status !== 'online'}
+          className="px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0a0b14] text-sm text-white disabled:opacity-50 disabled:cursor-not-allowed hover:border-[#3b82f6] transition-colors"
+        >
+          {running ? 'Running discovery…' : 'Run discovery'}
+        </button>
+      </div>
+
+      {node.status !== 'online' && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          The node is offline. Bring it back online before launching a new discovery run.
+        </div>
+      )}
+
+      {progressMessage && (
+        <div className="rounded-lg border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-200">
+          {progressMessage}
+        </div>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-400">{error}</p>
+      )}
+
+      {!snapshot && (
+        <div className="rounded-xl border border-dashed border-[rgba(255,255,255,0.08)] bg-[#0a0b14] px-4 py-5 text-sm text-[#6b7280]">
+          No discovery snapshot has been captured for this node yet.
+        </div>
+      )}
+
+      {snapshot && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Platform</p>
+              <p className="mt-1 text-sm text-white">{formatProviderLabel(snapshot.platform)}</p>
+            </div>
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Apps</p>
+              <p className="mt-1 text-sm text-white">{snapshot.summary.detectedApps}</p>
+            </div>
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Synced folders</p>
+              <p className="mt-1 text-sm text-white">{snapshot.summary.syncedFolders}</p>
+            </div>
+            <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Ready providers</p>
+              <p className="mt-1 text-sm text-white">
+                {snapshot.summary.readyProviders}/{snapshot.summary.totalProviders}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[#6b7280]">
+            {snapshot.hostname && <span>Host: <span className="text-[#d1d5db]">{snapshot.hostname}</span></span>}
+            {latestCollectedAt && <span>Last run: <span className="text-[#d1d5db]">{formatDateTime(latestCollectedAt)}</span></span>}
+          </div>
+
+          <div>
+            <p className="text-xs text-[#6b7280] mb-2">Local provider readiness</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {providerEntries.map(([provider, state]) => (
+                <div
+                  key={provider}
+                  className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-white">{formatProviderLabel(provider)}</p>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[11px] border ${
+                        state.available
+                          ? 'bg-emerald-900/20 text-emerald-300 border-emerald-500/30'
+                          : 'bg-red-900/20 text-red-300 border-red-500/30'
+                      }`}
+                    >
+                      {state.available ? 'Ready' : 'Unavailable'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[#9ca3af]">
+                    Source: {formatProviderLabel(state.source)}
+                  </p>
+                  <p className="mt-1 text-xs text-[#6b7280]">{state.reason}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs text-[#6b7280] mb-2">Detected apps</p>
+              {snapshot.detectedApps.length === 0 ? (
+                <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2 text-xs text-[#6b7280]">
+                  No known desktop apps were detected by the current probe.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {snapshot.detectedApps.map((app) => (
+                    <div
+                      key={`${app.key}-${app.location || app.label}`}
+                      className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2"
+                    >
+                      <p className="text-sm text-white">{app.label}</p>
+                      {app.location && <p className="mt-1 text-xs text-[#6b7280] font-mono break-all">{app.location}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <p className="text-xs text-[#6b7280] mb-2">Synced folders</p>
+              {snapshot.syncedFolders.length === 0 ? (
+                <div className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2 text-xs text-[#6b7280]">
+                  No common synced folders were detected on this machine.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {snapshot.syncedFolders.map((folder) => (
+                    <div
+                      key={`${folder.key}-${folder.path}`}
+                      className="rounded-lg border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-3 py-2"
+                    >
+                      <p className="text-sm text-white">{folder.label}</p>
+                      <p className="mt-1 text-xs text-[#6b7280] font-mono break-all">{folder.path}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RuntimeObservabilityCard({
   summary,
   commands,
@@ -2375,6 +2596,14 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
 
       {/* Capabilities */}
       <CapabilitiesCard nodeId={id} />
+
+      <DiscoverySnapshotCard
+        node={node}
+        onDiscoveryUpdated={() => {
+          fetchNode();
+          fetchCommandHistory();
+        }}
+      />
 
       <RuntimeObservabilityCard summary={commandSummary} commands={commandHistory} />
 
