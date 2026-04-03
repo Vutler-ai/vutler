@@ -34,6 +34,7 @@ class NexusNode {
     if (opts.providers !== false) {
       const { FilesystemProvider } = require('./lib/providers/filesystem');
       const { ShellProvider } = require('./lib/providers/shell');
+      const { TerminalSessionProvider } = require('./lib/providers/terminal-session');
       const { EnvProvider } = require('./lib/providers/env');
       const { NetworkProvider } = require('./lib/providers/network');
       const { LLMProvider } = require('./lib/providers/llm');
@@ -43,6 +44,9 @@ class NexusNode {
       const perms = this.permissions;
       this.providers.fs = new FilesystemProvider(perms.filesystem || {});
       this.providers.shell = new ShellProvider(perms.shell || {});
+      this.providers.terminal = new TerminalSessionProvider(perms.shell || {}, {
+        defaultCwd: this.filesystemRoot || undefined,
+      });
       this.providers.env = new EnvProvider(perms.env || {});
       this.providers.network = new NetworkProvider(perms.network || {});
       this.providers.llm = new LLMProvider(opts.llm || {});
@@ -196,6 +200,7 @@ class NexusNode {
     if (this.commandTimer) clearInterval(this.commandTimer);
     if (this.healthServer) this.healthServer.close();
     if (this.offlineMonitor) this.offlineMonitor.stop();
+    this.providers.terminal?.shutdown?.();
     if (this.nodeId) {
       await this._apiCall('DELETE', `/api/v1/nexus/${this.nodeId}`);
     }

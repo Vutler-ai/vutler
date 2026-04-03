@@ -8,6 +8,7 @@ const { resolveMemoryMode } = require('./memory/modeResolver');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const { resolveAgentRuntimeIntegrations, getSkillKeysForIntegrationProviders } = require('./agentIntegrationService');
+const { isSandboxEligibleAgentType } = require('./agentTypeProfiles');
 const {
   resolveLegacyWorkspaceProvider,
   syncLegacyWorkspaceProviders,
@@ -1436,6 +1437,8 @@ async function chat(agent, messages, db, opts = {}) {
     ...overlayDerivedSkillKeys,
     ...(Array.isArray(integrationAccess?.derivedSkillKeys) ? integrationAccess.derivedSkillKeys : []),
   ]);
+  const hasNexusTerminalAccess = isSandboxEligibleAgentType(agent?.type)
+    && rawAgentSkillKeys.includes('code_execution');
   const agentSkillKeys = normalizeCapabilities(
     filterProvisionedSkillKeys(
       filterAvailableSkillKeys(rawAgentSkillKeys, runtimeCapabilityAvailability),
@@ -1473,6 +1476,23 @@ async function chat(agent, messages, db, opts = {}) {
   const hasSocialMediaAccess = isProviderAvailable(runtimeCapabilityAvailability, 'social_media')
     && (Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess || hasOverlaySocialAccess);
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
+  let nexusTools = [];
+  let nexusNodeId = null;
+  if (workspaceId) {
+    try {
+      const { getNexusToolsForWorkspace, getOnlineNexusNode } = require('./nexusTools');
+      const onlineNexusNode = await getOnlineNexusNode(workspaceId, db);
+      nexusNodeId = onlineNexusNode?.id || null;
+      if (nexusNodeId) {
+        nexusTools = await getNexusToolsForWorkspace(workspaceId, db, {
+          allowTerminalSessions: hasNexusTerminalAccess,
+        });
+      }
+    } catch (_) {
+      nexusTools = [];
+      nexusNodeId = null;
+    }
+  }
   const allowedSocialPlatforms = hasSocialMediaAccess
     && Array.isArray(integrationAccess?.allowedSocialPlatforms) && integrationAccess.allowedSocialPlatforms.length > 0
     ? integrationAccess.allowedSocialPlatforms
@@ -1508,6 +1528,9 @@ async function chat(agent, messages, db, opts = {}) {
   }
   if (hasCodeExecution) {
     effectiveSystemPrompt += '\n\nYou can execute short JavaScript or Python snippets with run_code_in_sandbox(). Use it when a result depends on actual code execution, computation, parsing, or validation. Prefer concise snippets, avoid unnecessary execution, and never assume shell or host access.';
+  }
+  if (nexusTools.some((tool) => tool.name === 'open_terminal_session')) {
+    effectiveSystemPrompt += '\n\nYou can manage persistent terminal sessions on the connected Nexus node. Open one session, keep the returned session_id, reuse it across commands in the same cwd, read incremental output with the cursor, snapshot when you need cwd/closed state, and close the session when finished.';
   }
   if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += `\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is ${effectiveDriveRoot}. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under ${effectiveDriveRoot} instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.`;
@@ -1588,19 +1611,6 @@ async function chat(agent, messages, db, opts = {}) {
       const MAX_TOOL_ITERATIONS = 3;
 
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-        // Inject Nexus local tools when a node is online for this workspace
-        let nexusTools = [];
-        let nexusNodeId = null;
-        if (opts.wsConnections && workspaceId) {
-          try {
-            const { getNexusToolsForWorkspace, getOnlineNexusNode } = require('./nexusTools');
-            nexusTools = await getNexusToolsForWorkspace(workspaceId, db);
-            if (nexusTools.length > 0) {
-              const node = await getOnlineNexusNode(workspaceId, db);
-              nexusNodeId = node?.id || null;
-            }
-          } catch (_) { /* nexusTools not available — skip */ }
-        }
         // Inject skill tools when the agent has skills configured
         let skillTools = [];
         if (agentSkillKeys.length > 0) {
@@ -1879,7 +1889,7 @@ async function chat(agent, messages, db, opts = {}) {
             continueLoop = true;
 
           // ── Nexus tool execution (local node bridge) ──────────────────
-          } else if (nexusNodeId && opts.wsConnections) {
+          } else if (nexusNodeId) {
             const { NEXUS_TOOL_NAMES } = require('./nexusTools');
             if (NEXUS_TOOL_NAMES.has(toolCall.name)) {
               const agentName = agent?.name || agent?.username || 'agent';

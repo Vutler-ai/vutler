@@ -741,6 +741,73 @@ function describeNodeCommand(row) {
   return `${row.command_type}${action} ${row.status}`;
 }
 
+function shouldWaitForNodeDispatch(req) {
+  return !(
+    req.query.wait === '0'
+    || req.query.wait === 'false'
+    || req.body?.wait === false
+  );
+}
+
+function buildQueuedCommandResponse(command) {
+  return {
+    success: true,
+    queued: true,
+    commandId: command.id,
+    command: mapNodeCommand(command),
+  };
+}
+
+async function dispatchNodeAction({
+  workspaceId,
+  nodeId,
+  action,
+  args = {},
+  userId = null,
+  timing = {},
+  wait = true,
+}) {
+  const command = await enqueueNodeCommand({
+    workspaceId,
+    nodeId,
+    commandType: 'dispatch_action',
+    payload: { action, args },
+    userId,
+    timing,
+  });
+
+  if (!wait) {
+    return { queued: true, command, done: null };
+  }
+
+  const done = await waitForNodeCommand(workspaceId, command.id);
+  if (!done) {
+    return { queued: true, command, done: null };
+  }
+
+  return { queued: false, command, done };
+}
+
+function sendDispatchedNodeAction(res, outcome) {
+  if (outcome.queued) {
+    return res.status(202).json(buildQueuedCommandResponse(outcome.command));
+  }
+
+  if (outcome.done.status !== 'completed') {
+    return res.status(400).json(outcome.done.result || {
+      taskId: outcome.command.id,
+      status: 'error',
+      error: outcome.done.error || 'Dispatch failed',
+    });
+  }
+
+  return res.json(outcome.done.result || {
+    taskId: outcome.command.id,
+    status: 'completed',
+    data: null,
+  });
+}
+
 async function resolveWorkspaceApprovalRecipients(workspaceId) {
   const settingsRes = await pool.query(
     `SELECT key, value
@@ -2452,50 +2519,149 @@ router.post('/nodes/:nodeId/dispatch', async (req, res) => {
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
-    const command = await enqueueNodeCommand({
+    const outcome = await dispatchNodeAction({
       workspaceId,
       nodeId: req.params.nodeId,
-      commandType: 'dispatch_action',
-      payload: {
-        action: req.body?.command,
-        args: req.body?.args || {},
+      action: req.body?.command,
+      args: req.body?.args || {},
+      userId: req.userId || req.user?.id || null,
+      timing: req.body || {},
+      wait: shouldWaitForNodeDispatch(req),
+    });
+    return sendDispatchedNodeAction(res, outcome);
+  } catch (err) {
+    res.status(500).json({ taskId: '', status: 'error', error: err.message });
+  }
+});
+
+router.post('/nodes/:nodeId/terminal/open', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const outcome = await dispatchNodeAction({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      action: 'terminal_open',
+      args: {
+        cwd: req.body?.cwd,
+        cols: req.body?.cols,
+        rows: req.body?.rows,
+        env: req.body?.env,
+        shell: req.body?.shell,
       },
       userId: req.userId || req.user?.id || null,
       timing: req.body || {},
+      wait: shouldWaitForNodeDispatch(req),
     });
 
-    const shouldWait = !(
-      req.query.wait === '0' ||
-      req.query.wait === 'false' ||
-      req.body?.wait === false
-    );
+    return sendDispatchedNodeAction(res, outcome);
+  } catch (err) {
+    res.status(500).json({ taskId: '', status: 'error', error: err.message });
+  }
+});
 
-    if (!shouldWait) {
-      return res.status(202).json({
-        success: true,
-        queued: true,
-        commandId: command.id,
-        command: mapNodeCommand(command),
-      });
-    }
+router.post('/nodes/:nodeId/terminal/:sessionId/exec', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
-    const done = await waitForNodeCommand(workspaceId, command.id);
-    if (!done) {
-      return res.status(202).json({
-        success: true,
-        queued: true,
-        commandId: command.id,
-        command: mapNodeCommand(command),
-      });
-    }
-    if (done.status !== 'completed') {
-      return res.status(400).json(done.result || {
-        taskId: command.id,
-        status: 'error',
-        error: done.error || 'Dispatch failed',
-      });
-    }
-    res.json(done.result || { taskId: command.id, status: 'completed', data: null });
+    const outcome = await dispatchNodeAction({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      action: 'terminal_exec',
+      args: {
+        sessionId: req.params.sessionId,
+        input: req.body?.input,
+        waitMs: req.body?.waitMs,
+        appendNewline: req.body?.appendNewline,
+      },
+      userId: req.userId || req.user?.id || null,
+      timing: req.body || {},
+      wait: shouldWaitForNodeDispatch(req),
+    });
+
+    return sendDispatchedNodeAction(res, outcome);
+  } catch (err) {
+    res.status(500).json({ taskId: '', status: 'error', error: err.message });
+  }
+});
+
+router.post('/nodes/:nodeId/terminal/:sessionId/read', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const outcome = await dispatchNodeAction({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      action: 'terminal_read',
+      args: {
+        sessionId: req.params.sessionId,
+        cursor: req.body?.cursor,
+      },
+      userId: req.userId || req.user?.id || null,
+      timing: req.body || {},
+      wait: shouldWaitForNodeDispatch(req),
+    });
+
+    return sendDispatchedNodeAction(res, outcome);
+  } catch (err) {
+    res.status(500).json({ taskId: '', status: 'error', error: err.message });
+  }
+});
+
+router.get('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const outcome = await dispatchNodeAction({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      action: 'terminal_snapshot',
+      args: {
+        sessionId: req.params.sessionId,
+      },
+      userId: req.userId || req.user?.id || null,
+      timing: {},
+      wait: shouldWaitForNodeDispatch(req),
+    });
+
+    return sendDispatchedNodeAction(res, outcome);
+  } catch (err) {
+    res.status(500).json({ taskId: '', status: 'error', error: err.message });
+  }
+});
+
+router.delete('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
+  try {
+    await ensureNexusNodesTable();
+    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
+    if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
+
+    const outcome = await dispatchNodeAction({
+      workspaceId,
+      nodeId: req.params.nodeId,
+      action: 'terminal_close',
+      args: {
+        sessionId: req.params.sessionId,
+      },
+      userId: req.userId || req.user?.id || null,
+      timing: {},
+      wait: shouldWaitForNodeDispatch(req),
+    });
+
+    return sendDispatchedNodeAction(res, outcome);
   } catch (err) {
     res.status(500).json({ taskId: '', status: 'error', error: err.message });
   }

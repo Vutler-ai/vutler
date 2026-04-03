@@ -6,12 +6,16 @@ async function executeNexusPlan(plan = {}, context = {}) {
   if (!toolName) {
     throw new Error('Nexus execution plan is missing a tool name.');
   }
-  if (!nodeId || !context.wsConnections) {
-    throw new Error('Nexus execution requires a node id and websocket connections.');
+  if (!nodeId) {
+    throw new Error('Nexus execution requires a node id.');
   }
 
   const { executeNexusTool } = require('../nexusTools');
-  return executeNexusTool(nodeId, toolName, plan.params?.args || plan.input?.params || {}, context.wsConnections);
+  return executeNexusTool(nodeId, toolName, plan.params?.args || plan.input?.params || {}, {
+    wsConnections: context.wsConnections || null,
+    workspaceId: context.workspaceId || null,
+    db: context.db || null,
+  });
 }
 
 module.exports = {

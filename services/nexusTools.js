@@ -1,6 +1,7 @@
 'use strict';
 
 const { randomUUID } = require('crypto');
+const { dispatchNodeAction } = require('./nexusCommandService');
 
 const TOOL_TIMEOUT_MS = 30000;
 const TOOL_CALL_TYPE = 'tool.call';
@@ -21,7 +22,7 @@ const SKILL_EXECUTION_TOOL = {
   },
 };
 
-const NEXUS_TOOLS = [
+const NEXUS_BASE_TOOLS = [
   SKILL_EXECUTION_TOOL,
   {
     name: 'search_files',
@@ -101,6 +102,73 @@ const NEXUS_TOOLS = [
   },
 ];
 
+const NEXUS_TERMINAL_TOOLS = [
+  {
+    name: 'open_terminal_session',
+    description: 'Open a persistent terminal session on the Nexus node in a specific working directory.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        cwd: { type: 'string', description: 'Absolute working directory path to open the session in.' },
+        cols: { type: 'number', description: 'Optional terminal width in columns.' },
+        rows: { type: 'number', description: 'Optional terminal height in rows.' },
+        env: { type: 'object', description: 'Optional environment variable overrides.' },
+        shell: { type: 'string', description: 'Optional shell binary override.' },
+      },
+      required: ['cwd'],
+    },
+  },
+  {
+    name: 'exec_terminal_session',
+    description: 'Send input to an existing Nexus terminal session and return incremental output.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'The terminal session identifier returned by open_terminal_session.' },
+        input: { type: 'string', description: 'Exact input to send to the terminal.' },
+        wait_ms: { type: 'number', description: 'Milliseconds to wait before collecting output (default 150).' },
+        append_newline: { type: 'boolean', description: 'Whether to append a newline automatically when missing.' },
+      },
+      required: ['session_id'],
+    },
+  },
+  {
+    name: 'read_terminal_session',
+    description: 'Read new output from an existing Nexus terminal session using the last known cursor.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'The terminal session identifier.' },
+        cursor: { type: 'number', description: 'The last cursor position already consumed by the agent.' },
+      },
+      required: ['session_id'],
+    },
+  },
+  {
+    name: 'snapshot_terminal_session',
+    description: 'Inspect the current state of a Nexus terminal session, including cwd and closed status.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'The terminal session identifier.' },
+      },
+      required: ['session_id'],
+    },
+  },
+  {
+    name: 'close_terminal_session',
+    description: 'Close an existing Nexus terminal session when it is no longer needed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'The terminal session identifier.' },
+      },
+      required: ['session_id'],
+    },
+  },
+];
+
+const NEXUS_TOOLS = [...NEXUS_BASE_TOOLS, ...NEXUS_TERMINAL_TOOLS];
 const NEXUS_TOOL_NAMES = new Set(NEXUS_TOOLS.map((t) => t.name));
 
 // ── Tool name mapping: LLM tool name → Nexus orchestrator action ─────────────
@@ -116,7 +184,37 @@ function mapToolToNexus(toolName, args = {}) {
     case 'read_calendar':  return 'read_calendar';
     case 'read_contacts':  return hasQuery ? 'search_contacts' : 'read_contacts';
     case 'read_clipboard': return 'read_clipboard';
+    case 'open_terminal_session': return 'terminal_open';
+    case 'exec_terminal_session': return 'terminal_exec';
+    case 'read_terminal_session': return 'terminal_read';
+    case 'snapshot_terminal_session': return 'terminal_snapshot';
+    case 'close_terminal_session': return 'terminal_close';
     default:               return null;
+  }
+}
+
+function mapToolArgs(toolName, args = {}) {
+  const input = args && typeof args === 'object' ? args : {};
+  switch (toolName) {
+    case 'exec_terminal_session':
+      return {
+        sessionId: input.sessionId || input.session_id,
+        input: input.input,
+        waitMs: input.waitMs ?? input.wait_ms,
+        appendNewline: input.appendNewline ?? input.append_newline,
+      };
+    case 'read_terminal_session':
+      return {
+        sessionId: input.sessionId || input.session_id,
+        cursor: input.cursor,
+      };
+    case 'snapshot_terminal_session':
+    case 'close_terminal_session':
+      return {
+        sessionId: input.sessionId || input.session_id,
+      };
+    default:
+      return input;
   }
 }
 
@@ -139,9 +237,12 @@ async function getOnlineNexusNode(workspaceId, pool) {
  * Returns Nexus tool definitions if an online node exists for this workspace.
  * Otherwise returns an empty array (agents won't see Nexus tools).
  */
-async function getNexusToolsForWorkspace(workspaceId, pool) {
+async function getNexusToolsForWorkspace(workspaceId, pool, options = {}) {
   const node = await getOnlineNexusNode(workspaceId, pool);
-  return node ? [...NEXUS_TOOLS] : [];
+  if (!node) return [];
+  return options.allowTerminalSessions
+    ? [...NEXUS_TOOLS]
+    : [...NEXUS_BASE_TOOLS];
 }
 
 // ── WebSocket dispatch: send tool.call to Nexus, wait for tool.result ────────
@@ -162,7 +263,34 @@ async function executeNexusTool(nodeId, toolName, args, wsConnections) {
   const nexusAction = mapToolToNexus(toolName, args);
   if (!nexusAction) throw new Error(`No mapping for tool ${toolName}`);
 
-  const conn = findWs(nodeId, wsConnections);
+  const executionContext = normalizeExecutionContext(wsConnections);
+  const mappedArgs = mapToolArgs(toolName, args);
+
+  if (executionContext.workspaceId && executionContext.db) {
+    const outcome = await dispatchNodeAction({
+      db: executionContext.db,
+      workspaceId: executionContext.workspaceId,
+      nodeId,
+      action: nexusAction,
+      args: mappedArgs,
+      wait: true,
+      waitTimeoutMs: TOOL_TIMEOUT_MS,
+    });
+
+    if (outcome.queued || !outcome.done) {
+      throw new Error(`Nexus tool call timed out after ${TOOL_TIMEOUT_MS}ms`);
+    }
+
+    const payload = outcome.done.result || {};
+    if (outcome.done.status !== 'completed' || payload.status === 'error') {
+      const errorMessage = payload.error?.message || payload.error || outcome.done.error || 'Nexus execution failed.';
+      return { success: false, error: String(errorMessage) };
+    }
+
+    return { success: true, data: payload.data };
+  }
+
+  const conn = findWs(nodeId, executionContext.wsConnections);
   const ws = conn?.ws || conn; // conn may be { ws, agentId, ... } or raw ws
   if (!ws || typeof ws.send !== 'function') {
     throw new Error(`No WebSocket connection for Nexus node ${nodeId}`);
@@ -181,7 +309,7 @@ async function executeNexusTool(nodeId, toolName, args, wsConnections) {
     try {
       ws.send(JSON.stringify({
         type: TOOL_CALL_TYPE,
-        payload: { request_id: requestId, tool_name: nexusAction, args: args || {}, timeout_ms: TOOL_TIMEOUT_MS },
+        payload: { request_id: requestId, tool_name: nexusAction, args: mappedArgs || {}, timeout_ms: TOOL_TIMEOUT_MS },
       }));
     } catch (err) {
       clearTimeout(timer);
@@ -210,8 +338,36 @@ function handleToolResult(requestId, success, data, error) {
   return true;
 }
 
+function normalizeExecutionContext(value) {
+  if (!value) return { wsConnections: null, workspaceId: null, db: null };
+
+  if (value instanceof Map || typeof value.get === 'function') {
+    return {
+      wsConnections: value,
+      workspaceId: null,
+      db: null,
+    };
+  }
+
+  if (typeof value === 'object') {
+    const hasWrappedContext = Object.prototype.hasOwnProperty.call(value, 'wsConnections')
+      || Object.prototype.hasOwnProperty.call(value, 'workspaceId')
+      || Object.prototype.hasOwnProperty.call(value, 'db');
+
+    return {
+      wsConnections: hasWrappedContext ? (value.wsConnections || null) : value,
+      workspaceId: hasWrappedContext ? (value.workspaceId || null) : null,
+      db: hasWrappedContext ? (value.db || null) : null,
+    };
+  }
+
+  return { wsConnections: null, workspaceId: null, db: null };
+}
+
 module.exports = {
   NEXUS_TOOLS,
+  NEXUS_BASE_TOOLS,
+  NEXUS_TERMINAL_TOOLS,
   NEXUS_TOOL_NAMES,
   SKILL_EXECUTION_TOOL,
   getOnlineNexusNode,

@@ -14,6 +14,11 @@ import type {
   NexusCalendarEvent,
   NexusContact,
   NexusShellResult,
+  NexusTerminalOpenResult,
+  NexusTerminalExecResult,
+  NexusTerminalReadResult,
+  NexusTerminalSnapshot,
+  NexusTerminalCloseResult,
   NexusCapabilities,
   NexusCommandStatus,
   NexusCommandStats,
@@ -228,6 +233,64 @@ export async function dispatchShellExec(
   command: string
 ): Promise<NexusDispatchResult<NexusShellResult>> {
   return dispatchAction(nodeId, 'shell_exec', { command }) as Promise<NexusDispatchResult<NexusShellResult>>;
+}
+
+export async function openTerminalSession(
+  nodeId: string,
+  payload: {
+    cwd: string;
+    cols?: number;
+    rows?: number;
+    env?: Record<string, string>;
+    shell?: string;
+  }
+): Promise<NexusDispatchResult<NexusTerminalOpenResult>> {
+  return apiFetch<NexusDispatchResult<NexusTerminalOpenResult>>(`/api/v1/nexus/nodes/${nodeId}/terminal/open`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function execTerminalSession(
+  nodeId: string,
+  sessionId: string,
+  payload: {
+    input?: string;
+    waitMs?: number;
+    appendNewline?: boolean;
+  }
+): Promise<NexusDispatchResult<NexusTerminalExecResult>> {
+  return apiFetch<NexusDispatchResult<NexusTerminalExecResult>>(`/api/v1/nexus/nodes/${nodeId}/terminal/${sessionId}/exec`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function readTerminalSession(
+  nodeId: string,
+  sessionId: string,
+  cursor = 0
+): Promise<NexusDispatchResult<NexusTerminalReadResult>> {
+  return apiFetch<NexusDispatchResult<NexusTerminalReadResult>>(`/api/v1/nexus/nodes/${nodeId}/terminal/${sessionId}/read`, {
+    method: 'POST',
+    body: JSON.stringify({ cursor }),
+  });
+}
+
+export async function getTerminalSession(
+  nodeId: string,
+  sessionId: string
+): Promise<NexusDispatchResult<NexusTerminalSnapshot>> {
+  return apiFetch<NexusDispatchResult<NexusTerminalSnapshot>>(`/api/v1/nexus/nodes/${nodeId}/terminal/${sessionId}`);
+}
+
+export async function closeTerminalSession(
+  nodeId: string,
+  sessionId: string
+): Promise<NexusDispatchResult<NexusTerminalCloseResult>> {
+  return apiFetch<NexusDispatchResult<NexusTerminalCloseResult>>(`/api/v1/nexus/nodes/${nodeId}/terminal/${sessionId}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function dispatchReadClipboard(

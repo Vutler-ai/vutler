@@ -8,7 +8,7 @@ const MAX_RESULT_BYTES    = 1 * 1024 * 1024; // 1 MB
 const PROGRESS_INTERVAL_MS = 2_000;
 
 // Actions that can take long enough to warrant progress updates
-const LONG_RUNNING_ACTIONS = new Set(['search', 'read_document', 'shell_exec']);
+const LONG_RUNNING_ACTIONS = new Set(['search', 'read_document', 'shell_exec', 'terminal_exec']);
 
 /**
  * TaskOrchestrator — validates incoming task messages and routes them to the
@@ -59,7 +59,7 @@ class TaskOrchestrator {
 
     try {
       // Permission check — validate path before any provider call
-      const targetPath = params.path || null;
+      const targetPath = params.path || (action === 'terminal_open' ? params.cwd || null : null);
       if (targetPath) {
         getPermissionEngine().validate(targetPath, action);
       }
@@ -84,6 +84,7 @@ class TaskOrchestrator {
   async _route(action, params, taskId, onProgress) {
     const fs    = this.providers.fs;
     const shell = this.providers.shell;
+    const terminal = this.providers.terminal;
 
     switch (action) {
       case 'search': {
@@ -127,6 +128,44 @@ class TaskOrchestrator {
       case 'shell_exec':
         this._require(params.command, 'params.command');
         return { output: shell.exec(params.command) };
+
+      case 'terminal_open':
+        if (!terminal) throw new Error('Terminal session provider is unavailable');
+        this._require(params.cwd, 'params.cwd');
+        return terminal.open({
+          cwd: params.cwd,
+          cols: params.cols,
+          rows: params.rows,
+          env: params.env,
+          shell: params.shell,
+        });
+
+      case 'terminal_exec':
+        if (!terminal) throw new Error('Terminal session provider is unavailable');
+        this._require(params.sessionId, 'params.sessionId');
+        return terminal.exec({
+          sessionId: params.sessionId,
+          input: params.input,
+          waitMs: params.waitMs,
+          appendNewline: params.appendNewline !== false,
+        });
+
+      case 'terminal_read':
+        if (!terminal) throw new Error('Terminal session provider is unavailable');
+        this._require(params.sessionId, 'params.sessionId');
+        return terminal.read(params.sessionId, {
+          cursor: params.cursor,
+        });
+
+      case 'terminal_snapshot':
+        if (!terminal) throw new Error('Terminal session provider is unavailable');
+        this._require(params.sessionId, 'params.sessionId');
+        return terminal.snapshot(params.sessionId);
+
+      case 'terminal_close':
+        if (!terminal) throw new Error('Terminal session provider is unavailable');
+        this._require(params.sessionId, 'params.sessionId');
+        return terminal.close(params.sessionId);
 
       case 'read_clipboard': {
         const provider = this.providers.clipboard || new (require('./providers/clipboard').ClipboardProvider)();

@@ -1178,7 +1178,8 @@ export interface NexusTokenResponse {
 export type NexusAction =
   | 'search' | 'read_document' | 'list_dir' | 'open_file' | 'write_file'
   | 'shell_exec' | 'read_clipboard' | 'list_emails' | 'search_emails'
-  | 'read_calendar' | 'read_contacts' | 'search_contacts';
+  | 'read_calendar' | 'read_contacts' | 'search_contacts'
+  | 'terminal_open' | 'terminal_exec' | 'terminal_read' | 'terminal_snapshot' | 'terminal_close';
 
 export interface NexusDispatchResult<T = unknown> {
   taskId: string;
@@ -1355,6 +1356,51 @@ export interface NexusContact {
 export interface NexusShellResult {
   output: string;
   exitCode?: number;
+}
+
+export interface NexusTerminalOpenResult {
+  sessionId: string;
+  cwd: string;
+  shell: string;
+  cursor: number;
+  bufferStart: number;
+  startedAt: string;
+}
+
+export interface NexusTerminalExecResult {
+  sessionId: string;
+  cursor: number;
+  bufferStart: number;
+  output: string;
+  truncated?: boolean;
+  waitMs?: number;
+}
+
+export interface NexusTerminalReadResult {
+  sessionId: string;
+  cursor: number;
+  bufferStart: number;
+  output: string;
+  truncated?: boolean;
+  closed?: boolean;
+  exitCode?: number | null;
+}
+
+export interface NexusTerminalSnapshot {
+  sessionId: string;
+  cwd: string;
+  shell: string;
+  cursor: number;
+  bufferStart: number;
+  startedAt: string;
+  lastUsedAt: string;
+  closed: boolean;
+  exitCode?: number | null;
+}
+
+export interface NexusTerminalCloseResult {
+  sessionId: string;
+  closed: true;
 }
 
 export interface NexusCapabilities {
