@@ -48,6 +48,12 @@ For Nexus local, Vutler asks for:
 
 OS permissions still apply separately.
 
+Examples:
+
+- Vutler consent may allow `Mail`
+- the customer may still need to approve macOS or Windows access to Mail data
+- until both are true, the local path is not effective
+
 ## 4. What Runs Where
 
 ### In Vutler Cloud
@@ -69,14 +75,54 @@ Typical local tasks:
 - local document parsing
 - app launch and local context gathering
 
-## 5. Customer-Facing Rules
+## 5. Local-First vs Cloud-Required
+
+### Local-First
+
+Typical local-first cases:
+
+- synced Google Drive, OneDrive, or Dropbox folders already present on the PC
+- desktop mail, calendar, and contacts
+- document parsing on local files
+
+In these cases, Nexus Local can reduce or avoid extra cloud connector consent.
+
+### Cloud-Required
+
+Typical cloud-required cases:
+
+- GitHub
+- Jira
+- Slack
+- Teams
+- Notion
+- server-side automations that must keep running when the PC is offline
+
+In these cases, a workspace cloud connector still remains necessary.
+
+## 6. Customer-Facing Rules
 
 - Vutler should not ask for a cloud connector if Nexus local already covers the core use case.
 - Vutler should clearly show when a connector is cloud-required.
 - Vutler should explain why a permission is needed before requesting it.
 - Vutler should distinguish between product consent and operating system permissions.
 
-## 6. Trust Outcomes
+## 7. What The Customer Should Expect In Product
+
+The product should make these things visible:
+
+- whether a connector is `operational`, `partial`, or `coming soon`
+- whether a connector is `local-first` or `cloud-required`
+- whether a connector is merely connected or actually effective
+- why a local capability is blocked:
+  - consent denied
+  - missing app
+  - missing sync folder
+  - OS permission still needed
+
+This is important because “connected” does not automatically mean “usable now”.
+
+## 8. Trust Outcomes
 
 The intended customer outcome is:
 
