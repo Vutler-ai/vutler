@@ -76,7 +76,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Webhook-Secret', 'X-API-Key', 'X-Workspace-Id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Webhook-Secret', 'X-Vutler-Webhook-Secret', 'X-Postal-Signature', 'X-API-Key', 'X-Workspace-Id'],
 }));
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,14 @@ app.use(cookieParser());
 
 // Skip JSON parsing for Stripe webhook (needs raw body)
 app.use((req, res, next) => {
-  if (req.originalUrl === '/api/v1/billing/webhook' || req.originalUrl === '/api/v1/billing/webhooks/stripe') return next();
+  const rawBodyPath = req.originalUrl.split('?')[0];
+  if (
+    rawBodyPath === '/api/v1/billing/webhook'
+    || rawBodyPath === '/api/v1/billing/webhooks/stripe'
+    || rawBodyPath === '/api/v1/email/incoming'
+  ) {
+    return next();
+  }
   express.json({ limit: '10mb' })(req, res, next);
 });
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
