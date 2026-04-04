@@ -89,6 +89,8 @@ interface NodeDetail {
   consentState?: NodeConsentState;
 }
 
+type NodeDetailResponse = NodeDetail | { node?: NodeDetail };
+
 interface NodeLocalDiagnostic {
   key: string;
   label: string;
@@ -775,7 +777,7 @@ function CopyValueButton({
       await navigator.clipboard.writeText(value);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
-    } catch (_) {
+    } catch {
       setCopied(false);
     }
   };
@@ -1410,11 +1412,11 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
     );
   }
 
-  const data = result.data as any;
+  const data = (result.data ?? null) as Record<string, unknown> | null;
   if (!data) return null;
 
   if (action === 'search') {
-    const results: NexusSearchResult[] = data?.results ?? [];
+    const results = Array.isArray(data.results) ? (data.results as NexusSearchResult[]) : [];
     return (
       <div className="mt-4">
         <p className="text-xs text-[#9ca3af] mb-2">{results.length} file{results.length !== 1 ? 's' : ''} found</p>
@@ -1447,7 +1449,9 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'list_dir') {
-    const entries: Array<{ name: string; type: string; size?: number }> = data?.entries ?? [];
+    const entries = Array.isArray(data.entries)
+      ? (data.entries as Array<{ name: string; type: string; size?: number }>)
+      : [];
     return (
       <div className="mt-4">
         <p className="text-xs text-[#9ca3af] mb-2">{entries.length} entr{entries.length !== 1 ? 'ies' : 'y'}</p>
@@ -1482,7 +1486,7 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'list_emails' || action === 'search_emails') {
-    const emails: NexusEmailResult[] = data?.emails ?? [];
+    const emails = Array.isArray(data.emails) ? (data.emails as NexusEmailResult[]) : [];
     return (
       <div className="mt-4 space-y-2">
         <p className="text-xs text-[#9ca3af]">{emails.length} email{emails.length !== 1 ? 's' : ''}</p>
@@ -1505,7 +1509,7 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'read_calendar') {
-    const events: NexusCalendarEvent[] = data?.events ?? [];
+    const events = Array.isArray(data.events) ? (data.events as NexusCalendarEvent[]) : [];
     return (
       <div className="mt-4 space-y-2">
         <p className="text-xs text-[#9ca3af]">{events.length} event{events.length !== 1 ? 's' : ''}</p>
@@ -1532,7 +1536,7 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'read_contacts') {
-    const contacts: NexusContact[] = data?.contacts ?? [];
+    const contacts = Array.isArray(data.contacts) ? (data.contacts as NexusContact[]) : [];
     return (
       <div className="mt-4">
         <p className="text-xs text-[#9ca3af] mb-2">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}</p>
@@ -1560,7 +1564,7 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'shell_exec') {
-    const shellData = data as NexusShellResult;
+    const shellData = data as unknown as NexusShellResult;
     return (
       <div className="mt-4">
         {shellData.exitCode !== undefined && (
@@ -1576,7 +1580,7 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'read_document') {
-    const docData = data as NexusDocumentResult;
+    const docData = data as unknown as NexusDocumentResult;
     return (
       <div className="mt-4">
         {docData.format && (
@@ -1590,7 +1594,7 @@ function ResultViewer({ action, result }: { action: ActionType; result: NexusDis
   }
 
   if (action === 'read_clipboard') {
-    const clipContent: string = data?.content ?? '';
+    const clipContent = typeof data.content === 'string' ? data.content : '';
     return (
       <div className="mt-4">
         <p className="text-xs text-[#9ca3af] mb-2">Clipboard content</p>
@@ -2700,8 +2704,12 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
   const fetchNode = useCallback(async () => {
     setError('');
     try {
-      const data = await getNode(id);
-      setNode(((data as any).node ?? data) as NodeDetail);
+      const data = await getNode(id) as NodeDetailResponse;
+      if ('node' in data) {
+        setNode(data.node ?? null);
+      } else {
+        setNode(data as NodeDetail);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load node');
     } finally {
@@ -2714,7 +2722,7 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
       const data = await getNodeCommands(id, 20) as CommandHistoryResponse;
       setCommandHistory(data.commands ?? []);
       setCommandSummary(data.summary ?? null);
-    } catch (_) {
+    } catch {
       // Keep node detail usable even if observability fetch fails.
     }
   }, [id]);

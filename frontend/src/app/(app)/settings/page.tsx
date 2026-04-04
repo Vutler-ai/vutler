@@ -570,6 +570,7 @@ function WorkspaceTab({
 
 // ─── Integrations Tab ─────────────────────────────────────────────────────────
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function IntegrationsTab({
   onToast,
 }: {

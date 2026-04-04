@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { authFetch } from '@/lib/authFetch';
@@ -49,6 +49,89 @@ interface ProviderInfo {
   }>;
 }
 
+const DEFAULT_PROVIDERS: Record<string, ProviderInfo> = {
+  slack: {
+    provider: 'slack',
+    name: 'Slack',
+    description: 'Send messages, list channels, and manage your Slack workspace',
+    icon: '💬',
+    color: '#4A154B',
+    actions: [
+      {
+        name: 'list_channels',
+        description: 'List all channels in your Slack workspace'
+      },
+      {
+        name: 'send_message',
+        description: 'Send a message to a channel or user',
+        parameters: [
+          { name: 'channel', type: 'string', required: true },
+          { name: 'text', type: 'string', required: true }
+        ]
+      },
+      {
+        name: 'get_user_info',
+        description: 'Get information about your Slack user'
+      }
+    ]
+  },
+  google: {
+    provider: 'google',
+    name: 'Google',
+    description: 'Access Gmail, Google Drive, and Google Calendar',
+    icon: '📧',
+    color: '#4285F4',
+    actions: [
+      {
+        name: 'list_emails',
+        description: 'List recent emails from Gmail'
+      },
+      {
+        name: 'send_email',
+        description: 'Send an email via Gmail',
+        parameters: [
+          { name: 'to', type: 'string', required: true },
+          { name: 'subject', type: 'string', required: true },
+          { name: 'body', type: 'string', required: true }
+        ]
+      },
+      {
+        name: 'list_files',
+        description: 'List files in Google Drive'
+      }
+    ]
+  },
+  github: {
+    provider: 'github',
+    name: 'GitHub',
+    description: 'Manage repositories, issues, and pull requests',
+    icon: '🐙',
+    color: '#333333',
+    actions: [
+      {
+        name: 'list_repos',
+        description: 'List your GitHub repositories'
+      },
+      {
+        name: 'create_issue',
+        description: 'Create an issue in a repository',
+        parameters: [
+          { name: 'repo', type: 'string', required: true },
+          { name: 'title', type: 'string', required: true },
+          { name: 'body', type: 'string' }
+        ]
+      },
+      {
+        name: 'list_commits',
+        description: 'List recent commits in a repository',
+        parameters: [
+          { name: 'repo', type: 'string', required: true }
+        ]
+      }
+    ]
+  }
+};
+
 export default function IntegrationDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -60,99 +143,9 @@ export default function IntegrationDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [executing, setExecuting] = useState<string | null>(null);
-  const [actionResults, setActionResults] = useState<{ [key: string]: any }>({});
+  const [actionResults, setActionResults] = useState<Record<string, unknown>>({});
 
-  // Default provider configurations
-  const defaultProviders: { [key: string]: ProviderInfo } = {
-    slack: {
-      provider: 'slack',
-      name: 'Slack',
-      description: 'Send messages, list channels, and manage your Slack workspace',
-      icon: '💬',
-      color: '#4A154B',
-      actions: [
-        {
-          name: 'list_channels',
-          description: 'List all channels in your Slack workspace'
-        },
-        {
-          name: 'send_message',
-          description: 'Send a message to a channel or user',
-          parameters: [
-            { name: 'channel', type: 'string', required: true },
-            { name: 'text', type: 'string', required: true }
-          ]
-        },
-        {
-          name: 'get_user_info',
-          description: 'Get information about your Slack user'
-        }
-      ]
-    },
-    google: {
-      provider: 'google',
-      name: 'Google',
-      description: 'Access Gmail, Google Drive, and Google Calendar',
-      icon: '📧',
-      color: '#4285F4',
-      actions: [
-        {
-          name: 'list_emails',
-          description: 'List recent emails from Gmail'
-        },
-        {
-          name: 'send_email',
-          description: 'Send an email via Gmail',
-          parameters: [
-            { name: 'to', type: 'string', required: true },
-            { name: 'subject', type: 'string', required: true },
-            { name: 'body', type: 'string', required: true }
-          ]
-        },
-        {
-          name: 'list_files',
-          description: 'List files in Google Drive'
-        }
-      ]
-    },
-    github: {
-      provider: 'github',
-      name: 'GitHub',
-      description: 'Manage repositories, issues, and pull requests',
-      icon: '🐙',
-      color: '#333333',
-      actions: [
-        {
-          name: 'list_repos',
-          description: 'List your GitHub repositories'
-        },
-        {
-          name: 'create_issue',
-          description: 'Create an issue in a repository',
-          parameters: [
-            { name: 'repo', type: 'string', required: true },
-            { name: 'title', type: 'string', required: true },
-            { name: 'body', type: 'string' }
-          ]
-        },
-        {
-          name: 'list_commits',
-          description: 'List recent commits in a repository',
-          parameters: [
-            { name: 'repo', type: 'string', required: true }
-          ]
-        }
-      ]
-    }
-  };
-
-  useEffect(() => {
-    if (provider) {
-      fetchIntegrationData();
-    }
-  }, [provider]);
-
-  const fetchIntegrationData = async () => {
+  const fetchIntegrationData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -175,7 +168,7 @@ export default function IntegrationDetailPage() {
       }
 
       // Set provider info
-      setProviderInfo(defaultProviders[provider] || {
+      setProviderInfo(DEFAULT_PROVIDERS[provider] || {
         provider,
         name: provider.charAt(0).toUpperCase() + provider.slice(1),
         description: `${provider} integration`,
@@ -189,9 +182,15 @@ export default function IntegrationDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [provider]);
 
-  const executeAction = async (actionName: string, parameters: any = {}) => {
+  useEffect(() => {
+    if (provider) {
+      void fetchIntegrationData();
+    }
+  }, [fetchIntegrationData, provider]);
+
+  const executeAction = async (actionName: string, parameters: Record<string, unknown> = {}) => {
     try {
       setExecuting(actionName);
       setError(null);
@@ -264,7 +263,7 @@ export default function IntegrationDetailPage() {
         <XCircleIcon className="w-16 h-16 mx-auto text-red-500 mb-4" />
         <h2 className="text-xl font-semibold text-white mb-2">Integration not found</h2>
         <p className="text-[#9ca3af] mb-4">
-          The integration you're looking for doesn't exist or isn't connected.
+          The integration you&apos;re looking for doesn&apos;t exist or isn&apos;t connected.
         </p>
         <Link
           href="/integrations"

@@ -180,8 +180,6 @@ function OutputPanel({
       ? execution.stderr?.trim() || '(empty)'
       : combined;
 
-  const c = statusColors(execution.status);
-
   return (
     <div className="bg-[#000] border border-[rgba(255,255,255,0.07)] rounded-xl overflow-hidden">
       {/* Output header */}

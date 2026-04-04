@@ -136,7 +136,7 @@ export default function BrowserOperatorPage() {
       ]);
       setSelectedReport(report);
       setSelectedEvidence(evidence);
-    } catch (_) {
+    } catch {
       setSelectedReport(null);
       setSelectedEvidence([]);
     }

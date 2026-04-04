@@ -59,7 +59,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
           await navigator.clipboard.writeText(value);
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1600);
-        } catch (_) {
+        } catch {
           setCopied(false);
         }
       }}

@@ -268,6 +268,7 @@ function AgentAvatar({ agent, size = 8 }: { agent: Agent; size?: number }) {
 
   if (imageUrl) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={imageUrl}
         alt={agent.name}

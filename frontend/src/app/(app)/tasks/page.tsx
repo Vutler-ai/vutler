@@ -200,12 +200,6 @@ function getTaskOrchestrationStatus(task: Task | null | undefined): string | nul
   return getMetadataString(asTaskMetadata(task), "orchestration_status");
 }
 
-function getTaskOrchestrationStepId(task: Task | null | undefined): string | null {
-  const metadata = asTaskMetadata(task);
-  return getMetadataString(metadata, "orchestration_step_id")
-    || getMetadataString(metadata, "orchestration_parent_step_id");
-}
-
 function isOrchestratedTask(task: Task | null | undefined): boolean {
   const metadata = asTaskMetadata(task);
   return Boolean(
@@ -1976,7 +1970,10 @@ export default function TasksPage() {
   );
 
   const { data: agentData } = useApi<{ agents: Agent[]; count: number }>("/api/v1/agents");
-  const agentNames = agentData?.agents?.map((agent) => agent.name).filter(Boolean) ?? [];
+  const agentNames = useMemo(
+    () => agentData?.agents?.map((agent) => agent.name).filter(Boolean) ?? [],
+    [agentData?.agents]
+  );
   const assigneeOptions = agentNames.length > 0 ? agentNames : FALLBACK_AGENT_NAMES;
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -2071,19 +2068,6 @@ export default function TasksPage() {
   const openCreate = () => {
     setEditingTask(null);
     setForm(EMPTY_FORM);
-    setDialogOpen(true);
-  };
-
-  const openEdit = (task: Task) => {
-    setEditingTask(task);
-    setForm({
-      title: task.title,
-      description: task.description ?? "",
-      status: normalizeStatus(task.status),
-      priority: task.priority,
-      assignee: task.assignee,
-      due_date: task.due_date ?? "",
-    });
     setDialogOpen(true);
   };
 

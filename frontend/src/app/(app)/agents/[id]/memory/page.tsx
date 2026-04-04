@@ -332,7 +332,7 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
           >
             <div className="text-left">
               <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider">{soulDoc.title}</h3>
-              <p className="text-[11px] text-[#4b5563] mt-1">Loaded from the agent's own Snipara doc, not the workspace shared instructions.</p>
+              <p className="text-[11px] text-[#4b5563] mt-1">Loaded from the agent&apos;s own Snipara doc, not the workspace shared instructions.</p>
             </div>
             <span className="text-[#4b5563] text-xs">{soulExpanded ? 'Hide' : 'Show'}</span>
           </button>

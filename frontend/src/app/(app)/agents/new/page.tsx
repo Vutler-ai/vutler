@@ -924,6 +924,7 @@ export default function NewAgentPage() {
                 className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-[#0d1017] text-4xl"
               >
                 {avatarPreviewUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={avatarPreviewUrl} alt="Selected avatar" className="h-full w-full object-cover" />
                 ) : (
                   form.avatar
@@ -956,6 +957,7 @@ export default function NewAgentPage() {
                                 : 'border-white/10 hover:border-white/20'
                             )}
                           >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={`/static/avatars/${persona.slug}.svg`}
                               alt={persona.label}
@@ -1720,6 +1722,7 @@ export default function NewAgentPage() {
               <div className="flex items-center gap-4">
                 <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-[#0d1017] text-3xl">
                   {avatarPreviewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={avatarPreviewUrl} alt={form.name || 'Agent'} className="h-full w-full object-cover" />
                   ) : (
                     form.avatar

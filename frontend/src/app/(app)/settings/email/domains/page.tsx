@@ -636,7 +636,7 @@ export default function EmailDomainsPage() {
                     </h3>
                     <p className="text-xs text-zinc-400">
                       Log in to your DNS provider and add the following records. Once added, click
-                      "Verify DNS" to check propagation.
+                      &quot;Verify DNS&quot; to check propagation.
                     </p>
                   </div>
 

@@ -3,7 +3,7 @@
  * Auto-reconnecting WebSocket for real-time chat
  */
 
-type EventHandler = (data: any) => void;
+type EventHandler = (data: unknown) => void;
 
 export class ChatWebSocket {
   private ws: WebSocket | null = null;
@@ -90,7 +90,7 @@ export class ChatWebSocket {
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
   }
 
-  send(type: string, data: any): void {
+  send(type: string, data: unknown): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type, data }));
     }
@@ -120,13 +120,14 @@ export class ChatWebSocket {
     this.send('typing', { channelId });
   }
 
-  on(type: string, handler: EventHandler): () => void {
+  on<T = unknown>(type: string, handler: (data: T) => void): () => void {
     if (!this.handlers.has(type)) this.handlers.set(type, new Set());
-    this.handlers.get(type)!.add(handler);
-    return () => { this.handlers.get(type)?.delete(handler); };
+    const wrappedHandler: EventHandler = (data) => handler(data as T);
+    this.handlers.get(type)!.add(wrappedHandler);
+    return () => { this.handlers.get(type)?.delete(wrappedHandler); };
   }
 
-  private emit(type: string, data: any): void {
+  private emit(type: string, data: unknown): void {
     this.handlers.get(type)?.forEach(h => {
       try { h(data); } catch (e) { console.error('[WS] Handler error:', e); }
     });

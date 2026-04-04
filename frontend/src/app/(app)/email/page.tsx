@@ -13,7 +13,6 @@ import {
   rejectEmail,
   regenerateEmail,
   assignEmailToAgent,
-  getEmailStats,
   getEmailGroups,
   markUnread,
   toggleFlag,
@@ -132,15 +131,6 @@ function formatFullDate(dateStr: string): string {
   });
 }
 
-function avatarFallback(name: string): string {
-  return name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
 const EMAIL_FOLDER_SET = new Set<EmailFolder | "pending" | "archive" | "drafts">([
   "inbox",
   "sent",
@@ -155,6 +145,7 @@ function AgentMenuAvatar({ agent }: { agent: Pick<AgentEntry, "avatar" | "name">
 
   if (imageUrl) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={imageUrl}
         alt={agent.name}
@@ -448,6 +439,7 @@ function ApprovalCard({
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5">
             {email.agentAvatar ? (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={email.agentAvatar as string}
                 alt={email.agentName as string}

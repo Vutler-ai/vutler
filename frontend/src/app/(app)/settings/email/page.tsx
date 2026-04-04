@@ -217,7 +217,7 @@ function DomainCard({
       {expanded && dnsRecords && (
         <div className="px-4 pb-4 space-y-2 border-t border-[rgba(255,255,255,0.05)] pt-3">
           <p className="text-xs text-[#64748b] mb-3">
-            Add these records to your DNS provider, then click "Verify DNS" to confirm.
+            Add these records to your DNS provider, then click &quot;Verify DNS&quot; to confirm.
           </p>
           {(Object.keys(DNS_RECORD_LABELS) as Array<keyof typeof DNS_RECORD_LABELS>).map(key => (
             dnsRecords[key] ? (
@@ -725,6 +725,7 @@ export default function EmailSettingsPage() {
                 <div key={r.id} className="flex items-center justify-between p-4 bg-[#1e293b] rounded-xl border border-[rgba(255,255,255,0.07)]">
                   <div className="flex items-center gap-3">
                     {r.agentAvatar && (
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img src={r.agentAvatar} alt={r.agentName} className="w-8 h-8 rounded-full object-cover" />
                     )}
                     <div>

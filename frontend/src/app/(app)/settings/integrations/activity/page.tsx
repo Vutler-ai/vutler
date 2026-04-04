@@ -26,7 +26,6 @@ export default function IntegrationActivityPage() {
   const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => {
-    setLoading(true);
     const params = new URLSearchParams({ page: String(page), limit: "20" });
     if (filter !== "all") params.set("provider", filter);
     authFetch(`/api/v1/webhooks/events?${params}`)
@@ -56,7 +55,11 @@ export default function IntegrationActivityPage() {
         {PROVIDERS.map((p) => (
           <button
             key={p}
-            onClick={() => { setFilter(p); setPage(1); }}
+            onClick={() => {
+              setLoading(true);
+              setFilter(p);
+              setPage(1);
+            }}
             className={`px-3 py-1.5 text-sm rounded-lg transition-colors cursor-pointer ${
               filter === p ? "bg-[#3b82f6] text-white" : "bg-[#14151f] text-[#9ca3af] hover:text-white border border-[rgba(255,255,255,0.07)]"
             }`}
@@ -117,7 +120,10 @@ export default function IntegrationActivityPage() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between p-4 border-t border-[rgba(255,255,255,0.07)]">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => {
+                setLoading(true);
+                setPage((p) => Math.max(1, p - 1));
+              }}
               disabled={page <= 1}
               className="px-3 py-1.5 text-sm rounded-lg bg-[rgba(255,255,255,0.05)] text-[#9ca3af] hover:text-white disabled:opacity-40 cursor-pointer"
             >
@@ -125,7 +131,10 @@ export default function IntegrationActivityPage() {
             </button>
             <span className="text-[#6b7280] text-sm">Page {page} of {totalPages}</span>
             <button
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              onClick={() => {
+                setLoading(true);
+                setPage((p) => Math.min(totalPages, p + 1));
+              }}
               disabled={page >= totalPages}
               className="px-3 py-1.5 text-sm rounded-lg bg-[rgba(255,255,255,0.05)] text-[#9ca3af] hover:text-white disabled:opacity-40 cursor-pointer"
             >

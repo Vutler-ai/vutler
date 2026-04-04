@@ -164,6 +164,7 @@ function AgentAvatarDisplay({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }
 
   if (imageUrl) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={imageUrl}
         alt={agent.name}
