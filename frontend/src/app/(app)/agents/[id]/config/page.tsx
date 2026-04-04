@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -42,6 +43,12 @@ import {
   isNonCountedCapabilityKey,
   isSandboxEligibleAgentType,
 } from '@/lib/agent-types';
+import {
+  getAvatarImageUrl,
+  getStaticAvatarUrl,
+  LOCAL_AVATAR_OPTIONS,
+  normalizeLocalAvatarValue,
+} from '@/lib/avatar';
 import { getSocialPlatformMeta, normalizeIntegrationKey } from '@/lib/integrations/catalog';
 
 interface AgentConfigResponse {
@@ -84,6 +91,7 @@ interface BannerState {
 interface IdentityDraft {
   name: string;
   username: string;
+  avatar: string;
   description: string;
 }
 
@@ -167,6 +175,7 @@ function buildIdentityDraft(agent: Partial<Agent>): IdentityDraft {
   return {
     name: agent.name || '',
     username: agent.username || '',
+    avatar: normalizeLocalAvatarValue(agent.avatar),
     description: agent.description || '',
   };
 }
@@ -313,6 +322,77 @@ function StatCard({
 
 function FieldHint({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-[#6b7280]">{children}</p>;
+}
+
+function AvatarPicker({
+  value,
+  agentName,
+  onChange,
+}: {
+  value: string;
+  agentName: string;
+  onChange: (value: string) => void;
+}) {
+  const previewSrc = getAvatarImageUrl(value, agentName) || getStaticAvatarUrl(value) || LOCAL_AVATAR_OPTIONS[0]?.src || null;
+
+  return (
+    <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <div className="flex items-center gap-4">
+        <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-[#0e0f1a]">
+          {previewSrc ? (
+            <Image
+              src={previewSrc}
+              alt={agentName}
+              width={64}
+              height={64}
+              className="h-full w-full object-cover"
+              unoptimized
+            />
+          ) : (
+            <span className="text-xs text-[#6b7280]">No preview</span>
+          )}
+        </div>
+        <div className="space-y-1">
+          <div className="text-sm font-medium text-white">Agent image</div>
+          <FieldHint>Choose one of the local Vutler avatars. Uploads and custom images are disabled.</FieldHint>
+        </div>
+      </div>
+
+      <div className="grid max-h-[420px] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+        {LOCAL_AVATAR_OPTIONS.map((option) => {
+          const selected = option.slug === value;
+          return (
+            <button
+              key={option.slug}
+              type="button"
+              onClick={() => onChange(option.slug)}
+              className={`flex items-center gap-3 rounded-xl border p-3 text-left transition-colors ${
+                selected
+                  ? 'border-blue-500 bg-blue-500/10'
+                  : 'border-white/10 bg-[#0e0f1a] hover:border-white/20 hover:bg-white/[0.04]'
+              }`}
+              aria-pressed={selected}
+            >
+              <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#08090f]">
+                <Image
+                  src={option.src}
+                  alt={option.label}
+                  width={48}
+                  height={48}
+                  className="h-full w-full object-cover"
+                  unoptimized
+                />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-medium text-white">{option.label}</div>
+                <div className="text-xs text-[#6b7280]">{option.category}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function TogglePill({
@@ -791,6 +871,7 @@ export default function AgentConfigPage() {
         identity: {
           name: identityDraft.name.trim(),
           username: identityDraft.username.trim(),
+          avatar: identityDraft.avatar || null,
           description: identityDraft.description.trim(),
         },
       });
@@ -1194,6 +1275,12 @@ export default function AgentConfigPage() {
                       placeholder="Summarize what this agent owns and why it exists."
                     />
                   </div>
+
+                  <AvatarPicker
+                    value={identityDraft.avatar}
+                    agentName={identityDraft.name || agent.name || 'Agent'}
+                    onChange={(avatar) => setIdentityDraft((previous) => ({ ...previous, avatar }))}
+                  />
 
                   <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
                     <div className="text-sm font-medium text-white">Current specialization</div>

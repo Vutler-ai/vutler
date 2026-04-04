@@ -43,10 +43,10 @@ import {
   isSandboxEligibleAgentType,
 } from '@/lib/agent-types';
 import {
-  AVATAR_PERSONAS,
+  LOCAL_AVATAR_OPTIONS,
   getAvatarImageUrl,
   getPersonaAvatarForAgentTypes,
-  isEmojiAvatar,
+  normalizeLocalAvatarValue,
 } from '@/lib/avatar';
 import { useFeatures } from '@/hooks/useFeatures';
 import { cn } from '@/lib/utils';
@@ -65,8 +65,7 @@ const FALLBACK_MODELS = [
   { provider: 'codex', model_name: 'codex/o3' },
 ];
 
-const EMOJIS = ['🤖', '🧠', '⚡', '🔥', '🎯', '💡', '🛡️', '🚀', '🌟', '🎨', '📊', '🔧', '🤝', '👾', '🦾', '🧬'];
-const DEFAULT_AVATAR = getPersonaAvatarForAgentTypes([]);
+const DEFAULT_AVATAR = normalizeLocalAvatarValue(getPersonaAvatarForAgentTypes([]));
 const PERSISTENT_TOOL_OPTIONS = WIZARD_OPTIONAL_TOOL_CAPABILITIES.filter((tool) => tool.key !== 'code_execution');
 const SOCIAL_PLATFORM_OPTIONS = ['linkedin', 'twitter', 'instagram', 'facebook', 'tiktok', 'youtube', 'threads', 'bluesky', 'pinterest'];
 
@@ -574,7 +573,7 @@ export default function NewAgentPage() {
     (tool) => tool.key !== 'code_execution'
   );
   const sandboxEligible = isSandboxEligibleAgentType(form.agentTypes);
-  const avatarPreviewUrl = !isEmojiAvatar(form.avatar) ? getAvatarImageUrl(form.avatar, form.name || 'Agent') : null;
+  const avatarPreviewUrl = getAvatarImageUrl(form.avatar, form.name || 'Agent');
   const draftMatrix = buildDraftCapabilityMatrix({
     planId: plan,
     features,
@@ -607,7 +606,7 @@ export default function NewAgentPage() {
       return {
         ...current,
         agentTypes: nextTypes,
-        avatar: nextTypes.length > 0 ? getPersonaAvatarForAgentTypes(nextTypes) : current.avatar,
+        avatar: nextTypes.length > 0 ? normalizeLocalAvatarValue(getPersonaAvatarForAgentTypes(nextTypes)) : current.avatar,
         skills: nextRecommendedSkills,
         access: nextAccess,
         persistentTools: current.persistentTools.filter((toolKey) => toolKey !== 'code_execution'),
@@ -935,55 +934,35 @@ export default function NewAgentPage() {
                   <div className="space-y-3">
                     <div>
                       <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">
-                        Persona library
+                        Local avatar library
                       </div>
-                      <div className="grid grid-cols-4 gap-2">
-                        {AVATAR_PERSONAS.map((persona) => (
+                      <div className="grid grid-cols-3 gap-2">
+                        {LOCAL_AVATAR_OPTIONS.map((option) => (
                           <button
-                            key={persona.slug}
+                            key={option.slug}
                             type="button"
-                            title={persona.label}
+                            title={option.label}
                             onClick={() => {
                               updateForm((current) => ({
                                 ...current,
-                                avatar: `/static/avatars/${persona.slug}.svg`,
+                                avatar: option.slug,
                               }));
                               setShowAvatarPicker(false);
                             }}
                             className={cn(
                               'overflow-hidden rounded-xl border text-left',
-                              form.avatar === `/static/avatars/${persona.slug}.svg`
+                              normalizeLocalAvatarValue(form.avatar) === option.slug
                                 ? 'border-blue-500 ring-1 ring-blue-500/40'
                                 : 'border-white/10 hover:border-white/20'
                             )}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
-                              src={`/static/avatars/${persona.slug}.svg`}
-                              alt={persona.label}
+                              src={option.src}
+                              alt={option.label}
                               className="aspect-square w-full bg-[#080a11] object-cover"
                             />
-                            <span className="block truncate px-2 py-1 text-[10px] text-[#9ca3af]">{persona.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="border-t border-white/8 pt-3">
-                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#8c94a8]">
-                        Emoji fallback
-                      </div>
-                      <div className="grid grid-cols-8 gap-1">
-                        {EMOJIS.map((emoji) => (
-                          <button
-                            key={emoji}
-                            type="button"
-                            onClick={() => {
-                              updateForm((current) => ({ ...current, avatar: emoji }));
-                              setShowAvatarPicker(false);
-                            }}
-                            className="flex h-9 w-9 items-center justify-center rounded-lg hover:bg-white/5"
-                          >
-                            {emoji}
+                            <span className="block truncate px-2 py-1 text-[10px] text-[#9ca3af]">{option.label}</span>
                           </button>
                         ))}
                       </div>

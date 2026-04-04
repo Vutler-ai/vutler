@@ -26,6 +26,13 @@ export interface AvatarPersonaOption {
   recommendedAgentTypes: string[];
 }
 
+export interface LocalAvatarOption {
+  slug: string;
+  label: string;
+  category: string;
+  src: string;
+}
+
 export const AVATAR_PERSONAS: AvatarPersonaOption[] = [
   {
     slug: 'operations-oracle',
@@ -209,6 +216,22 @@ const AGENT_TYPE_PERSONA_MAP: Record<string, string> = {
   integration: 'automation-pilot',
 };
 
+export function humanizeAvatarSlug(value: string): string {
+  return value
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+export function normalizeLocalAvatarValue(value: string | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/static/avatars/')) return raw;
+
+  const fileName = raw.split('/').pop() || '';
+  return fileName.replace(/\.(png|svg|jpg|jpeg|webp)$/i, '');
+}
+
 function stripImageExtension(value: string): string {
   return value.replace(IMAGE_EXTENSION_RE, '');
 }
@@ -236,6 +259,21 @@ export function getStaticAvatarUrl(avatar: string | undefined): string | null {
   if (KNOWN_AVATAR_SLUGS.has(slug)) return `${STATIC_AVATAR_PREFIX}${slug}.png`;
   return null;
 }
+
+export const LOCAL_AVATAR_OPTIONS: LocalAvatarOption[] = [
+  ...PNG_AVATAR_SLUGS.map((slug) => ({
+    slug,
+    label: humanizeAvatarSlug(slug),
+    category: 'Classic',
+    src: `${STATIC_AVATAR_PREFIX}${slug}.png`,
+  })),
+  ...AVATAR_PERSONAS.map((persona) => ({
+    slug: persona.slug,
+    label: persona.label,
+    category: persona.category,
+    src: `${STATIC_AVATAR_PREFIX}${persona.slug}.svg`,
+  })),
+];
 
 export function getPersonaAvatarForAgentTypes(agentTypes: string[]): string {
   for (const agentType of agentTypes) {
