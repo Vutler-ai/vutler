@@ -1,41 +1,80 @@
-# ACTIONS SÉCURITÉ REQUISES - ROTATION CLÉS API
+# Security Actions Required
 
-## 🔴 ACTIONS MANUELLES URGENTES
+## Goal
 
-### 1. Stripe API Key Rotation
-- **URL:** https://dashboard.stripe.com/apikeys
-- **Action:** Rotater la clé `STRIPE_WEBHOOK_SECRET` actuelle
-- **Valeur exposée:** `[REDACTED_WEBHOOK_SECRET]`
-- **Après rotation:** Mettre à jour la valeur dans `/home/ubuntu/vutler/.env` sur le VPS
+Track the manual credential rotations and historical cleanup actions that followed the exposed-secret incident.
 
-### 2. Google OAuth Credentials Rotation
-**RocketChat OAuth (MongoDB):**
-- **Client ID exposé:** `[REDACTED_GOOGLE_CLIENT_ID]`
-- **Secret exposé:** `[REDACTED_GOOGLE_CLIENT_SECRET]`
-- **Action:** Rotater dans Google Cloud Console et mettre à jour via MongoDB
+This runbook is historical and operational. It intentionally references legacy systems only where they were part of the incident surface.
 
-**OpenClaw Extension OAuth:**
-- **Client ID exposé:** `[REDACTED_GOOGLE_CLIENT_ID]`
-- **Secret exposé:** `[REDACTED_GOOGLE_CLIENT_SECRET]`
-- **Action:** Rotater dans Google Cloud Console et mettre à jour `.env`
+## Use When
 
-## ✅ ACTIONS DÉJÀ EFFECTUÉES
+Use this runbook when:
+- rotating credentials after a confirmed exposure
+- checking which manual rotations are still pending
+- confirming which code paths were already cleaned up
 
-### Code nettoyé :
-1. **sniparaWebhook.js** - Secret hardcodé supprimé
-2. **index.ts (OpenClaw)** - Secrets base64 remplacés par variables env
-3. **docker-compose.yml** - Variable `SNIPARA_WEBHOOK_SECRET` ajoutée
+## Immediate Manual Actions
 
-### Commits de sécurité :
-- `0ca23474`: Remove hardcoded webhook secret from sniparaWebhook.js
-- `b9e57e54`: Remove hardcoded Google OAuth secrets from OpenClaw extension
+### Stripe API Key Rotation
 
-## ⚠️ PROBLÈME HISTORIQUE GIT
-- Push bloqué par GitHub Push Protection
-- Secrets présents dans l'historique (commit 6869f726...)
-- **Recommandation:** Nettoyer l'historique Git ou utiliser les URLs de dérogation GitHub
+URL:
+- [dashboard.stripe.com/apikeys](https://dashboard.stripe.com/apikeys)
 
-## 🔍 SCAN DE SÉCURITÉ FINAL
-- ✅ Aucun secret résiduel trouvé dans le code actuel
-- ✅ Tous les secrets sont maintenant dans les variables d'environnement
-- ✅ Fichier `.env` protégé par `.gitignore`
+Required action:
+- rotate the current `STRIPE_WEBHOOK_SECRET`
+- update the rotated value in `/home/ubuntu/vutler/.env` on the VPS
+
+Exposed historical value:
+- `[REDACTED_WEBHOOK_SECRET]`
+
+### Google OAuth Credentials Rotation
+
+Legacy Rocket.Chat OAuth credentials:
+- exposed client ID: `[REDACTED_GOOGLE_CLIENT_ID]`
+- exposed secret: `[REDACTED_GOOGLE_CLIENT_SECRET]`
+- action: rotate in Google Cloud Console and remove any remaining dependency on the legacy path
+
+OpenClaw extension OAuth credentials:
+- exposed client ID: `[REDACTED_GOOGLE_CLIENT_ID]`
+- exposed secret: `[REDACTED_GOOGLE_CLIENT_SECRET]`
+- action: rotate in Google Cloud Console and update the corresponding `.env` value
+
+## Completed Cleanup
+
+Code already cleaned:
+- `sniparaWebhook.js` hardcoded secret removed
+- `index.ts` in OpenClaw moved base64 secrets to env variables
+- `docker-compose.yml` now uses `SNIPARA_WEBHOOK_SECRET`
+
+Security commits:
+- `0ca23474` remove hardcoded webhook secret from `sniparaWebhook.js`
+- `b9e57e54` remove hardcoded Google OAuth secrets from OpenClaw extension
+
+## Historical Git Risk
+
+Observed:
+- push was blocked by GitHub Push Protection
+- secrets were present in repository history, including commit `6869f726...`
+
+Required follow-up:
+- clean Git history if retention policy requires it
+- or use GitHub exemption flow only when cleanup is formally accepted
+
+## Validation
+
+Final security scan status at the time of this note:
+- no residual secret found in current code
+- secrets moved to environment variables
+- `.env` remains protected by `.gitignore`
+
+Validation checklist after each rotation:
+- confirm the old credential is revoked
+- confirm the new credential is stored only in the intended env source
+- confirm runtime still boots with the rotated secret
+- confirm no hardcoded copy remains in the repo or deployment scripts
+
+## Hard Rules
+
+- Do not treat code cleanup as credential rotation.
+- Do not keep exposed credentials active after the replacement is available.
+- Do not reintroduce secrets into tracked files, test fixtures, or deployment notes.

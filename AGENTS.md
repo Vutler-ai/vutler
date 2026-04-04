@@ -1,97 +1,91 @@
 # AGENTS.md
 
-## Project Overview
+## Purpose
 
-Vutler is an AI agent management platform built by **Starbox Group**, based in Geneva.
+This file defines the current architectural truth for Vutler.
 
-### Product surfaces
-- **vutler.ai** → public landing site
-- **app.vutler.ai** → authenticated application
+Use it as the default reference when:
+- navigating the repo
+- writing implementation notes
+- updating onboarding or product documentation
+- reviewing whether a feature is current, legacy, or obsolete
 
-### What the platform does
-Vutler allows organizations to create, configure, and operate AI agents that can collaborate across multiple channels and tools.
+If code and docs disagree, align work toward the rules in this file unless the current implementation has already been intentionally superseded.
 
-Agents can work through:
-- **native WebSocket chat**
-- **email**
-- **tasks**
-- **shared drive access**
+## Product
 
-The platform is multi-tenant and designed for workspace-based agent operations, with configuration, memory, task execution, and communication handled at the application level.
+Vutler is an AI agent management platform built by Starbox Group in Geneva.
 
----
+Public surfaces:
+- `vutler.ai` -> marketing site
+- `app.vutler.ai` -> authenticated product
 
-## Technology Stack
+Core product scope:
+- multi-tenant, workspace-based agent operations
+- agent configuration, memory, tasks, and communication at application level
+- runtime collaboration over native chat, email, tasks, and shared drive access
 
-### Frontend
-- **Next.js 14**
-- **TypeScript**
-- **Tailwind CSS**
-- **shadcn/ui**
+## Architecture At A Glance
 
-### Backend
-- **Express.js**
-- **Node.js**
-- Module system: **CommonJS**
+Frontend:
+- Next.js 14
+- TypeScript
+- Tailwind CSS
+- shadcn/ui
 
-### Database
-- **Supabase PostgreSQL**
-- Primary schema: **`tenant_vutler`**
-- **No MongoDB**
-- **No Meteor**
+Backend:
+- Express.js
+- Node.js
+- CommonJS modules
 
-### Authentication
-- **Supabase Auth**
-- **X-API-Key** for API-based integrations and external clients
+Data:
+- Supabase PostgreSQL
+- primary schema: `tenant_vutler`
+- raw SQL access
+- no ORM
 
-### Real-time communication
-- **Native WebSocket**
-- **No Rocket.Chat**
-- **No DDP**
+Auth:
+- Supabase Auth
+- `X-API-Key` for external clients and programmable access
 
-### LLM providers
-Supported providers include:
-- **Anthropic**
-- **Codex** via ChatGPT OAuth
-- **OpenRouter**
-- **Mistral**
-- **Groq**
-- **Google**
+Realtime:
+- native WebSocket chat
+- no Rocket.Chat
+- no DDP
 
-### Deployment
-- **Docker**
-- **Ubuntu VPS**
+Deployment:
+- Docker
+- Ubuntu VPS
 
----
+Memory:
+- Snipara workspace-level memory integration
 
-## Agent Lifecycle
+## Current Platform Model
 
-### Agent creation
-Agents are created through an **agent type wizard**.
+### Agents
 
-This replaces any older direct/manual agent creation flow. The wizard is the expected entry point for provisioning a new agent.
+Agents are created through the agent type wizard.
 
-### Provisioning model
-Agents are **auto-provisioned by role**.  
-The selected role determines the initial setup, including default behavior and compatible capabilities.
+Do not assume:
+- a legacy manual creation flow
+- ad hoc agent bootstrapping outside the wizard
 
-### Skills
-- Each agent can have a maximum of **8 skills**
-- Skills are selected and constrained according to the agent’s intended role and runtime configuration
+Provisioning model:
+- agents are auto-provisioned by role
+- the selected role determines initial setup and compatible capabilities
+- each agent can have at most `8` skills
 
-### Configuration model
-Agent configuration is split across distinct layers:
+Agent configuration layers must stay distinct:
+- persistent skills
+- workspace integrations
+- agent access policy
+- agent provisioning
 
-- **persistent skills** stay on the agent profile
-- **workspace integrations** are connected at workspace level, not owned by one agent
-- **agent access policy** decides which runtime capability an agent may use
-- **agent provisioning** stores local setup such as email identity, social scope, drive root, or visible channels
+Do not flatten these into one generic "skills + integrations" bucket.
 
-When discussing agent setup, do not collapse these layers into one flat “skills + integrations” list.
+### Capabilities
 
-### Capability matrix
-Runtime capability readiness should be understood through four states:
-
+Capability readiness is expressed through:
 - `workspace_available`
 - `agent_allowed`
 - `provisioned`
@@ -99,238 +93,141 @@ Runtime capability readiness should be understood through four states:
 
 Only `effective` means the capability is actually usable at runtime.
 
-### Sandbox rule
-`sandbox` is a governed execution capability and should stay limited to technical agent types such as:
+Sandbox policy:
+- `sandbox` is governed and should stay limited to technical agent types
+- valid stable targets include `technical`, `security`, `qa`, `devops`, `engineering`
+- non-technical agents should rely on orchestration and delegation instead of direct sandbox access
 
-- `technical`
-- `security`
-- `qa`
-- `devops`
-- `engineering`
+### Communication
 
-Non-technical agents should rely on orchestration and delegation instead of exposing sandbox directly in their stable profile.
+Supported collaboration channels:
+- native WebSocket chat
+- email via Postal
+- tasks via the Tasks API
+- shared drive access backed by Exoscale SOS
 
-### Core agent configuration
-Each agent can be configured with:
-- `model`
-- `provider`
-- `system_prompt`
-- `temperature`
-- `max_tokens`
+Email identities may be:
+- workspace custom domains
+- platform-managed addresses under `@slug.vutler.ai`
 
-### Supported model families
-Supported models include current providers and naming conventions such as:
-- `codex/*`
-  - examples: `gpt-5.4`, `gpt-5.3-codex-spark`
-- `claude-sonnet-4`
-- other currently supported models exposed through configured providers
-
-Do not document or rely on deprecated model references such as:
-- `gpt-4o`
-- `claude-3.5-sonnet`
-
----
-
-## Agent Communication
-
-### Native chat
-Agents collaborate through a **native WebSocket chat system**.
-
-This is the current real-time communication layer and fully replaces any previous Rocket.Chat-based assumptions.
-
-### Email
-Agents can send and receive email via **Postal**.
-
-Supported email identities include:
-- custom domains configured by the workspace
-- platform-managed addresses under **`@slug.vutler.ai`**
-
-### Tasks
-Agents can collaborate asynchronously through the **Tasks API**.
-
-Tasks are assigned using:
+Task assignment uses:
 - `assigned_agent`
 
-### Shared drive
-Agents can access shared files through a common drive layer backed by:
-- **Exoscale SOS**
+### MCP Access
 
----
+Vutler exposes one public MCP server:
+- `@vutler/mcp`
 
-## LLM Integration
+Purpose:
+- allow MCP-compatible clients to operate inside a Vutler workspace
+- delegate work to Vutler agents through the standard programmable surface
 
-### Router architecture
-LLM calls are routed through a central service layer, typically represented by `llmRouter`.
+Authentication:
+- `X-API-Key`
 
-This router is responsible for:
-- selecting the correct provider
-- resolving credentials
-- formatting requests
-- applying fallbacks
-- handling streaming behavior
-
-### Codex provider
-Vutler supports **Codex** through the ChatGPT backend endpoint:
-
-- `chatgpt.com/backend-api/codex/responses`
-
-### Codex authentication
-Authentication uses **ChatGPT OAuth**.
-
-Implementation requirements:
-- OAuth token is stored in the database
-- token refresh must happen automatically when needed
-
-### Request format
-Codex integration uses a **Responses API-style payload**.
-
-Use:
-- `instructions`
-- `input`
-
-Do **not** rely on old `messages`-based formatting for this provider.
-
-### Transport requirements
-Streaming is required for Codex requests.
-
-Mandatory parameters:
-- `stream: true`
-- `store: false`
-
-Transport mode:
-- **SSE streaming**
-
-### Fallback behavior
-If the primary provider fails, the default fallback is:
-- **Anthropic**
-
-This fallback behavior should be built into the routing and execution path, not implemented ad hoc in feature code.
-
-### Token resolution requirement
-Provider token resolution requires a database pool to be passed into `llmRouter`.
-
-If `llmRouter` is used without access to the DB pool, provider auth resolution may fail, especially for OAuth-backed providers like Codex.
-
----
-
-## Task Execution
-
-### Task creation
-Tasks are created through the API and assigned via:
-- `assigned_agent`
-
-### Execution flow
-Task execution is handled by `TaskExecutor`.
-
-Expected flow:
-1. A task is created with an assigned agent
-2. `TaskExecutor` loads the task and agent context
-3. `TaskExecutor` calls `llmRouter.chat()` with the agent
-4. The provider executes using the agent configuration
-5. If the primary provider fails, execution falls back automatically to **Anthropic**
-6. The output is persisted in task metadata
-
-### Persistence
-Task execution results are stored in:
-- task `metadata`
-
-This metadata should include enough structured context to support later inspection, retries, or downstream processing.
-
----
-
-## Unified MCP Access
-
-Vutler exposes one public MCP server through:
-
-- **`@vutler/mcp`**
-
-### Purpose
-This package allows external MCP-compatible clients to operate inside the Vutler workspace and delegate work to Vutler agents.
-
-Typical clients include:
+Typical clients:
 - Claude Desktop
 - Cursor
 - Claude Code
-- any MCP-compatible tool or runtime
+- any MCP-compatible runtime
 
-### Authentication
-Authentication is handled with:
-- **X-API-Key**
+## LLM Runtime
 
-This server should be treated as the standard programmable access layer for Vutler workspaces.
+LLM execution is routed through `llmRouter`.
 
----
+`llmRouter` is responsible for:
+- provider selection
+- credential resolution
+- request shaping
+- fallback handling
+- streaming behavior
 
-## Memory & Context
+Supported providers include:
+- Anthropic
+- Codex via ChatGPT OAuth
+- OpenRouter
+- Mistral
+- Groq
+- Google
 
-Vutler integrates with **Snipara** for persistent agent memory.
+Supported model families should follow current naming:
+- `codex/*`
+- `gpt-5.4`
+- `gpt-5.3-codex-spark`
+- `claude-sonnet-4`
+- other current models exposed through configured providers
 
-### Runtime primitives
-Agents can use:
+Do not document or build against deprecated names such as:
+- `gpt-4o`
+- `claude-3.5-sonnet`
+
+### Codex Rules
+
+Codex uses the ChatGPT backend endpoint:
+- `chatgpt.com/backend-api/codex/responses`
+
+Authentication requirements:
+- OAuth token stored in the database
+- token refresh handled automatically
+
+Payload requirements:
+- use `instructions`
+- use `input`
+- do not rely on old `messages` formatting for this provider
+
+Transport requirements:
+- `stream: true`
+- `store: false`
+- SSE streaming
+
+Fallback behavior:
+- default fallback is Anthropic
+- fallback belongs in routing/runtime, not ad hoc feature code
+
+Important:
+- provider token resolution requires a DB pool
+- calling `llmRouter` without DB access can break provider auth resolution, especially for Codex OAuth
+
+## Task Execution
+
+Task execution is handled by `TaskExecutor`.
+
+Expected flow:
+1. A task is created with `assigned_agent`.
+2. `TaskExecutor` loads task and agent context.
+3. `TaskExecutor` calls `llmRouter.chat()` with the agent.
+4. The configured provider executes.
+5. If the primary provider fails, runtime falls back to Anthropic.
+6. The result is persisted in task metadata.
+
+Persistence requirement:
+- execution output must be stored in task `metadata`
+- metadata should retain enough structured context for inspection, retries, and downstream automation
+
+## Memory
+
+Vutler integrates with Snipara for persistent agent memory.
+
+Runtime primitives:
 - `remember()`
 - `recall()`
 
-These functions are available in the agent runtime to persist and retrieve contextual memory over time.
+Memory is configured at workspace level through workspace settings.
 
-### Configuration
-Snipara is configured at the workspace level through:
-- workspace settings
+Treat memory as persistent contextual support, not a replacement for immediate runtime state.
 
-Memory behavior should be understood as persistent contextual support for agents, not as a replacement for immediate runtime state.
+## Repo Map
 
----
+Frontend:
+- `frontend/src/app/(app)/` -> authenticated application pages
+- `frontend/src/lib/api/` -> API client and shared types
 
-## Key Directories
+Backend:
+- `api/` -> Express route handlers
+- `services/` -> business logic such as `llmRouter` and `taskExecutor`
+- `seeds/` -> agent templates and skills
 
-### Frontend
-- `frontend/src/app/(app)/` → application pages
-- `frontend/src/lib/api/` → API client and shared types
-
-### Backend
-- `api/` → Express route handlers
-- `services/` → business logic such as `llmRouter`, `taskExecutor`, and related services
-- `seeds/` → agent templates and skills
-
-When documenting architecture or navigating the codebase, use these directories as the primary reference points.
-
----
-
-## Development
-
-### Frontend
-```bash
-cd frontend && pnpm dev
-```
-
-Default port:
-- `3000`
-
-### API
-```bash
-cd api && pnpm dev
-```
-
-### Tests
-```bash
-pnpm test
-```
-
-### Operations commands
-
-For production/Vaultbrix operational checks, prefer these entry points first:
-
-```bash
-npm run ops:prod:audit
-npm run db:backup
-./scripts/production-state-audit.sh --strict
-```
-
-Meaning:
-- `npm run ops:prod:audit` → standard production state audit wrapper
-- `npm run db:backup` → logical database backup entry point
-- `./scripts/production-state-audit.sh --strict` → hard gate for unhealthy API, pending migrations, or mixed owners
-
-Primary references:
+Operational references:
 - `scripts/production-state-audit.sh`
 - `scripts/backup-db.sh`
 - `docs/runbooks/production-ops-hardening-plan.md`
@@ -338,20 +235,48 @@ Primary references:
 - `docs/runbooks/production-deploy-clean-artifact.md`
 - `docs/runbooks/production-rollback-clean-artifact.md`
 
----
+## Development
+
+Frontend:
+```bash
+cd frontend && pnpm dev
+```
+
+Default frontend port:
+- `3000`
+
+API:
+```bash
+cd api && pnpm dev
+```
+
+Tests:
+```bash
+pnpm test
+```
+
+Preferred production operations entry points:
+```bash
+npm run ops:prod:audit
+npm run db:backup
+./scripts/production-state-audit.sh --strict
+```
+
+Meaning:
+- `npm run ops:prod:audit` -> standard production state audit wrapper
+- `npm run db:backup` -> logical database backup entry point
+- `./scripts/production-state-audit.sh --strict` -> hard gate for unhealthy API, pending migrations, or mixed owners
 
 ## Conventions
 
-### Language conventions
-- Application code is written in **English**
-- Business-facing documentation can be written in **French**
+Language:
+- application code in English
+- business-facing documentation may be in French
 
-### Type safety
-- Frontend uses **TypeScript strict mode**
+Type safety:
+- frontend runs in TypeScript strict mode
 
-### API response format
-Standard API responses should follow:
-
+API response shape:
 ```ts
 {
   success: boolean,
@@ -360,36 +285,36 @@ Standard API responses should follow:
 }
 ```
 
-### Database access
-- Database queries use **raw SQL via Supabase**
-- **No ORM**
+Database access:
+- raw SQL via Supabase
+- no ORM
 
-### Architectural rules
-- Do not introduce or document deprecated Meteor/DDP concepts
-- Do not reference Rocket.Chat as the chat layer
-- Do not reference MiniMax as a supported provider
-- Do not assume legacy model names are current
-- Do not assume agent creation happens outside the wizard flow
+## Do / Don't
 
----
+Do:
+- treat PostgreSQL as the source of truth
+- use native WebSocket chat as the current realtime layer
+- use the wizard as the default agent creation path
+- preserve the separation between skills, integrations, access policy, and provisioning
+- pass DB access into `llmRouter` when provider auth resolution is needed
+- keep fallback behavior centralized in runtime services
 
-## Important Current-State Notes
+Do not:
+- introduce or document MongoDB or Meteor assumptions
+- reference Rocket.Chat as the chat layer
+- reference DDP as a current transport
+- reference MiniMax as a supported provider
+- rely on legacy model names
+- describe agent creation as a direct manual flow unless discussing legacy history
 
-The following are explicitly obsolete and should not appear in future documentation unless discussing legacy history:
+## Obsolete References
 
-- **Rocket.Chat**
-- **Meteor / DDP**
-- **MiniMax**
-- legacy models such as:
-  - `gpt-4o`
-  - `claude-3.5-sonnet`
-- manual agent creation flow without the wizard
+The following are obsolete and should not appear in current-state documentation unless explicitly discussing legacy history:
+- Rocket.Chat
+- Meteor / DDP
+- MiniMax
+- `gpt-4o`
+- `claude-3.5-sonnet`
+- manual agent creation outside the wizard flow
 
-Any implementation, documentation, or onboarding material should reflect the current platform architecture described in this file.
-```
-
-Si tu veux, je peux aussi te livrer une **version encore plus “repo-ready”**, avec :
-- un ton plus interne/dev
-- une section “Architecture at a glance”
-- une section “Do / Don’t”
-- une mise en forme plus compacte pour un vrai `AGENTS.md` de projet.
+Everything shipped or documented going forward should reflect the current platform model described above.

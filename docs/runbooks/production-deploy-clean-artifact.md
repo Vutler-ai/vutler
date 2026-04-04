@@ -2,30 +2,19 @@
 
 ## Goal
 
-Deploy Vutler production from an exact pushed commit, without rebuilding from the dirty VPS checkout.
+Deploy production from an exact pushed commit without rebuilding from a dirty VPS checkout.
 
-This is now the recommended production path when:
+This is the preferred production path when:
 - the VPS repo has local changes
 - the runtime was manually patched on the host
 - the deploy must match a specific pushed commit exactly
 
-## Why
+## Use When
 
-The VPS checkout at `/home/ubuntu/vutler` can drift from Git:
-- modified tracked files
-- untracked files
-- local hotfixes
-- stale scripts
-
-If Docker builds from that tree directly, production may not match the pushed commit.
-
-The running container can also drift from `origin/main`:
-- tracked files present in Git but missing from the live container
-- tracked files that differ between the live container and the target commit
-
-This does not automatically block deployment. It means production is not an exact match of the commit you want to ship, so you must decide whether the drift is:
-- expected lag that will be replaced by the next clean deploy
-- a live-only hotfix that must be preserved first
+Use this runbook when:
+- deploying API or frontend from `origin/main`
+- replacing a drifted VPS checkout with a clean artifact
+- validating whether live code can be safely replaced by the target commit
 
 ## Rule
 
@@ -38,23 +27,37 @@ Source of truth:
 Production build source:
 - a tar archive exported from the exact commit to deploy
 
-## Standard Flow
+## Why
 
-### Automated path
+The VPS checkout at `/home/ubuntu/vutler` can drift from Git:
+- modified tracked files
+- untracked files
+- local hotfixes
+- stale scripts
 
-You can run the full clean-artifact flow from your local machine:
+The running container can also drift from `origin/main`:
+- tracked files present in Git but missing from the live container
+- tracked files that differ between the live container and the target commit
+
+This does not automatically block deployment. It means production is not an exact match of the commit you want to ship, so you must decide whether the drift is:
+- expected lag that will be replaced by the next clean deploy
+- a live-only hotfix that must be preserved first
+
+## Fast Path
+
+Run the full flow from your local machine:
 
 ```bash
 ./scripts/deploy-clean-artifact.sh --commit origin/main
 ```
 
 Useful flags:
-- `--frontend` to rebuild and restart `vutler-frontend` too
+- `--frontend` to rebuild and restart `vutler-frontend`
 - `--audit-only` to run the live-container parity audit without deploying
-- `--skip-smoke` if you must defer the smoke test intentionally
-- `--keep-tmp` to keep the local audit artifacts for inspection
+- `--skip-smoke` to defer the smoke test intentionally
+- `--keep-tmp` to keep local audit artifacts for inspection
 
-Rollback path:
+Rollback references:
 - [production-rollback-clean-artifact.md](/Users/alopez/Devs/Vutler/docs/runbooks/production-rollback-clean-artifact.md)
 - [rollback-clean-artifact.sh](/Users/alopez/Devs/Vutler/scripts/rollback-clean-artifact.sh)
 
@@ -67,7 +70,7 @@ The script:
 - runs `./scripts/smoke-test.sh` unless told not to
 - updates `/home/ubuntu/vutler-deploy/current-release.env` after a successful promotion
 
-It still enforces the same rule: the target commit must already be contained in `origin/main`.
+## Procedure
 
 ### 1. Push the exact commit first
 
@@ -78,9 +81,7 @@ git push origin main
 git rev-parse --short HEAD
 ```
 
-Record the commit you intend to deploy.
-
-If you work through feature branches, the same rule applies:
+If you work through feature branches:
 
 ```bash
 git checkout main
@@ -92,7 +93,7 @@ git rev-parse --short HEAD
 
 Deploy only a pushed commit already present on `origin/main`.
 
-### 2. Optional parity audit before deploy
+### 2. Run parity audit when drift is plausible
 
 Use this when:
 - the VPS was manually patched before
@@ -115,39 +116,26 @@ VPS:
 docker cp vutler-api:/app/. /tmp/vutler-api-live
 ```
 
-Then compare tracked files only.
-
 Interpretation:
-- a few missing/different files usually means production is simply behind `main`
-- if the differing files are exactly the files you are about to deploy, continue with clean artifact deploy
+- a few missing or different files usually means production is behind `main`
+- if the differing files are exactly the files you are about to deploy, continue
 - if the differing files look like emergency prod hotfixes not present in Git, stop and capture them first
 
-### 3. Decision rule for missing/different tracked files
+### 3. Apply the decision rule for drift
 
-If parity audit shows drift, do not try to “merge from the VPS checkout”.
+If parity audit shows drift:
+- if the live drift is understood and disposable, deploy the clean artifact from `origin/main`
+- if the live drift contains unknown business logic, export those files, review them locally, and either commit them or intentionally discard them
 
-Use this rule:
-- if the live container drift is understood and disposable, deploy the clean artifact from `origin/main`
-- if the live container drift contains unknown business logic, export those files, review them locally, and either commit them or intentionally discard them
-
-What the `13 missing` and `9 different` files mean in practice:
-- they are evidence that the current live container is not built from the exact `origin/main` tree
-- they are not something to reconcile on the VPS
-- the next clean deploy from `origin/main` will replace the live container filesystem with the target commit contents
-
-Only block deployment if one of the `different` files contains a prod-only fix you still need.
+Do not try to "merge from the VPS checkout".
 
 ### 4. Export a clean tarball locally
-
-Local:
 
 ```bash
 git archive --format=tar <commit> -o /tmp/vutler-deploy-<commit>.tar
 ```
 
 ### 5. Copy the artifact to the VPS
-
-Local:
 
 ```bash
 scp -i ~/.ssh/vps-ssh-key.pem -o StrictHostKeyChecking=no \
@@ -156,8 +144,6 @@ scp -i ~/.ssh/vps-ssh-key.pem -o StrictHostKeyChecking=no \
 ```
 
 ### 6. Extract to a temporary release directory on the VPS
-
-VPS:
 
 ```bash
 COMMIT=<commit>
@@ -168,8 +154,6 @@ tar -xf /tmp/vutler-deploy-$COMMIT.tar -C "$DEPLOY_DIR"
 ```
 
 ### 7. Build and run the API from the extracted release
-
-VPS:
 
 ```bash
 cd "$DEPLOY_DIR"
@@ -212,15 +196,10 @@ docker run -d --name vutler-frontend --restart unless-stopped \
 
 ### 9. Run smoke tests from the same release
 
-VPS:
-
 ```bash
 cd "$DEPLOY_DIR"
 ./scripts/smoke-test.sh
 ```
-
-Expected:
-- `10/10 passed`
 
 Recommended follow-up:
 
@@ -228,46 +207,47 @@ Recommended follow-up:
 ./scripts/production-state-audit.sh --strict
 ```
 
+## Validation
+
+Expected outcome:
+- target commit is already pushed
+- `vutler-api` becomes healthy
+- `vutler-frontend` becomes healthy when rebuilt
+- smoke test passes from the extracted release
+- `current-release.env` is refreshed after success
+
 ## Hard Rules
 
 - Never rebuild production straight from `/home/ubuntu/vutler` if `git status` is dirty.
 - Never assume VPS `HEAD` matches `origin/main`.
-- Never try to reconcile missing/different container files by editing the VPS checkout in place.
+- Never try to reconcile missing or different container files by editing the VPS checkout in place.
 - Never debug production deploys against an unknown local patch state.
 - Prefer exact artifact deploys over `git pull && docker build` on the server.
 
-## Known Failure Modes Discovered
+## Known Failure Modes
 
-### 1. Package drift between `package.json` and `package-lock.json`
+### Package drift between `package.json` and `package-lock.json`
 
 Observed:
 - runtime modules present in lockfile but missing in `package.json`
 - API Docker image installed an incomplete dependency set
 
 Fix applied:
-- API Dockerfile now copies `package-lock.json`
-- API Dockerfile now uses `npm ci --omit=dev`
+- API Dockerfile copies `package-lock.json`
+- API Dockerfile uses `npm ci --omit=dev`
 
-### 2. Optional module crash at boot
-
-Observed:
-- `web-push` missing caused `/api/push` mount to crash the whole API boot
-
-Fix applied:
-- push route mount is now guarded at boot
-
-### 3. Refactor residue crash at boot
+### Optional module crash at boot
 
 Observed:
-- `chatRuntime.js` still exported `getMemoryScope` after the helper had been removed
+- missing `web-push` caused `/api/push` mount to crash the whole API boot
 
 Fix applied:
-- dead export removed
+- push route mount is guarded at boot
 
-## Recommended Follow-up
+### Refactor residue crash at boot
 
-- keep `/home/ubuntu/vutler` only for reference and scripts
-- add a proper release directory convention under `/home/ubuntu/releases/vutler/<commit>/`
-- install [`vps-retention.sh`](/Users/alopez/Devs/Vutler/scripts/vps-retention.sh) on the VPS and run it daily to prune stale deploy artifacts and historical Docker images
-- optionally keep the last successful API image tag and last successful frontend image tag in a rollback note
-- eventually move this process into a single deploy script that accepts a commit tarball
+Observed:
+- stale runtime mounts can survive if deploy hygiene is weak
+
+Fix applied:
+- clean-artifact deploy removes dependence on the dirty VPS checkout
