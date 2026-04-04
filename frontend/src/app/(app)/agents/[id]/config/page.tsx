@@ -731,7 +731,7 @@ export default function AgentConfigPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [savingSection, setSavingSection] = useState<string | null>(null);
 
-  const [identityDraft, setIdentityDraft] = useState<IdentityDraft>({ name: '', username: '', description: '' });
+  const [identityDraft, setIdentityDraft] = useState<IdentityDraft>({ name: '', username: '', avatar: '', description: '' });
   const [brainDraft, setBrainDraft] = useState<BrainDraft>({
     provider: '',
     model: '',
