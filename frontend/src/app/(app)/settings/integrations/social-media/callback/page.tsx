@@ -8,19 +8,24 @@ import { authFetch } from "@/lib/authFetch";
 export default function SocialMediaCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-  const [message, setMessage] = useState("Please wait while we finalize the connection.");
+  const provider = searchParams.get("provider");
+  const error = searchParams.get("error");
+  const [status, setStatus] = useState<"loading" | "success" | "error">(
+    error ? "error" : "loading"
+  );
+  const [message, setMessage] = useState(
+    error
+      ? "Something went wrong while connecting your account. Please try again."
+      : "Please wait while we finalize the connection."
+  );
 
   useEffect(() => {
-    const error = searchParams.get("error");
-    const provider = searchParams.get("provider");
     if (error) {
-      setStatus("error");
-      setMessage("Something went wrong while connecting your account. Please try again.");
       return;
     }
 
     let cancelled = false;
+    let redirectTimer: number | null = null;
 
     async function finalize() {
       for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -35,12 +40,12 @@ export default function SocialMediaCallbackPage() {
             if (cancelled) return;
             setStatus("success");
             setMessage("Your social account has been connected successfully.");
-            const timer = setTimeout(() => {
+            redirectTimer = window.setTimeout(() => {
               router.push("/settings/integrations/social-media?connected=true");
             }, 1200);
-            return () => clearTimeout(timer);
+            return;
           }
-        } catch (_) {
+        } catch {
           // Retry a few times before surfacing an error.
         }
 
@@ -59,8 +64,9 @@ export default function SocialMediaCallbackPage() {
     void finalize();
     return () => {
       cancelled = true;
+      if (redirectTimer) window.clearTimeout(redirectTimer);
     };
-  }, [searchParams, router]);
+  }, [error, provider, router]);
 
   return (
     <div className="max-w-md mx-auto mt-20 text-center">

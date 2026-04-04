@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { startTransition, useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useEffectEvent } from 'react';
 import { Menu, LogOut } from 'lucide-react';
 import { authFetch } from '@/lib/authFetch';
 
@@ -38,6 +39,7 @@ const typeStyles: Record<string, { dot: string }> = {
 function HeaderNotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
+  const [relativeNow, setRelativeNow] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -52,11 +54,20 @@ function HeaderNotificationBell() {
     }
   }, []);
 
+  const loadNotifications = useEffectEvent(() => {
+    void fetchNotifications();
+  });
+
   useEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [fetchNotifications]);
+    const initialTimeout = window.setTimeout(loadNotifications, 0);
+    const interval = window.setInterval(loadNotifications, 30000);
+    const clock = window.setInterval(() => setRelativeNow(Date.now()), 60000);
+    return () => {
+      window.clearTimeout(initialTimeout);
+      window.clearInterval(interval);
+      window.clearInterval(clock);
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -87,7 +98,7 @@ function HeaderNotificationBell() {
   };
 
   const timeAgo = (date: string) => {
-    const diff = Date.now() - new Date(date).getTime();
+    const diff = relativeNow - new Date(date).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return 'now';
     if (mins < 60) return `${mins}m`;
@@ -216,17 +227,26 @@ function TrialBadge() {
     try {
       const res = await authFetch('/api/v1/onboarding/trial-status');
       const data = await res.json();
-      if (data.success && data.data) setTrial(data.data);
+      if (data.success && data.data) {
+        startTransition(() => setTrial(data.data));
+      }
     } catch {
       // silent
     }
   }, []);
 
+  const loadTrial = useEffectEvent(() => {
+    void fetchTrial();
+  });
+
   useEffect(() => {
-    fetchTrial();
-    const interval = setInterval(fetchTrial, 60000);
-    return () => clearInterval(interval);
-  }, [fetchTrial]);
+    const initialTimeout = window.setTimeout(loadTrial, 0);
+    const interval = window.setInterval(loadTrial, 60000);
+    return () => {
+      window.clearTimeout(initialTimeout);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   if (!trial || !trial.is_trial_active) return null;
 

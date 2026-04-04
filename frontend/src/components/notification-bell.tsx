@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffectEvent } from 'react';
 import { authFetch } from '@/lib/authFetch';
 
 interface Notification {
@@ -22,7 +23,7 @@ const typeStyles: Record<string, { dot: string; icon: string }> = {
 export default function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [relativeNow, setRelativeNow] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
 
   const unreadCount = notifications.filter(n => !n.read).length;
@@ -35,11 +36,20 @@ export default function NotificationBell() {
     } catch {}
   }, []);
 
+  const loadNotifications = useEffectEvent(() => {
+    void fetchNotifications();
+  });
+
   useEffect(() => {
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
-  }, [fetchNotifications]);
+    const initialTimeout = window.setTimeout(loadNotifications, 0);
+    const interval = window.setInterval(loadNotifications, 30000);
+    const clock = window.setInterval(() => setRelativeNow(Date.now()), 60000);
+    return () => {
+      window.clearTimeout(initialTimeout);
+      window.clearInterval(interval);
+      window.clearInterval(clock);
+    };
+  }, []);
 
   // Close on outside click
   useEffect(() => {
@@ -61,7 +71,7 @@ export default function NotificationBell() {
   };
 
   const timeAgo = (date: string) => {
-    const diff = Date.now() - new Date(date).getTime();
+    const diff = relativeNow - new Date(date).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return 'now';
     if (mins < 60) return `${mins}m`;

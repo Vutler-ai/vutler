@@ -10,58 +10,71 @@ export default function IntegrationCallbackPage() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'connecting' | 'success' | 'error'>('connecting');
   const [message, setMessage] = useState<string>('');
-  const [providerName, setProviderName] = useState<string>('');
+  const queryString = searchParams.toString();
 
   useEffect(() => {
-    handleCallback();
-  }, [searchParams]);
+    let cancelled = false;
+    let redirectTimer: number | null = null;
 
-  const handleCallback = async () => {
-    try {
-      const code = searchParams?.get('code');
-      const state = searchParams?.get('state');
-      const provider = searchParams?.get('provider') || state; // Sometimes provider is in state
-      const error = searchParams?.get('error');
+    async function runCallback() {
+      try {
+        const params = new URLSearchParams(queryString);
+        const code = params.get('code');
+        const state = params.get('state');
+        const provider = params.get('provider') || state;
+        const error = params.get('error');
+        const providerName = provider
+          ? `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`
+          : 'provider';
 
-      if (error) {
-        setStatus('error');
-        setMessage(`OAuth error: ${error}`);
-        return;
-      }
+        if (error) {
+          if (!cancelled) {
+            setStatus('error');
+            setMessage(`OAuth error: ${error}`);
+          }
+          return;
+        }
 
-      if (!code || !provider) {
-        setStatus('error');
-        setMessage('Missing required parameters (code or provider)');
-        return;
-      }
+        if (!code || !provider) {
+          if (!cancelled) {
+            setStatus('error');
+            setMessage('Missing required parameters (code or provider)');
+          }
+          return;
+        }
 
-      setProviderName(provider.charAt(0).toUpperCase() + provider.slice(1));
+        const response = await authFetch(`/api/v1/integrations/${provider}/callback?${params.toString()}`, {
+          method: 'GET',
+        });
+        const result = await response.json();
 
-      // Call the backend callback endpoint
-      const response = await authFetch(`/api/v1/integrations/${provider}/callback?${searchParams?.toString()}`, {
-        method: 'GET'
-      });
+        if (cancelled) return;
 
-      const result = await response.json();
+        if (response.ok) {
+          setStatus('success');
+          setMessage(`Successfully connected to ${providerName}!`);
+          redirectTimer = window.setTimeout(() => {
+            router.push('/integrations');
+          }, 2000);
+          return;
+        }
 
-      if (response.ok) {
-        setStatus('success');
-        setMessage(`Successfully connected to ${providerName}!`);
-        
-        // Redirect to integrations page after a delay
-        setTimeout(() => {
-          router.push('/integrations');
-        }, 2000);
-      } else {
         setStatus('error');
         setMessage(result.error || `Failed to connect to ${providerName}`);
+      } catch (err) {
+        if (cancelled) return;
+        setStatus('error');
+        setMessage(err instanceof Error ? err.message : 'An unexpected error occurred');
       }
-
-    } catch (err) {
-      setStatus('error');
-      setMessage(err instanceof Error ? err.message : 'An unexpected error occurred');
     }
-  };
+
+    void runCallback();
+
+    return () => {
+      cancelled = true;
+      if (redirectTimer) window.clearTimeout(redirectTimer);
+    };
+  }, [queryString, router]);
 
   const getStatusIcon = () => {
     switch (status) {
@@ -146,7 +159,7 @@ export default function IntegrationCallbackPage() {
               Back to Integrations
             </button>
             <button
-              onClick={handleCallback}
+              onClick={() => window.location.reload()}
               className="w-full px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors"
             >
               Try Again

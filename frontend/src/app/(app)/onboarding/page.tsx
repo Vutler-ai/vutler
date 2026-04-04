@@ -30,6 +30,28 @@ interface CreatedAgent {
   sprite?: string;
 }
 
+interface ConfettiPiece {
+  left: string;
+  top: string;
+  width: string;
+  height: string;
+  backgroundColor: string;
+  borderRadius: string;
+  animation: string;
+}
+
+function createConfettiPieces(count: number): ConfettiPiece[] {
+  return Array.from({ length: count }, (_, i) => ({
+    left: `${Math.random() * 100}%`,
+    top: `-${Math.random() * 20}%`,
+    width: `${6 + Math.random() * 8}px`,
+    height: `${6 + Math.random() * 8}px`,
+    backgroundColor: ['#3b82f6', '#a855f7', '#f59e0b', '#10b981', '#ef4444', '#ec4899'][i % 6],
+    borderRadius: Math.random() > 0.5 ? '50%' : '2px',
+    animation: `fall ${2 + Math.random() * 3}s linear ${Math.random() * 2}s forwards`,
+  }));
+}
+
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const totalSteps = 3;
@@ -44,6 +66,7 @@ export default function OnboardingPage() {
   // Step 3
   const [createdAgents, setCreatedAgents] = useState<CreatedAgent[]>([]);
   const [confetti, setConfetti] = useState(false);
+  const [confettiPieces, setConfettiPieces] = useState<ConfettiPiece[]>([]);
 
   // ── Step 1: save company name ────────────────────────────────────────────
   const handleStep1Continue = async () => {
@@ -78,6 +101,7 @@ export default function OnboardingPage() {
       });
       const data = res && typeof res === 'object' ? (res as { agents_created?: CreatedAgent[] }) : {};
       setCreatedAgents(data.agents_created ?? []);
+      setConfettiPieces(createConfettiPieces(60));
       setConfetti(true);
       setStep(3);
     } catch (e) {
@@ -96,19 +120,11 @@ export default function OnboardingPage() {
       {/* Confetti */}
       {confetti && (
         <div className="fixed inset-0 pointer-events-none z-50">
-          {Array.from({ length: 60 }).map((_, i) => (
+          {confettiPieces.map((piece, i) => (
             <div
               key={i}
               className="absolute animate-bounce"
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: `-${Math.random() * 20}%`,
-                width: `${6 + Math.random() * 8}px`,
-                height: `${6 + Math.random() * 8}px`,
-                backgroundColor: ['#3b82f6', '#a855f7', '#f59e0b', '#10b981', '#ef4444', '#ec4899'][i % 6],
-                borderRadius: Math.random() > 0.5 ? '50%' : '2px',
-                animation: `fall ${2 + Math.random() * 3}s linear ${Math.random() * 2}s forwards`,
-              }}
+              style={piece}
             />
           ))}
           <style>{`@keyframes fall { to { transform: translateY(110vh) rotate(720deg); opacity: 0; } }`}</style>

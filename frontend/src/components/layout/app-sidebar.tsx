@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Home,
@@ -339,10 +340,12 @@ export default function AppSidebar({
       <div className="p-4 border-b border-[rgba(255,255,255,0.07)] flex items-center justify-between">
         {!collapsed && (
           <div className="flex items-center space-x-3">
-            <img
+            <Image
               src="/landing/vutler-logo-full-white.png"
               alt="Vutler"
               className="h-7"
+              width={112}
+              height={28}
               onError={(e) => {
                 e.currentTarget.style.display = 'none';
                 const fb = e.currentTarget.nextElementSibling as HTMLElement;

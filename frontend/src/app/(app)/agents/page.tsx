@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getTemplateLaunchHref, getTemplateLaunchLabel } from '@/lib/template-launch';
+import { getAvatarImageUrl, getStaticAvatarUrl, isEmojiAvatar } from '@/lib/avatar';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,9 +62,7 @@ function StatusBadge({ status }: { status: Agent['status'] }) {
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
-import { getAvatarImageUrl, getStaticAvatarUrl, isEmojiAvatar } from '@/lib/avatar';
-
-function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
+function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name' | 'username'> }) {
   const [imgError, setImgError] = useState(false);
   const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
 
@@ -88,7 +87,7 @@ function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
   }
 
   // Initials fallback
-  const initials = (agent.name || (agent as any).username || 'A')
+  const initials = (agent.name || agent.username || 'A')
     .split(' ')
     .map((w: string) => w[0] || '')
     .join('')
@@ -332,9 +331,8 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
     () => getTemplates({ limit: 50 }),
   );
 
-  const templates = data?.templates ?? [];
-
   const filtered = useMemo(() => {
+    const templates = data?.templates ?? [];
     let result = templates;
 
     // Category filter
@@ -356,7 +354,7 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
     }
 
     return result;
-  }, [templates, search, activeCategory]);
+  }, [data?.templates, search, activeCategory]);
 
   const handleUseTemplate = async (template: MarketplaceTemplate) => {
     const launchHref = getTemplateLaunchHref(template);
@@ -378,8 +376,8 @@ function TemplatesTab({ onCreated }: { onCreated: (agentId: string) => void }) {
         template_id: template.id,
       });
       onCreated(agent.id);
-    } catch (err: any) {
-      setInstallError(err.message || 'Failed to create agent from template');
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : 'Failed to create agent from template');
     } finally {
       setInstalling(null);
     }

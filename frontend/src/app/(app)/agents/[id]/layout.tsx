@@ -57,7 +57,7 @@ function StatusBadge({ status, model }: { status: Agent['status']; model?: strin
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 
-function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
+function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name' | 'username'> }) {
   const [imgError, setImgError] = useState(false);
   const imageUrl = !imgError ? getAvatarImageUrl(agent.avatar, agent.name) : null;
 
@@ -80,7 +80,7 @@ function AgentAvatar({ agent }: { agent: Pick<Agent, 'avatar' | 'name'> }) {
     );
   }
 
-  const initials = (agent.name || (agent as any).username || 'A')
+  const initials = (agent.name || agent.username || 'A')
     .split(' ')
     .map((w: string) => w[0] || '')
     .join('')
@@ -143,7 +143,7 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
           {isLoading ? (
             <Skeleton className="h-3 w-24" />
           ) : (
-            <span className="text-[#9ca3af]">{agent?.name || (agent as any)?.username || 'Agent'}</span>
+            <span className="text-[#9ca3af]">{agent?.name || agent?.username || 'Agent'}</span>
           )}
         </div>
 
