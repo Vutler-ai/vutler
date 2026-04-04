@@ -264,6 +264,79 @@ function extractLatestUserMessage(messages = []) {
   return '';
 }
 
+const DIRECT_EMAIL_SEND_PATTERNS = [
+  /\bsend\b/i,
+  /\breply\b/i,
+  /\bforward\b/i,
+  /\benvoie(?:r)?\b/i,
+  /\brépond(?:s|re)?\b/i,
+  /\brepond(?:s|re)?\b/i,
+  /\btransf(?:e|è)re(?:r)?\b/i,
+  /\bmail(?:e|er)?\b/i,
+];
+const DRAFT_EMAIL_PATTERNS = [
+  /\bdraft\b/i,
+  /\bbrouillon\b/i,
+  /\bprépare\b/i,
+  /\bprepare\b/i,
+  /\brédige\b/i,
+  /\bredige\b/i,
+  /\breview\b/i,
+  /\brelecture\b/i,
+];
+const EMAIL_ADDRESS_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+
+function analyzeEmailIntent(message = '') {
+  const text = String(message || '').trim();
+  if (!text) {
+    return {
+      hasExplicitRecipient: false,
+      directSend: false,
+      draftOnly: false,
+    };
+  }
+
+  const draftOnly = DRAFT_EMAIL_PATTERNS.some((pattern) => pattern.test(text));
+  const directSend = !draftOnly && DIRECT_EMAIL_SEND_PATTERNS.some((pattern) => pattern.test(text));
+
+  return {
+    hasExplicitRecipient: EMAIL_ADDRESS_PATTERN.test(text),
+    directSend,
+    draftOnly,
+  };
+}
+
+function applyContextualToolFiltering(tools = [], latestUserMessage = '') {
+  if (!Array.isArray(tools) || tools.length === 0) return [];
+
+  const emailIntent = analyzeEmailIntent(latestUserMessage);
+  if (!emailIntent.hasExplicitRecipient) return tools;
+
+  const toolNames = new Set(
+    tools.map((tool) => tool?.function?.name || tool?.name).filter(Boolean)
+  );
+
+  return tools.filter((tool) => {
+    const name = tool?.function?.name || tool?.name || '';
+    if (!name) return false;
+
+    // When the address is explicit, contacts lookup should never be used.
+    if (name === 'read_contacts') return false;
+
+    if (emailIntent.directSend) {
+      if (name === 'read_emails') return false;
+      if (toolNames.has('send_email') && name === 'draft_email') return false;
+    }
+
+    if (emailIntent.draftOnly) {
+      if (name === 'read_emails') return false;
+      if (toolNames.has('draft_email') && name === 'send_email') return false;
+    }
+
+    return true;
+  });
+}
+
 function safeTaskLink(data = {}, args = {}) {
   const taskId = data.taskId || data.task_id || data.id || args.taskId || args.task_id || args.id || null;
   if (data.taskUrl) return String(data.taskUrl);
@@ -1491,6 +1564,8 @@ async function chat(agent, messages, db, opts = {}) {
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
   let nexusTools = [];
   let nexusNodeId = null;
+  const latestUserMessage = extractLatestUserMessage(messages);
+  const emailIntent = analyzeEmailIntent(latestUserMessage);
   if (workspaceId) {
     try {
       const { getNexusToolsForWorkspace, getOnlineNexusNode } = require('./nexusTools');
@@ -1558,6 +1633,9 @@ async function chat(agent, messages, db, opts = {}) {
   }
   if (isProviderAvailable(runtimeCapabilityAvailability, 'email')) {
     effectiveSystemPrompt += '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, send it immediately using the agent email capability. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
+    if (emailIntent.directSend && emailIntent.hasExplicitRecipient) {
+      effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present. Do not inspect mailboxes or contacts first. Use send_email immediately if available.';
+    }
   }
   if (unavailableOverlayProviders.length > 0) {
     const providerNames = unavailableOverlayProviders.map((entry) => entry.key).join(', ');
@@ -1644,7 +1722,10 @@ async function chat(agent, messages, db, opts = {}) {
           } catch (_) { /* skills not available — skip */ }
         }
         const sandboxTools = hasCodeExecution ? [SANDBOX_CODE_EXECUTION_TOOL] : [];
-        const allTools = [...memoryTools, ...socialMediaTools, ...sandboxTools, ...nexusTools, ...skillTools];
+        const allTools = applyContextualToolFiltering(
+          [...memoryTools, ...socialMediaTools, ...sandboxTools, ...nexusTools, ...skillTools],
+          latestUserMessage
+        );
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
 
         // No tool calls → we have the final answer
@@ -1652,7 +1733,6 @@ async function chat(agent, messages, db, opts = {}) {
 
         // Process each tool call
         let continueLoop = false;
-        const latestUserMessage = extractLatestUserMessage(currentMessages);
         for (const toolCall of llmResult.tool_calls) {
           const agentName = agent?.name || agent?.username || 'agent';
           const args = toolCall.arguments || {};

@@ -5,6 +5,7 @@ const { EventEmitter } = require('events');
 describe('llmRouter nexus tool orchestration', () => {
   let recordedBodies;
   let chat;
+  let nexusTools;
   let orchestrateToolCallMock;
   let governOrchestrationDecisionMock;
   let executeOrchestrationDecisionMock;
@@ -34,6 +35,19 @@ describe('llmRouter nexus tool orchestration', () => {
     recordedBodies = [];
     responses = [];
     actionRuns = [];
+    nexusTools = [
+      {
+        name: 'search_files',
+        description: 'Search files on the Nexus node',
+        input_schema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string' },
+          },
+          required: ['query'],
+        },
+      },
+    ];
 
     orchestrateToolCallMock = jest.fn();
     governOrchestrationDecisionMock = jest.fn();
@@ -62,21 +76,9 @@ describe('llmRouter nexus tool orchestration', () => {
       inferProviderForSkill: jest.fn(() => null),
     }));
     jest.doMock('../services/nexusTools', () => ({
-      getNexusToolsForWorkspace: jest.fn().mockResolvedValue([
-        {
-          name: 'search_files',
-          description: 'Search files on the Nexus node',
-          input_schema: {
-            type: 'object',
-            properties: {
-              query: { type: 'string' },
-            },
-            required: ['query'],
-          },
-        },
-      ]),
+      getNexusToolsForWorkspace: jest.fn().mockImplementation(async () => nexusTools),
       getOnlineNexusNode: jest.fn().mockResolvedValue({ id: 'node-1' }),
-      NEXUS_TOOL_NAMES: new Set(['search_files']),
+      NEXUS_TOOL_NAMES: new Set(['search_files', 'send_email', 'draft_email', 'read_emails', 'read_contacts']),
     }));
 
     const realHttps = jest.requireActual('https');
@@ -344,5 +346,102 @@ describe('llmRouter nexus tool orchestration', () => {
         ],
       }),
     });
+  });
+
+  test('prunes mail and contacts probes for direct send requests with an explicit recipient', async () => {
+    nexusTools = [
+      {
+        name: 'send_email',
+        description: 'Send immediately',
+        input_schema: { type: 'object', properties: { to: { type: 'string' } } },
+      },
+      {
+        name: 'draft_email',
+        description: 'Draft an email',
+        input_schema: { type: 'object', properties: { to: { type: 'string' } } },
+      },
+      {
+        name: 'read_emails',
+        description: 'Read emails',
+        input_schema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'read_contacts',
+        description: 'Read contacts',
+        input_schema: { type: 'object', properties: {} },
+      },
+    ];
+
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        email: 'jarvis@starbox-group.com',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are an assistant.',
+      },
+      [{ role: 'user', content: 'Tu peux envoyer ça à client@example.com maintenant ?' }],
+      db,
+      {
+        chatActionContext: {
+          workspaceId: 'ws-1',
+          messageId: 'msg-2',
+          channelId: 'chan-1',
+          requestedAgentId: 'agent-1',
+          displayAgentId: 'agent-1',
+          orchestratedBy: 'jarvis',
+        },
+      }
+    );
+
+    expect(result.content).toContain('Done.');
+    const toolNames = (recordedBodies[0].tools || []).map((tool) => tool.function.name);
+    expect(toolNames).toContain('send_email');
+    expect(toolNames).not.toContain('draft_email');
+    expect(toolNames).not.toContain('read_emails');
+    expect(toolNames).not.toContain('read_contacts');
+  });
+
+  test('prunes mail and contacts probes even when direct send is unavailable', async () => {
+    nexusTools = [
+      {
+        name: 'read_emails',
+        description: 'Read emails',
+        input_schema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'read_contacts',
+        description: 'Read contacts',
+        input_schema: { type: 'object', properties: {} },
+      },
+    ];
+
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are an assistant.',
+      },
+      [{ role: 'user', content: 'Envoie ça à client@example.com.' }],
+      db,
+      {
+        chatActionContext: {
+          workspaceId: 'ws-1',
+          messageId: 'msg-3',
+          channelId: 'chan-1',
+          requestedAgentId: 'agent-1',
+          displayAgentId: 'agent-1',
+          orchestratedBy: 'jarvis',
+        },
+      }
+    );
+
+    expect(result.content).toContain('Done.');
+    const toolNames = (recordedBodies[0].tools || []).map((tool) => tool.function.name);
+    expect(toolNames).not.toContain('read_emails');
+    expect(toolNames).not.toContain('read_contacts');
   });
 });
