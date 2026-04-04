@@ -258,6 +258,7 @@ function buildSocialExecutionIntent(args = {}, context = {}) {
       allowedAccountIds,
       allowedBrandIds,
       externalId: context.workspaceId ? `ws_${context.workspaceId}` : null,
+      originTaskId: context.originTaskId || null,
     },
     metadata: {
       rawArguments: args,
@@ -282,6 +283,7 @@ function buildSocialOrchestrationDecision(args = {}, context = {}) {
       allowed_account_ids: intent.input?.allowedAccountIds || [],
       allowed_brand_ids: intent.input?.allowedBrandIds || [],
       external_id: intent.input?.externalId || null,
+      origin_task_id: intent.input?.originTaskId || null,
     },
     allowedAgentIds: [context.agent?.id || null],
     requiredCapabilities: intent.capabilityRequirements,
@@ -299,6 +301,7 @@ function buildSocialOrchestrationDecision(args = {}, context = {}) {
     metadata: buildDecisionMetadata(context, {
       policyBundle: 'social-default-v1',
       tool_name: 'vutler_post_social_media',
+      origin_task_id: intent.input?.originTaskId || null,
     }),
   });
 }

@@ -441,6 +441,7 @@ async function executeTask(task) {
       {
         wsConnections,
         humanContext: executionPrompt.humanContext || null,
+        originTaskId: task.id,
       }
     );
 

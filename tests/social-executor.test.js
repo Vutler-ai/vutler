@@ -3,6 +3,7 @@
 describe('socialExecutor', () => {
   let createSocialPostMock;
   let listSocialAccountsMock;
+  let createTaskMock;
   let executeSocialPlan;
 
   beforeEach(() => {
@@ -35,8 +36,45 @@ describe('socialExecutor', () => {
       listSocialAccounts: listSocialAccountsMock,
       toInternalPlatform: jest.fn((value) => String(value || '').trim().toLowerCase() === 'x' ? 'twitter' : String(value || '').trim().toLowerCase()),
     }));
+    createTaskMock = jest.fn().mockResolvedValue({
+      id: 'task-queued-1',
+      status: 'pending',
+    });
+    jest.doMock('../app/custom/services/swarmCoordinator', () => ({
+      getSwarmCoordinator: jest.fn(() => ({
+        createTask: createTaskMock,
+      })),
+    }));
 
     ({ executeSocialPlan } = require('../services/executors/socialExecutor'));
+  });
+
+  test('queues a task instead of publishing when no origin task exists', async () => {
+    const result = await executeSocialPlan({
+      workspace_id: 'ws-1',
+      selectedAgentId: 'agent-1',
+      params: {
+        caption: 'Queue this post first',
+        platforms: ['linkedin'],
+      },
+    }, { db: { query: jest.fn() } });
+
+    expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining('Social publish:'),
+      for_agent_id: 'agent-1',
+      metadata: expect.objectContaining({
+        social_publication_request: expect.objectContaining({
+          caption: 'Queue this post first',
+          platforms: ['linkedin'],
+        }),
+      }),
+    }), 'ws-1');
+    expect(createSocialPostMock).not.toHaveBeenCalled();
+    expect(result.data).toMatchObject({
+      queued: true,
+      task_id: 'task-queued-1',
+      task_status: 'pending',
+    });
   });
 
   test('filters posting to explicitly allowed local social accounts', async () => {
@@ -69,6 +107,7 @@ describe('socialExecutor', () => {
       workspace_id: 'ws-1',
       params: {
         caption: 'Post only to Snipara',
+        origin_task_id: 'task-1',
         allowed_platforms: ['linkedin'],
         allowed_account_ids: ['local-account-2'],
         allowed_brand_ids: ['111276245'],
@@ -95,6 +134,7 @@ describe('socialExecutor', () => {
       workspace_id: 'ws-1',
       params: {
         caption: 'Post only to brand 111276245',
+        origin_task_id: 'task-1',
         allowed_platforms: ['linkedin'],
         allowed_brand_ids: ['111276245'],
       },

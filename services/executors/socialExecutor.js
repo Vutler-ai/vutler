@@ -1,6 +1,7 @@
 'use strict';
 
 const { createSocialPost, listSocialAccounts, toInternalPlatform } = require('../postForMeClient');
+const { getSwarmCoordinator } = require('../../app/custom/services/swarmCoordinator');
 const {
   extractSocialAccountIdentifiers,
   normalizeScopeStrings,
@@ -17,6 +18,37 @@ function normalizePlatforms(values = []) {
 function getRemoteAccountId(account = {}) {
   const candidate = account.id || account.social_account_id || account.platform_account_id || account.account_id;
   return candidate ? String(candidate).trim() : null;
+}
+
+function buildQueuedSocialTaskPayload({ caption, params = {}, workspaceId, agentId }) {
+  const requestedPlatforms = normalizePlatforms(params.platforms);
+  const schedule = params.scheduled_at || params.scheduledAt || null;
+  const scheduleHint = schedule ? `\nScheduled for: ${schedule}` : '';
+  const platformHint = requestedPlatforms.length > 0 ? `\nPlatforms: ${requestedPlatforms.join(', ')}` : '';
+  const titleBase = caption.slice(0, 48) || 'Social publication';
+
+  return {
+    title: `Social publish: ${titleBase}`,
+    description: [
+      'Publish the following social media update using the authorized workspace accounts.',
+      '',
+      caption,
+      platformHint,
+      scheduleHint,
+    ].filter(Boolean).join('\n'),
+    priority: schedule ? 'high' : 'medium',
+    for_agent_id: agentId,
+    metadata: {
+      origin: 'social_executor',
+      execution_mode: 'simple_task',
+      social_publication_request: {
+        caption,
+        platforms: requestedPlatforms,
+        scheduled_at: schedule,
+        workspace_id: workspaceId,
+      },
+    },
+  };
 }
 
 async function loadWorkspaceAccountScope(workspaceId, db) {
@@ -41,8 +73,28 @@ async function executeSocialPlan(plan = {}, context = {}) {
   const agentId = plan.selectedAgentId || plan.agentId || context.selectedAgentId || null;
   const params = plan.params || plan.input || {};
   const caption = typeof params.caption === 'string' ? params.caption.trim() : '';
+  const originTaskId = params.origin_task_id || params.originTaskId || context.originTaskId || null;
   if (!workspaceId) throw new Error('Social execution requires a workspace id.');
   if (!caption) throw new Error('Social execution requires a caption.');
+
+  if (!originTaskId) {
+    const coordinator = getSwarmCoordinator();
+    const queuedTask = await coordinator.createTask(
+      buildQueuedSocialTaskPayload({ caption, params, workspaceId, agentId }),
+      workspaceId
+    );
+
+    return {
+      success: true,
+      data: {
+        queued: true,
+        task_id: queuedTask?.id || null,
+        task_status: queuedTask?.status || 'pending',
+        task_url: queuedTask?.id ? `/tasks?task=${encodeURIComponent(String(queuedTask.id))}` : '/tasks',
+        message: 'Social publication was routed into the task queue before execution.',
+      },
+    };
+  }
 
   const externalId = params.external_id || `ws_${workspaceId}`;
   const requestedPlatforms = normalizePlatforms(params.platforms);

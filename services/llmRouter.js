@@ -610,6 +610,13 @@ function buildOrchestratedTextToolResult(outputText, data, orchestrationPayload)
 
 function buildSocialToolResult(actionResult, orchestrationPayload) {
   const data = actionResult?.output_json || {};
+  if (data.task_id) {
+    return buildOrchestratedTextToolResult(
+      `Social publication queued as task ${data.task_id}.`,
+      data,
+      orchestrationPayload
+    );
+  }
   const accountCount = Number(data.account_count || 0);
   const postId = data.post_id || 'pending';
   return buildOrchestratedTextToolResult(
@@ -658,6 +665,7 @@ async function executeToolThroughOrchestration({
   memoryBindings = null,
   memoryMode = null,
   latestUserMessage = '',
+  originTaskId = null,
 } = {}) {
   const orchestrationInput = {
     toolName,
@@ -667,6 +675,7 @@ async function executeToolThroughOrchestration({
     workspaceId,
     chatActionContext,
     nexusNodeId,
+    originTaskId,
   };
   if (Array.isArray(allowedSocialPlatforms) && allowedSocialPlatforms.length > 0) {
     orchestrationInput.allowedSocialPlatforms = allowedSocialPlatforms;
@@ -711,6 +720,7 @@ async function executeToolThroughOrchestration({
     provider,
     nexusNodeId,
     latestUserMessage,
+    originTaskId,
   });
   const actionResult = Array.isArray(actionResults) ? actionResults[0] : null;
 
@@ -1877,6 +1887,7 @@ async function chat(agent, messages, db, opts = {}) {
                 allowedSocialAccountIds,
                 allowedSocialBrandIds,
                 latestUserMessage,
+                originTaskId: opts.originTaskId || null,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Social execution failed.');

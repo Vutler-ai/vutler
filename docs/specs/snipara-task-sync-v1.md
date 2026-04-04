@@ -136,6 +136,8 @@ Rules:
 - create simple tasks through Snipara first, then upsert locally
 - create complex tasks through `htask` first, then upsert locally
 - local task status changes must not bypass the coordinator in primary mode
+- agent-triggered side effects that mutate external systems should execute from an existing task context
+- if an agent tries to execute such a side effect without `origin_task_id`, Vutler should queue a task first instead of mutating the external system directly
 
 ## Local metadata contract
 

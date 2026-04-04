@@ -340,4 +340,112 @@ describe('llmRouter social tool orchestration', () => {
       ])
     );
   });
+
+  test('passes origin task context into social orchestration', async () => {
+    orchestrateToolCallMock.mockReturnValue({
+      version: 'v1',
+      workspace_id: 'ws-1',
+      selected_agent_id: 'agent-1',
+      selected_agent_reason: 'test',
+      allowed_tools: ['vutler_post_social_media'],
+      allowed_skills: [],
+      actions: [],
+      final_response_strategy: 'tool_then_agent',
+      metadata: {
+        trace_id: 'msg-2',
+        policy_bundle: 'social-default-v1',
+      },
+    });
+    governOrchestrationDecisionMock.mockReturnValue({
+      allowed: true,
+      decision: 'sync',
+      reason: 'ok',
+      risk_level: 'medium',
+      decisionPayload: {
+        version: 'v1',
+        workspace_id: 'ws-1',
+        selected_agent_id: 'agent-1',
+        actions: [],
+        metadata: {
+          execution_mode: 'sync',
+        },
+      },
+    });
+    executeOrchestrationDecisionMock.mockResolvedValue([
+      {
+        action_id: 'act_social_1',
+        success: true,
+        status: 'completed',
+        output_json: {
+          task_id: 'task-123',
+          queued: true,
+        },
+        error: null,
+        artifacts: [],
+      },
+    ]);
+
+    responses.push(
+      JSON.stringify({
+        id: 'chatcmpl-2',
+        model: 'gpt-5.4',
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call-2',
+                  type: 'function',
+                  function: {
+                    name: 'vutler_post_social_media',
+                    arguments: JSON.stringify({ caption: 'Queue this post' }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+      buildStopResponse('Queued.')
+    );
+
+    await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are Nora.',
+        capabilities: ['multi_platform_posting'],
+      },
+      [{ role: 'user', content: 'Publish this post.' }],
+      db,
+      {
+        originTaskId: 'task-123',
+        chatActionContext: {
+          workspaceId: 'ws-1',
+          messageId: 'msg-2',
+          channelId: 'channel-1',
+          requestedAgentId: 'agent-1',
+          displayAgentId: 'agent-1',
+          orchestratedBy: 'jarvis',
+        },
+      }
+    );
+
+    expect(orchestrateToolCallMock).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'vutler_post_social_media',
+      originTaskId: 'task-123',
+    }));
+    expect(executeOrchestrationDecisionMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        originTaskId: 'task-123',
+      })
+    );
+  });
 });
