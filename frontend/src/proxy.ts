@@ -64,14 +64,14 @@ export function proxy(request: NextRequest) {
   const adminToken = request.cookies.get(ADMIN_TOKEN_COOKIE)?.value || null;
   const featureSnapshot = deserializeFeatureSnapshot(request.cookies.get(WORKSPACE_FEATURES_COOKIE)?.value);
 
-  if (LANDING_ROUTES.includes(pathname as (typeof LANDING_ROUTES)[number])) {
-    if (pathname === '/' && authToken) {
-      const url = request.nextUrl.clone();
-      url.pathname = '/dashboard';
-      url.search = '';
-      return NextResponse.redirect(url);
-    }
+  if (pathname === '/') {
+    const url = request.nextUrl.clone();
+    url.pathname = authToken ? '/dashboard' : '/login';
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
 
+  if (LANDING_ROUTES.includes(pathname as (typeof LANDING_ROUTES)[number])) {
     return NextResponse.redirect(new URL(`https://vutler.ai${pathname}${request.nextUrl.search}`));
   }
 
