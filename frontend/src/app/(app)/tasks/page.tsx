@@ -93,7 +93,7 @@ const KANBAN_COLUMNS: { status: NormalizedStatus; label: string }[] = [
 
 type NormalizedStatus = "todo" | "in_progress" | "done";
 
-function normalizeStatus(status: Task["status"]): NormalizedStatus {
+function normalizeStatus(status: Task["status"] | string | null | undefined): NormalizedStatus {
   if (status === "completed" || status === "done") return "done";
   if (status === "pending" || status === "todo") return "todo";
   return "in_progress";
@@ -198,6 +198,30 @@ function getTaskOrchestrationRunId(task: Task | null | undefined): string | null
 
 function getTaskOrchestrationStatus(task: Task | null | undefined): string | null {
   return getMetadataString(asTaskMetadata(task), "orchestration_status");
+}
+
+function getTaskDisplayStatus(task: Task | null | undefined): Task["status"] {
+  const metadata = asTaskMetadata(task);
+  return (getMetadataString(metadata, "rollup_status") || task?.status || "pending") as Task["status"];
+}
+
+function getTaskVisibleProgress(task: Task | null | undefined) {
+  const metadata = asTaskMetadata(task);
+  const total = getMetadataNumber(metadata, "rollup_progress_total") ?? task?.subtask_count ?? 0;
+  const done = getMetadataNumber(metadata, "rollup_progress_done") ?? task?.subtask_completed_count ?? 0;
+  return { total, done };
+}
+
+function getTaskVisibleDueDate(task: Task | null | undefined): string | null {
+  const metadata = asTaskMetadata(task);
+  return getMetadataString(metadata, "rollup_next_due_at") || task?.due_date || null;
+}
+
+function getTaskPrimaryBlocker(task: Task | null | undefined): string | null {
+  const metadata = asTaskMetadata(task);
+  return getMetadataString(metadata, "rollup_primary_blocker")
+    || getMetadataString(metadata, "orchestration_blocker_reason")
+    || getMetadataString(metadata, "snipara_blocker_reason");
 }
 
 function isOrchestratedTask(task: Task | null | undefined): boolean {
@@ -1531,9 +1555,10 @@ interface TaskCardProps {
 }
 
 function TaskCard({ task, onOpenDetail, onDelete, onStatusChange }: TaskCardProps) {
-  const subtaskCount = task.subtask_count ?? 0;
-  const subtaskDone = task.subtask_completed_count ?? 0;
-  const ns = normalizeStatus(task.status);
+  const { total: subtaskCount, done: subtaskDone } = getTaskVisibleProgress(task);
+  const visibleDueDate = getTaskVisibleDueDate(task);
+  const primaryBlocker = getTaskPrimaryBlocker(task);
+  const ns = normalizeStatus(getTaskDisplayStatus(task));
 
   return (
     <div
@@ -1573,10 +1598,10 @@ function TaskCard({ task, onOpenDetail, onDelete, onStatusChange }: TaskCardProp
         </div>
       </div>
 
-      {task.due_date && (
+      {visibleDueDate && (
         <p className="text-xs text-[#6b7280] mt-2">
           Due{" "}
-          {new Date(task.due_date).toLocaleDateString(undefined, {
+          {new Date(visibleDueDate).toLocaleDateString(undefined, {
             month: "short",
             day: "numeric",
           })}
@@ -1585,6 +1610,12 @@ function TaskCard({ task, onOpenDetail, onDelete, onStatusChange }: TaskCardProp
 
       {subtaskCount > 0 && (
         <SubtaskProgress count={subtaskCount} completed={subtaskDone} />
+      )}
+
+      {primaryBlocker && (
+        <p className="text-[11px] text-amber-400/90 mt-2 line-clamp-2">
+          Blocked: {primaryBlocker}
+        </p>
       )}
 
       {/* Quick status arrows */}
@@ -1619,7 +1650,7 @@ function KanbanBoard({ tasks, onOpenDetail, onDelete, onStatusChange }: KanbanBo
   return (
     <div className="flex gap-3 sm:gap-4 overflow-x-auto pb-4 min-h-[400px] snap-x snap-mandatory lg:snap-none scrollbar-hide">
       {KANBAN_COLUMNS.map((col) => {
-        const colTasks = tasks.filter((t) => normalizeStatus(t.status) === col.status);
+        const colTasks = tasks.filter((t) => normalizeStatus(getTaskDisplayStatus(t)) === col.status);
         return (
           <div
             key={col.status}
@@ -1753,7 +1784,9 @@ function ListView({ tasks, onOpenDetail, onDelete }: ListViewProps) {
               </TableRow>
             ) : (
               sorted.map((task) => {
-                const hasSubtasks = (task.subtask_count ?? 0) > 0;
+                const { total: progressTotal, done: progressDone } = getTaskVisibleProgress(task);
+                const visibleDueDate = getTaskVisibleDueDate(task);
+                const hasSubtasks = progressTotal > 0 || (task.subtask_count ?? 0) > 0;
                 const isExpanded = expandedIds.has(task.id);
                 const isLoading = loadingIds.has(task.id);
                 const subs = subtasksMap[task.id] ?? [];
@@ -1793,7 +1826,7 @@ function ListView({ tasks, onOpenDetail, onDelete }: ListViewProps) {
                           {task.title}
                           {hasSubtasks && (
                             <span className="text-[10px] text-[#6b7280] bg-[#1e1f2e] px-1.5 py-0.5 rounded">
-                              {task.subtask_completed_count ?? 0}/{task.subtask_count}
+                              {progressDone}/{progressTotal || task.subtask_count}
                             </span>
                           )}
                           <OrchestrationBadge task={task} />
@@ -1801,7 +1834,7 @@ function ListView({ tasks, onOpenDetail, onDelete }: ListViewProps) {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={task.status} />
+                        <StatusBadge status={getTaskDisplayStatus(task)} />
                       </TableCell>
                       <TableCell>
                         <PriorityBadge priority={task.priority} />
@@ -1813,8 +1846,8 @@ function ListView({ tasks, onOpenDetail, onDelete }: ListViewProps) {
                         </div>
                       </TableCell>
                       <TableCell className="text-[#9ca3af] text-sm">
-                        {task.due_date
-                          ? new Date(task.due_date).toLocaleDateString(undefined, {
+                        {visibleDueDate
+                          ? new Date(visibleDueDate).toLocaleDateString(undefined, {
                               month: "short",
                               day: "numeric",
                               year: "numeric",

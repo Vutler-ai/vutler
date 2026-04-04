@@ -33,6 +33,13 @@ export type WorkspaceRealtimeTaskPayload = {
   autonomy_recommendation_summary?: string | null;
   autonomy_recurring_blocker?: string | null;
   autonomy_escalation_recommended?: boolean | null;
+  rollup_status?: string | null;
+  rollup_progress_total?: number | null;
+  rollup_progress_done?: number | null;
+  rollup_next_due_at?: string | null;
+  rollup_primary_blocker?: string | null;
+  visible_in_kanban?: boolean | null;
+  visible_in_agenda?: boolean | null;
 };
 
 export type WorkspaceRealtimeRunPayload = {
@@ -121,6 +128,13 @@ function mergeTaskMetadata(task: Task, event: WorkspaceRealtimeEvent): Record<st
     ...(taskPayload.autonomy_escalation_recommended !== undefined
       ? { orchestration_autonomy_escalation_recommended: taskPayload.autonomy_escalation_recommended }
       : {}),
+    ...(taskPayload.rollup_status !== undefined ? { rollup_status: taskPayload.rollup_status } : {}),
+    ...(taskPayload.rollup_progress_total !== undefined ? { rollup_progress_total: taskPayload.rollup_progress_total } : {}),
+    ...(taskPayload.rollup_progress_done !== undefined ? { rollup_progress_done: taskPayload.rollup_progress_done } : {}),
+    ...(taskPayload.rollup_next_due_at !== undefined ? { rollup_next_due_at: taskPayload.rollup_next_due_at } : {}),
+    ...(taskPayload.rollup_primary_blocker !== undefined ? { rollup_primary_blocker: taskPayload.rollup_primary_blocker } : {}),
+    ...(taskPayload.visible_in_kanban !== undefined ? { visible_in_kanban: taskPayload.visible_in_kanban } : {}),
+    ...(taskPayload.visible_in_agenda !== undefined ? { visible_in_agenda: taskPayload.visible_in_agenda } : {}),
   };
 }
 

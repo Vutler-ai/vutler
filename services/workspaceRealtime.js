@@ -68,6 +68,13 @@ function buildTaskRealtimePayload(task = {}) {
     autonomy_recommendation_summary: metadata.orchestration_autonomy_recommendation_summary || null,
     autonomy_recurring_blocker: metadata.orchestration_autonomy_recurring_blocker || null,
     autonomy_escalation_recommended: metadata.orchestration_autonomy_escalation_recommended === true,
+    rollup_status: metadata.rollup_status || null,
+    rollup_progress_total: asFiniteNumber(metadata.rollup_progress_total),
+    rollup_progress_done: asFiniteNumber(metadata.rollup_progress_done),
+    rollup_next_due_at: metadata.rollup_next_due_at || null,
+    rollup_primary_blocker: metadata.rollup_primary_blocker || null,
+    visible_in_kanban: metadata.visible_in_kanban === true,
+    visible_in_agenda: metadata.visible_in_agenda === true,
   };
 }
 

@@ -20,6 +20,7 @@ const {
 } = require('../../../services/agentDriveService');
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
 const { publishTaskEvent } = require('../../../services/workspaceRealtime');
+const { refreshTaskHierarchyRollups } = require('../../../services/taskHierarchyRollupService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -111,6 +112,27 @@ function buildWorkspacePlacementInstruction(driveRoot, agentDriveRoot = null) {
     instruction += ` ${buildAgentDrivePlacementInstruction(agentDriveRoot)}`;
   }
   return instruction;
+}
+
+async function refreshHierarchyProjection(taskRow, reason = 'hierarchy_rollup_refreshed') {
+  if (!taskRow?.id || !taskRow?.workspace_id) return taskRow;
+
+  const refreshedRows = await refreshTaskHierarchyRollups({
+    taskId: taskRow.id,
+    workspaceId: taskRow.workspace_id,
+    db: pool,
+  }).catch(() => []);
+
+  for (const row of refreshedRows) {
+    if (!row?.id || row.id === taskRow.id) continue;
+    publishTaskEvent(row, {
+      type: 'task.updated',
+      origin: 'task-rollup',
+      reason,
+    });
+  }
+
+  return refreshedRows.find((row) => row.id === taskRow.id) || taskRow;
 }
 
 async function loadAgentDirectory(workspaceId) {
@@ -549,7 +571,8 @@ class SwarmCoordinator {
          RETURNING *`,
         [swarmTaskId, title, description, priority, status, assignedTo, source, parentId, metaJson, existing.rows[0].id]
       );
-      const taskRow = updated.rows[0];
+      let taskRow = updated.rows[0];
+      taskRow = await refreshHierarchyProjection(taskRow, 'swarm_upsert_rollup');
       await signalRunFromTask(taskRow, {
         reason: source || 'swarm_upsert',
         eventType: source && source.startsWith('snipara-webhook:')
@@ -571,7 +594,8 @@ class SwarmCoordinator {
        RETURNING *`,
       [title || 'Nouvelle tache', description || '', status, priority, assignedTo, ws, source, parentId, metaJson, swarmTaskId]
     );
-    const taskRow = inserted.rows[0];
+    let taskRow = inserted.rows[0];
+    taskRow = await refreshHierarchyProjection(taskRow, 'swarm_insert_rollup');
     await signalRunFromTask(taskRow, {
       reason: source || 'swarm_insert',
       eventType: source && source.startsWith('snipara-webhook:')

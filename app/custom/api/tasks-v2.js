@@ -13,6 +13,7 @@ const {
   publishTaskDeleted,
   publishTaskEvent,
 } = require('../../../services/workspaceRealtime');
+const { refreshTaskHierarchyRollups } = require('../../../services/taskHierarchyRollupService');
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
@@ -61,6 +62,27 @@ function getDefaultChildHtaskLevel(parent = null) {
 function normalizeWorkstreamType(value) {
   if (!value) return undefined;
   return String(value).toUpperCase();
+}
+
+async function refreshHierarchyProjection(task, workspaceId, reason = 'hierarchy_rollup_refreshed') {
+  if (!task?.id) return task;
+
+  const refreshedRows = await refreshTaskHierarchyRollups({
+    taskId: task.id,
+    workspaceId,
+    db: pool,
+  }).catch(() => []);
+
+  for (const row of refreshedRows) {
+    if (!row?.id || row.id === task.id) continue;
+    publishTaskEvent(row, {
+      type: 'task.updated',
+      origin: 'task-rollup',
+      reason,
+    });
+  }
+
+  return refreshedRows.find((row) => row.id === task.id) || task;
 }
 
 async function ensureTaskColumns() {
@@ -249,7 +271,7 @@ async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoord
     throw new Error('Snipara htask creation did not return a task id');
   }
 
-  return insertHierarchicalTask({
+  const inserted = await insertHierarchicalTask({
     workspaceId,
     parent: resolvedParent,
     title: body.title,
@@ -272,6 +294,8 @@ async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoord
     sniparaTaskId,
     source: 'vutler-htask',
   });
+
+  return refreshHierarchyProjection(inserted, workspaceId, 'hierarchical_subtask_rollup');
 }
 
 async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator }) {
@@ -290,7 +314,7 @@ async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator 
     throw new Error('Snipara root htask creation did not return a task id');
   }
 
-  return insertRootHierarchicalTask({
+  const inserted = await insertRootHierarchicalTask({
     workspaceId,
     title: body.title,
     description: body.description || '',
@@ -309,6 +333,8 @@ async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator 
     sniparaTaskId,
     source: 'vutler-htask',
   });
+
+  return refreshHierarchyProjection(inserted, workspaceId, 'hierarchical_root_rollup');
 }
 
 router.get('/tasks-v2', authenticateAgent, async (req, res) => {
@@ -393,7 +419,8 @@ router.post('/tasks-v2', authenticateAgent, async (req, res) => {
       },
     }, wsId(req));
 
-    res.status(201).json({ success: true, data: created });
+    const projected = await refreshHierarchyProjection(created, wsId(req), 'task_created_rollup');
+    res.status(201).json({ success: true, data: projected });
   } catch (error) {
     console.error('[Tasks API] Error creating task:', error);
     res.status(500).json({ success: false, error: 'Failed to create task', message: error.message });
@@ -485,10 +512,11 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
         workspaceId
       ]
     );
+    const projected = await refreshHierarchyProjection(saved.rows[0], workspaceId, 'task_patch_rollup');
 
     const remoteCompletionHandled = updates.status === 'completed' && task.snipara_task_id;
     if (!remoteCompletionHandled) {
-      await signalRunFromTask(saved.rows[0], {
+      await signalRunFromTask(projected, {
         reason: 'tasks_v2_patch',
         eventType: updates.status === 'completed'
           ? 'delegate.task_completed'
@@ -500,12 +528,12 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
       }).catch(() => {});
     }
 
-    publishTaskEvent(saved.rows[0], {
+    publishTaskEvent(projected, {
       type: 'task.updated',
       origin: 'tasks-v2',
       reason: updates.status || 'task_patched',
     });
-    res.json({ success: true, data: saved.rows[0] });
+    res.json({ success: true, data: projected });
   } catch (error) {
     console.error('[Tasks API] Error updating task:', error);
     res.status(500).json({ success: false, error: 'Failed to update task', message: error.message });
@@ -574,7 +602,8 @@ router.post('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
       },
     }, workspaceId);
 
-    res.status(201).json({ success: true, data: created });
+    const projected = await refreshHierarchyProjection(created, workspaceId, 'subtask_created_rollup');
+    res.status(201).json({ success: true, data: projected });
   } catch (error) {
     console.error('[Tasks API] Error creating subtask:', error);
     res.status(500).json({ success: false, error: 'Failed to create subtask', message: error.message });
@@ -586,13 +615,28 @@ router.delete('/tasks-v2/:id', authenticateAgent, async (req, res) => {
     const result = await pool.query(
       `DELETE FROM ${SCHEMA}.tasks
        WHERE workspace_id = $2 AND (id::text = $1 OR snipara_task_id = $1 OR swarm_task_id = $1)
-       RETURNING id`,
+       RETURNING id, parent_id`,
       [req.params.id, wsId(req)]
     );
     if (!result.rows.length) return res.status(404).json({ success: false, error: 'Task not found' });
+    if (result.rows[0].parent_id) {
+      const refreshedRows = await refreshTaskHierarchyRollups({
+        taskId: result.rows[0].parent_id,
+        workspaceId: wsId(req),
+        db: pool,
+      }).catch(() => []);
+      for (const row of refreshedRows) {
+        publishTaskEvent(row, {
+          type: 'task.updated',
+          origin: 'task-rollup',
+          reason: 'task_deleted_rollup',
+        });
+      }
+    }
     publishTaskDeleted({
       workspaceId: wsId(req),
       taskId: result.rows[0].id,
+      parentId: result.rows[0].parent_id,
       reason: 'task_deleted',
       origin: 'tasks-v2',
     });

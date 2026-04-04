@@ -77,6 +77,32 @@ Lifecycle:
 - reporting and filtering
 - user-facing task browsing and editing flows
 
+### Root rollup contract
+
+For visible hierarchical work, Vutler projects the user-facing state on the `N0` root.
+
+The root rollup should expose at least:
+
+- `rollup_status`
+- `rollup_progress_total`
+- `rollup_progress_done`
+- `rollup_next_due_at`
+- `rollup_primary_blocker`
+- `visible_in_kanban`
+- `visible_in_agenda`
+
+Rollup rules:
+
+- `blocked` if one required descendant is blocked, failed, stalled, or timed out
+- `completed` if all required descendant leaves are completed
+- `in_progress` if execution has started anywhere in the subtree or partial completion exists
+- `pending` otherwise
+
+Board rules:
+
+- kanban and agenda should default to `N0` only
+- descendant tasks remain available in task detail or execution drill-down views
+
 ## Bidirectional sync contract
 
 ### Snipara -> Vutler
