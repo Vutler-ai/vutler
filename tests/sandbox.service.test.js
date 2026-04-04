@@ -230,6 +230,12 @@ describe('sandbox service hardening', () => {
     expect(sandbox.__private.resolveSandboxRuntime()).toBe('docker');
   });
 
+  test('does not bootstrap sandbox schema on import', () => {
+    require('../services/sandbox');
+
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   test('builds a hardened docker command for javascript execution', () => {
     process.env.SANDBOX_RUNTIME = 'docker';
     process.env.SANDBOX_DOCKER_BINARY = 'docker';

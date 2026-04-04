@@ -42,30 +42,32 @@ const PUSH_INDEX_SQL = `
     ON tenant_vutler.push_subscriptions(user_id)
 `;
 
-async function ensurePushTable() {
-  if (!pool) return;
-  try {
-    if (!runtimeSchemaMutationsAllowed()) {
-      await assertTableExists(pool, 'tenant_vutler', 'push_subscriptions', {
-        label: 'Push subscriptions table',
-      });
-      return;
-    }
-
-    await pool.query(PUSH_TABLE_SQL);
-    await pool.query(PUSH_INDEX_SQL);
-  } catch (err) {
-    console.warn('[pushService] Failed to ensure push_subscriptions table:', err.message);
-  }
-}
-
-if (runtimeSchemaMutationsAllowed()) {
-  ensurePushTable();
-}
+let ensurePushTablePromise = null;
 
 function requirePool() {
   if (!pool) throw new Error('PostgreSQL pool unavailable for push subscriptions');
   return pool;
+}
+
+async function ensurePushTable(db = requirePool()) {
+  if (!ensurePushTablePromise) {
+    ensurePushTablePromise = (async () => {
+      if (!runtimeSchemaMutationsAllowed()) {
+        await assertTableExists(db, 'tenant_vutler', 'push_subscriptions', {
+          label: 'Push subscriptions table',
+        });
+        return;
+      }
+
+      await db.query(PUSH_TABLE_SQL);
+      await db.query(PUSH_INDEX_SQL);
+    })().catch((err) => {
+      ensurePushTablePromise = null;
+      throw err;
+    });
+  }
+
+  return ensurePushTablePromise;
 }
 
 /**
@@ -73,6 +75,7 @@ function requirePool() {
  */
 async function saveSubscription(userId, subscription) {
   const db = requirePool();
+  await ensurePushTable(db);
   const { endpoint, keys } = subscription;
   await db.query(
     `INSERT INTO tenant_vutler.push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth)
@@ -89,6 +92,7 @@ async function saveSubscription(userId, subscription) {
  */
 async function removeSubscription(userId, endpoint) {
   const db = requirePool();
+  await ensurePushTable(db);
   await db.query(
     `DELETE FROM tenant_vutler.push_subscriptions WHERE user_id = $1 AND endpoint = $2`,
     [userId, endpoint]
@@ -102,6 +106,7 @@ async function removeSubscription(userId, endpoint) {
  */
 async function sendPushToUser(userId, payload) {
   const db = requirePool();
+  await ensurePushTable(db);
   const { rows } = await db.query(
     `SELECT endpoint, keys_p256dh, keys_auth FROM tenant_vutler.push_subscriptions WHERE user_id = $1`,
     [userId]
@@ -153,4 +158,7 @@ module.exports = {
   removeSubscription,
   sendPushToUser,
   sendPushToUsers,
+  __private: {
+    ensurePushTable,
+  },
 };

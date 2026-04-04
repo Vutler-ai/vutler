@@ -858,12 +858,6 @@ async function executeBatch(scripts, {
   return settled.length > 0 ? settled : jobs;
 }
 
-if (runtimeSchemaMutationsAllowed()) {
-  ensureSandboxSchema().catch((err) => {
-    console.warn('[Sandbox] ensureSandboxSchema warning:', err.message);
-  });
-}
-
 module.exports = {
   ensureSandboxSchema,
   createSandboxJob,
