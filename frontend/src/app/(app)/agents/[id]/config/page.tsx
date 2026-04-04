@@ -447,11 +447,13 @@ function SkillsSection({
   const limitMessage = getSkillLimitMessage(selectedCount);
   const atLimit = selectedCount >= SKILL_LIMITS.max;
 
-  const activeTypes = agentTypes?.filter(Boolean) || [];
-  const recommendedKeys = new Set(activeTypes.length > 0 ? getRecommendedSkills(activeTypes) : []);
   const searchQuery = search.trim().toLowerCase();
 
   const groupedSkills = useMemo(() => {
+    const activeTypes = agentTypes?.filter(Boolean) || [];
+    const recommendedKeys = new Set(
+      activeTypes.length > 0 ? getRecommendedSkills(activeTypes) : []
+    );
     const recommended: AgentSkill[] = [];
     const sameCategory: AgentSkill[] = [];
     const othersByCategory: Record<string, AgentSkill[]> = {};
@@ -481,7 +483,7 @@ function SkillsSection({
     }
 
     return { recommended, sameCategory, othersByCategory };
-  }, [activeTypes, allSkills, recommendedKeys, searchQuery]);
+  }, [agentTypes, allSkills, searchQuery]);
 
   if (loading) {
     return (
@@ -757,7 +759,10 @@ export default function AgentConfigPage() {
     () => Array.from(new Set(socialAccounts.map((account) => account.platform))).filter(Boolean),
     [socialAccounts]
   );
-  const selectedSocialPlatforms = provisioningDraft.social?.allowed_platforms || [];
+  const selectedSocialPlatforms = useMemo(
+    () => provisioningDraft.social?.allowed_platforms || [],
+    [provisioningDraft.social?.allowed_platforms]
+  );
   const filteredSocialAccounts = useMemo(() => {
     if (selectedSocialPlatforms.length === 0) return socialAccounts;
     const selectedSet = new Set(selectedSocialPlatforms);

@@ -382,6 +382,7 @@ export default function MemoryPage() {
     `/api/v1/agents/${agentId}/memories/context`,
     () => getAgentContext(agentId)
   );
+  const contextRole = context?.role;
 
   // Actions
   const handleAddMemory = useCallback(async (text: string, type: MemoryType, importance: number) => {
@@ -404,12 +405,12 @@ export default function MemoryPage() {
   const handlePromote = useCallback(async (memoryId: string) => {
     setActionError('');
     try {
-      await promoteMemory(agentId, memoryId, context?.role);
+      await promoteMemory(agentId, memoryId, contextRole);
       await mutateContext();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Promote failed.');
     }
-  }, [agentId, context?.role, mutateContext]);
+  }, [agentId, contextRole, mutateContext]);
 
   return (
     <div className="px-6 py-6">
