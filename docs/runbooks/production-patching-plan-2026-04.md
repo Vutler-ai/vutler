@@ -150,6 +150,17 @@ Livrables:
 - UI usage/billing alignée avec le runtime réel
 - doc opératoire
 
+Implémentation du 4 avril 2026:
+
+- `frontend/src/app/(app)/usage/page.tsx` explique maintenant que l’analytics couvre à la fois `BYOK` et `Vutler-managed credits`, sans continuer à affirmer que tout est exclusivement BYOK.
+- `frontend/src/app/(app)/billing/page.tsx` remplace les mentions produit `Bring Your Own Key` par `BYOK or Vutler Credits` sur les plans et sur la carte du plan courant.
+- `api/llm.js` retire les références de catalogues obsolètes (`gpt-4o`, `gpt-4o-mini`, `claude-3.5-haiku-latest`) au profit des modèles courants déjà utilisés ailleurs dans le repo.
+
+Critères d’acceptation:
+
+- l’application n’annonce plus un modèle BYOK-only alors que le runtime gère désormais du trial et des crédits managés
+- le catalogue modèles exposé par `api/llm.js` n’affiche plus de références explicitement obsolètes dans le repo
+
 ## Delivery Rule
 
 Chaque phase doit sortir avec:

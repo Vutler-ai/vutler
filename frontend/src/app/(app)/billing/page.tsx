@@ -14,8 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 // These are shown when the API is unavailable and serve as the source of truth
 // for plan metadata. Prices are in cents. Limits: -1 = unlimited.
 
-// NOTE: LLM is BYOK — no token limits on any plan. Token tracking in /usage
-// is for monitoring only. Users can also purchase LLM Credits separately.
+// NOTE: Plans stay token-unlimited by default. Workspaces can either bring
+// their own keys or buy Vutler-managed credits for a hosted runtime path.
 const FALLBACK_PLANS: PlansResponse = {
   office: [
     {
@@ -40,7 +40,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Dashboard",
         "Memory (3-level)",
         "Pixel Office",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: { agents: 2, storage: "5 GB", socialPosts: 0 },
     },
@@ -60,7 +60,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Memory (3-level)",
         "Goals & CRM",
         "Pixel Office",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: { agents: 10, storage: "50 GB", socialPosts: 0 },
     },
@@ -81,7 +81,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Deployments & templates",
         "Knowledge base",
         "Providers & dashboard",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: { agents: 10, nexusNodes: 2, storage: "5 GB", socialPosts: 10 },
     },
@@ -101,7 +101,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Knowledge base",
         "Providers & dashboard",
         "Nexus Local orchestration",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: { agents: 50, nexusNodes: 10, storage: "25 GB", socialPosts: 50 },
     },
@@ -119,7 +119,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Priority support",
         "Unlimited features",
         "Office + Agents in one workspace",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: { agents: 50, nexusNodes: 10, storage: "100 GB", socialPosts: 100 },
     },
@@ -137,7 +137,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Drive repo provisioning",
         "Webhook preparation and event ingestion",
         "AV / IT runtime orchestration",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: { agents: 100, nexusNodes: 1, nexusEnterpriseNodes: 1, nexus_enterprise_seats: 5, storage: "100 GB", socialPosts: 100 },
     },
@@ -153,7 +153,7 @@ const FALLBACK_PLANS: PlansResponse = {
         "Advanced governance and integrations",
         "Custom SLAs",
         "White-labelling",
-        "LLM: Bring Your Own Key",
+        "LLM: BYOK or Vutler Credits",
       ],
       limits: {},
     },
@@ -339,7 +339,7 @@ function CurrentPlanCard({
       {!subscription?.planId && (
         <CardContent className="border-t border-[rgba(255,255,255,0.06)] pt-5">
           <p className="text-sm text-[#9ca3af]">
-            You&apos;re on the Free plan. Upgrade below to unlock more agents and storage. LLM is Bring Your Own Key — no token limits on any plan.
+            You&apos;re on the Free plan. Upgrade below to unlock more agents and storage. LLM can run either through your own provider keys or through purchased Vutler credits.
           </p>
         </CardContent>
       )}
@@ -461,7 +461,7 @@ function PlanCard({
               <p className="text-[#6b7280] text-xs">Enterprise Seats</p>
             </div>
           )}
-          {/* Tokens/mo removed — LLM is BYOK, no plan-based token limits */}
+          {/* Tokens/mo removed — plans do not enforce token caps; usage is BYOK or managed credits. */}
           {storageLabel && (
             <div className="bg-[#0a0b14] rounded-lg px-3 py-2 text-center">
               <p className="text-white font-semibold text-sm">{storageLabel}</p>

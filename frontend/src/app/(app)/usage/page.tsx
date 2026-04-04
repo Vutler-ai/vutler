@@ -161,7 +161,7 @@ export default function UsagePage() {
         <div>
           <h1 className="text-xl sm:text-2xl font-bold text-white">Usage Analytics</h1>
           <p className="text-sm text-[#9ca3af] mt-1">
-            Monitor token consumption and API calls across your agents. LLM is BYOK — no token limits apply.
+            Monitor token consumption and API calls across your agents, whether you run BYOK providers or Vutler-managed credits.
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -208,8 +208,8 @@ export default function UsagePage() {
             <StatCard label="Avg Latency" value={avgLatency ? `${avgLatency}ms` : "—"} color="from-pink-500 to-rose-600" />
           </div>
           <p className="text-xs text-[#6b7280] mt-2">
-            Token tracking is for monitoring only. LLM is BYOK (Bring Your Own Key) — no plan-based token limits.{" "}
-            <a href="/billing" className="text-[#3b82f6] hover:underline">Purchase LLM Credits</a> if you do not have your own key.
+            Usage includes both BYOK traffic and Vutler-managed credits. Plans still do not enforce token caps by default.{" "}
+            <a href="/billing" className="text-[#3b82f6] hover:underline">Purchase LLM Credits</a> if you need a managed runtime without your own key.
           </p>
         </>
       )}
