@@ -133,6 +133,7 @@ async function queryTokenUsageTotal(pg, workspaceId) {
     `SELECT COALESCE(SUM(tokens_input + tokens_output), 0) AS total FROM ${SCHEMA}.llm_usage_logs WHERE workspace_id = $1`,
     `SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total FROM ${SCHEMA}.usage_logs WHERE workspace_id = $1`,
     `SELECT COALESCE(SUM(tokens_used), 0) AS total FROM ${SCHEMA}.agent_executions WHERE workspace_id = $1`,
+    `SELECT COALESCE(SUM(ABS(amount)), 0) AS total FROM ${SCHEMA}.credit_transactions WHERE workspace_id = $1 AND type = 'usage'`,
   ];
 
   for (const query of queries) {
@@ -235,3 +236,6 @@ router.get('/usage/tiers', (req, res) => {
 });
 
 module.exports = router;
+module.exports.estimateCost = estimateCost;
+module.exports.queryTokenUsageRecords = queryTokenUsageRecords;
+module.exports.queryTokenUsageTotal = queryTokenUsageTotal;

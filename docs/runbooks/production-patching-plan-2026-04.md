@@ -56,6 +56,20 @@ Livrables:
 - test multi-tenant
 - doc de phase
 
+Implémentation du 4 avril 2026:
+
+- `api/dashboard.js` refuse désormais toute requête sans `workspaceId`, scope `agents` et `chat_messages` par `workspace_id`, et compte les agents `online` ou `active` comme actifs.
+- `api/usage-pg.js` expose le helper de totalisation utilisé par la page usage et ajoute un fallback `credit_transactions(type='usage')` pour que le dashboard lise la même vérité que le runtime managé.
+- tests ciblés:
+  - `tests/dashboard-api.test.js`
+  - `tests/usage-pg-summary.test.js`
+
+Critères d’acceptation:
+
+- aucun agent/message cross-tenant dans `/api/v1/dashboard`
+- la carte `Token Usage` reflète les vraies tables de consommation et non une table legacy non alimentée
+- absence de `workspaceId` => `401`
+
 ### P2 — Trial / Credits Wiring
 
 Objectif:
