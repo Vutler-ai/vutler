@@ -17,7 +17,6 @@ export const APP_ROUTE_PREFIXES = [
   '/admin',
   '/onboarding',
   '/integrations',
-  '/vchat',
   '/clients',
   '/billing',
   '/notifications',

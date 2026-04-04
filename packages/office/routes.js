@@ -44,12 +44,10 @@ function mountRoot(gate, matchPrefixes, modulePath, label) {
 
 // ── Chat (full-path: /chat/channels, /chat/send, etc.) ──────────────────────
 mountRoot('chat', ['/chat'], '../../app/custom/api/chat', 'chat');
-mount('/vchat', 'chat', '../../api/vchat');
 
 // ── Drive (full-path: /drive/files, /drive/upload, etc.) ────────────────────
 mountRoot('drive', ['/drive'], '../../app/custom/api/drive', 'drive');
 mount('/drive-s3', 'drive', '../../app/custom/api/drive-s3');
-mount('/drive-chat', 'drive', '../../api/drive-chat');
 // vdrive (legacy encrypted drive) removed — use /drive (S3-backed)
 
 // ── Email (full-path: /email, /email/send) ──────────────────────────────────

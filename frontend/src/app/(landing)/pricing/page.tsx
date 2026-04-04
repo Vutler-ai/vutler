@@ -7,7 +7,7 @@ import { CheckIcon, XMarkIcon, StarIcon } from '@heroicons/react/24/solid';
 
 // ─── Plan data from featureGate.js ────────────────────────────────────────────
 
-type PlanId = 'free' | 'office_starter' | 'office_team' | 'agents_starter' | 'agents_pro' | 'nexus_enterprise' | 'full' | 'enterprise' | 'beta';
+type PlanId = 'free' | 'office_starter' | 'office_team' | 'agents_starter' | 'agents_pro' | 'nexus_enterprise' | 'full' | 'enterprise';
 
 interface Plan {
   id: PlanId;
@@ -91,15 +91,6 @@ const PLANS: Plan[] = [
     price: { monthly: 0, yearly: 0 },
     limits: { agents: -1, storage_gb: -1 },
     features: ['*'],
-  },
-  {
-    id: 'beta',
-    label: 'Open Beta',
-    tier: 'beta',
-    price: { monthly: 0, yearly: 0 },
-    limits: { agents: 50, storage_gb: 50 },
-    features: ['*'],
-    badge: 'Current',
   },
 ];
 
@@ -187,14 +178,13 @@ function tierColor(tier: string) {
     case 'agents': return { text: 'text-purple-400', border: 'border-purple-500/25', bg: 'from-purple-600/8', ring: 'ring-1 ring-purple-500/30', badge: 'bg-purple-600/20 text-purple-400 border-purple-500/30' };
     case 'full': return { text: 'text-green-400', border: 'border-green-500/25', bg: 'from-green-600/8', ring: '', badge: 'bg-green-600/20 text-green-400 border-green-500/30' };
     case 'enterprise': return { text: 'text-orange-400', border: 'border-orange-500/25', bg: 'from-orange-600/8', ring: '', badge: 'bg-orange-600/20 text-orange-400 border-orange-500/30' };
-    case 'beta': return { text: 'text-cyan-400', border: 'border-cyan-500/25', bg: 'from-cyan-600/8', ring: 'ring-1 ring-cyan-500/30', badge: 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30' };
     default: return { text: 'text-white/60', border: 'border-white/10', bg: 'from-white/5', ring: '', badge: '' };
   }
 }
 
 // ─── Card plans (main grid) ───────────────────────────────────────────────────
 
-const DISPLAY_PLANS: PlanId[] = ['free', 'office_starter', 'office_team', 'agents_starter', 'agents_pro', 'nexus_enterprise', 'full', 'enterprise', 'beta'];
+const DISPLAY_PLANS: PlanId[] = ['free', 'office_starter', 'office_team', 'agents_starter', 'agents_pro', 'nexus_enterprise', 'full', 'enterprise'];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -241,7 +231,6 @@ export default function PricingPage() {
             const colors = tierColor(plan.tier);
             const price = fmtPrice(yearly ? plan.price.yearly : plan.price.monthly, yearly);
             const isCustom = plan.id === 'enterprise';
-            const isBeta = plan.id === 'beta';
 
             return (
               <div
@@ -266,11 +255,6 @@ export default function PricingPage() {
                   {isCustom ? (
                     <div className="flex items-baseline gap-1">
                       <span className={`text-2xl font-bold ${colors.text}`}>Custom</span>
-                    </div>
-                  ) : isBeta ? (
-                    <div className="flex items-baseline gap-1">
-                      <span className={`text-2xl font-bold ${colors.text}`}>Free</span>
-                      <span className="text-white/30 text-sm">during beta</span>
                     </div>
                   ) : plan.price.monthly === 0 ? (
                     <div className="flex items-baseline gap-1">
@@ -317,10 +301,6 @@ export default function PricingPage() {
                 {isCustom ? (
                   <Button variant="outline" className="w-full border-orange-500/30 text-orange-400 hover:bg-orange-500/10" asChild>
                     <a href="mailto:sales@vutler.ai">Contact Sales</a>
-                  </Button>
-                ) : isBeta ? (
-                  <Button className="w-full bg-cyan-600 hover:bg-cyan-500 text-white" asChild>
-                    <a href="https://app.vutler.ai/register">Join Beta Free</a>
                   </Button>
                 ) : plan.price.monthly === 0 ? (
                   <Button variant="outline" className="w-full border-white/20 text-white/60 hover:text-white" asChild>
@@ -426,9 +406,9 @@ export default function PricingPage() {
 
         {/* Bottom CTA */}
         <div className="text-center rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-600/5 to-purple-600/5 p-12">
-          <h3 className="text-3xl font-bold mb-4">Start free during Open Beta</h3>
+          <h3 className="text-3xl font-bold mb-4">Start with Vutler Cloud</h3>
           <p className="text-white/50 mb-8 max-w-lg mx-auto">
-            Open Beta access. No credit card required. Plan limits still apply.
+            Start with the free plan or talk to sales for enterprise packaging.
           </p>
           <div className="flex flex-wrap gap-4 justify-center">
             <Button size="lg" className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-8 text-base font-semibold shadow-xl shadow-blue-600/25" asChild>
