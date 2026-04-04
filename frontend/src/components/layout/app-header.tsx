@@ -275,7 +275,7 @@ export default function AppHeader({
     : 'U';
 
   return (
-    <div className="sticky top-0 z-30 flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2 sm:py-3 bg-[#08090f]/80 backdrop-blur-xl border-b border-[rgba(255,255,255,0.07)]">
+    <div className="sticky top-0 z-30 flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 pt-[calc(env(safe-area-inset-top,0px)+0.5rem)] sm:pt-[calc(env(safe-area-inset-top,0px)+0.75rem)] pb-2 sm:pb-3 bg-[#08090f]/80 backdrop-blur-xl border-b border-[rgba(255,255,255,0.07)]">
       {/* Mobile hamburger — hidden when bottom nav is active (lg:hidden stays) */}
       <button
         onClick={onMenuClick}

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { CookieConsentProvider } from "@/components/legal/cookie-consent";
+import PWAInstallPrompt from "@/components/pwa-install-prompt";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -37,6 +38,7 @@ export default function RootLayout({
         <CookieConsentProvider>
           {children}
           <ServiceWorkerRegister />
+          <PWAInstallPrompt />
         </CookieConsentProvider>
       </body>
     </html>

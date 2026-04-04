@@ -326,7 +326,8 @@ export default function AppSidebar({
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       className={`
-        fixed top-0 left-0 h-screen ${sidebarWidth} bg-[#0e0f1a] border-r border-[rgba(255,255,255,0.07)]
+        fixed top-0 left-0 h-dvh ${sidebarWidth} bg-[#0e0f1a] border-r border-[rgba(255,255,255,0.07)]
+        pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]
         flex flex-col z-40 transition-all duration-300 ease-in-out
         ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0

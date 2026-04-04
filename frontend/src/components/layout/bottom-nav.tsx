@@ -37,12 +37,11 @@ export default function BottomNav({ onMoreClick }: BottomNavProps) {
 
   return (
     <nav
-      className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0e0f1a]/95 backdrop-blur-xl border-t border-[rgba(255,255,255,0.07)]"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0e0f1a]/95 backdrop-blur-xl border-t border-[rgba(255,255,255,0.07)] pb-[env(safe-area-inset-bottom,0px)]"
       role="navigation"
       aria-label="Mobile navigation"
     >
-      <div className="flex items-center justify-around h-14">
+      <div className="flex items-center justify-around h-16">
         {visibleItems.map(({ href, icon: Icon, label }) => {
           const isActive =
             pathname === href || pathname?.startsWith(href);

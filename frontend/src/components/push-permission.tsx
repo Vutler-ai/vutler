@@ -41,7 +41,7 @@ export default function PushPermission() {
   if (!show) return null;
 
   return (
-    <div className="fixed top-4 left-4 right-4 lg:top-6 lg:left-auto lg:right-6 lg:w-80 z-[55] animate-in slide-in-from-top-4 duration-300">
+    <div className="fixed top-[calc(env(safe-area-inset-top,0px)+1rem)] left-4 right-4 lg:top-6 lg:left-auto lg:right-6 lg:w-80 z-[55] animate-in slide-in-from-top-4 duration-300">
       <div className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl p-4 shadow-2xl">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-[#3b82f6]/20 flex items-center justify-center flex-shrink-0">

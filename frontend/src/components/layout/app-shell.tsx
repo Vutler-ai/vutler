@@ -6,7 +6,6 @@ import AppSidebar from './app-sidebar';
 import AppHeader from './app-header';
 import BottomNav from './bottom-nav';
 import OfflineBanner from '../offline-banner';
-import PWAInstallPrompt from '../pwa-install-prompt';
 import PushPermission from '../push-permission';
 import { CookieSettingsButton } from '@/components/legal/cookie-settings-button';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -82,8 +81,14 @@ export default function AppShell({
     router.replace(`/upgrade/${guardedFeature}?from=${encodeURIComponent(pathname)}`);
   }, [featuresLoading, hasFeature, pathname, router]);
 
+  useEffect(() => {
+    const handleMobileSidebarOpen = () => setMobileOpen(true);
+    window.addEventListener('mobile-sidebar-open', handleMobileSidebarOpen);
+    return () => window.removeEventListener('mobile-sidebar-open', handleMobileSidebarOpen);
+  }, []);
+
   return (
-    <div className="min-h-screen bg-[#08090f]">
+    <div className="min-h-dvh bg-[#08090f]">
       {/* Offline indicator */}
       <OfflineBanner />
 
@@ -101,10 +106,12 @@ export default function AppShell({
         />
 
         {/* Main content — add bottom padding on mobile for BottomNav */}
-        <main className="p-4 sm:p-6 pb-20 lg:pb-6">{children}</main>
+        <main className="p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] lg:pb-6">
+          {children}
+        </main>
 
         {/* Footer — hidden on mobile (BottomNav takes its place) */}
-        <footer className="hidden lg:block px-6 py-4 border-t border-[rgba(255,255,255,0.07)] mt-12">
+        <footer className="hidden lg:block px-6 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] border-t border-[rgba(255,255,255,0.07)] mt-12">
           <div className="flex flex-col sm:flex-row items-center justify-between space-y-2 sm:space-y-0">
             <p className="text-sm text-[#6b7280]">
               &copy; {new Date().getFullYear()} Vutler. All rights reserved.
@@ -144,8 +151,6 @@ export default function AppShell({
       {/* Mobile bottom navigation */}
       <BottomNav onMoreClick={() => setMobileOpen(true)} />
 
-      {/* PWA prompts */}
-      <PWAInstallPrompt />
       <PushPermission />
     </div>
   );
