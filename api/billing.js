@@ -9,6 +9,8 @@ const {
   upsertWorkspaceBillingAddon,
   updateWorkspaceBillingAddonStatusByStripeSubscription,
 } = require('../services/workspaceBillingAddons');
+const { recordCreditTransaction } = require('../services/creditLedger');
+const { ensureManagedProvider } = require('../services/managedProviderService');
 
 let pool;
 try { pool = require('../lib/vaultbrix'); } catch (e) {
@@ -145,6 +147,46 @@ async function applyWorkspacePlan(workspaceId, planId, options = {}) {
     stripeCustomerId: options.stripeCustomerId || null,
     stripeSubscriptionId: options.stripeSubscriptionId || null,
   });
+}
+
+async function applyManagedCreditsPurchase(workspaceId, session) {
+  if (!pool || !workspaceId) return;
+
+  const purchasedTokens = parseInt(session?.metadata?.tokens, 10) || 0;
+  if (purchasedTokens <= 0) return;
+
+  await pool.query(
+    `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
+     VALUES (gen_random_uuid(), $1, 'trial_tokens_total', to_jsonb($2), NOW(), NOW())
+     ON CONFLICT (workspace_id, key) DO UPDATE
+       SET value = to_jsonb((workspace_settings.value::text::int + $2)), updated_at = NOW()`,
+    [workspaceId, purchasedTokens]
+  );
+
+  await ensureManagedProvider(pool, workspaceId, {
+    source: 'credits',
+    forceDefault: false,
+  });
+
+  // Purchased credits do not expire.
+  await pool.query(
+    `DELETE FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'trial_expires_at'`,
+    [workspaceId]
+  );
+
+  await recordCreditTransaction(pool, {
+    workspaceId,
+    type: 'purchase',
+    amount: purchasedTokens,
+    metadata: {
+      source: 'billing.webhook',
+      pack_id: session?.metadata?.pack_id || null,
+      stripe_session_id: session?.id || null,
+      stripe_payment_intent: session?.payment_intent || null,
+    },
+  });
+
+  console.log(`[Billing] Credits: +${purchasedTokens} tokens for workspace ${workspaceId}`);
 }
 
 router.get('/billing/plans', (req, res) => {
@@ -462,32 +504,7 @@ router.post('/billing/webhook', express.raw({ type: 'application/json' }), async
       const { planId, interval, workspaceId, addonId, type } = s.metadata || {};
 
       if (type === 'credits' && pool && workspaceId) {
-        // Handle LLM credit purchase — add tokens to workspace
-        const purchasedTokens = parseInt(s.metadata?.tokens, 10) || 0;
-        if (purchasedTokens > 0) {
-          await pool.query(
-            `INSERT INTO ${SCHEMA}.workspace_settings (id, workspace_id, key, value, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, 'trial_tokens_total', to_jsonb($2), NOW(), NOW())
-             ON CONFLICT (workspace_id, key) DO UPDATE
-               SET value = to_jsonb((workspace_settings.value::text::int + $2)), updated_at = NOW()`,
-            [workspaceId, purchasedTokens]
-          );
-          const trialKey = process.env.VUTLER_TRIAL_OPENAI_KEY;
-          if (trialKey) {
-            await pool.query(
-              `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
-               VALUES ($1, 'vutler-trial', $2, 'https://api.openai.com/v1', TRUE, FALSE, '{"display_name":"Vutler Credits","source":"credits"}'::jsonb)
-               ON CONFLICT DO NOTHING`,
-              [workspaceId, trialKey]
-            );
-          }
-          // Purchased credits don't expire — remove trial expiry
-          await pool.query(
-            `DELETE FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 AND key = 'trial_expires_at'`,
-            [workspaceId]
-          );
-          console.log(`[Billing] Credits: +${purchasedTokens} tokens for workspace ${workspaceId}`);
-        }
+        await applyManagedCreditsPurchase(workspaceId, s);
       } else if (type === 'addon' && pool && workspaceId && addonId) {
         // Handle addon purchase (social posts packs, etc.)
         const addon = ADDONS.find(a => a.id === addonId);
@@ -617,7 +634,9 @@ router.post('/billing/webhooks/stripe', express.raw({ type: 'application/json' }
       const s = event.data.object;
       const { planId, interval, workspaceId, addonId, type } = s.metadata || {};
 
-      if (type === 'addon' && pool && workspaceId && addonId) {
+      if (type === 'credits' && pool && workspaceId) {
+        await applyManagedCreditsPurchase(workspaceId, s);
+      } else if (type === 'addon' && pool && workspaceId && addonId) {
         const addon = ADDONS.find(a => a.id === addonId);
         await recordAddonActivation({ workspaceId, addon, stripeSubscriptionId: s.subscription });
       } else if (pool && workspaceId && planId) {

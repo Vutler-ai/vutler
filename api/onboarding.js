@@ -4,6 +4,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
 const { normalizeStoredAvatar, buildSpriteAvatar } = require('../lib/avatarPath');
+const { resolveProvisionedManagedRuntime } = require('../services/managedProviderService');
 const { recommendAgents, getDomainAgents } = require('../services/coordinatorPrompt');
 const { ensureWorkspaceDriveSetup } = require('../app/custom/services/provisioning');
 const { syncWorkspacePlan } = require('../services/workspacePlanService');
@@ -11,6 +12,16 @@ const SCHEMA = 'tenant_vutler';
 
 function getWorkspaceId(req) {
   return req.workspaceId || req.user?.workspaceId || null;
+}
+
+function normalizeOnboardingModel(model) {
+  const value = String(model || '').trim();
+  if (!value) return 'claude-haiku-4-5';
+  if (value === 'gpt-4o-mini') return 'gpt-5.4-mini';
+  if (value === 'gpt-4o') return 'gpt-5.4';
+  if (value === 'claude-3-5-haiku-latest') return 'claude-haiku-4-5';
+  if (value === 'claude-3.5-sonnet') return 'claude-sonnet-4-20250514';
+  return value;
 }
 
 router.get('/status', async (req, res) => {
@@ -196,20 +207,29 @@ router.post('/setup', async (req, res) => {
     );
 
     const createdAgents = [];
+    const managedRuntime = await resolveProvisionedManagedRuntime(pool, workspaceId);
 
     for (const tmpl of tmplResult.rows) {
       try {
         const username = tmpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+        const runtimeModel = managedRuntime?.model || normalizeOnboardingModel(tmpl.model);
+        const runtimeProvider = managedRuntime?.provider || null;
         const result = await pool.query(
           `INSERT INTO ${SCHEMA}.agents
-             (name, username, workspace_id, type, model, system_prompt, avatar, status, description)
-           VALUES ($1, $2, $3, 'bot', $4, $5, $6, 'active', $7)
+             (name, username, workspace_id, type, model, provider, system_prompt, avatar, status, description)
+           VALUES ($1, $2, $3, 'bot', $4, $5, $6, $7, 'active', $8)
            ON CONFLICT DO NOTHING
-           RETURNING id, name, username, description, avatar`,
-          [tmpl.name, username, workspaceId, tmpl.model || 'gpt-4o-mini',
-           tmpl.system_prompt || `You are ${tmpl.name}, an AI agent on Vutler.`,
-           normalizeStoredAvatar(tmpl.avatar, { username }) || buildSpriteAvatar(username),
-           tmpl.description || '']
+           RETURNING id, name, username, description, avatar, provider, model`,
+          [
+            tmpl.name,
+            username,
+            workspaceId,
+            runtimeModel,
+            runtimeProvider,
+            tmpl.system_prompt || `You are ${tmpl.name}, an AI agent on Vutler.`,
+            normalizeStoredAvatar(tmpl.avatar, { username }) || buildSpriteAvatar(username),
+            tmpl.description || '',
+          ]
         );
         if (result.rows.length) createdAgents.push(result.rows[0]);
       } catch (agentErr) {

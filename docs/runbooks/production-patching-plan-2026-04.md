@@ -83,6 +83,24 @@ Livrables:
 - écriture ledger usage/achat sur le chemin managé
 - tests ciblés
 
+Implémentation du 4 avril 2026:
+
+- nouveau service `services/managedProviderService.js` pour unifier le provider managé `vutler-trial` avec résolution de profil par source:
+  - `trial` privilégie `Anthropic Haiku` si disponible, sinon fallback vers un provider partagé existant
+  - `credits` privilégie `OpenRouter auto` pour le mode managé payant
+- `api/auth.js` provisionne désormais le provider managé avant la création de `Jarvis`, le marque par défaut si aucun BYOK ne le remplace, et inscrit le grant initial dans le ledger.
+- `api/onboarding.js` crée les agents du wizard sur le runtime managé provisionné lorsqu’il existe, au lieu de dériver implicitement vers `openai/gpt-4o-mini`; les vieux modèles d’onboarding sont aussi normalisés vers des références courantes.
+- `services/llmRouter.js` résout maintenant `vutler-trial` vers son vrai upstream provider/model, débite les tokens consommés, et écrit chaque usage dans `credit_transactions`.
+- `api/billing.js` enregistre les achats de packs en `credit_transactions`, crédite le quota workspace et bascule/maintient le provider managé sur le profil `credits`.
+- migration ajoutée: `scripts/migrations/20260404_credit_transactions.sql`
+
+Critères d’acceptation:
+
+- un workspace fraîchement inscrit avec clé partagée disponible peut réellement exécuter `Jarvis` et les agents onboarding sans BYOK
+- les achats de packs génèrent une écriture positive auditée
+- les appels runtime managés génèrent une écriture négative auditée
+- le trial reste limité et rate-limité, tandis que les crédits payants n’héritent pas du rate limit trial
+
 ### P3 — Provider Secret Hardening
 
 Objectif:

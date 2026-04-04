@@ -5,10 +5,15 @@ const { buildAgentMemoryBindings } = require('./sniparaMemoryService');
 const { createSniparaGateway } = require('./snipara/gateway');
 const { createMemoryRuntimeService } = require('./memory/runtime');
 const { resolveMemoryMode } = require('./memory/modeResolver');
+const { recordCreditTransaction } = require('./creditLedger');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const { resolveAgentRuntimeIntegrations, getSkillKeysForIntegrationProviders } = require('./agentIntegrationService');
 const { isSandboxEligibleAgentType } = require('./agentTypeProfiles');
+const {
+  MANAGED_PROVIDER_ALIAS,
+  getManagedRuntimeConfig,
+} = require('./managedProviderService');
 const {
   resolveLegacyWorkspaceProvider,
   syncLegacyWorkspaceProviders,
@@ -1657,24 +1662,38 @@ async function chat(agent, messages, db, opts = {}) {
     }
 
     let api_key, base_url;
-    if (a.provider === 'vutler-trial') {
-      // Trial tokens: enforce quota, rate limit, and gpt-4o-mini only
+    let requestProvider = a.provider;
+    let managedRuntime = null;
+    if (a.provider === MANAGED_PROVIDER_ALIAS) {
+      // Managed Vutler runtime: quota-gated shared provider for trial or purchased credits.
       const quota = await checkTrialQuota(db, workspaceId);
       if (!quota.allowed) {
         lastErr = new Error(quota.reason);
         continue;
       }
-      const rateCheck = checkTrialRateLimit(workspaceId);
-      if (!rateCheck.allowed) {
-        lastErr = new Error(rateCheck.reason);
+
+      const row = await resolveWorkspaceProvider(db, workspaceId, MANAGED_PROVIDER_ALIAS);
+      managedRuntime = getManagedRuntimeConfig(row);
+      requestProvider = managedRuntime.upstreamProvider;
+      const requestProviderCfg = PROVIDERS[requestProvider];
+      if (!requestProviderCfg) {
+        lastErr = new Error(`Managed provider upstream is not supported: ${requestProvider}`);
         continue;
       }
-      const row = await resolveWorkspaceProvider(db, workspaceId, 'vutler-trial');
-      api_key = row?.api_key || process.env.VUTLER_TRIAL_OPENAI_KEY;
-      base_url = providerCfg.baseURL;
-      a.model = 'gpt-4o-mini'; // force trial model
+
+      if (managedRuntime.source !== 'credits') {
+        const rateCheck = checkTrialRateLimit(workspaceId);
+        if (!rateCheck.allowed) {
+          lastErr = new Error(rateCheck.reason);
+          continue;
+        }
+      }
+
+      api_key = managedRuntime.apiKey;
+      base_url = row?.base_url || managedRuntime.baseURL || requestProviderCfg.baseURL;
+      a.model = managedRuntime.upstreamModel || requestProviderCfg.defaultModel;
       if (!api_key) {
-        lastErr = new Error('Trial not provisioned. No shared key available.');
+        lastErr = new Error('Managed runtime not provisioned. No shared key available.');
         continue;
       }
     } else if (a.provider === 'codex') {
@@ -1691,14 +1710,20 @@ async function chat(agent, messages, db, opts = {}) {
       base_url = row?.base_url || providerCfg.baseURL;
     }
 
+    const effectiveProviderCfg = PROVIDERS[requestProvider];
+    if (!effectiveProviderCfg) {
+      lastErr = new Error(`Unknown provider: ${requestProvider}`);
+      continue;
+    }
+
     // For codex provider, strip the codex/ prefix to get the real OpenAI model ID
-    const resolvedModel = a.provider === 'codex'
-      ? resolveCodexModel(a.model || providerCfg.defaultModel)
-      : (a.model || providerCfg.defaultModel);
+    const resolvedModel = requestProvider === 'codex'
+      ? resolveCodexModel(a.model || effectiveProviderCfg.defaultModel)
+      : (a.model || effectiveProviderCfg.defaultModel);
 
     const attempt = {
       ...agent,
-      provider: a.provider,
+      provider: requestProvider,
       model: resolvedModel,
       api_key,
       base_url,
@@ -2066,10 +2091,26 @@ async function chat(agent, messages, db, opts = {}) {
         resource_artifacts: enriched.artifacts,
       };
 
-      // Debit trial tokens if using the shared trial provider
-      if (a.provider === 'vutler-trial' && llmResult.usage) {
+      // Debit managed workspace credits when using the shared Vutler runtime.
+      if (a.provider === MANAGED_PROVIDER_ALIAS && llmResult.usage) {
         const totalTokens = (llmResult.usage.input_tokens || 0) + (llmResult.usage.output_tokens || 0);
-        if (totalTokens > 0) await debitTrialTokens(db, workspaceId, totalTokens);
+        if (totalTokens > 0) {
+          await debitTrialTokens(db, workspaceId, totalTokens);
+          await recordCreditTransaction(db, {
+            workspaceId,
+            type: 'usage',
+            amount: -totalTokens,
+            metadata: {
+              source: managedRuntime?.source || 'trial',
+              provider: llmResult.provider,
+              model: llmResult.model,
+              agent_id: agent?.id || null,
+              agent_name: agent?.name || null,
+              input_tokens: llmResult.usage.input_tokens || 0,
+              output_tokens: llmResult.usage.output_tokens || 0,
+            },
+          });
+        }
       }
 
       return llmResult;

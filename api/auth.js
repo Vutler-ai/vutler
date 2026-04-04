@@ -12,7 +12,9 @@ const bcrypt = require('bcryptjs');
 const https = require('https');
 const router = express.Router();
 const coordinatorPrompt = require('../services/coordinatorPrompt');
+const { recordCreditTransaction } = require('../services/creditLedger');
 const { CryptoService } = require('../services/crypto');
+const { ensureManagedProvider, resolveManagedProfile } = require('../services/managedProviderService');
 const { syncWorkspacePlan } = require('../services/workspacePlanService');
 const { buildSpriteAvatar } = require('../lib/avatarPath');
 const {
@@ -645,38 +647,18 @@ async function registerHandler(req, res) {
         [user.id, workspaceId]
       );
 
-      await client.query(
-        `INSERT INTO tenant_vutler.agents (id, name, username, workspace_id, agent_type, system_prompt, model, status, avatar)
-         VALUES (gen_random_uuid(), 'Jarvis', 'jarvis', $1, 'coordinator', $2, 'claude-sonnet-4-20250514', 'active', $3)
-         ON CONFLICT DO NOTHING`,
-        [workspaceId, coordinatorPrompt.FULL_PROMPT, buildSpriteAvatar('jarvis')]
-      );
-
-      await client.query(
-        `INSERT INTO tenant_vutler.chat_channels (id, name, workspace_id, type)
-         VALUES (gen_random_uuid(), 'DM-jarvis', $1, 'dm') ON CONFLICT DO NOTHING`,
-        [workspaceId]
-      );
-
-      await client.query(
-        `INSERT INTO tenant_vutler.chat_channels (id, name, workspace_id, type)
-         VALUES (gen_random_uuid(), 'team-coordination', $1, 'team') ON CONFLICT DO NOTHING`,
-        [workspaceId]
-      );
-
-      // ── Trial token provisioning (silent — user never sees this) ──────────
-      const trialKey = process.env.VUTLER_TRIAL_OPENAI_KEY;
-      if (trialKey) {
+      // ── Trial / managed runtime provisioning (silent — user never sees this) ──
+      const trialProfile = resolveManagedProfile('trial');
+      let managedProvider = null;
+      if (trialProfile?.apiKey) {
         const trialTotal = parseInt(process.env.VUTLER_TRIAL_TOKENS_TOTAL, 10) || 50000;
         const trialDays = parseInt(process.env.VUTLER_TRIAL_EXPIRY_DAYS, 10) || 7;
         const expiresAt = new Date(Date.now() + trialDays * 86400000).toISOString();
 
-        await client.query(
-          `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
-           VALUES ($1, 'vutler-trial', $2, 'https://api.openai.com/v1', TRUE, FALSE, '{"display_name":"Vutler Trial","source":"trial"}'::jsonb)
-           ON CONFLICT DO NOTHING`,
-          [workspaceId, trialKey]
-        );
+        managedProvider = await ensureManagedProvider(client, workspaceId, {
+          source: 'trial',
+          forceDefault: true,
+        });
 
         const trialSettings = [
           ['trial_tokens_total', JSON.stringify(trialTotal)],
@@ -691,7 +673,44 @@ async function registerHandler(req, res) {
             [workspaceId, key, value]
           );
         }
+
+        await recordCreditTransaction(client, {
+          workspaceId,
+          type: 'grant',
+          amount: trialTotal,
+          metadata: {
+            source: 'auth.register',
+            provider: managedProvider?.upstreamProvider || trialProfile.provider,
+            model: managedProvider?.model || trialProfile.model,
+            expires_at: expiresAt,
+          },
+        });
       }
+
+      await client.query(
+        `INSERT INTO tenant_vutler.agents (id, name, username, workspace_id, agent_type, system_prompt, model, provider, status, avatar)
+         VALUES (gen_random_uuid(), 'Jarvis', 'jarvis', $1, 'coordinator', $2, $3, $4, 'active', $5)
+         ON CONFLICT DO NOTHING`,
+        [
+          workspaceId,
+          coordinatorPrompt.FULL_PROMPT,
+          managedProvider?.model || 'claude-haiku-4-5',
+          managedProvider?.provider || null,
+          buildSpriteAvatar('jarvis'),
+        ]
+      );
+
+      await client.query(
+        `INSERT INTO tenant_vutler.chat_channels (id, name, workspace_id, type)
+         VALUES (gen_random_uuid(), 'DM-jarvis', $1, 'dm') ON CONFLICT DO NOTHING`,
+        [workspaceId]
+      );
+
+      await client.query(
+        `INSERT INTO tenant_vutler.chat_channels (id, name, workspace_id, type)
+         VALUES (gen_random_uuid(), 'team-coordination', $1, 'team') ON CONFLICT DO NOTHING`,
+        [workspaceId]
+      );
 
       await client.query('COMMIT');
     } catch (e) {
