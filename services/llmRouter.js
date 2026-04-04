@@ -274,7 +274,7 @@ const DIRECT_EMAIL_SEND_PATTERNS = [
   /\bsend\b/i,
   /\breply\b/i,
   /\bforward\b/i,
-  /\benvoie(?:r)?\b/i,
+  /\benvo(?:ie|ies|ient|yer|yez|yons|yaient|yant)\b/i,
   /\brépond(?:s|re)?\b/i,
   /\brepond(?:s|re)?\b/i,
   /\btransf(?:e|è)re(?:r)?\b/i,
@@ -1516,6 +1516,12 @@ async function chat(agent, messages, db, opts = {}) {
     source: 'none',
   }));
   const executionOverlay = agent?.execution_overlay || {};
+  const emailWorkspaceAvailable = isProviderAvailable(runtimeCapabilityAvailability, 'email');
+  const unavailableEmailProviders = getUnavailableAgentProviders(['email'], { agent, emailProvisioning });
+  const emailCapabilityEffective = emailWorkspaceAvailable && unavailableEmailProviders.length === 0;
+  const emailCapabilityUnavailableReason = !emailWorkspaceAvailable
+    ? runtimeCapabilityAvailability?.providerStates?.email?.reason || 'Email is not available for this workspace run.'
+    : (unavailableEmailProviders[0]?.reason || null);
   const overlaySkillKeys = Array.isArray(executionOverlay.skillKeys) ? executionOverlay.skillKeys : [];
   const overlayProviders = Array.isArray(executionOverlay.integrationProviders) ? executionOverlay.integrationProviders : [];
   const overlayToolCapabilities = Array.isArray(executionOverlay.toolCapabilities) ? executionOverlay.toolCapabilities : [];
@@ -1588,8 +1594,6 @@ async function chat(agent, messages, db, opts = {}) {
       const onlineNexusNode = await getOnlineNexusNode(workspaceId, db);
       nexusNodeId = onlineNexusNode?.id || null;
       if (nexusNodeId) {
-        const emailCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'email')
-          && getUnavailableAgentProviders(['email'], { agent, emailProvisioning }).length === 0;
         const calendarCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar')
           || isProviderAvailable(runtimeCapabilityAvailability, 'google');
         nexusTools = await getNexusToolsForWorkspace(workspaceId, db, {
@@ -1647,11 +1651,22 @@ async function chat(agent, messages, db, opts = {}) {
   if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
     effectiveSystemPrompt += `\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is ${effectiveDriveRoot}. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under ${effectiveDriveRoot} instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.`;
   }
-  if (isProviderAvailable(runtimeCapabilityAvailability, 'email')) {
-    effectiveSystemPrompt += '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, send it immediately using the agent email capability. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
-    if (emailIntent.directSend && emailIntent.hasExplicitRecipient) {
-      effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present. Do not inspect mailboxes or contacts first. Use send_email immediately if available.';
+  const hasSendEmailTool = nexusTools.some((tool) => tool.name === 'send_email');
+  const hasDraftEmailTool = nexusTools.some((tool) => tool.name === 'draft_email');
+  if (emailCapabilityEffective && emailProvisioning?.email) {
+    effectiveSystemPrompt += `\n\nYour provisioned email sending identity for this run is ${emailProvisioning.email}.`;
+  }
+  if (emailCapabilityEffective && (hasSendEmailTool || hasDraftEmailTool)) {
+    effectiveSystemPrompt += '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, act directly through the available email tool. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
+    if (emailIntent.directSend && emailIntent.hasExplicitRecipient && hasSendEmailTool) {
+      effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present. Do not inspect mailboxes or contacts first. Use send_email immediately.';
+    } else if (emailIntent.draftOnly && emailIntent.hasExplicitRecipient && hasDraftEmailTool) {
+      effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present and the user asked for a draft. Use draft_email directly.';
     }
+  } else if (emailCapabilityEffective) {
+    effectiveSystemPrompt += '\n\nEmail is provisioned for this agent in this run, but no direct email tool is exposed right now. Do not claim you sent, drafted, or inspected email unless a tool call confirms it.';
+  } else if (emailCapabilityUnavailableReason) {
+    effectiveSystemPrompt += `\n\nEmail is unavailable in this run: ${emailCapabilityUnavailableReason}. Do not claim you can inspect mailboxes, send email, or confirm an agent email identity unless a tool call explicitly confirms it.`;
   }
   if (unavailableOverlayProviders.length > 0) {
     const providerNames = unavailableOverlayProviders.map((entry) => entry.key).join(', ');

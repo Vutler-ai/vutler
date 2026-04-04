@@ -294,7 +294,7 @@ describe('llmRouter nexus tool orchestration', () => {
     expect(recordedBodies[0].tools.map((tool) => tool.function.name)).toEqual(
       expect.arrayContaining(['search_files'])
     );
-    expect(orchestrateToolCallMock).toHaveBeenCalledWith({
+    expect(orchestrateToolCallMock).toHaveBeenCalledWith(expect.objectContaining({
       toolName: 'search_files',
       args: {
         query: 'brief',
@@ -307,7 +307,8 @@ describe('llmRouter nexus tool orchestration', () => {
         messageId: 'msg-1',
       }),
       nexusNodeId: 'node-1',
-    });
+      originTaskId: null,
+    }));
     expect(executeOrchestrationDecisionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         version: 'v1',
