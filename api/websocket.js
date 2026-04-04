@@ -30,6 +30,11 @@
 
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const { resolveApiKey } = require('./middleware/auth');
+const { resolveAgentRecord } = require('../services/sniparaMemoryService');
+const llmRouter = require('../services/llmRouter');
+
+const SCHEMA = 'tenant_vutler';
 
 // ─── Connection Registry ────────────────────────────────────────────────────
 
@@ -38,6 +43,138 @@ const { WebSocketServer } = require('ws');
  * Shared so other modules can broadcast via app.locals
  */
 const connections = new Map();
+
+function getPg(app) {
+  return app?.locals?.pg || app?.locals?.db || null;
+}
+
+async function loadWorkspaceAgent(pg, workspaceId, agentIdOrUsername, fallback = {}) {
+  if (!pg || !workspaceId || !agentIdOrUsername) return null;
+  const agent = await resolveAgentRecord(pg, workspaceId, agentIdOrUsername, fallback);
+  return agent?.id ? agent : null;
+}
+
+async function authenticateWebSocketRequest(req, app) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const requestedAgentId = url.searchParams.get('agent_id');
+  const apiKey = url.searchParams.get('api_key') || req.headers['x-api-key'];
+
+  if (!apiKey) {
+    return { ok: false, code: 4001, reason: 'Missing api_key' };
+  }
+
+  const pg = getPg(app);
+  if (!pg) {
+    return { ok: false, code: 1011, reason: 'Database unavailable' };
+  }
+
+  const identity = await resolveApiKey({ app: { locals: { pg } } }, apiKey).catch((err) => {
+    console.error('[WS] API key auth error:', err.message);
+    return null;
+  });
+
+  if (!identity) {
+    return { ok: false, code: 4003, reason: 'Invalid API key' };
+  }
+
+  let agent = null;
+  if (requestedAgentId) {
+    agent = await loadWorkspaceAgent(pg, identity.workspaceId, requestedAgentId);
+    if (!agent) {
+      return { ok: false, code: 4004, reason: 'Agent not found' };
+    }
+  }
+
+  return {
+    ok: true,
+    apiKey,
+    requestedAgentId,
+    identity,
+    workspaceId: identity.workspaceId,
+    agent,
+    pg,
+  };
+}
+
+async function updateSocketAgentStatus(pg, workspaceId, agentId, status) {
+  if (!pg || !workspaceId || !agentId || !status) return;
+  await pg.query(
+    `UPDATE ${SCHEMA}.agents
+        SET status = $3,
+            updated_at = NOW()
+      WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, agentId, status]
+  ).catch(() => {});
+}
+
+async function persistConversationTurns(pg, workspaceId, conversationId, connection, userMessage, assistantMessage) {
+  if (!pg || !workspaceId || !conversationId) return;
+
+  const channel = await pg.query(
+    `SELECT id
+       FROM ${SCHEMA}.chat_channels
+      WHERE workspace_id = $1 AND id::text = $2
+      LIMIT 1`,
+    [workspaceId, String(conversationId)]
+  ).catch(() => ({ rows: [] }));
+
+  if (!channel.rows?.length) return;
+
+  await pg.query(
+    `INSERT INTO ${SCHEMA}.chat_messages
+       (channel_id, sender_id, sender_name, content, message_type, workspace_id, metadata)
+     VALUES
+       ($1, $2, $3, $4, 'text', $5, $6::jsonb),
+       ($1, $7, $8, $9, 'text', $5, $10::jsonb)`,
+    [
+      channel.rows[0].id,
+      connection.userId || connection.identity?.id || 'ws-client',
+      connection.userName || connection.identity?.name || 'User',
+      userMessage,
+      workspaceId,
+      JSON.stringify({ source: 'ws-chat', conversation_id: String(conversationId), role: 'user' }),
+      connection.agentId,
+      connection.agentName,
+      assistantMessage,
+      JSON.stringify({ source: 'ws-chat', conversation_id: String(conversationId), role: 'assistant' }),
+    ]
+  ).catch(() => {});
+}
+
+async function insertWorkspaceChannelMessage(pg, workspaceId, channelId, connection, text, attachments = []) {
+  if (!pg || !workspaceId || !channelId || !text) return null;
+
+  const channel = await pg.query(
+    `SELECT id
+       FROM ${SCHEMA}.chat_channels
+      WHERE workspace_id = $1 AND id::text = $2
+      LIMIT 1`,
+    [workspaceId, String(channelId)]
+  );
+  if (!channel.rows.length) {
+    throw new Error('Channel not found');
+  }
+
+  const result = await pg.query(
+    `INSERT INTO ${SCHEMA}.chat_messages
+       (channel_id, sender_id, sender_name, content, message_type, workspace_id, metadata)
+     VALUES ($1, $2, $3, $4, 'text', $5, $6::jsonb)
+     RETURNING id`,
+    [
+      channel.rows[0].id,
+      connection.agentId || connection.identity?.id || 'ws-client',
+      connection.agentName || connection.identity?.name || 'API Client',
+      text,
+      workspaceId,
+      JSON.stringify({
+        source: 'ws-chat',
+        attachments: Array.isArray(attachments) ? attachments : [],
+      }),
+    ]
+  );
+
+  return { messageId: result.rows[0]?.id || null };
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -86,40 +223,25 @@ function setupWebSocket(server, app) {
 // ─── Connection Lifecycle ────────────────────────────────────────────────────
 
 async function handleConnection(ws, req, app) {
-  const url     = new URL(req.url, `http://${req.headers.host}`);
-  const agentId = url.searchParams.get('agent_id');
-  const apiKey  = url.searchParams.get('api_key') || req.headers['x-api-key'];
-
-  // ── Auth ────────────────────────────────────────────────────────────────
-  if (!apiKey) {
-    ws.close(4001, 'Missing api_key');
+  const auth = await authenticateWebSocketRequest(req, app);
+  if (!auth.ok) {
+    ws.close(auth.code, auth.reason);
     return;
   }
-
-  let agent;
-  try {
-    const { verifyApiKey } = require('../lib/auth');
-    const db = app.locals.db;
-    agent = await verifyApiKey(db, apiKey);
-  } catch (err) {
-    console.error('WS auth error:', err);
-    ws.close(4002, 'Authentication failed');
-    return;
-  }
-
-  if (!agent) {
-    ws.close(4003, 'Invalid API key');
-    return;
-  }
-
-  const storedId = String(agentId || agent._id || 'nexus-runtime');
+  const storedId = String(auth.agent?.id || auth.requestedAgentId || auth.identity.id || 'nexus-runtime');
+  const agentName = auth.agent?.name || auth.identity.name || 'API Client';
 
   // ── Register ─────────────────────────────────────────────────────────────
   const connectionId = crypto.randomBytes(8).toString('hex');
   const connection = {
     ws,
     agentId  : storedId,
-    agentName: agent.name,
+    agentName,
+    agent: auth.agent || null,
+    identity: auth.identity,
+    workspaceId: auth.workspaceId,
+    userId: auth.identity.id || null,
+    userName: auth.identity.name || auth.identity.email || 'API Client',
     connectionId,
     connectedAt: new Date(),
     subscriptions: new Set()
@@ -128,24 +250,18 @@ async function handleConnection(ws, req, app) {
   ws.connectionId = connectionId;
   ws.agentId      = storedId;
 
-  console.log(`🔌 [WS] Agent "${agent.name}" connected (${connectionId})`);
+  console.log(`🔌 [WS] Agent "${agentName}" connected (${connectionId})`);
 
   // ── Welcome ───────────────────────────────────────────────────────────────
   send(ws, 'agent.status', {
     status        : 'connected',
     agent_id      : storedId,
-    agent_name    : agent.name,
+    agent_name    : agentName,
     connection_id : connectionId,
     timestamp     : new Date().toISOString()
   });
 
-  // Update last_seen in DB (fire-and-forget)
-  try {
-    await app.locals.db.collection('users').updateOne(
-      { _id: agent._id },
-      { $set: { status: 'online', lastSeen: new Date() } }
-    );
-  } catch (_) {}
+  await updateSocketAgentStatus(auth.pg, auth.workspaceId, auth.agent?.id || null, 'online');
 
   // ── Message Handling ──────────────────────────────────────────────────────
   ws.on('message', async (raw) => {
@@ -162,15 +278,9 @@ async function handleConnection(ws, req, app) {
   // ── Disconnect ────────────────────────────────────────────────────────────
   ws.on('close', async () => {
     connections.delete(connectionId);
-    console.log(`🔌 [WS] Agent "${agent.name}" disconnected (${connectionId})`);
+    console.log(`🔌 [WS] Agent "${agentName}" disconnected (${connectionId})`);
 
-    // Mark offline in DB
-    try {
-      await app.locals.db.collection('users').updateOne(
-        { _id: agent._id },
-        { $set: { status: 'offline', lastSeen: new Date() } }
-      );
-    } catch (_) {}
+    await updateSocketAgentStatus(auth.pg, auth.workspaceId, auth.agent?.id || null, 'offline');
 
     // Notify other connections of this agent (if they subscribed)
     broadcastToAgent(storedId, 'agent.status', {
@@ -305,10 +415,11 @@ async function handleChatMessage(connection, data, app) {
   });
 
   try {
-    const db = app.locals.db;
-
-    // Fetch agent with LLM config
-    const agent = await db.collection('users').findOne({ _id: connection.agentId });
+    const pg = getPg(app);
+    const agent = await loadWorkspaceAgent(pg, connection.workspaceId, connection.agentId, connection.agent || {});
+    if (!agent) {
+      throw new Error('This WebSocket connection is not bound to a workspace agent.');
+    }
 
     // Build messages array
     const messages = [
@@ -317,39 +428,14 @@ async function handleChatMessage(connection, data, app) {
     ];
 
     // Route to LLM
-    const llmRouter = require('../services/llmRouter');
-    const llmResult = await llmRouter.chat(agent, messages, db);
+    const llmResult = await llmRouter.chat(agent, messages, pg, {
+      wsConnections: app?.locals?.wsConnections,
+    });
 
     const reply = llmResult.content || llmResult.message || '…';
 
-    // Log token usage
-    if (llmResult.usage) {
-      await db.collection('token_usage').insertOne({
-        agent_id     : connection.agentId,
-        workspace_id : agent.workspaceId || null,
-        provider     : llmResult.provider,
-        model        : llmResult.model,
-        tier         : llmResult.tier || 'byokey',
-        tokens_input : llmResult.usage.input_tokens  || 0,
-        tokens_output: llmResult.usage.output_tokens || 0,
-        tokens_total : (llmResult.usage.input_tokens  || 0) +
-                       (llmResult.usage.output_tokens || 0),
-        cost         : llmResult.cost || 0,
-        latency_ms   : llmResult.latency_ms || 0,
-        request_type : 'chat_ws',
-        timestamp    : new Date()
-      });
-    }
-
     // Record conversation turn
-    if (conversation_id) {
-      await db.collection('conversations').insertMany([
-        { conversation_id, agent_id: connection.agentId, role: 'user',
-          content: message, timestamp: new Date() },
-        { conversation_id, agent_id: connection.agentId, role: 'assistant',
-          content: reply, timestamp: new Date() }
-      ]);
-    }
+    await persistConversationTurns(pg, connection.workspaceId, conversation_id, connection, message, reply);
 
     send(connection.ws, 'chat.response', {
       agent_id        : connection.agentId,
@@ -406,14 +492,14 @@ async function handleMessageSend(connection, data, app) {
   }
 
   try {
-    const chatAPI = require('./chat');
-    const result  = await chatAPI.sendMessage(app.locals.db, {
-      agentId   : connection.agentId,
-      agentName : connection.agentName,
-      channelId : channel_id,
+    const result = await insertWorkspaceChannelMessage(
+      getPg(app),
+      connection.workspaceId,
+      channel_id,
+      connection,
       text,
       attachments
-    });
+    );
 
     send(connection.ws, 'message.sent', {
       channel_id,
@@ -504,4 +590,13 @@ function getStats() {
 
 module.exports = { setupWebSocket, broadcastToAgent, broadcastToAll,
                    pushActivityEvent, getStats, send,
-                   wsConnections: connections };
+                   wsConnections: connections,
+                   __test: {
+                     authenticateWebSocketRequest,
+                     handleChatMessage,
+                     handleMessageSend,
+                     insertWorkspaceChannelMessage,
+                     loadWorkspaceAgent,
+                     persistConversationTurns,
+                     updateSocketAgentStatus,
+                   } };

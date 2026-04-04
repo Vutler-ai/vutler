@@ -161,6 +161,42 @@ Critères d’acceptation:
 - l’application n’annonce plus un modèle BYOK-only alors que le runtime gère désormais du trial et des crédits managés
 - le catalogue modèles exposé par `api/llm.js` n’affiche plus de références explicitement obsolètes dans le repo
 
+### P5 — `/ws/chat` PG Refactor
+
+Objectif:
+
+- retirer la dépendance restante à l’ancien modèle Mongo/auth dans `api/websocket.js`
+- faire pointer `/ws/chat` uniquement sur l’auth API key actuelle et les tables PostgreSQL workspace-scopées
+
+Livrables:
+
+- auth WebSocket branchée sur `resolveApiKey`
+- résolution d’agent via `tenant_vutler.agents`
+- persistance `chat.message` et `message.send` via `chat_messages`
+- tests ciblés
+
+Implémentation du 4 avril 2026:
+
+- `api/middleware/auth.js` exporte désormais `resolveApiKey` pour les transports non-Express comme le WebSocket upgrade handler.
+- `api/websocket.js` n’utilise plus `app.locals.db.collection(...)` ni le faux `verifyApiKey(db, key)`.
+- la connexion `/ws/chat`:
+  - valide la clé via le resolver API key actuel
+  - récupère le workspace depuis cette identité
+  - charge l’agent demandé depuis `tenant_vutler.agents`
+  - met à jour le statut agent `online/offline` en best-effort
+- `chat.message`:
+  - charge l’agent via PG
+  - exécute `llmRouter.chat()` sur le pool PG courant
+  - persiste le tour dans `chat_messages` quand `conversation_id` correspond à un channel existant
+- `message.send` persiste directement un message agent dans `chat_messages` avec `metadata.attachments`
+- test ajouté: `tests/websocket-pg.test.js`
+
+Critères d’acceptation:
+
+- plus aucune dépendance Mongo dans le chemin nominal `/ws/chat`
+- plus d’appel du middleware auth comme s’il s’agissait d’un resolver
+- les messages socket sont désormais limités au workspace porté par la clé API
+
 ## Delivery Rule
 
 Chaque phase doit sortir avec:

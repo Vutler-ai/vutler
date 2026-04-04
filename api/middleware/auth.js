@@ -340,3 +340,4 @@ module.exports.requireApiKey = async (req, res, next) => {
   }
 };
 module.exports.verifyApiKey = module.exports.requireApiKey;
+module.exports.resolveApiKey = resolveApiKey;
