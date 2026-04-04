@@ -9,6 +9,7 @@ const express = require('express');
 const https = require('https');
 const crypto = require('crypto');
 const pool = require('../lib/vaultbrix');
+const { encryptProviderSecret } = require('../services/providerSecrets');
 const {
   assertColumnsExist,
   assertTableExists,
@@ -1369,9 +1370,9 @@ async function storeChatGPTTokens(workspaceId, tokenResp, userEmail) {
   try {
     await pool.query(
       `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
-       VALUES ($1, 'codex', 'oauth:chatgpt', 'https://api.openai.com/v1', TRUE, FALSE, '{"source":"chatgpt_oauth"}'::jsonb)
+       VALUES ($1, 'codex', $2, 'https://api.openai.com/v1', TRUE, FALSE, '{"source":"chatgpt_oauth"}'::jsonb)
        ON CONFLICT DO NOTHING`,
-      [workspaceId]
+      [workspaceId, encryptProviderSecret('oauth:chatgpt')]
     );
   } catch (_) {}
 

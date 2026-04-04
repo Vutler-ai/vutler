@@ -2,6 +2,7 @@
 
 const express = require("express");
 const router = express.Router();
+const { decryptProviderSecret, encryptProviderSecret } = require("../services/providerSecrets");
 
 const SCHEMA = "tenant_vutler";
 const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
@@ -138,7 +139,7 @@ router.post("/providers", async (req, res) => {
       `INSERT INTO ${SCHEMA}.llm_providers (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [workspaceId, provider, api_key, base_url || null, is_enabled, is_default, config]
+      [workspaceId, provider, encryptProviderSecret(api_key), base_url || null, is_enabled, is_default, config]
     );
 
     res.status(201).json({ success: true, provider: toProviderResponse(result.rows[0]) });
@@ -165,7 +166,7 @@ router.put("/providers/:id", async (req, res) => {
     const row = current.rows[0];
     const next = {
       provider: req.body.provider ?? row.provider,
-      api_key: req.body.api_key ?? row.api_key,
+      api_key: req.body.api_key !== undefined ? encryptProviderSecret(req.body.api_key) : row.api_key,
       base_url: req.body.base_url ?? row.base_url,
       is_enabled: req.body.is_enabled ?? row.is_enabled,
       is_default: req.body.is_default ?? row.is_default,
@@ -228,7 +229,10 @@ router.post("/providers/:id/test", async (req, res) => {
       return res.status(404).json({ success: false, error: "provider not found" });
     }
 
-    const provider = result.rows[0];
+    const provider = {
+      ...result.rows[0],
+      api_key: decryptProviderSecret(result.rows[0].api_key),
+    };
     await testConnection({
       provider: provider.provider,
       apiKey: provider.api_key,

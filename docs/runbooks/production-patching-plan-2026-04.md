@@ -113,6 +113,32 @@ Livrables:
 - résolution transparente au runtime
 - tests ciblés
 
+Implémentation du 4 avril 2026:
+
+- nouveau helper `services/providerSecrets.js` pour centraliser:
+  - chiffrement à l’écriture via `CryptoService`
+  - déchiffrement transparent au runtime
+  - compatibilité ascendante pour les lignes legacy encore en clair
+- writers modernisés:
+  - `api/providers.js`
+  - `api/llm.js`
+  - `api/integrations.js` pour le marqueur `codex`
+  - `api/settings.js` pour le vieux blob `workspace_settings.llm_providers`
+  - `services/managedProviderService.js`
+  - `services/llmProviderCompat.js`
+- readers runtime modernisés:
+  - `services/llmRouter.js`
+  - `api/llm.js` sur le test de connexion provider
+- tests ciblés:
+  - `tests/provider-secrets.test.js`
+  - `tests/llm-provider-compat.test.js`
+
+Critères d’acceptation:
+
+- une nouvelle clé provider n’est plus écrite en clair dans `tenant_vutler.llm_providers`
+- le runtime continue à fonctionner avec les lignes legacy déjà présentes
+- les endpoints UI continuent à retourner uniquement des clés masquées
+
 ### P4 — Dashboard / Usage UX Cleanup
 
 Objectif:

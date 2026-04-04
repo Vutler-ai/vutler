@@ -14,6 +14,7 @@ const {
   MANAGED_PROVIDER_ALIAS,
   getManagedRuntimeConfig,
 } = require('./managedProviderService');
+const { hydrateProviderSecret } = require('./providerSecrets');
 const {
   resolveLegacyWorkspaceProvider,
   syncLegacyWorkspaceProviders,
@@ -969,7 +970,7 @@ async function resolveWorkspaceProvider(db, workspaceId, providerName, options =
           LIMIT 1`,
         [workspaceId, options.id]
       );
-      if (r.rows?.[0]?.api_key) return r.rows[0];
+      if (r.rows?.[0]?.api_key) return hydrateProviderSecret(r.rows[0]);
     }
 
     if (!providerName) return null;
@@ -982,7 +983,7 @@ async function resolveWorkspaceProvider(db, workspaceId, providerName, options =
         LIMIT 1`,
       [workspaceId, providerName]
     );
-    if (r.rows?.[0]?.api_key) return r.rows[0];
+    if (r.rows?.[0]?.api_key) return hydrateProviderSecret(r.rows[0]);
   } catch (err) {
     console.warn('[LLM Router] resolveWorkspaceProvider failed:', err.message);
   }
@@ -1041,7 +1042,7 @@ async function resolveWorkspaceDefaultProvider(db, workspaceId) {
         LIMIT 1`,
       [workspaceId]
     );
-    return result.rows?.[0] || null;
+    return result.rows?.[0] ? hydrateProviderSecret(result.rows[0]) : null;
   } catch (err) {
     console.warn('[LLM Router] resolveWorkspaceDefaultProvider failed:', err.message);
     return null;

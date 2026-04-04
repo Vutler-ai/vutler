@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const { decryptProviderSecret, encryptProviderSecret } = require('../services/providerSecrets');
 const { clearSniparaConfigCache } = require('../services/sniparaResolver');
 const {
   assertColumnsExist,
@@ -480,7 +481,8 @@ router.get('/llm-providers', async (req, res) => {
     const providers = r.rows[0]?.llm_providers || {};
     const masked = {};
     for (const [k, v] of Object.entries(providers)) {
-      masked[k] = { ...v, api_key: v.api_key ? maskKey(v.api_key) : '' };
+      const decryptedApiKey = v.api_key ? decryptProviderSecret(v.api_key) : '';
+      masked[k] = { ...v, api_key: decryptedApiKey ? maskKey(decryptedApiKey) : '' };
     }
     res.json({ success: true, providers: masked });
   } catch (err) {
@@ -502,7 +504,11 @@ router.put('/llm-providers', async (req, res) => {
       if (v.api_key && v.api_key.includes('••')) {
         merged[k] = { ...merged[k], ...v, api_key: existing[k]?.api_key || '' };
       } else {
-        merged[k] = { ...merged[k], ...v };
+        merged[k] = {
+          ...merged[k],
+          ...v,
+          api_key: v.api_key ? encryptProviderSecret(v.api_key) : (v.api_key === '' ? '' : merged[k]?.api_key || ''),
+        };
       }
     }
     await pool.query(`UPDATE ${SCHEMA}.workspace_settings SET llm_providers=$1, updated_at=NOW() WHERE workspace_id=$2`, [JSON.stringify(merged), wsId]);

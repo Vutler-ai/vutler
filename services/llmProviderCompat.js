@@ -1,6 +1,7 @@
 'use strict';
 
 const { CryptoService } = require('./crypto');
+const { encryptProviderSecret } = require('./providerSecrets');
 
 const SCHEMA = 'tenant_vutler';
 const cryptoSvc = new CryptoService();
@@ -111,7 +112,7 @@ async function upsertModernProviderFromLegacy(db, workspaceId, providerRow) {
         providerRow.id,
         workspaceId,
         providerRow.provider,
-        providerRow.api_key || '',
+        encryptProviderSecret(providerRow.api_key || ''),
         providerRow.base_url,
         providerRow.is_enabled,
         providerRow.is_default,
@@ -139,7 +140,7 @@ async function upsertModernProviderFromLegacy(db, workspaceId, providerRow) {
             updated_at = NOW()
       WHERE id = $5`,
     [
-      providerRow.api_key || '',
+      encryptProviderSecret(providerRow.api_key || ''),
       providerRow.base_url,
       providerRow.is_enabled,
       JSON.stringify(nextConfig),

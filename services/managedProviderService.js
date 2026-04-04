@@ -1,5 +1,7 @@
 'use strict';
 
+const { decryptProviderSecret, encryptProviderSecret } = require('./providerSecrets');
+
 const SCHEMA = 'tenant_vutler';
 const MANAGED_PROVIDER_ALIAS = 'vutler-trial';
 
@@ -111,7 +113,8 @@ async function loadManagedProviderRow(db, workspaceId) {
         LIMIT 1`,
       [workspaceId, MANAGED_PROVIDER_ALIAS]
     );
-    return result.rows?.[0] || null;
+    const row = result.rows?.[0] || null;
+    return row ? { ...row, api_key: decryptProviderSecret(row.api_key) } : null;
   } catch (_) {
     return null;
   }
@@ -207,7 +210,7 @@ async function ensureManagedProvider(db, workspaceId, options = {}) {
               is_enabled = TRUE,
               updated_at = NOW()
         WHERE workspace_id = $1 AND id = $2`,
-      [workspaceId, existing.id, profile.apiKey, profile.baseURL, JSON.stringify(config)]
+      [workspaceId, existing.id, encryptProviderSecret(profile.apiKey), profile.baseURL, JSON.stringify(config)]
     );
 
     await syncManagedDefaultProvider(db, workspaceId, existing.id, Boolean(options.forceDefault));
@@ -226,7 +229,7 @@ async function ensureManagedProvider(db, workspaceId, options = {}) {
        (workspace_id, provider, api_key, base_url, is_enabled, is_default, config)
      VALUES ($1, $2, $3, $4, TRUE, FALSE, $5::jsonb)
      RETURNING id`,
-    [workspaceId, MANAGED_PROVIDER_ALIAS, profile.apiKey, profile.baseURL, JSON.stringify(config)]
+    [workspaceId, MANAGED_PROVIDER_ALIAS, encryptProviderSecret(profile.apiKey), profile.baseURL, JSON.stringify(config)]
   );
   const providerId = inserted.rows?.[0]?.id || null;
 

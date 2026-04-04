@@ -4,6 +4,7 @@ const {
   prettifyProvider,
   syncLegacyWorkspaceProviders,
 } = require('../services/llmProviderCompat');
+const { encryptProviderSecret } = require('../services/providerSecrets');
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
@@ -90,7 +91,7 @@ router.post('/', async (req, res) => {
       [
         req.workspaceId,
         providerVal,
-        secret || '',
+        secret ? encryptProviderSecret(secret) : '',
         base_url || api_url || null,
         is_active,
         JSON.stringify({ display_name: name }),
@@ -136,7 +137,7 @@ router.put('/:id', async (req, res) => {
         RETURNING id, provider, api_key, base_url, is_enabled, config, created_at, updated_at`,
       [
         nextProvider,
-        secret,
+        secret !== undefined ? encryptProviderSecret(secret) : secret,
         req.body.base_url !== undefined ? req.body.base_url : row.base_url,
         req.body.is_active !== undefined ? req.body.is_active : row.is_enabled,
         JSON.stringify(nextConfig),

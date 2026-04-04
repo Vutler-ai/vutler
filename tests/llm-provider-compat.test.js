@@ -8,6 +8,9 @@ describe('llmProviderCompat', () => {
   test('syncLegacyWorkspaceProviders updates modern rows missing api_key', async () => {
     jest.doMock('../services/crypto', () => ({
       CryptoService: class {
+        encrypt(value) {
+          return `encrypted:${value}`;
+        }
         decrypt(value) {
           return `decrypted:${value}`;
         }
@@ -71,13 +74,16 @@ describe('llmProviderCompat', () => {
 
     expect(
       db.query.mock.calls.some(([sql, params]) => /UPDATE tenant_vutler\.llm_providers/i.test(sql)
-        && params[0] === 'decrypted:secret-1')
+        && params[0] === 'encrypted:decrypted:secret-1')
     ).toBe(true);
   });
 
   test('resolveLegacyWorkspaceProvider normalizes missing URL schemes', async () => {
     jest.doMock('../services/crypto', () => ({
       CryptoService: class {
+        encrypt(value) {
+          return `encrypted:${value}`;
+        }
         decrypt(value) {
           return `decrypted:${value}`;
         }
