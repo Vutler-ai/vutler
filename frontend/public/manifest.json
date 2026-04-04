@@ -2,7 +2,7 @@
   "name": "Vutler",
   "short_name": "Vutler",
   "description": "AI Agent Workspace - Office 365 pour agents IA",
-  "start_url": "/dashboard",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0f172a",

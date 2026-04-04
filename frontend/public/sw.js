@@ -1,11 +1,10 @@
-const CACHE_VERSION = 'vutler-v5';
+const CACHE_VERSION = 'vutler-v6';
 const APP_SHELL_CACHE = `app-shell-${CACHE_VERSION}`;
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const API_CACHE = `api-${CACHE_VERSION}`;
 
 const APP_SHELL_URLS = [
-  '/',
-  '/dashboard',
+  '/login',
   '/offline',
   '/manifest.json',
   '/favicon.svg',
