@@ -282,4 +282,88 @@ describe('watchdog orchestration integration', () => {
     }));
     expect(signalRunFromTask).not.toHaveBeenCalled();
   });
+
+  test('follows up visible roots on the configured 15-minute cadence and wakes orchestration roots', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn().mockResolvedValue({ signaled: true, runId: 'run-root-2' });
+    const appendRunEventForTask = jest.fn().mockResolvedValue({ appended: true, runId: 'run-root-2' });
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({
+      checkIntervalMs: 1000,
+      stallThresholdMs: 1000,
+      visibleRootFollowUpMs: 900_000,
+      maxNudges: 1,
+    });
+
+    await watchdog._followUpVisibleRoot({
+      id: 'root-task-2',
+      title: 'April editorial calendar',
+      workspace_id: 'ws-1',
+      parent_id: null,
+      status: 'in_progress',
+      metadata: {
+        visible_in_kanban: true,
+        snipara_hierarchy_level: 'N0',
+        orchestration_run_id: 'run-root-2',
+        execution_backend: 'orchestration_run',
+      },
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SET metadata = COALESCE'),
+      expect.any(Array)
+    );
+    expect(appendRunEventForTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'root-task-2',
+      metadata: expect.objectContaining({
+        watchdog_root_follow_up_interval_ms: 900000,
+      }),
+    }), expect.objectContaining({
+      eventType: 'watchdog.visible_root_followup',
+    }));
+    expect(wakeRunFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'root-task-2',
+    }), expect.objectContaining({
+      reason: 'watchdog_visible_root_followup',
+      eventType: 'run.watchdog_visible_root_followup',
+      actor: 'watchdog',
+      extraPayload: expect.objectContaining({
+        follow_up_interval_ms: 900000,
+      }),
+    }));
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
+
+  test('does not follow up a visible root again before the cadence expires', async () => {
+    jest.doMock('../../lib/postgres', () => ({ pool: { query: jest.fn() } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask: jest.fn(),
+      signalRunFromTask: jest.fn(),
+      wakeRunFromTask: jest.fn(),
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({
+      visibleRootFollowUpMs: 900_000,
+    });
+
+    expect(watchdog._shouldFollowUpVisibleRoot({
+      id: 'root-task-3',
+      parent_id: null,
+      metadata: {
+        visible_in_kanban: true,
+        snipara_hierarchy_level: 'N0',
+        watchdog_last_root_follow_up_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    })).toBe(false);
+  });
 });

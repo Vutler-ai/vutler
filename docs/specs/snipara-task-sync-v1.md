@@ -103,6 +103,12 @@ Board rules:
 - kanban and agenda should default to `N0` only
 - descendant tasks remain available in task detail or execution drill-down views
 
+Follow-up rules:
+
+- visible open roots should be re-evaluated on an approximately 15-minute cadence
+- if the root belongs to an orchestration run, watchdog follow-up should wake the run instead of creating ad hoc work
+- if the root is a simple assigned task, watchdog follow-up may nudge the assigned agent channel
+
 ## Bidirectional sync contract
 
 ### Snipara -> Vutler

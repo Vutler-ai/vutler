@@ -19,12 +19,14 @@ const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 const CHECK_INTERVAL = Number(process.env.WATCHDOG_INTERVAL_MS) || 60_000;
 const STALL_THRESHOLD = Number(process.env.WATCHDOG_STALL_THRESHOLD_MS) || 600_000; // 10 min
+const VISIBLE_ROOT_FOLLOW_UP_MS = Number(process.env.WATCHDOG_VISIBLE_ROOT_FOLLOW_UP_MS) || 900_000; // 15 min
 const MAX_NUDGES = 3;
 
 class AgentWatchdog {
   constructor(options = {}) {
     this.checkIntervalMs = options.checkIntervalMs || CHECK_INTERVAL;
     this.stallThresholdMs = options.stallThresholdMs || STALL_THRESHOLD;
+    this.visibleRootFollowUpMs = options.visibleRootFollowUpMs || VISIBLE_ROOT_FOLLOW_UP_MS;
     this.maxNudges = options.maxNudges || MAX_NUDGES;
     this._timer = null;
     this._nudgeCounts = new Map(); // taskId -> count
@@ -51,6 +53,7 @@ class AgentWatchdog {
    */
   async tick() {
     const cutoff = new Date(Date.now() - this.stallThresholdMs).toISOString();
+    const handledTaskIds = new Set();
 
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.tasks
@@ -83,7 +86,10 @@ class AgentWatchdog {
         await this._redispatch(task);
         this._nudgeCounts.delete(task.id);
       }
+      handledTaskIds.add(task.id);
     }
+
+    await this._followUpVisibleRoots(handledTaskIds);
   }
 
   _parseMetadata(task) {
@@ -106,6 +112,102 @@ class AgentWatchdog {
   _isOrchestrationRootTask(task) {
     const meta = this._parseMetadata(task);
     return Boolean(meta.orchestration_run_id && meta.execution_backend === 'orchestration_run');
+  }
+
+  _isVisibleRootTask(task) {
+    const meta = this._parseMetadata(task);
+    return meta.visible_in_kanban === true
+      || (!task?.parent_id && String(meta.snipara_hierarchy_level || '').toUpperCase() === 'N0')
+      || (!task?.parent_id && !meta.snipara_hierarchy_level);
+  }
+
+  _shouldFollowUpVisibleRoot(task, nowMs = Date.now()) {
+    if (!this._isVisibleRootTask(task)) return false;
+    const meta = this._parseMetadata(task);
+    const lastFollowUp = meta.watchdog_last_root_follow_up_at || null;
+    if (!lastFollowUp) return true;
+
+    const timestamp = new Date(lastFollowUp).getTime();
+    if (!Number.isFinite(timestamp)) return true;
+    return (nowMs - timestamp) >= this.visibleRootFollowUpMs;
+  }
+
+  async _followUpVisibleRoots(handledTaskIds = new Set()) {
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks
+       WHERE status IN ('pending', 'in_progress', 'blocked')
+         AND (parent_id IS NULL OR COALESCE(metadata->>'visible_in_kanban', 'false') = 'true')
+       ORDER BY updated_at ASC
+       LIMIT 20`
+    );
+
+    const nowMs = Date.now();
+    for (const task of result.rows) {
+      if (handledTaskIds.has(task.id)) continue;
+      if (!this._shouldFollowUpVisibleRoot(task, nowMs)) continue;
+      await this._followUpVisibleRoot(task);
+    }
+  }
+
+  async _followUpVisibleRoot(task) {
+    const meta = this._parseMetadata(task);
+    const nextMetadata = {
+      ...meta,
+      watchdog_last_root_follow_up_at: new Date().toISOString(),
+      watchdog_root_follow_up_interval_ms: this.visibleRootFollowUpMs,
+    };
+
+    await pool.query(
+      `UPDATE ${SCHEMA}.tasks
+       SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [task.id, JSON.stringify(nextMetadata)]
+    );
+
+    const nextTask = {
+      ...task,
+      metadata: nextMetadata,
+    };
+
+    await appendRunEventForTask(nextTask, {
+      eventType: 'watchdog.visible_root_followup',
+      actor: 'watchdog',
+      payload: {
+        follow_up_interval_ms: this.visibleRootFollowUpMs,
+      },
+    }).catch(() => {});
+
+    if (this._isOrchestrationRootTask(nextTask)) {
+      await wakeRunFromTask(nextTask, {
+        reason: 'watchdog_visible_root_followup',
+        eventType: 'run.watchdog_visible_root_followup',
+        actor: 'watchdog',
+        extraPayload: {
+          follow_up_interval_ms: this.visibleRootFollowUpMs,
+          task_kind: 'visible_root',
+        },
+      }).catch(() => {});
+      return;
+    }
+
+    if (nextTask.assigned_agent) {
+      const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+      const coordinator = getSwarmCoordinator();
+      const workspaceId = nextTask.workspace_id || DEFAULT_WORKSPACE;
+
+      try {
+        await coordinator.postTaskMessageToAgentChannel(
+          workspaceId,
+          nextTask.assigned_agent,
+          nextTask.title,
+          nextTask.priority || 'medium',
+          `📋 Follow-up: "${nextTask.title}" is still open. Please update the task or continue execution.`,
+        );
+      } catch (err) {
+        console.warn(`[Watchdog] Follow-up failed for task ${nextTask.id}:`, err.message);
+      }
+    }
   }
 
   /**
