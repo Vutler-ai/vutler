@@ -896,7 +896,7 @@ const TRIAL_RATE_LIMIT = 5;
 const TRIAL_RATE_WINDOW_MS = 60000;
 
 // Cleanup stale rate-limit entries every 5 minutes
-setInterval(() => {
+const trialRateCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - TRIAL_RATE_WINDOW_MS * 2;
   for (const [wsId, timestamps] of _trialRateWindows) {
     const fresh = timestamps.filter(t => t > cutoff);
@@ -904,6 +904,7 @@ setInterval(() => {
     else _trialRateWindows.set(wsId, fresh);
   }
 }, 300000);
+trialRateCleanupTimer.unref?.();
 
 async function checkTrialQuota(db, workspaceId) {
   const rows = await db.query(

@@ -1571,7 +1571,7 @@ async function refreshChatGPTToken(workspaceId) {
 }
 
 // Clean up expired state entries and device auth sessions every 10 minutes
-setInterval(() => {
+const oauthStateCleanupTimer = setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
   for (const [key, val] of oauthStateStore.entries()) {
     if (val.createdAt < cutoff) oauthStateStore.delete(key);
@@ -1580,6 +1580,7 @@ setInterval(() => {
     if (Date.now() > val.expires_at) deviceAuthSessions.delete(key);
   }
 }, 10 * 60 * 1000);
+oauthStateCleanupTimer.unref?.();
 
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -28,12 +28,13 @@ const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const adminSessions = new Map();
 
 // Clean expired sessions every 10 min
-setInterval(() => {
+const adminSessionCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [token, session] of adminSessions) {
     if (session.expires < now) adminSessions.delete(token);
   }
 }, 10 * 60 * 1000);
+adminSessionCleanupTimer.unref?.();
 
 /**
  * Hash password with salt (matching existing signup logic)

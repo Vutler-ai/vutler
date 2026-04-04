@@ -20,12 +20,13 @@ let usersAuthHasDeletedAtColumn = null;
 const apiKeyCache = new Map();
 const API_KEY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-setInterval(() => {
+const apiKeyCacheCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, val] of apiKeyCache) {
     if (val.expiresAt < now) apiKeyCache.delete(key);
   }
 }, 10 * 60 * 1000);
+apiKeyCacheCleanupTimer.unref?.();
 
 // Public paths (no auth needed)
 const WORKSPACE_INTEGRATION_CALLBACK_PATHS = [
