@@ -38,9 +38,15 @@ Use Snipara `htask` when any of the following are true:
 
 Hierarchy:
 
+- `N0` visible root for product-facing tracking
 - `N1_FEATURE`
 - `N2_WORKSTREAM`
 - `N3_TASK`
+
+Projection rule:
+
+- `N0` is the only level that must be shown by default in Vutler kanban and agenda views
+- `N1+` stays internal to orchestration unless the user opens task details
 
 Lifecycle:
 
@@ -118,7 +124,7 @@ Every local task row should carry a normalized metadata envelope.
   "snipara_task_kind": "task|htask",
   "snipara_swarm_id": "cmmfe0cq90008o1cohufkls68",
   "snipara_project_id": "cmmfdy2up0002o1colc66rxs2",
-  "snipara_hierarchy_level": "N1_FEATURE|N2_WORKSTREAM|N3_TASK",
+  "snipara_hierarchy_level": "N0|N1_FEATURE|N2_WORKSTREAM|N3_TASK",
   "snipara_hierarchy_root_id": "remote-root-id",
   "snipara_remote_parent_id": "remote-parent-id",
   "snipara_last_event": "task.completed",
@@ -137,11 +143,16 @@ Accepts:
 
 - default simple task creation
 - `hierarchical=true` or `execution_mode=hierarchical_htask` for root htask creation
+- root htask creation defaults to `N0` unless the caller explicitly requests a deeper level
 
 ### `POST /tasks-v2/:id/subtasks`
 
 - creates child `task` by default when parent is simple
 - creates child `htask` when parent already belongs to a hierarchy or caller explicitly requests hierarchical execution
+- when the parent is hierarchical and no explicit level is provided, child defaults follow the parent:
+  - `N0 -> N1_FEATURE`
+  - `N1_FEATURE -> N2_WORKSTREAM`
+  - `N2_WORKSTREAM -> N3_TASK`
 
 ### `PATCH /tasks-v2/:id`
 

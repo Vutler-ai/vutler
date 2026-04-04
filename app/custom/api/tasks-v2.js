@@ -39,10 +39,23 @@ function parseTaskMetadata(task) {
   }
 }
 
+const HTASK_LEVELS = ['N0', 'N1_FEATURE', 'N2_WORKSTREAM', 'N3_TASK'];
+
 function normalizeHtaskLevel(level, fallback = 'N3_TASK') {
   const value = String(level || fallback).toUpperCase();
-  if (value === 'N1_FEATURE' || value === 'N2_WORKSTREAM' || value === 'N3_TASK') return value;
-  return fallback;
+  return HTASK_LEVELS.includes(value) ? value : fallback;
+}
+
+function getDefaultChildHtaskLevel(parent = null) {
+  const parentMeta = parseTaskMetadata(parent);
+  const parentLevel = normalizeHtaskLevel(
+    parentMeta.snipara_hierarchy_level || parent?.level || parent?.snipara_hierarchy_level || null,
+    'N0'
+  );
+
+  if (parentLevel === 'N0') return 'N1_FEATURE';
+  if (parentLevel === 'N1_FEATURE') return 'N2_WORKSTREAM';
+  return 'N3_TASK';
 }
 
 function normalizeWorkstreamType(value) {
@@ -193,7 +206,7 @@ async function ensureHierarchyRoot(parent, workspaceId, swarmCoordinator) {
   }
 
   const created = await swarmCoordinator.createHtask({
-    level: 'N1_FEATURE',
+    level: 'N0',
     title: parent.title,
     description: parent.description || '',
     owner: parent.assigned_agent || parent.assignee || 'jarvis',
@@ -206,7 +219,7 @@ async function ensureHierarchyRoot(parent, workspaceId, swarmCoordinator) {
 
   const updatedParent = await updateTaskMetadata(parent, workspaceId, {
     snipara_hierarchy_root_id: hierarchyRootId,
-    snipara_hierarchy_level: 'N1_FEATURE',
+    snipara_hierarchy_level: 'N0',
   });
 
   return { parent: updatedParent, hierarchyRootId };
@@ -219,7 +232,7 @@ async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoord
     ? { parent, hierarchyRootId: parent.snipara_task_id }
     : await ensureHierarchyRoot(parent, workspaceId, swarmCoordinator);
 
-  const level = normalizeHtaskLevel(body.level, 'N3_TASK');
+  const level = normalizeHtaskLevel(body.level, getDefaultChildHtaskLevel(resolvedParent));
   const remoteParentId = isParentHtask ? parent.snipara_task_id : hierarchyRootId;
   const owner = body.owner || body.assignee || body.assigned_agent || parent.assigned_agent || parent.assignee || 'jarvis';
   const created = await swarmCoordinator.createHtask({
@@ -262,7 +275,7 @@ async function createHierarchicalSubtask({ parent, body, workspaceId, swarmCoord
 }
 
 async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator }) {
-  const level = normalizeHtaskLevel(body.level, 'N1_FEATURE');
+  const level = normalizeHtaskLevel(body.level, 'N0');
   const owner = body.owner || body.assignee || body.assigned_agent || 'jarvis';
   const created = await swarmCoordinator.createHtask({
     level,
@@ -602,3 +615,8 @@ router.post('/tasks-v2/sync', authenticateAgent, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__test = {
+  HTASK_LEVELS,
+  normalizeHtaskLevel,
+  getDefaultChildHtaskLevel,
+};
