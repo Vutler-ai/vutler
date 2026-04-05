@@ -198,6 +198,15 @@ function findJarvisAgent(agents = []) {
   }) || null;
 }
 
+function findSingleNonJarvisAgent(agents = []) {
+  const nonJarvisAgents = agents.filter((agent) => {
+    const username = String(agent.username || '').toLowerCase();
+    const name = String(agent.name || '').toLowerCase();
+    return username !== 'jarvis' && name !== 'jarvis';
+  });
+  return nonJarvisAgents.length === 1 ? nonJarvisAgents[0] : null;
+}
+
 function sortAgentsDeterministically(agents = []) {
   return [...agents].sort((left, right) => {
     const leftKey = `${String(left.name || '').toLowerCase()}|${String(left.username || '').toLowerCase()}|${String(left.id || '')}`;
@@ -250,6 +259,19 @@ function analyzeEmailIntent(message = '') {
     directSend,
     draftOnly,
   };
+}
+
+function resolveDirectEmailTargetAgent(resolution, targetAgent, channelAgents = [], allWorkspaceAgents = []) {
+  if (!targetAgent) return null;
+  if (String(resolution?.reason || '') !== 'jarvis_fallback') return targetAgent;
+
+  const singleNonJarvis = findSingleNonJarvisAgent(channelAgents);
+  if (!singleNonJarvis) return targetAgent;
+
+  return allWorkspaceAgents.find((agent) =>
+    String(agent.id || '') === String(singleNonJarvis.id || '')
+      || String(agent.username || '').toLowerCase() === String(singleNonJarvis.username || '').toLowerCase()
+  ) || singleNonJarvis;
 }
 
 function appendPlacementInstruction(prompt, instruction) {
@@ -541,14 +563,21 @@ async function handleMessage(message) {
     ? allWorkspaceAgents.find((agent) => String(agent.id) === String(resolution.agent.id)
       || String(agent.username || '').toLowerCase() === String(resolution.agent.username || '').toLowerCase())
     : null;
-  const targetAgent = requestedAgentFromDirectory || resolution?.agent;
-  if (!targetAgent) {
+  const resolvedTargetAgent = requestedAgentFromDirectory || resolution?.agent;
+  if (!resolvedTargetAgent) {
     throw new Error('Unable to resolve requested agent');
   }
 
   const emailIntent = analyzeEmailIntent(message.content);
-  const needsDirectEmailBypassCheck = shouldBypassSwarmRouting(resolution)
-    && emailIntent.directSend
+  const targetAgent = emailIntent.directSend && emailIntent.hasExplicitRecipient
+    ? (resolveDirectEmailTargetAgent(
+        resolution,
+        resolvedTargetAgent,
+        channelAgents,
+        allWorkspaceAgents
+      ) || resolvedTargetAgent)
+    : resolvedTargetAgent;
+  const needsDirectEmailBypassCheck = emailIntent.directSend
     && emailIntent.hasExplicitRecipient;
   const targetAgentEmailProvisioning = needsDirectEmailBypassCheck
     ? await resolveAgentEmailProvisioning({
@@ -562,8 +591,7 @@ async function handleMessage(message) {
         source: 'none',
       }))
     : null;
-  const bypassSwarmForDirectEmail = shouldBypassSwarmRouting(resolution)
-    && emailIntent.directSend
+  const bypassSwarmForDirectEmail = emailIntent.directSend
     && emailIntent.hasExplicitRecipient
     && agentHasProvisionedEmail(targetAgent, targetAgentEmailProvisioning);
 
