@@ -140,4 +140,58 @@ describe('EmailAdapter', () => {
     expect(insertArgs[1]).toBe('jarvis@starbox-group.com');
     expect(insertArgs[2]).toBe('client@example.com');
   });
+
+  test('falls back to legacy email inserts when the emails table has no metadata column', async () => {
+    const query = jest.fn()
+      .mockRejectedValueOnce(new Error('column "metadata" of relation "emails" does not exist'))
+      .mockResolvedValueOnce({
+        rows: [{ id: 'email-legacy-1' }],
+      });
+    const resolveAgentEmailProvisioning = jest.fn().mockResolvedValue({
+      provisioned: true,
+      email: 'jarvis@starbox-group.com',
+      source: 'agent',
+    });
+    const sendPostalMail = jest.fn().mockResolvedValue({
+      success: true,
+      data: { message_id: 'postal-msg-legacy-1' },
+    });
+    const resolveSenderAddress = jest.fn().mockResolvedValue('jarvis@starbox-group.com');
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../../services/agentProvisioningService', () => ({
+      resolveAgentEmailProvisioning,
+    }));
+    jest.doMock('../../services/postalMailer', () => ({
+      sendPostalMail,
+    }));
+    jest.doMock('../../services/workspaceEmailService', () => ({
+      resolveSenderAddress,
+    }));
+
+    const { EmailAdapter } = require('../../services/skills/adapters/EmailAdapter');
+    const adapter = new EmailAdapter();
+
+    const result = await adapter.execute({
+      workspaceId: 'ws-1',
+      agentId: 'agent-1',
+      latestUserMessage: 'Envoie à client@example.com',
+      params: {
+        recipient_email: 'client@example.com',
+        subject: 'Legacy schema',
+        body: 'Hello from Jarvis',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      id: 'email-legacy-1',
+      uid: 'email-legacy-1',
+      status: 'sent',
+      messageId: 'postal-msg-legacy-1',
+    });
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[0][0]).toContain('metadata');
+    expect(query.mock.calls[1][0]).not.toContain('metadata');
+  });
 });

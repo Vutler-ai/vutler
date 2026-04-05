@@ -75,6 +75,96 @@ function extractPostalMessageId(response) {
   return response?.data?.message_id || response?.message_id || null;
 }
 
+function isMissingMetadataColumnError(err) {
+  return /column ["']metadata["'] of relation ["']emails["'] does not exist/i.test(String(err?.message || ''));
+}
+
+async function insertEmailRecord(pg, {
+  workspaceId,
+  from,
+  to,
+  subject,
+  body,
+  htmlBody = null,
+  folder,
+  agentId,
+  metadata = null,
+}) {
+  const valuesWithMetadata = [
+    workspaceId,
+    from,
+    to,
+    subject,
+    body || '',
+    htmlBody,
+    agentId,
+    metadata ? JSON.stringify(metadata) : JSON.stringify({}),
+  ];
+
+  try {
+    if (folder === 'sent') {
+      return await pg.query(
+        `INSERT INTO ${SCHEMA}.emails
+          (workspace_id, from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'sent', TRUE, $7, $8::jsonb, NOW())
+         RETURNING id::text AS id`,
+        valuesWithMetadata
+      );
+    }
+
+    return await pg.query(
+      `INSERT INTO ${SCHEMA}.emails
+        (workspace_id, from_addr, to_addr, subject, body, folder, is_read, agent_id, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'drafts', FALSE, $6, $7::jsonb, NOW())
+       RETURNING id::text AS id`,
+      [
+        workspaceId,
+        from,
+        to,
+        subject,
+        body || '',
+        agentId,
+        metadata ? JSON.stringify(metadata) : JSON.stringify({}),
+      ]
+    );
+  } catch (err) {
+    if (!isMissingMetadataColumnError(err)) throw err;
+
+    if (folder === 'sent') {
+      return pg.query(
+        `INSERT INTO ${SCHEMA}.emails
+          (workspace_id, from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'sent', TRUE, $7, NOW())
+         RETURNING id::text AS id`,
+        [
+          workspaceId,
+          from,
+          to,
+          subject,
+          body || '',
+          htmlBody,
+          agentId,
+        ]
+      );
+    }
+
+    return pg.query(
+      `INSERT INTO ${SCHEMA}.emails
+        (workspace_id, from_addr, to_addr, subject, body, folder, is_read, agent_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'drafts', FALSE, $6, NOW())
+       RETURNING id::text AS id`,
+      [
+        workspaceId,
+        from,
+        to,
+        subject,
+        body || '',
+        agentId,
+      ]
+    );
+  }
+}
+
 class EmailAdapter {
   async execute(context) {
     const { workspaceId, params = {} } = context;
@@ -132,30 +222,25 @@ class EmailAdapter {
       }
 
       const messageId = extractPostalMessageId(postalResult);
-      const result = await pool.query(
-        `INSERT INTO ${SCHEMA}.emails
-          (workspace_id, from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, metadata, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'sent', TRUE, $7, $8::jsonb, NOW())
-         RETURNING id::text AS id`,
-        [
-          workspaceId,
-          sender,
-          to,
-          subject,
-          body || '',
-          htmlBody,
-          agentId,
-          JSON.stringify({
-            via: 'postal',
-            send_origin: 'agent_email',
-            sender_email: provisioning.email,
-            sender_source: provisioning.source,
-            implicit_user_approval: true,
-            latest_user_message: context.latestUserMessage || null,
-            message_id: messageId,
-          }),
-        ]
-      );
+      const result = await insertEmailRecord(pool, {
+        workspaceId,
+        from: sender,
+        to,
+        subject,
+        body,
+        htmlBody,
+        folder: 'sent',
+        agentId,
+        metadata: {
+          via: 'postal',
+          send_origin: 'agent_email',
+          sender_email: provisioning.email,
+          sender_source: provisioning.source,
+          implicit_user_approval: true,
+          latest_user_message: context.latestUserMessage || null,
+          message_id: messageId,
+        },
+      });
 
       return {
         success: true,
@@ -200,26 +285,21 @@ class EmailAdapter {
     }
 
     try {
-      const result = await pool.query(
-        `INSERT INTO ${SCHEMA}.emails
-          (workspace_id, from_addr, to_addr, subject, body, folder, is_read, agent_id, metadata, created_at)
-         VALUES ($1, $2, $3, $4, $5, 'drafts', FALSE, $6, $7::jsonb, NOW())
-         RETURNING id::text AS id`,
-        [
-          workspaceId,
-          provisioning.email,
-          to,
-          subject,
-          body,
-          agentId,
-          JSON.stringify({
-            via: 'postal',
-            draft_origin: 'agent_email',
-            sender_email: provisioning.email,
-            sender_source: provisioning.source,
-          }),
-        ]
-      );
+      const result = await insertEmailRecord(pool, {
+        workspaceId,
+        from: provisioning.email,
+        to,
+        subject,
+        body,
+        folder: 'drafts',
+        agentId,
+        metadata: {
+          via: 'postal',
+          draft_origin: 'agent_email',
+          sender_email: provisioning.email,
+          sender_source: provisioning.source,
+        },
+      });
 
       return {
         success: true,
