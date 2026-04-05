@@ -12,6 +12,7 @@ describe('llmRouter nexus tool orchestration', () => {
   let responses;
   let actionRuns;
   let db;
+  let onlineNexusNode;
 
   function buildStopResponse(content = 'Done.') {
     return JSON.stringify({
@@ -35,6 +36,7 @@ describe('llmRouter nexus tool orchestration', () => {
     recordedBodies = [];
     responses = [];
     actionRuns = [];
+    onlineNexusNode = { id: 'node-1' };
     nexusTools = [
       {
         name: 'search_files',
@@ -77,7 +79,7 @@ describe('llmRouter nexus tool orchestration', () => {
     }));
     jest.doMock('../services/nexusTools', () => ({
       getNexusToolsForWorkspace: jest.fn().mockImplementation(async () => nexusTools),
-      getOnlineNexusNode: jest.fn().mockResolvedValue({ id: 'node-1' }),
+      getOnlineNexusNode: jest.fn().mockImplementation(async () => onlineNexusNode),
       NEXUS_TOOL_NAMES: new Set(['search_files', 'send_email', 'draft_email', 'read_emails', 'read_contacts']),
     }));
 
@@ -402,6 +404,183 @@ describe('llmRouter nexus tool orchestration', () => {
     expect(toolNames).not.toContain('draft_email');
     expect(toolNames).not.toContain('read_emails');
     expect(toolNames).not.toContain('read_contacts');
+  });
+
+  test('routes workspace-backed send_email tool calls even when no nexus node is online', async () => {
+    onlineNexusNode = null;
+    nexusTools = [
+      {
+        name: 'send_email',
+        description: 'Send immediately',
+        input_schema: {
+          type: 'object',
+          properties: {
+            to: { type: 'string' },
+            subject: { type: 'string' },
+            body: { type: 'string' },
+          },
+          required: ['to', 'subject', 'body'],
+        },
+      },
+    ];
+
+    orchestrateToolCallMock.mockReturnValue({
+      version: 'v1',
+      workspace_id: 'ws-1',
+      selected_agent_id: 'agent-1',
+      selected_agent_reason: 'Current execution agent is authorized to execute this Nexus tool.',
+      allowed_tools: ['send_email'],
+      allowed_skills: [],
+      actions: [
+        {
+          id: 'act_nexus_email_1',
+          kind: 'tool',
+          key: 'nexus_tool_exec',
+          executor: 'nexus-executor',
+          mode: 'sync',
+          approval: 'none',
+          params: {
+            tool_name: 'send_email',
+            args: {
+              to: 'client@example.com',
+              subject: 'Test',
+              body: 'Hello',
+            },
+          },
+          risk_level: 'medium',
+        },
+      ],
+      final_response_strategy: 'tool_then_agent',
+      metadata: {
+        trace_id: 'msg-4',
+        policy_bundle: 'nexus-default-v1',
+      },
+    });
+    governOrchestrationDecisionMock.mockReturnValue({
+      allowed: true,
+      decision: 'sync',
+      reason: 'Workspace email execution allowed.',
+      risk_level: 'medium',
+      decisionPayload: {
+        version: 'v1',
+        workspace_id: 'ws-1',
+        selected_agent_id: 'agent-1',
+        selected_agent_reason: 'Current execution agent is authorized to execute this Nexus tool.',
+        allowed_tools: ['send_email'],
+        allowed_skills: [],
+        actions: [
+          {
+            id: 'act_nexus_email_1',
+            kind: 'tool',
+            key: 'nexus_tool_exec',
+            executor: 'nexus-executor',
+            mode: 'sync',
+            approval: 'none',
+            params: {
+              tool_name: 'send_email',
+              args: {
+                to: 'client@example.com',
+                subject: 'Test',
+                body: 'Hello',
+              },
+            },
+            risk_level: 'medium',
+          },
+        ],
+        final_response_strategy: 'tool_then_agent',
+        metadata: {
+          trace_id: 'msg-4',
+          policy_bundle: 'nexus-default-v1',
+        },
+      },
+    });
+    executeOrchestrationDecisionMock.mockResolvedValue([
+      {
+        action_id: 'act_nexus_email_1',
+        success: true,
+        status: 'completed',
+        output_json: {
+          id: 'email-1',
+          messageId: 'msg-email-1',
+        },
+        error: null,
+        artifacts: [],
+      },
+    ]);
+
+    responses.push(
+      JSON.stringify({
+        id: 'chatcmpl-email-1',
+        model: 'gpt-5.4',
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call-email-1',
+                  type: 'function',
+                  function: {
+                    name: 'send_email',
+                    arguments: JSON.stringify({
+                      to: 'client@example.com',
+                      subject: 'Test',
+                      body: 'Hello',
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        usage: { prompt_tokens: 11, completion_tokens: 6 },
+      }),
+      buildStopResponse('Email sent.')
+    );
+
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        email: 'jarvis@starbox-group.com',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are an assistant.',
+      },
+      [{ role: 'user', content: 'Envoie ça à client@example.com maintenant.' }],
+      db,
+      {
+        chatActionContext: {
+          workspaceId: 'ws-1',
+          messageId: 'msg-4',
+          channelId: 'chan-1',
+          requestedAgentId: 'agent-1',
+          displayAgentId: 'agent-1',
+          orchestratedBy: 'jarvis',
+        },
+      }
+    );
+
+    expect(result.content).toContain('Email sent.');
+    expect(orchestrateToolCallMock).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'send_email',
+      adapter: 'nexus',
+      nexusNodeId: null,
+    }));
+    expect(executeOrchestrationDecisionMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        nexusNodeId: null,
+      })
+    );
+    expect(actionRuns[0]).toMatchObject({
+      chat_message_id: 'msg-4',
+      action_key: 'send_email',
+      adapter: 'nexus',
+      status: 'success',
+    });
   });
 
   test('prunes mail and contacts probes even when direct send is unavailable', async () => {

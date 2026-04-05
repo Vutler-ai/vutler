@@ -3,10 +3,11 @@
 async function executeNexusPlan(plan = {}, context = {}) {
   const toolName = plan.metadata?.toolName || plan.toolName || plan.params?.tool_name || null;
   const nodeId = context.nexusNodeId || plan.metadata?.nexusNodeId || null;
+  const workspaceBackedTool = toolName === 'send_email' || toolName === 'draft_email';
   if (!toolName) {
     throw new Error('Nexus execution plan is missing a tool name.');
   }
-  if (!nodeId) {
+  if (!nodeId && !workspaceBackedTool) {
     throw new Error('Nexus execution requires a node id.');
   }
 

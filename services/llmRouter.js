@@ -2050,7 +2050,7 @@ async function chat(agent, messages, db, opts = {}) {
             continueLoop = true;
 
           // ── Nexus tool execution (local node bridge) ──────────────────
-          } else if (nexusNodeId) {
+          } else {
             const { NEXUS_TOOL_NAMES } = require('./nexusTools');
             if (NEXUS_TOOL_NAMES.has(toolCall.name)) {
               const agentName = agent?.name || agent?.username || 'agent';
