@@ -228,6 +228,7 @@ function governSkillAction(action = {}, decision = {}, context = {}) {
 
 function governNexusAction(action = {}, decision = {}, context = {}) {
   const toolName = String(action.params?.tool_name || '').trim();
+  const workspaceBackedTool = toolName === 'send_email' || toolName === 'draft_email';
   if (!toolName) {
     return buildDeniedDecision('Nexus execution requires a tool name.');
   }
@@ -236,7 +237,7 @@ function governNexusAction(action = {}, decision = {}, context = {}) {
     return buildDeniedDecision('Nexus tool execution is not allowed for this run.');
   }
 
-  if (!context.nexusNodeId) {
+  if (!context.nexusNodeId && !workspaceBackedTool) {
     return buildDeniedDecision('Nexus execution requires an online node.');
   }
 

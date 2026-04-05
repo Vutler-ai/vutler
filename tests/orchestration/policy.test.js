@@ -190,6 +190,57 @@ describe('orchestration policy', () => {
     });
   });
 
+  test('allows workspace-backed send_email execution without an online node', () => {
+    const decision = governOrchestrationDecision(buildOrchestrationDecision({
+      workspaceId: 'ws-1',
+      selectedAgentId: 'agent-1',
+      selectedAgentReason: 'test',
+      allowedTools: ['send_email'],
+      actions: [
+        {
+          id: 'act_nexus_email_1',
+          kind: 'tool',
+          key: 'nexus_tool_exec',
+          executor: 'nexus-executor',
+          mode: 'sync',
+          approval: 'none',
+          params: {
+            tool_name: 'send_email',
+            args: {
+              to: 'client@example.com',
+              subject: 'Test',
+              body: 'Hello',
+            },
+          },
+          allowed_agent_ids: ['agent-1'],
+          risk_level: 'medium',
+        },
+      ],
+    }), {
+      agent: { id: 'agent-1' },
+      nexusNodeId: null,
+    });
+
+    expect(decision).toMatchObject({
+      allowed: true,
+      decision: 'sync',
+      risk_level: 'medium',
+      decisionPayload: expect.objectContaining({
+        actions: [
+          expect.objectContaining({
+            executor: 'nexus-executor',
+            params: expect.objectContaining({
+              tool_name: 'send_email',
+            }),
+          }),
+        ],
+        metadata: expect.objectContaining({
+          policy_bundle: 'nexus-default-v1',
+        }),
+      }),
+    });
+  });
+
   test('allows social execution for authorized platforms', () => {
     const decision = governOrchestrationDecision(buildOrchestrationDecision({
       workspaceId: 'ws-1',
