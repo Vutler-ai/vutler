@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from './auth-context';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { clearAuthToken } from '@/lib/api/client';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -16,6 +17,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
+      clearAuthToken();
       router.replace('/login');
 
       const timeout = window.setTimeout(() => {
