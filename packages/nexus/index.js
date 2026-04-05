@@ -40,6 +40,7 @@ class NexusNode {
       const { LLMProvider } = require('./lib/providers/llm');
       const { AVControlProvider } = require('./lib/providers/av-control');
       const { ClipboardProvider } = require('./lib/providers/clipboard');
+      const { WorkspaceEmailProvider } = require('./lib/providers/workspace-email');
 
       const perms = this.permissions;
       this.providers.fs = new FilesystemProvider(perms.filesystem || {});
@@ -52,6 +53,10 @@ class NexusNode {
       this.providers.llm = new LLMProvider(opts.llm || {});
       this.providers.av = new AVControlProvider(perms.av || { subnets: perms.network?.subnets });
       this.providers.clipboard = new ClipboardProvider();
+      this.providers.workspaceEmail = new WorkspaceEmailProvider({
+        server: this.server,
+        apiKey: this.key,
+      });
 
       const workspaceBacked = this.mode === 'enterprise' || this.type === 'docker';
       if (workspaceBacked) {
@@ -61,7 +66,6 @@ class NexusNode {
         const { WorkspaceContactsProvider } = require('./lib/providers/workspace-contacts');
         const { WorkspaceDriveProvider } = require('./lib/providers/workspace-drive');
         const { WorkspaceKnowledgeProvider } = require('./lib/providers/workspace-knowledge');
-        const { WorkspaceEmailProvider } = require('./lib/providers/workspace-email');
         const { WorkspaceJiraProvider } = require('./lib/providers/workspace-jira');
         const { WorkspaceEventSubscriptionsProvider } = require('./lib/providers/workspace-event-subscriptions');
         this.providers.mail = new WorkspaceMailProvider(sharedConfig);
@@ -69,7 +73,6 @@ class NexusNode {
         this.providers.contacts = new WorkspaceContactsProvider(sharedConfig);
         this.providers.workspaceDrive = new WorkspaceDriveProvider(sharedConfig);
         this.providers.workspaceKnowledge = new WorkspaceKnowledgeProvider(sharedConfig);
-        this.providers.workspaceEmail = new WorkspaceEmailProvider(sharedConfig);
         this.providers.workspaceJira = new WorkspaceJiraProvider(sharedConfig);
         this.providers.workspaceEventSubscriptions = new WorkspaceEventSubscriptionsProvider(sharedConfig);
       }

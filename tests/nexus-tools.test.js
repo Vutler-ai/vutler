@@ -70,15 +70,15 @@ describe('nexusTools terminal support', () => {
     expect(names).not.toContain('read_clipboard');
   });
 
-  test('getNexusToolsForWorkspace only exposes workspace email tools when the agent email capability is effective', async () => {
+  test('getNexusToolsForWorkspace exposes direct email tools on local nodes only when the agent email capability is effective', async () => {
     const { getNexusToolsForWorkspace } = require('../services/nexusTools');
     const db = {
       query: jest.fn().mockResolvedValue({
         rows: [{
           id: 'node-1',
-          name: 'Enterprise Node',
-          type: 'docker',
-          mode: 'enterprise',
+          name: 'Local Node',
+          type: 'local',
+          mode: 'local',
           config: {},
         }],
       }),
@@ -96,6 +96,31 @@ describe('nexusTools terminal support', () => {
 
     expect(disabledTools.some((tool) => tool.name === 'send_email')).toBe(false);
     expect(disabledTools.some((tool) => tool.name === 'draft_email')).toBe(false);
+    expect(enabledTools.some((tool) => tool.name === 'send_email')).toBe(true);
+    expect(enabledTools.some((tool) => tool.name === 'draft_email')).toBe(true);
+  });
+
+  test('getNexusToolsForWorkspace still exposes workspace mail, calendar, and contacts tools on enterprise nodes', async () => {
+    const { getNexusToolsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockResolvedValue({
+        rows: [{
+          id: 'node-1',
+          name: 'Enterprise Node',
+          type: 'docker',
+          mode: 'enterprise',
+          config: {},
+        }],
+      }),
+    };
+
+    const enabledTools = await getNexusToolsForWorkspace('ws-1', db, {
+      emailCapabilityEffective: true,
+      workspaceMailAvailable: true,
+      workspaceCalendarAvailable: true,
+      workspaceContactsAvailable: true,
+    });
+
     expect(enabledTools.some((tool) => tool.name === 'send_email')).toBe(true);
     expect(enabledTools.some((tool) => tool.name === 'draft_email')).toBe(true);
     expect(enabledTools.some((tool) => tool.name === 'read_emails')).toBe(true);

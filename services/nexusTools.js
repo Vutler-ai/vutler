@@ -376,8 +376,7 @@ function isRuntimeAvailable(node, runtimeKey, options = {}) {
   const discoveryEntry = runtimeKey ? discoveryProviders[runtimeKey] : null;
 
   if (runtimeKey === 'workspace_email') {
-    if (!workspaceBacked) return false;
-    return options.emailCapabilityEffective !== false;
+    return options.emailCapabilityEffective === true;
   }
 
   if (runtimeKey === 'mail') {
