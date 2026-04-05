@@ -1594,17 +1594,15 @@ async function chat(agent, messages, db, opts = {}) {
       const { getNexusToolsForWorkspace, getOnlineNexusNode } = require('./nexusTools');
       const onlineNexusNode = await getOnlineNexusNode(workspaceId, db);
       nexusNodeId = onlineNexusNode?.id || null;
-      if (nexusNodeId) {
-        const calendarCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar')
-          || isProviderAvailable(runtimeCapabilityAvailability, 'google');
-        nexusTools = await getNexusToolsForWorkspace(workspaceId, db, {
-          allowTerminalSessions: hasNexusTerminalAccess,
-          emailCapabilityEffective,
-          workspaceMailAvailable: isProviderAvailable(runtimeCapabilityAvailability, 'email'),
-          workspaceCalendarAvailable: calendarCapabilityEffective,
-          workspaceContactsAvailable: true,
-        });
-      }
+      const calendarCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar')
+        || isProviderAvailable(runtimeCapabilityAvailability, 'google');
+      nexusTools = await getNexusToolsForWorkspace(workspaceId, db, {
+        allowTerminalSessions: hasNexusTerminalAccess,
+        emailCapabilityEffective,
+        workspaceMailAvailable: isProviderAvailable(runtimeCapabilityAvailability, 'email'),
+        workspaceCalendarAvailable: calendarCapabilityEffective,
+        workspaceContactsAvailable: true,
+      });
     } catch (_) {
       nexusTools = [];
       nexusNodeId = null;
