@@ -5,6 +5,7 @@ const { dispatchNodeAction } = require('./nexusCommandService');
 const { getNodeMode } = require('./nexusBilling');
 
 const TOOL_TIMEOUT_MS = 30000;
+const NEXUS_NODE_FRESHNESS_WINDOW_MS = Number.parseInt(process.env.NEXUS_NODE_FRESHNESS_WINDOW_MS || '300000', 10);
 const TOOL_CALL_TYPE = 'tool.call';
 const pendingToolCalls = new Map();
 
@@ -404,19 +405,81 @@ function isRuntimeAvailable(node, runtimeKey, options = {}) {
   return true;
 }
 
+function parseNodeTimestamp(value) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function isFreshNodeCandidate(node, now = Date.now()) {
+  const lastHeartbeatAt = parseNodeTimestamp(node?.last_heartbeat);
+  if (lastHeartbeatAt !== null) {
+    return (now - lastHeartbeatAt) <= NEXUS_NODE_FRESHNESS_WINDOW_MS;
+  }
+
+  const updatedAt = parseNodeTimestamp(node?.updated_at);
+  if (updatedAt !== null) {
+    return (now - updatedAt) <= NEXUS_NODE_FRESHNESS_WINDOW_MS;
+  }
+
+  const createdAt = parseNodeTimestamp(node?.created_at);
+  if (createdAt !== null) {
+    return (now - createdAt) <= NEXUS_NODE_FRESHNESS_WINDOW_MS;
+  }
+
+  return false;
+}
+
+function compareOnlineNodeFreshness(left = {}, right = {}) {
+  const leftHeartbeatAt = parseNodeTimestamp(left.last_heartbeat);
+  const rightHeartbeatAt = parseNodeTimestamp(right.last_heartbeat);
+  const leftHasHeartbeat = leftHeartbeatAt !== null;
+  const rightHasHeartbeat = rightHeartbeatAt !== null;
+
+  if (leftHasHeartbeat !== rightHasHeartbeat) {
+    return leftHasHeartbeat ? -1 : 1;
+  }
+  if (leftHeartbeatAt !== rightHeartbeatAt) {
+    return (rightHeartbeatAt || 0) - (leftHeartbeatAt || 0);
+  }
+
+  const leftUpdatedAt = parseNodeTimestamp(left.updated_at) || 0;
+  const rightUpdatedAt = parseNodeTimestamp(right.updated_at) || 0;
+  if (leftUpdatedAt !== rightUpdatedAt) {
+    return rightUpdatedAt - leftUpdatedAt;
+  }
+
+  const leftCreatedAt = parseNodeTimestamp(left.created_at) || 0;
+  const rightCreatedAt = parseNodeTimestamp(right.created_at) || 0;
+  return rightCreatedAt - leftCreatedAt;
+}
+
+function selectBestOnlineNexusNode(nodes = [], now = Date.now()) {
+  const candidates = (Array.isArray(nodes) ? nodes : [])
+    .filter((node) => String(node?.status || 'online') === 'online')
+    .filter((node) => isFreshNodeCandidate(node, now))
+    .sort(compareOnlineNodeFreshness);
+
+  return candidates[0] || null;
+}
+
+function getWorkspaceEmailTools() {
+  return NEXUS_BASE_TOOLS.filter((tool) => tool.name === 'send_email' || tool.name === 'draft_email');
+}
+
 async function getOnlineNexusNodeRecord(workspaceId, pool) {
   if (!pool) return null;
   try {
     const result = await pool.query(
-      `SELECT id, name, type, mode, config
+      `SELECT id, name, type, mode, status, config, last_heartbeat, updated_at, created_at
          FROM tenant_vutler.nexus_nodes
         WHERE workspace_id = $1
           AND status = 'online'
-        ORDER BY last_heartbeat DESC
-        LIMIT 1`,
+        ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+        LIMIT 25`,
       [workspaceId]
     );
-    return result.rows[0] || null;
+    return selectBestOnlineNexusNode(result.rows);
   } catch {
     return null;
   }
@@ -435,7 +498,9 @@ async function getOnlineNexusNode(workspaceId, pool) {
  */
 async function getNexusToolsForWorkspace(workspaceId, pool, options = {}) {
   const node = await getOnlineNexusNodeRecord(workspaceId, pool);
-  if (!node) return [];
+  if (!node) {
+    return options.emailCapabilityEffective === true ? getWorkspaceEmailTools() : [];
+  }
   const localActionGate = buildLocalActionGate(node);
   const visibleTools = options.allowTerminalSessions
     ? NEXUS_TOOLS
@@ -486,6 +551,26 @@ async function executeNexusTool(nodeId, toolName, args, wsConnections) {
 
   const executionContext = normalizeExecutionContext(wsConnections);
   const mappedArgs = mapToolArgs(toolName, args);
+
+  if ((toolName === 'send_email' || toolName === 'draft_email')
+    && executionContext.workspaceId
+    && executionContext.db) {
+    const { EmailAdapter } = require('./skills/adapters/EmailAdapter');
+    const adapter = new EmailAdapter();
+    return adapter.execute({
+      workspaceId: executionContext.workspaceId,
+      agentId: mappedArgs.agentId || mappedArgs.agent_id || null,
+      agent: executionContext.agent || null,
+      latestUserMessage: executionContext.latestUserMessage || '',
+      params: {
+        action: toolName === 'send_email' ? 'send_message' : 'draft_message',
+        to: mappedArgs.to,
+        subject: mappedArgs.subject,
+        body: mappedArgs.body,
+        htmlBody: mappedArgs.htmlBody || mappedArgs.html_body || null,
+      },
+    });
+  }
 
   if (executionContext.workspaceId && executionContext.db) {
     const outcome = await dispatchNodeAction({
@@ -560,29 +645,35 @@ function handleToolResult(requestId, success, data, error) {
 }
 
 function normalizeExecutionContext(value) {
-  if (!value) return { wsConnections: null, workspaceId: null, db: null };
+  if (!value) return { wsConnections: null, workspaceId: null, db: null, agent: null, latestUserMessage: '' };
 
   if (value instanceof Map || typeof value.get === 'function') {
     return {
       wsConnections: value,
       workspaceId: null,
       db: null,
+      agent: null,
+      latestUserMessage: '',
     };
   }
 
   if (typeof value === 'object') {
     const hasWrappedContext = Object.prototype.hasOwnProperty.call(value, 'wsConnections')
       || Object.prototype.hasOwnProperty.call(value, 'workspaceId')
-      || Object.prototype.hasOwnProperty.call(value, 'db');
+      || Object.prototype.hasOwnProperty.call(value, 'db')
+      || Object.prototype.hasOwnProperty.call(value, 'agent')
+      || Object.prototype.hasOwnProperty.call(value, 'latestUserMessage');
 
     return {
       wsConnections: hasWrappedContext ? (value.wsConnections || null) : value,
       workspaceId: hasWrappedContext ? (value.workspaceId || null) : null,
       db: hasWrappedContext ? (value.db || null) : null,
+      agent: hasWrappedContext ? (value.agent || null) : null,
+      latestUserMessage: hasWrappedContext ? String(value.latestUserMessage || '') : '',
     };
   }
 
-  return { wsConnections: null, workspaceId: null, db: null };
+  return { wsConnections: null, workspaceId: null, db: null, agent: null, latestUserMessage: '' };
 }
 
 module.exports = {
@@ -595,4 +686,5 @@ module.exports = {
   getNexusToolsForWorkspace,
   executeNexusTool,
   handleToolResult,
+  selectBestOnlineNexusNode,
 };

@@ -23,6 +23,8 @@ async function executeNexusPlan(plan = {}, context = {}) {
     wsConnections: context.wsConnections || null,
     workspaceId: context.workspaceId || null,
     db: context.db || null,
+    agent: context.agent || null,
+    latestUserMessage: context.latestUserMessage || '',
   });
 }
 

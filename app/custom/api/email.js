@@ -6,7 +6,6 @@
 'use strict';
 
 const express = require('express');
-const axios = require('axios');
 const router = express.Router();
 const {
   assignEmailToAgent,
@@ -15,11 +14,9 @@ const {
   toggleEmailFlag,
   updateEmailReadState,
 } = require('../../../services/workspaceEmailService');
+const { sendPostalMail } = require('../../../services/postalMailer');
 
 // Postal configuration
-const POSTAL_API_URL = process.env.POSTAL_API_URL || 'http://postal-smtp:8080';
-const POSTAL_API_KEY = process.env.POSTAL_API_KEY || '';
-const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.starbox-group.com';
 const EMAIL_DOMAIN = process.env.EMAIL_DOMAIN || 'starbox-group.com';
 const SCHEMA = 'tenant_vutler';
 
@@ -33,27 +30,28 @@ router.use((req, res, next) => {
  * Send email via Postal HTTP API
  */
 async function sendViaPostal({ from, to, subject, body, htmlBody }) {
-  const payload = {
-    to: Array.isArray(to) ? to : [to],
+  const result = await sendPostalMail({
+    to,
     from: from || `noreply@${EMAIL_DOMAIN}`,
-    subject: subject,
+    subject,
     plain_body: body || '',
-  };
-  if (htmlBody) payload.html_body = htmlBody;
+    html_body: htmlBody || undefined,
+  });
 
-  const resp = await axios.post(
-    `${POSTAL_API_URL}/api/v1/send/message`,
-    payload,
-    {
-      headers: {
-        'X-Server-API-Key': POSTAL_API_KEY,
-        'Content-Type': 'application/json',
-        'Host': POSTAL_HOST,
-      },
-      timeout: 10000,
-    }
-  );
-  return resp.data;
+  const failure = result?.skipped
+    ? (result.reason || 'Postal delivery was skipped.')
+    : (result?.success === false ? (result.error || result.reason || result.raw || 'Postal delivery failed.') : null);
+
+  if (failure) {
+    const error = new Error(failure);
+    error.response = { data: result };
+    throw error;
+  }
+
+  return {
+    data: result?.data || result,
+    raw: result,
+  };
 }
 
 /**

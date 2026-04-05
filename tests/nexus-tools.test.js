@@ -2,6 +2,7 @@
 
 describe('nexusTools terminal support', () => {
   let dispatchNodeActionMock;
+  const freshTimestamp = new Date().toISOString();
 
   beforeEach(() => {
     jest.resetModules();
@@ -16,7 +17,13 @@ describe('nexusTools terminal support', () => {
     const { getNexusToolsForWorkspace } = require('../services/nexusTools');
     const db = {
       query: jest.fn().mockResolvedValue({
-        rows: [{ id: 'node-1', name: 'Nexus Node' }],
+        rows: [{
+          id: 'node-1',
+          name: 'Nexus Node',
+          status: 'online',
+          updated_at: freshTimestamp,
+          created_at: freshTimestamp,
+        }],
       }),
     };
 
@@ -37,8 +44,11 @@ describe('nexusTools terminal support', () => {
         rows: [{
           id: 'node-1',
           name: 'Nexus Node',
+          status: 'online',
           type: 'local',
           mode: 'local',
+          updated_at: freshTimestamp,
+          created_at: freshTimestamp,
           config: {
             permissions: {
               allowedActions: ['search', 'read_document'],
@@ -77,8 +87,11 @@ describe('nexusTools terminal support', () => {
         rows: [{
           id: 'node-1',
           name: 'Local Node',
+          status: 'online',
           type: 'local',
           mode: 'local',
+          updated_at: freshTimestamp,
+          created_at: freshTimestamp,
           config: {},
         }],
       }),
@@ -100,6 +113,19 @@ describe('nexusTools terminal support', () => {
     expect(enabledTools.some((tool) => tool.name === 'draft_email')).toBe(true);
   });
 
+  test('getNexusToolsForWorkspace still exposes workspace email tools when no online node is available', async () => {
+    const { getNexusToolsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+    };
+
+    const tools = await getNexusToolsForWorkspace('ws-1', db, {
+      emailCapabilityEffective: true,
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual(['send_email', 'draft_email']);
+  });
+
   test('getNexusToolsForWorkspace still exposes workspace mail, calendar, and contacts tools on enterprise nodes', async () => {
     const { getNexusToolsForWorkspace } = require('../services/nexusTools');
     const db = {
@@ -107,8 +133,11 @@ describe('nexusTools terminal support', () => {
         rows: [{
           id: 'node-1',
           name: 'Enterprise Node',
+          status: 'online',
           type: 'docker',
           mode: 'enterprise',
+          updated_at: freshTimestamp,
+          created_at: freshTimestamp,
           config: {},
         }],
       }),
@@ -126,6 +155,37 @@ describe('nexusTools terminal support', () => {
     expect(enabledTools.some((tool) => tool.name === 'read_emails')).toBe(true);
     expect(enabledTools.some((tool) => tool.name === 'read_calendar')).toBe(true);
     expect(enabledTools.some((tool) => tool.name === 'read_contacts')).toBe(true);
+  });
+
+  test('selectBestOnlineNexusNode ignores stale online records without heartbeat and prefers a fresh heartbeat node', async () => {
+    const { selectBestOnlineNexusNode } = require('../services/nexusTools');
+    const now = Date.parse('2026-04-05T09:20:00.000Z');
+
+    const selected = selectBestOnlineNexusNode([
+      {
+        id: 'stale-e2e',
+        status: 'online',
+        last_heartbeat: null,
+        updated_at: '2026-03-31T07:05:19.468Z',
+        created_at: '2026-03-31T07:05:19.468Z',
+      },
+      {
+        id: 'fresh-node',
+        status: 'online',
+        last_heartbeat: '2026-04-05T09:19:40.000Z',
+        updated_at: '2026-04-05T09:19:40.000Z',
+        created_at: '2026-04-05T09:10:00.000Z',
+      },
+      {
+        id: 'fresh-no-heartbeat',
+        status: 'online',
+        last_heartbeat: null,
+        updated_at: '2026-04-05T09:19:50.000Z',
+        created_at: '2026-04-05T09:19:50.000Z',
+      },
+    ], now);
+
+    expect(selected).toEqual(expect.objectContaining({ id: 'fresh-node' }));
   });
 
   test('executeNexusTool uses the Nexus command queue when db and workspace are provided', async () => {
@@ -205,5 +265,61 @@ describe('nexusTools terminal support', () => {
         appendNewline: false,
       },
     }));
+  });
+
+  test('executeNexusTool sends workspace email directly without dispatching to a Nexus node', async () => {
+    const execute = jest.fn().mockResolvedValue({
+      success: true,
+      data: {
+        id: 'email-1',
+        status: 'sent',
+      },
+    });
+
+    jest.doMock('../services/skills/adapters/EmailAdapter', () => ({
+      EmailAdapter: jest.fn().mockImplementation(() => ({
+        execute,
+      })),
+    }));
+
+    const { executeNexusTool } = require('../services/nexusTools');
+    const result = await executeNexusTool(
+      'node-stale',
+      'send_email',
+      {
+        to: 'client@example.com',
+        subject: 'Hello',
+        body: 'Body',
+        agentId: 'agent-1',
+      },
+      {
+        workspaceId: 'ws-1',
+        db: { query: jest.fn() },
+        agent: { id: 'agent-1', email: 'nora@starbox-group.com' },
+        latestUserMessage: 'Envoie cet email maintenant.',
+      }
+    );
+
+    expect(dispatchNodeActionMock).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith({
+      workspaceId: 'ws-1',
+      agentId: 'agent-1',
+      agent: { id: 'agent-1', email: 'nora@starbox-group.com' },
+      latestUserMessage: 'Envoie cet email maintenant.',
+      params: {
+        action: 'send_message',
+        to: 'client@example.com',
+        subject: 'Hello',
+        body: 'Body',
+        htmlBody: null,
+      },
+    });
+    expect(result).toEqual({
+      success: true,
+      data: {
+        id: 'email-1',
+        status: 'sent',
+      },
+    });
   });
 });
