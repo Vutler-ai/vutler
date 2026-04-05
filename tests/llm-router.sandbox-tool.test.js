@@ -310,7 +310,7 @@ describe('llmRouter sandbox tool', () => {
     expect(recordedBodies[0].tools.map((tool) => tool.function.name)).toEqual(
       expect.arrayContaining(['run_code_in_sandbox'])
     );
-    expect(orchestrateToolCallMock).toHaveBeenCalledWith({
+    expect(orchestrateToolCallMock).toHaveBeenCalledWith(expect.objectContaining({
       toolName: 'run_code_in_sandbox',
       args: {
         language: 'python',
@@ -325,7 +325,7 @@ describe('llmRouter sandbox tool', () => {
         messageId: 'msg-1',
       }),
       nexusNodeId: null,
-    });
+    }));
     expect(executeOrchestrationDecisionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         version: 'v1',

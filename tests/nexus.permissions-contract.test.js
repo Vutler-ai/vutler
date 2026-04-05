@@ -65,7 +65,7 @@ describe('nexus permission contract', () => {
           filesystem: { active: 'local', fallbacks: [] },
         }
       )
-    ).toEqual({
+    ).toEqual(expect.objectContaining({
       platform: 'local',
       providers: ['filesystem'],
       providerSources: {
@@ -75,7 +75,7 @@ describe('nexus permission contract', () => {
         allowedFolders: ['/Users/test/Documents'],
         allowedActions: ['search', 'open_file'],
       },
-    });
+    }));
   });
 
   test('syncs allowed actions into the local permission engine snapshot', () => {

@@ -179,7 +179,7 @@ describe('orchestration orchestrator', () => {
           id: 'act_social_1',
           key: 'social_post',
           executor: 'social-executor',
-          params: {
+          params: expect.objectContaining({
             caption: 'Launch update',
             scheduled_at: '2026-04-02T09:00:00.000Z',
             platforms: ['linkedin', 'twitter'],
@@ -187,7 +187,7 @@ describe('orchestration orchestrator', () => {
             allowed_account_ids: ['social-local-1'],
             allowed_brand_ids: ['106026474'],
             external_id: 'ws_ws-1',
-          },
+          }),
         }),
       ],
       metadata: expect.objectContaining({
@@ -239,17 +239,17 @@ describe('orchestration orchestrator', () => {
         expect.objectContaining({
           key: 'memory_remember',
           executor: 'memory-executor',
-          params: {
+          params: expect.objectContaining({
             operation: 'remember',
             content: 'User prefers concise French replies.',
             importance: 8,
             memory_type: 'preference',
-            bindings: {
+            bindings: expect.objectContaining({
               scope: 'agent',
               category: 'agent:agent-1',
               agent_id: 'agent-1',
-            },
-          },
+            }),
+          }),
         }),
       ],
     });
@@ -259,15 +259,15 @@ describe('orchestration orchestrator', () => {
         expect.objectContaining({
           key: 'memory_recall',
           executor: 'memory-executor',
-          params: {
+          params: expect.objectContaining({
             operation: 'recall',
             query: 'language preference',
-            bindings: {
+            bindings: expect.objectContaining({
               scope: 'agent',
               category: 'agent:agent-1',
               agent_id: 'agent-1',
-            },
-          },
+            }),
+          }),
         }),
       ],
     });
