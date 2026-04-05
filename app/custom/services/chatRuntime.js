@@ -12,6 +12,10 @@ const { createSniparaGateway } = require('../../../services/snipara/gateway');
 const { resolveAgentRecord } = require('../../../services/sniparaMemoryService');
 const { resolveOrchestrationCapabilities } = require('../../../services/orchestrationCapabilityResolver');
 const {
+  resolveAgentEmailProvisioning,
+  agentHasProvisionedEmail,
+} = require('../../../services/agentProvisioningService');
+const {
   buildOverlaySuggestionMessages,
   filterExecutionOverlay,
   isOverlayEmpty,
@@ -27,6 +31,27 @@ const RETRY_BACKOFF_MS = [5000, 15_000, 60_000, 300_000];
 const ERROR_LOG_THROTTLE = 30_000;
 const SOUL_CACHE_TTL = 300_000;
 const AGENT_CACHE_TTL = 60_000;
+const DIRECT_EMAIL_SEND_PATTERNS = [
+  /\bsend\b/i,
+  /\breply\b/i,
+  /\bforward\b/i,
+  /\benvo(?:ie|ies|ient|yer|yez|yons|yaient|yant)\b/i,
+  /\brépond(?:s|re)?\b/i,
+  /\brepond(?:s|re)?\b/i,
+  /\btransf(?:e|è)re(?:r)?\b/i,
+  /\bmail(?:e|er)?\b/i,
+];
+const DRAFT_EMAIL_PATTERNS = [
+  /\bdraft\b/i,
+  /\bbrouillon\b/i,
+  /\bprépare\b/i,
+  /\bprepare\b/i,
+  /\brédige\b/i,
+  /\bredige\b/i,
+  /\breview\b/i,
+  /\brelecture\b/i,
+];
+const EMAIL_ADDRESS_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 
 let running = false;
 let pollInterval = POLL_INTERVAL;
@@ -205,6 +230,26 @@ function resolveRequestedAgent(message, channelAgents = []) {
 function shouldBypassSwarmRouting(resolution) {
   const reason = String(resolution?.reason || '');
   return reason === 'explicit' || reason === 'mention' || reason === 'single_channel_agent';
+}
+
+function analyzeEmailIntent(message = '') {
+  const text = String(message || '').trim();
+  if (!text) {
+    return {
+      hasExplicitRecipient: false,
+      directSend: false,
+      draftOnly: false,
+    };
+  }
+
+  const draftOnly = DRAFT_EMAIL_PATTERNS.some((pattern) => pattern.test(text));
+  const directSend = !draftOnly && DIRECT_EMAIL_SEND_PATTERNS.some((pattern) => pattern.test(text));
+
+  return {
+    hasExplicitRecipient: EMAIL_ADDRESS_PATTERN.test(text),
+    directSend,
+    draftOnly,
+  };
 }
 
 function appendPlacementInstruction(prompt, instruction) {
@@ -501,16 +546,30 @@ async function handleMessage(message) {
     throw new Error('Unable to resolve requested agent');
   }
 
+  const emailIntent = analyzeEmailIntent(message.content);
+  const needsDirectEmailBypassCheck = shouldBypassSwarmRouting(resolution)
+    && emailIntent.directSend
+    && emailIntent.hasExplicitRecipient;
+  const targetAgentEmailProvisioning = needsDirectEmailBypassCheck
+    ? await resolveAgentEmailProvisioning({
+        workspaceId,
+        agentId: targetAgent.id || null,
+        agent: targetAgent,
+        db: pool,
+      }).catch(() => ({
+        provisioned: false,
+        email: null,
+        source: 'none',
+      }))
+    : null;
+  const bypassSwarmForDirectEmail = shouldBypassSwarmRouting(resolution)
+    && emailIntent.directSend
+    && emailIntent.hasExplicitRecipient
+    && agentHasProvisionedEmail(targetAgent, targetAgentEmailProvisioning);
+
   const swarmCoordinator = getSwarmCoordinator();
   const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
-  const orchestration = await resolveOrchestrationCapabilities({
-    workspaceId,
-    messageText: message.content,
-    history,
-    requestedAgent: targetAgent,
-    availableAgents: allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
-    db: pool,
-  }).catch(() => ({
+  const orchestrationDefaults = {
     domains: [],
     overlayProviders: [],
     overlaySkillKeys: [],
@@ -523,53 +582,65 @@ async function handleMessage(message) {
     workspacePressure: null,
     specializationProfile: null,
     recommendations: [],
-  }));
-
-  try {
-    const routing = await swarmCoordinator.analyzeAndRoute(
-      {
-        ...message,
-        requested_agent_id: String(targetAgent.id),
-      },
-      allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
-      workspaceId,
-      {
+  };
+  const orchestration = bypassSwarmForDirectEmail
+    ? orchestrationDefaults
+    : await resolveOrchestrationCapabilities({
+        workspaceId,
+        messageText: message.content,
         history,
-        preferredAgentId: orchestration.primaryDelegate?.agentRef || String(targetAgent.id),
-      }
-    );
-    if (routing?.routed) {
-      await insertChatMessage(pool, null, SCHEMA, {
-        channel_id: message.channel_id,
-        sender_id: 'jarvis',
-        sender_name: 'Jarvis',
-        content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
-        message_type: 'text',
-        workspace_id: workspaceId,
-        processed_at: new Date(),
-        processing_state: 'processed',
-        reply_to_message_id: message.id,
-        requested_agent_id: String(targetAgent.id),
-        display_agent_id: 'jarvis',
-        orchestrated_by: 'jarvis',
-        executed_by: 'jarvis',
-        metadata: {
-          orchestration_status: 'routed',
-          created_task_count: routing.created_count || 0,
-          routed_domains: orchestration.domains || [],
-          delegated_agents: orchestration.delegatedAgents || [],
-          available_runtime_providers: orchestration.availability?.availableProviders || [],
-          unavailable_runtime_providers: orchestration.availability?.unavailableProviders || [],
-          unavailable_domains: orchestration.unavailableDomains || [],
-          workspace_agent_pressure: orchestration.workspacePressure || null,
-          specialization_profile: orchestration.specializationProfile || null,
-          agent_recommendations: orchestration.recommendations || [],
+        requestedAgent: targetAgent,
+        availableAgents: allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+        db: pool,
+      }).catch(() => orchestrationDefaults);
+
+  if (!bypassSwarmForDirectEmail) {
+    try {
+      const routing = await swarmCoordinator.analyzeAndRoute(
+        {
+          ...message,
+          requested_agent_id: String(targetAgent.id),
+        },
+        allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+        workspaceId,
+        {
+          history,
+          preferredAgentId: orchestration.primaryDelegate?.agentRef || String(targetAgent.id),
         }
-      });
-      return;
+      );
+      if (routing?.routed) {
+        await insertChatMessage(pool, null, SCHEMA, {
+          channel_id: message.channel_id,
+          sender_id: 'jarvis',
+          sender_name: 'Jarvis',
+          content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
+          message_type: 'text',
+          workspace_id: workspaceId,
+          processed_at: new Date(),
+          processing_state: 'processed',
+          reply_to_message_id: message.id,
+          requested_agent_id: String(targetAgent.id),
+          display_agent_id: 'jarvis',
+          orchestrated_by: 'jarvis',
+          executed_by: 'jarvis',
+          metadata: {
+            orchestration_status: 'routed',
+            created_task_count: routing.created_count || 0,
+            routed_domains: orchestration.domains || [],
+            delegated_agents: orchestration.delegatedAgents || [],
+            available_runtime_providers: orchestration.availability?.availableProviders || [],
+            unavailable_runtime_providers: orchestration.availability?.unavailableProviders || [],
+            unavailable_domains: orchestration.unavailableDomains || [],
+            workspace_agent_pressure: orchestration.workspacePressure || null,
+            specialization_profile: orchestration.specializationProfile || null,
+            agent_recommendations: orchestration.recommendations || [],
+          }
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
     }
-  } catch (err) {
-    console.error('[ChatRuntime] Swarm analyzeAndRoute failed:', err.message);
   }
 
   const delegatedAgent = orchestration.primaryDelegate?.agentId

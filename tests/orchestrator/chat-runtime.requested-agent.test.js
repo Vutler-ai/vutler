@@ -238,6 +238,190 @@ describe('chatRuntime requested agent resolution', () => {
     }));
   });
 
+  test('bypasses swarm delegation for a direct email send in a single-agent DM when the facade agent has email', async () => {
+    const inserts = [];
+    const preparePromptContext = jest.fn().mockResolvedValue({
+      prompt: '',
+      stats: { runtime: 'chat', selected: { total: 0, instance: 0, template: 0, global: 0 } },
+    });
+    const recordConversation = jest.fn().mockResolvedValue([]);
+    const llmChat = jest.fn().mockResolvedValue({
+      content: 'Email sent.',
+      provider: 'codex',
+      model: 'gpt-5.4',
+      usage: { input_tokens: 15, output_tokens: 6 },
+    });
+    const analyzeAndRoute = jest.fn().mockResolvedValue({ routed: false });
+
+    const insertChatMessage = jest.fn(async (_pg, _app, _schema, payload) => {
+      inserts.push(payload);
+      return { id: 'reply-email-1', ...payload };
+    });
+    const messageState = {
+      id: 'msg-email-1',
+      channel_id: 'chan-email-1',
+      workspace_id: 'ws-1',
+      sender_id: 'user-1',
+      sender_name: 'User',
+      content: 'Envoie immédiatement un email à client@example.com. Sujet: Test. Corps: Bonjour.',
+      processed_at: null,
+    };
+
+    const poolQuery = jest.fn(async (sql) => {
+      if (sql.includes('SET processed_at = NOW()') && sql.includes('RETURNING *')) {
+        if (messageState.processed_at) return { rows: [] };
+        messageState.processed_at = new Date();
+        return { rows: [{ ...messageState }] };
+      }
+
+      if (sql.includes('UPDATE tenant_vutler.chat_messages SET processed_at = NOW() WHERE id = $1 AND workspace_id = $2')) {
+        messageState.processed_at = new Date();
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM tenant_vutler.agents') && sql.includes('WHERE workspace_id = $1')) {
+        return {
+          rows: [
+            {
+              id: 'agent-nora',
+              name: 'Nora',
+              username: 'nora',
+              email: 'nora@starbox-group.com',
+              role: 'support',
+              model: 'gpt-5.4',
+              provider: 'codex',
+              system_prompt: 'You are Nora.',
+              temperature: 0.2,
+              max_tokens: 512,
+              workspace_id: 'ws-1',
+              capabilities: ['email_outreach'],
+            },
+            {
+              id: 'agent-jarvis',
+              name: 'Jarvis',
+              username: 'jarvis',
+              email: 'jarvis@starbox-group.com',
+              role: 'coordinator',
+              model: 'gpt-5.4',
+              provider: 'codex',
+              system_prompt: 'You are Jarvis.',
+              temperature: 0.2,
+              max_tokens: 512,
+              workspace_id: 'ws-1',
+              capabilities: [],
+            },
+          ],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.chat_channel_members')) {
+        return {
+          rows: [{
+            id: 'agent-nora',
+            name: 'Nora',
+            username: 'nora',
+            email: 'nora@starbox-group.com',
+            role: 'support',
+            capabilities: ['email_outreach'],
+            model: 'gpt-5.4',
+            provider: 'codex',
+            system_prompt: 'You are Nora.',
+            temperature: 0.2,
+            max_tokens: 512,
+            workspace_id: 'ws-1',
+          }],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.chat_messages') && sql.includes('ORDER BY created_at DESC')) {
+        return {
+          rows: [{
+            id: messageState.id,
+            sender_id: messageState.sender_id,
+            sender_name: messageState.sender_name,
+            content: messageState.content,
+            attachments: null,
+          }],
+        };
+      }
+
+      throw new Error(`Unexpected SQL in test: ${sql}`);
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
+    jest.doMock('../../services/llmRouter', () => ({ chat: llmChat }));
+    jest.doMock('../../services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        analyzeAndRoute,
+        resolveAgentExecutionContext: jest.fn(async (agent, workspaceId) => ({
+          ...agent,
+          workspace_id: workspaceId,
+          capabilities: agent.capabilities || [],
+        })),
+      }),
+    }));
+    jest.doMock('../../services/chatMessages', () => ({ insertChatMessage }));
+    jest.doMock('../../services/fetchWithTimeout', () => ({ fetchWithTimeout: jest.fn() }));
+    jest.doMock('../../services/orchestrationCapabilityResolver', () => ({
+      resolveOrchestrationCapabilities: jest.fn().mockResolvedValue({
+        domains: ['email'],
+        overlayProviders: ['email'],
+        overlaySkillKeys: ['email_outreach'],
+        overlayToolCapabilities: [],
+        primaryDelegate: null,
+        delegatedAgents: [],
+        reasons: [],
+      }),
+    }));
+    jest.doMock('../../services/memory/runtime', () => ({
+      createMemoryRuntimeService: () => ({
+        preparePromptContext,
+        recordConversation,
+      }),
+    }));
+
+    const chatRuntime = require('../../app/custom/services/chatRuntime');
+
+    await chatRuntime.processMessage({
+      id: 'msg-email-1',
+      channel_id: 'chan-email-1',
+      workspace_id: 'ws-1',
+      sender_id: 'user-1',
+      sender_name: 'User',
+      content: 'Envoie immédiatement un email à client@example.com. Sujet: Test. Corps: Bonjour.',
+    });
+
+    expect(analyzeAndRoute).not.toHaveBeenCalled();
+    expect(llmChat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'agent-nora',
+        email: 'nora@starbox-group.com',
+        provider: 'codex',
+        model: 'gpt-5.4',
+        workspace_id: 'ws-1',
+      }),
+      expect.any(Array),
+      expect.anything(),
+      expect.objectContaining({
+        chatActionContext: expect.objectContaining({
+          requestedAgentId: 'agent-nora',
+          displayAgentId: 'agent-nora',
+          orchestratedBy: 'jarvis',
+        }),
+      })
+    );
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]).toMatchObject({
+      sender_id: 'agent-nora',
+      sender_name: 'Nora',
+      requested_agent_id: 'agent-nora',
+      display_agent_id: 'agent-nora',
+      orchestrated_by: 'jarvis',
+      executed_by: 'agent-nora',
+      reply_to_message_id: 'msg-email-1',
+    });
+  });
+
   test('invalidates cached soul after remembering a conversation', async () => {
     const preparePromptContext = jest.fn().mockResolvedValue({
       prompt: '## Agent Memory\n- [fact] Team standards apply.',
