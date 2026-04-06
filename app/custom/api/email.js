@@ -66,6 +66,12 @@ function parseEmailMetadata(value) {
   return typeof value === 'object' ? value : {};
 }
 
+function parseListLimit(value, fallback = 50, max = 200) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(Math.floor(parsed), max);
+}
+
 /**
  * GET /api/v1/email — list emails, supports ?folder=inbox|sent|drafts
  */
@@ -74,7 +80,7 @@ router.get('/email', async (req, res) => {
     const pg = req.app.locals.pg;
     const folder = req.query.folder || 'inbox';
     const agentId = req.query.agent_id || null;
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const limit = parseListLimit(req.query.limit, 50, 200);
 
     if (!pg) {
       return res.json({ success: true, emails: [], count: 0 });
@@ -117,7 +123,7 @@ router.get('/email', async (req, res) => {
 router.get('/email/inbox', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const limit = parseListLimit(req.query.limit, 50, 200);
 
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
@@ -145,11 +151,12 @@ router.get('/email/inbox', async (req, res) => {
 router.get('/email/sent', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
+    const limit = parseListLimit(req.query.limit, 50, 200);
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
     const r = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' AND workspace_id = $1 ORDER BY created_at DESC LIMIT 50`,
-      [req.workspaceId]
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' AND workspace_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [req.workspaceId, limit]
     );
     const emails = r.rows.map(e => ({
       id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
@@ -172,11 +179,12 @@ router.get('/email/sent', async (req, res) => {
 router.get('/email/drafts', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
+    const limit = parseListLimit(req.query.limit, 50, 200);
     if (!pg) return res.json({ success: true, emails: [], count: 0 });
 
     const r = await pg.query(
-      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' AND workspace_id = $1 ORDER BY created_at DESC LIMIT 100`,
-      [req.workspaceId]
+      `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' AND workspace_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [req.workspaceId, limit]
     );
     const emails = r.rows.map(e => ({
       id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
