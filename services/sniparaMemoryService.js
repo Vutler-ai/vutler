@@ -269,6 +269,124 @@ function tokenize(text) {
     .filter((token) => token.length > 2);
 }
 
+const LOW_SIGNAL_QUERY_TOKENS = new Set([
+  'about',
+  'avec',
+  'code',
+  'current',
+  'dans',
+  'for',
+  'from',
+  'memo',
+  'memory',
+  'note',
+  'only',
+  'pour',
+  'project',
+  'projet',
+  'recall',
+  'remember',
+  'reply',
+  'respond',
+  'response',
+  'tell',
+  'the',
+  'this',
+  'uniquement',
+  'user',
+  'what',
+  'with',
+]);
+
+function getQueryTokenWeight(token) {
+  let weight = 1;
+  if (LOW_SIGNAL_QUERY_TOKENS.has(token)) weight -= 0.45;
+  if (token.length >= 6) weight += 0.35;
+  if (token.length >= 10) weight += 0.25;
+  if (/\d/.test(token)) weight += 1.4;
+  return Math.max(0.35, Number(weight.toFixed(3)));
+}
+
+function computeWeightedQueryCoverage(query, text) {
+  const queryTokens = [...new Set(tokenize(query))];
+  const memoryTokens = new Set(tokenize(text));
+  if (queryTokens.length === 0 || memoryTokens.size === 0) return 0;
+
+  let matchedWeight = 0;
+  let totalWeight = 0;
+  for (const token of queryTokens) {
+    const weight = getQueryTokenWeight(token);
+    totalWeight += weight;
+    if (memoryTokens.has(token)) matchedWeight += weight;
+  }
+
+  if (totalWeight <= 0) return 0;
+  return matchedWeight / totalWeight;
+}
+
+function computeDistinctiveTokenCoverage(query, text) {
+  const queryTokens = [...new Set(tokenize(query))];
+  const distinctiveTokens = queryTokens.filter((token) => /\d/.test(token) || token.length >= 7);
+  if (distinctiveTokens.length === 0) return computeWeightedQueryCoverage(query, text);
+
+  const memoryTokens = new Set(tokenize(text));
+  let matchedWeight = 0;
+  let totalWeight = 0;
+  for (const token of distinctiveTokens) {
+    const weight = getQueryTokenWeight(token);
+    totalWeight += weight;
+    if (memoryTokens.has(token)) matchedWeight += weight;
+  }
+
+  if (totalWeight <= 0) return 0;
+  return matchedWeight / totalWeight;
+}
+
+function computeCueTokenMatch(query, text) {
+  const queryTokens = [...new Set(tokenize(query))];
+  const numericTokens = queryTokens.filter((token) => /\d/.test(token));
+  const cueTokens = numericTokens.length > 0
+    ? numericTokens
+    : queryTokens.filter((token) => !LOW_SIGNAL_QUERY_TOKENS.has(token) && token.length >= 5);
+  if (cueTokens.length === 0) return 0;
+
+  const memoryTokens = new Set(tokenize(text));
+  let matchedWeight = 0;
+  let totalWeight = 0;
+  for (const token of cueTokens) {
+    const weight = getQueryTokenWeight(token);
+    totalWeight += weight;
+    if (memoryTokens.has(token)) matchedWeight += weight;
+  }
+
+  if (totalWeight <= 0) return 0;
+  return matchedWeight / totalWeight;
+}
+
+function computeQueryPhraseCoverage(query, text) {
+  const normalizedQuery = canonicalizeText(query);
+  const normalizedText = canonicalizeText(text);
+  if (!normalizedQuery || !normalizedText) return 0;
+  if (normalizedText.includes(normalizedQuery)) return 1;
+
+  const queryTokens = tokenize(query);
+  if (queryTokens.length < 2) return 0;
+
+  let best = 0;
+  for (let size = Math.min(5, queryTokens.length); size >= 2; size -= 1) {
+    for (let start = 0; start <= queryTokens.length - size; start += 1) {
+      const phrase = queryTokens.slice(start, start + size).join(' ');
+      if (!phrase) continue;
+      if (normalizedText.includes(phrase)) {
+        best = Math.max(best, size / queryTokens.length);
+      }
+    }
+    if (best > 0) break;
+  }
+
+  return best;
+}
+
 function computeTokenOverlap(left, right) {
   const leftTokens = new Set(tokenize(left));
   const rightTokens = new Set(tokenize(right));
@@ -425,12 +543,25 @@ function scoreMemoryForRuntime(memory, { query = '', runtime = 'chat', scopeKey 
 
   const effectiveScope = normalizeScopeKey(scopeKey || memory.scope_key || memory.metadata?.memory_scope_key || memory.scope);
   const policy = getMemoryTypePolicy(memory.type);
-  const queryScore = query ? computeTokenOverlap(query, memory.text) : 0.45;
+  const queryOverlapScore = query ? computeTokenOverlap(query, memory.text) : 0.45;
+  const queryCoverageScore = query ? computeWeightedQueryCoverage(query, memory.text) : 0.45;
+  const distinctiveCoverageScore = query ? computeDistinctiveTokenCoverage(query, memory.text) : 0.45;
+  const cueScore = query ? computeCueTokenMatch(query, memory.text) : 0.35;
+  const phraseScore = query ? computeQueryPhraseCoverage(query, memory.text) : 0.35;
+  const queryScore = query
+    ? (
+      (queryOverlapScore * 0.14)
+      + (queryCoverageScore * 0.28)
+      + (distinctiveCoverageScore * 0.3)
+      + (cueScore * 0.2)
+      + (phraseScore * 0.08)
+    )
+    : 0.45;
   const importanceScore = normalizeImportance(memory.importance, 0.5);
   const freshnessScore = computeFreshnessScore(memory);
   const usageScore = computeUsageScore(memory);
 
-  const baseScore = (queryScore * 0.42) + (importanceScore * 0.28) + (freshnessScore * 0.18) + (usageScore * 0.12);
+  const baseScore = (queryScore * 0.68) + (importanceScore * 0.14) + (freshnessScore * 0.1) + (usageScore * 0.08);
   return Number((baseScore * policy.retrievalWeight * getScopeWeight(effectiveScope, runtime)).toFixed(4));
 }
 

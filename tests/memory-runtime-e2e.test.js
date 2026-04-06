@@ -263,4 +263,41 @@ describe('memory runtime e2e', () => {
     expect(samBundle.sections.human.some((memory) => /Sam/.test(memory.text))).toBe(true);
     expect(samBundle.sections.human.some((memory) => /Alex/.test(memory.text))).toBe(false);
   });
+
+  test('prefers the memory with the exact project cue during runtime recall', async () => {
+    const db = createDb(agents);
+
+    await rememberScopedMemory({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[0],
+      scopeKey: 'instance',
+      text: 'For project kiwi, the recall code is MEM-LEGACY.',
+      type: 'fact',
+      importance: 0.95,
+      source: 'test',
+    });
+
+    await rememberScopedMemory({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[0],
+      scopeKey: 'instance',
+      text: 'For project kiwi-20260406, the recall code is ORBIT-20260406.',
+      type: 'fact',
+      importance: 0.2,
+      source: 'test',
+      metadata: { created_at: '2026-02-01T00:00:00.000Z' },
+    });
+
+    const bundle = await buildRuntimeMemoryBundle({
+      db,
+      workspaceId: 'ws-1',
+      agent: agents[0],
+      query: 'what is the recall code for project kiwi-20260406',
+      runtime: 'chat',
+    });
+
+    expect(bundle.sections.instance[0]?.text).toContain('ORBIT-20260406');
+  });
 });

@@ -96,4 +96,31 @@ describe('sniparaMemoryService', () => {
 
     expect(ranked[0].id).toBe('a');
   });
+
+  test('prefers query-specific memories over fresher generic matches', () => {
+    const ranked = rankMemories(normalizeMemories({
+      memories: [
+        {
+          id: 'specific',
+          text: 'For project kiwi-20260406, the recall code is ORBIT-20260406.',
+          type: 'fact',
+          importance: 0.2,
+          metadata: { created_at: '2026-02-01T00:00:00.000Z' },
+        },
+        {
+          id: 'generic',
+          text: 'For project kiwi, the recall code is MEM-LEGACY.',
+          type: 'fact',
+          importance: 0.95,
+          metadata: { created_at: '2026-04-06T00:00:00.000Z' },
+        },
+      ],
+    }, 'instance'), {
+      query: 'what is the recall code for project kiwi-20260406',
+      runtime: 'chat',
+      scopeKey: 'instance',
+    });
+
+    expect(ranked[0].id).toBe('specific');
+  });
 });
