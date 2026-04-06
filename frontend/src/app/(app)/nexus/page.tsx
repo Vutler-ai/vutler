@@ -311,6 +311,9 @@ function DeployModal({
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [enterpriseDriveRepo, setEnterpriseDriveRepo] = useState<NexusEnterpriseDriveRepo | null>(null);
+  const [localSetupPort, setLocalSetupPort] = useState<number | null>(null);
+  const [localSetupState, setLocalSetupState] = useState<'idle' | 'searching' | 'ready' | 'sending' | 'sent' | 'error'>('idle');
+  const [localSetupMessage, setLocalSetupMessage] = useState('');
 
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -480,6 +483,78 @@ function DeployModal({
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  const detectLocalNexusSetup = useCallback(async () => {
+    if (typeof window === 'undefined') return null;
+
+    setLocalSetupState('searching');
+    setLocalSetupMessage('Searching for a running local Nexus console…');
+
+    const candidatePorts = [3100, 3101, 3102, 3103, 3199];
+    for (const port of candidatePorts) {
+      try {
+        const response = await fetch(`http://localhost:${port}/api/setup-state`);
+        if (!response.ok) continue;
+        const payload = await response.json().catch(() => null);
+        if (!payload) continue;
+
+        setLocalSetupPort(port);
+        setLocalSetupState('ready');
+        setLocalSetupMessage(`Local Nexus detected on port ${port}.`);
+        return port;
+      } catch {
+        // Try the next known local port.
+      }
+    }
+
+    setLocalSetupPort(null);
+    setLocalSetupState('error');
+    setLocalSetupMessage('No local Nexus console detected on localhost. Launch the installer first, then retry detection.');
+    return null;
+  }, []);
+
+  const pushToLocalNexus = useCallback(async () => {
+    if (!token) return;
+
+    setError('');
+    setLocalSetupState('sending');
+    setLocalSetupMessage('Sending deploy token and permissions to local Nexus…');
+
+    const port = localSetupPort ?? await detectLocalNexusSetup();
+    if (!port) return;
+
+    try {
+      const permissions = buildLocalPermissionsFromConsent(localConsent);
+      const response = await fetch(`http://localhost:${port}/api/setup/connect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          token,
+          nodeName: localNodeName.trim() || undefined,
+          permissions,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error || `Local Nexus connect failed on port ${port}`);
+      }
+
+      setLocalSetupPort(port);
+      setLocalSetupState('sent');
+      setLocalSetupMessage(`Local Nexus connected on port ${port}.`);
+    } catch (err) {
+      setLocalSetupState('error');
+      setLocalSetupMessage(err instanceof Error ? err.message : 'Could not send the deploy token to local Nexus.');
+    }
+  }, [token, localSetupPort, detectLocalNexusSetup, localConsent, localNodeName]);
+
+  useEffect(() => {
+    if (step !== 'local-token') return;
+    void detectLocalNexusSetup();
+  }, [step, detectLocalNexusSetup]);
 
   const localCliInstructions = `npm install -g @vutler/nexus\nvutler-nexus init ${token || '<token>'}\nvutler-nexus start`;
   const enterpriseDockerInstructions = `git clone https://github.com/Vutler-ai/vutler.git\ncd vutler/packages/nexus\ncat > .env <<'EOF'\nNEXUS_TOKEN=${token || '<token>'}\nNEXUS_SERVER=https://app.vutler.ai\nNODE_NAME=${nodeName.trim() || '<enterprise-node-name>'}\nEOF\ndocker compose up -d --build`;
@@ -1169,16 +1244,54 @@ function DeployModal({
                       <div>
                         <p className="text-white text-sm font-medium">Desktop installer</p>
                         <p className="text-[#6b7280] text-xs mt-0.5">
-                          The `.dmg` / `.exe` package installs and launches the local runtime, but it does not inject this deploy token automatically.
-                          Use the token from step 2 with the CLI commands below to connect the node.
+                          Install Nexus locally, then send this deploy token directly to the running setup console on `localhost`.
                         </p>
                       </div>
+                    </div>
+                    <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[#11131d] p-3 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => void pushToLocalNexus()}
+                          disabled={!token || localSetupState === 'sending'}
+                          className="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
+                        >
+                          {localSetupState === 'sending' ? 'Sending…' : 'Send To Local Nexus'}
+                        </button>
+                        <button
+                          onClick={() => void detectLocalNexusSetup()}
+                          disabled={localSetupState === 'searching'}
+                          className="px-3 py-2 bg-[#1e293b] hover:bg-[#334155] disabled:opacity-50 text-white rounded-lg text-xs transition-colors"
+                        >
+                          {localSetupState === 'searching' ? 'Searching…' : 'Retry Detection'}
+                        </button>
+                        {localSetupPort && (
+                          <a
+                            href={`http://localhost:${localSetupPort}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-3 py-2 bg-[#1e293b] hover:bg-[#334155] text-white rounded-lg text-xs transition-colors"
+                          >
+                            Open Local Console
+                          </a>
+                        )}
+                      </div>
+                      <p
+                        className={`text-xs ${
+                          localSetupState === 'error'
+                            ? 'text-red-400'
+                            : localSetupState === 'sent'
+                              ? 'text-emerald-400'
+                              : 'text-[#6b7280]'
+                        }`}
+                      >
+                        {localSetupMessage || 'If Nexus is already running locally, Vutler can push the token and permissions directly without CLI copy-paste.'}
+                      </p>
                     </div>
                     <div className="border-t border-[rgba(255,255,255,0.05)] pt-3">
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center gap-2">
                           <span className="text-lg shrink-0">⌨️</span>
-                          <p className="text-[#9ca3af] text-xs font-medium">CLI setup</p>
+                          <p className="text-[#9ca3af] text-xs font-medium">CLI fallback</p>
                         </div>
                         <button
                           onClick={() => copyText(localCliInstructions)}

@@ -81,6 +81,13 @@ function createDashboardServer(node) {
   return http.createServer((req, res) => {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      return res.end();
+    }
 
     if (req.url === '/' || req.url === '/index.html' || req.url === '/onboarding' || req.url === '/onboarding.html') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
