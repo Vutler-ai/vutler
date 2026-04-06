@@ -4,6 +4,7 @@ const ProviderUnavailableError = require('../../errors/ProviderUnavailableError'
 
 class MailProviderDarwin {
   async listEmails(opts = {}) {
+    this._validateSource(opts.source);
     const limit = opts.limit || 20;
     const mailbox = opts.mailbox || 'inbox';
     const script = `
@@ -19,6 +20,7 @@ class MailProviderDarwin {
   }
 
   async searchEmails(query, opts = {}) {
+    this._validateSource(opts.source);
     const limit = opts.limit || 20;
     const script = `
       tell application "Mail"
@@ -56,7 +58,24 @@ class MailProviderDarwin {
         const [key, ...val] = part.split(':');
         if (key && val.length) obj[key.toLowerCase().trim()] = val.join(':').trim();
       }
-      return { sender: obj.from, subject: obj.subj, date: obj.date, preview: obj.preview };
+      return {
+        sender: obj.from,
+        subject: obj.subj,
+        date: obj.date,
+        preview: obj.preview,
+        source: 'local',
+        sourceDetail: 'apple_mail',
+      };
+    });
+  }
+
+  _validateSource(source) {
+    const normalized = String(source || '').trim().toLowerCase();
+    if (!normalized || normalized === 'local' || normalized === 'desktop' || normalized === 'apple_mail') {
+      return;
+    }
+    throw new ProviderUnavailableError(`Requested mailbox source "${source}" is not available on this Nexus Local mail bridge`, {
+      provider: 'MailProviderDarwin',
     });
   }
 }

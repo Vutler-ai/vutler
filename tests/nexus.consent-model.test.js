@@ -75,7 +75,7 @@ describe('nexus consent model', () => {
             mail: {
               enabled: true,
               apps: ['apple_mail'],
-              actions: ['list_emails'],
+              actions: ['list_emails', 'send_email_on_behalf'],
             },
           },
         },
@@ -92,6 +92,7 @@ describe('nexus consent model', () => {
         'search',
         'read_document',
         'list_emails',
+        'send_email_on_behalf',
       ]));
       expect(permissions.consent.sources.filesystem).toEqual(expect.objectContaining({
         enabled: true,
@@ -105,7 +106,7 @@ describe('nexus consent model', () => {
       expect(permissions.consent.sources.mail).toEqual(expect.objectContaining({
         enabled: true,
         apps: ['apple_mail'],
-        actions: ['list_emails'],
+        actions: ['list_emails', 'send_email_on_behalf'],
       }));
     } finally {
       fs.rmSync(tempHome, { recursive: true, force: true });
@@ -168,7 +169,7 @@ describe('nexus consent model', () => {
           mail: {
             enabled: true,
             apps: ['apple_mail'],
-            actions: ['list_emails'],
+            actions: ['list_emails', 'send_email_on_behalf'],
           },
           clipboard: {
             enabled: false,
@@ -185,7 +186,7 @@ describe('nexus consent model', () => {
       summary: {
         enabledSources: 2,
         enabledApps: 2,
-        enabledActions: 3,
+        enabledActions: 4,
       },
     }));
     expect(router._private.getNodeConsentState({

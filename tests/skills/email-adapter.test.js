@@ -194,4 +194,61 @@ describe('EmailAdapter', () => {
     expect(query.mock.calls[0][0]).toContain('metadata');
     expect(query.mock.calls[1][0]).not.toContain('metadata');
   });
+
+  test('creates an approval-gated on-behalf Gmail draft instead of sending immediately', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{ connected_by: 'owner@example.com', credentials: {} }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: 'draft-gmail-1' }],
+      });
+    const resolveAgentEmailProvisioning = jest.fn();
+    const sendPostalMail = jest.fn();
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../../services/agentProvisioningService', () => ({
+      resolveAgentEmailProvisioning,
+    }));
+    jest.doMock('../../services/postalMailer', () => ({
+      sendPostalMail,
+    }));
+    jest.doMock('../../services/workspaceEmailService', () => ({
+      resolveSenderAddress: jest.fn(),
+    }));
+
+    const { EmailAdapter } = require('../../services/skills/adapters/EmailAdapter');
+    const adapter = new EmailAdapter();
+
+    const result = await adapter.execute({
+      workspaceId: 'ws-1',
+      agentId: 'agent-1',
+      latestUserMessage: 'Send this on my behalf from Gmail.',
+      params: {
+        recipient_email: 'client@example.com',
+        subject: 'Follow-up',
+        body: 'Hello from me',
+        source: 'google',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      status: 'pending_approval',
+      requiresApproval: true,
+      draftId: 'draft-gmail-1',
+      draftUrl: '/email?folder=drafts&uid=draft-gmail-1',
+    });
+    expect(sendPostalMail).not.toHaveBeenCalled();
+    expect(resolveAgentEmailProvisioning).not.toHaveBeenCalled();
+
+    const insertArgs = query.mock.calls[1][1];
+    expect(insertArgs[1]).toBe('owner@example.com');
+    expect(JSON.parse(insertArgs[6])).toEqual(expect.objectContaining({
+      via: 'google',
+      sender_mode: 'on_behalf',
+      approval_required: true,
+      requested_action: 'send_message',
+    }));
+  });
 });

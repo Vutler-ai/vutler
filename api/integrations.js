@@ -160,6 +160,7 @@ const MICROSOFT_INTEGRATION_SCOPES = [
   'offline_access',
   'User.Read',
   'Mail.Read',
+  'Mail.Send',
   'Calendars.Read',
   'Contacts.Read',
 ].join(' ');

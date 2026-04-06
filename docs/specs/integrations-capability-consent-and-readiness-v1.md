@@ -111,6 +111,24 @@ Nexus local consent has four layers:
 
 The cloud UI must not collapse this to folders only.
 
+For mail specifically:
+
+- `list_emails`
+  - permits listing recent messages from the selected mailbox source
+- `search_emails`
+  - permits mailbox search
+- `send_email_on_behalf`
+  - permits approval-gated delivery through the user's connected Gmail or Microsoft 365 mailbox
+  - does not apply to the provisioned Vutler agent mailbox
+
+Nexus Local mail routing must preserve these distinctions:
+
+- reading mail may combine local desktop mail plus workspace-connected Gmail / Microsoft 365 / workspace mail sources
+- if a prompt such as `check email` is ambiguous and more than one mailbox source is available, the agent must ask which mailbox the user means
+- `on my behalf` means the user wants a personal connected mailbox, not the provisioned agent mailbox
+- personal mailbox sends must not silently downgrade to the agent mailbox if consent or provider selection is missing
+- personal mailbox sends require approval before delivery
+
 ### OS Permissions
 
 OS permissions are separate from product consent.

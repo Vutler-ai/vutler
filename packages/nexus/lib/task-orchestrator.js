@@ -199,7 +199,12 @@ class TaskOrchestrator {
 
       case 'list_emails':
       case 'search_emails': {
-        const mail = this.providers.mail || require('./providers/mail').getMailProvider();
+        const requestedSource = String(params.source || '').trim().toLowerCase();
+        const useWorkspaceMail = ['google', 'gmail', 'microsoft365', 'outlook', 'workspace', 'vutler'].includes(requestedSource);
+        const mail = useWorkspaceMail
+          ? (this.providers.workspaceMail || this.providers.mail)
+          : (this.providers.mail || require('./providers/mail').getMailProvider());
+        if (!mail) throw new Error('Mail provider is unavailable');
         if (action === 'search_emails') {
           this._require(params.query, 'params.query');
           return { emails: await mail.searchEmails(params.query, params) };

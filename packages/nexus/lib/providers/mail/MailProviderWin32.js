@@ -4,6 +4,7 @@ const ProviderUnavailableError = require('../../errors/ProviderUnavailableError'
 
 class MailProviderWin32 {
   async listEmails(opts = {}) {
+    this._validateSource(opts.source);
     const limit = opts.limit || 20;
     const script = `
       $ol = New-Object -ComObject Outlook.Application
@@ -15,6 +16,7 @@ class MailProviderWin32 {
   }
 
   async searchEmails(query, opts = {}) {
+    this._validateSource(opts.source);
     const limit = opts.limit || 20;
     const script = `
       $ol = New-Object -ComObject Outlook.Application
@@ -32,9 +34,26 @@ class MailProviderWin32 {
         try {
           let data = JSON.parse(stdout || '[]');
           if (!Array.isArray(data)) data = [data];
-          resolve(data.map(d => ({ sender: d.From, subject: d.Subject, date: d.Date, preview: d.Preview })));
+          resolve(data.map(d => ({
+            sender: d.From,
+            subject: d.Subject,
+            date: d.Date,
+            preview: d.Preview,
+            source: 'local',
+            sourceDetail: 'outlook',
+          })));
         } catch (_) { resolve([]); }
       });
+    });
+  }
+
+  _validateSource(source) {
+    const normalized = String(source || '').trim().toLowerCase();
+    if (!normalized || normalized === 'local' || normalized === 'desktop' || normalized === 'outlook' || normalized === 'microsoft365') {
+      return;
+    }
+    throw new ProviderUnavailableError(`Requested mailbox source "${source}" is not available on this Nexus Local mail bridge`, {
+      provider: 'MailProviderWin32',
     });
   }
 }

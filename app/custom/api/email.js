@@ -54,6 +54,18 @@ async function sendViaPostal({ from, to, subject, body, htmlBody }) {
   };
 }
 
+function parseEmailMetadata(value) {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch (_) {
+      return {};
+    }
+  }
+  return typeof value === 'object' ? value : {};
+}
+
 /**
  * GET /api/v1/email — list emails, supports ?folder=inbox|sent|drafts
  */
@@ -319,26 +331,43 @@ router.post('/email/approve/:id', async (req, res) => {
       email.html_body = editedBody;
     }
 
-    // Route via Gmail API if email was created by GmailAdapter
-    const metadata = typeof email.metadata === 'string' ? JSON.parse(email.metadata || '{}') : (email.metadata || {});
+    // Route via provider APIs when the draft represents an explicit on-behalf mailbox.
+    const metadata = parseEmailMetadata(email.metadata);
 
     let sendResult;
-    if (metadata.via === 'gmail') {
+    if (metadata.via === 'gmail' || metadata.via === 'google') {
       try {
         const { sendGmailMessage } = require('../../../services/google/googleApi');
         const gmailResp = await sendGmailMessage(req.workspaceId, {
-          to: metadata.gmail_to || email.to_addr,
-          subject: metadata.gmail_subject || email.subject,
+          to: metadata.provider_to || metadata.gmail_to || email.to_addr,
+          subject: metadata.provider_subject || metadata.gmail_subject || email.subject,
           body: email.body,
           cc: metadata.gmail_cc || undefined,
           bcc: metadata.gmail_bcc || undefined,
         });
-        sendResult = { via: 'gmail', messageId: gmailResp.id };
+        sendResult = { via: 'google', messageId: gmailResp.id };
       } catch (gmailErr) {
         return res.status(502).json({
           success: false,
           error: 'Failed to send via Gmail',
           details: gmailErr.message,
+        });
+      }
+    } else if (metadata.via === 'microsoft365') {
+      try {
+        const { sendMailMessage } = require('../../../services/microsoft/graphApi');
+        await sendMailMessage(req.workspaceId, {
+          to: metadata.provider_to || email.to_addr,
+          subject: metadata.provider_subject || email.subject,
+          body: email.body,
+          htmlBody: email.html_body,
+        });
+        sendResult = { via: 'microsoft365', messageId: null };
+      } catch (microsoftErr) {
+        return res.status(502).json({
+          success: false,
+          error: 'Failed to send via Microsoft 365',
+          details: microsoftErr.message,
         });
       }
     } else {

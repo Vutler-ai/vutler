@@ -6,6 +6,7 @@ const { sendPostalMail } = require('../../postalMailer');
 const { resolveSenderAddress } = require('../../workspaceEmailService');
 
 const SCHEMA = 'tenant_vutler';
+const SUPPORTED_ON_BEHALF_SOURCES = new Set(['google', 'microsoft365']);
 const DIRECT_SEND_PATTERNS = [
   /\bsend\b/i,
   /\breply\b/i,
@@ -62,6 +63,19 @@ function inferEmailAction(params = {}, latestUserMessage = '') {
 
 function resolveBody(params = {}) {
   return params.body || params.content || params.message || '';
+}
+
+function normalizeSenderSource(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'agent';
+  if (['agent', 'managed', 'workspace', 'provisioned', 'default'].includes(normalized)) return 'agent';
+  if (['gmail'].includes(normalized)) return 'google';
+  if (['outlook', 'microsoft', 'microsoft_365', 'office365'].includes(normalized)) return 'microsoft365';
+  return normalized;
+}
+
+function getOnBehalfSourceLabel(source) {
+  return source === 'google' ? 'Gmail' : 'Microsoft 365 / Outlook';
 }
 
 function extractPostalFailure(response) {
@@ -165,10 +179,48 @@ async function insertEmailRecord(pg, {
   }
 }
 
+async function resolveConnectedMailboxIdentity(db, workspaceId, source) {
+  const result = await db.query(
+    `SELECT connected_by, credentials
+       FROM ${SCHEMA}.workspace_integrations
+      WHERE workspace_id = $1
+        AND provider = $2
+        AND connected = TRUE
+      LIMIT 1`,
+    [workspaceId, source]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`${getOnBehalfSourceLabel(source)} is not connected for this workspace.`);
+  }
+
+  const credentials = typeof row.credentials === 'string'
+    ? JSON.parse(row.credentials || '{}')
+    : (row.credentials || {});
+
+  return (
+    credentials.email
+    || credentials.user_email
+    || credentials.account_email
+    || row.connected_by
+    || getOnBehalfSourceLabel(source)
+  );
+}
+
 class EmailAdapter {
   async execute(context) {
     const { workspaceId, params = {} } = context;
     const action = inferEmailAction(params, context.latestUserMessage);
+    const source = normalizeSenderSource(params.source || params.sender_source);
+
+    if (source !== 'agent' && !SUPPORTED_ON_BEHALF_SOURCES.has(source)) {
+      return { success: false, error: `Unsupported email source: "${source}"` };
+    }
+
+    if (source !== 'agent') {
+      return this._createOnBehalfDraft(workspaceId, context, params, source, action);
+    }
 
     switch (action) {
       case 'send_message':
@@ -318,6 +370,62 @@ class EmailAdapter {
       };
     } catch (err) {
       return { success: false, error: `Failed to create email draft: ${err.message}` };
+    }
+  }
+
+  async _createOnBehalfDraft(workspaceId, context, params, source, action) {
+    const to = params.to || params.recipient_email;
+    const subject = params.subject || '(no subject)';
+    const body = resolveBody(params);
+
+    if (!to) return { success: false, error: 'recipient (to) is required' };
+
+    const agentId = context.agentId || null;
+
+    try {
+      const senderIdentity = await resolveConnectedMailboxIdentity(pool, workspaceId, source);
+      const result = await insertEmailRecord(pool, {
+        workspaceId,
+        from: senderIdentity,
+        to,
+        subject,
+        body,
+        folder: 'drafts',
+        agentId,
+        metadata: {
+          via: source,
+          draft_origin: 'on_behalf',
+          send_origin: 'on_behalf',
+          sender_mode: 'on_behalf',
+          sender_source: source,
+          sender_identity: senderIdentity,
+          approval_required: true,
+          requested_action: action,
+          latest_user_message: context.latestUserMessage || null,
+          provider_to: to,
+          provider_subject: subject,
+          provider_body: body,
+        },
+      });
+
+      return {
+        success: true,
+        data: {
+          status: 'pending_approval',
+          requiresApproval: true,
+          draftId: result.rows[0]?.id,
+          draftUrl: `/email?folder=drafts&uid=${encodeURIComponent(String(result.rows[0]?.id || ''))}`,
+          placement: {
+            root: '/email',
+            folder: 'drafts',
+            defaulted: true,
+            reason: 'draft_created',
+          },
+          message: `${getOnBehalfSourceLabel(source)} draft created for "${to}" — approval is required before it can be sent on your behalf.`,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: `Failed to create on-behalf email draft: ${err.message}` };
     }
   }
 }

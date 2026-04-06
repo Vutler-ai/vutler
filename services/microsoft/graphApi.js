@@ -146,6 +146,48 @@ async function listContacts(workspaceId, { search, top = 50 } = {}) {
   });
 }
 
+async function sendMailMessage(workspaceId, { to, subject, body, htmlBody = null, cc, bcc, saveToSentItems = true } = {}) {
+  const toRecipients = String(to || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((address) => ({ emailAddress: { address } }));
+
+  if (!toRecipients.length) {
+    throw new Error('Recipient address is required.');
+  }
+
+  const ccRecipients = String(cc || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((address) => ({ emailAddress: { address } }));
+
+  const bccRecipients = String(bcc || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((address) => ({ emailAddress: { address } }));
+
+  return graphRequest(workspaceId, {
+    path: '/me/sendMail',
+    method: 'POST',
+    body: {
+      message: {
+        subject: subject || '(no subject)',
+        body: {
+          contentType: htmlBody ? 'HTML' : 'Text',
+          content: htmlBody || body || '',
+        },
+        toRecipients,
+        ...(ccRecipients.length ? { ccRecipients } : {}),
+        ...(bccRecipients.length ? { bccRecipients } : {}),
+      },
+      saveToSentItems: Boolean(saveToSentItems),
+    },
+  });
+}
+
 async function createSubscription(workspaceId, payload = {}) {
   return graphRequest(workspaceId, {
     path: '/subscriptions',
@@ -203,6 +245,7 @@ module.exports = {
   listMailMessages,
   listCalendarEvents,
   listContacts,
+  sendMailMessage,
   createSubscription,
   probeMicrosoftIntegration,
 };

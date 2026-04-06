@@ -2,66 +2,104 @@
 
 const { WorkspaceApiClient } = require('./workspace-api-client');
 
+function normalizeWorkspaceMailSource(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (['gmail'].includes(normalized)) return 'google';
+  if (['outlook', 'microsoft', 'microsoft_365', 'office365'].includes(normalized)) return 'microsoft365';
+  if (['vutler'].includes(normalized)) return 'workspace';
+  return normalized;
+}
+
 class WorkspaceMailProvider {
   constructor(config = {}) {
     this.client = new WorkspaceApiClient(config);
   }
 
+  async _listGoogleEmails(opts = {}, folder = 'inbox') {
+    const params = new URLSearchParams();
+    params.set('maxResults', String(opts.limit || 20));
+    if (opts.query) params.set('q', String(opts.query));
+    const result = await this.client.get(`/api/v1/integrations/google/gmail/messages?${params.toString()}`);
+    const messages = Array.isArray(result.messages) ? result.messages : [];
+    return messages.map((message) => ({
+      id: message.id,
+      sender: message.from || '',
+      from: message.from || '',
+      to: message.to || '',
+      subject: message.subject || '',
+      date: message.date || null,
+      preview: message.snippet || '',
+      snippet: message.snippet || '',
+      source: 'google',
+      folder,
+    }));
+  }
+
+  async _listMicrosoftEmails(opts = {}, folder = 'inbox') {
+    const params = new URLSearchParams();
+    params.set('top', String(opts.limit || 20));
+    if (opts.query) params.set('search', String(opts.query));
+    const result = await this.client.get(`/api/v1/integrations/microsoft365/outlook/messages?${params.toString()}`);
+    const messages = Array.isArray(result.value) ? result.value : [];
+    return messages.map((message) => ({
+      id: message.id,
+      sender: message.from?.emailAddress?.address || '',
+      from: message.from?.emailAddress?.address || '',
+      to: Array.isArray(message.toRecipients)
+        ? message.toRecipients.map((entry) => entry.emailAddress?.address).filter(Boolean).join(', ')
+        : '',
+      subject: message.subject || '',
+      date: message.receivedDateTime || null,
+      preview: message.bodyPreview || '',
+      snippet: message.bodyPreview || '',
+      source: 'microsoft365',
+      folder,
+    }));
+  }
+
+  async _listWorkspaceEmails(opts = {}, folder = 'inbox') {
+    const params = new URLSearchParams();
+    params.set('folder', folder);
+    params.set('limit', String(opts.limit || 20));
+    const result = await this.client.get(`/api/v1/email?${params.toString()}`);
+    const emails = result.emails || result.data || [];
+    return emails.map((email) => ({
+      ...email,
+      sender: email.sender || email.from || '',
+      preview: email.preview || email.snippet || email.body || '',
+      source: email.source || 'workspace',
+    }));
+  }
+
   async listEmails(opts = {}) {
     const limit = opts.limit || 20;
     const folder = opts.folder || 'inbox';
+    const requestedSource = normalizeWorkspaceMailSource(opts.source);
+
+    if (requestedSource === 'google') {
+      return this._listGoogleEmails({ ...opts, limit }, folder);
+    }
+
+    if (requestedSource === 'microsoft365') {
+      return this._listMicrosoftEmails({ ...opts, limit }, folder);
+    }
+
+    if (requestedSource === 'workspace') {
+      return this._listWorkspaceEmails({ ...opts, limit }, folder);
+    }
+
+    if (requestedSource) {
+      throw new Error(`Unsupported workspace mail source: ${requestedSource}`);
+    }
 
     try {
-      const params = new URLSearchParams();
-      params.set('maxResults', String(limit));
-      if (opts.query) params.set('q', String(opts.query));
-      const result = await this.client.get(`/api/v1/integrations/google/gmail/messages?${params.toString()}`);
-      const messages = Array.isArray(result.messages) ? result.messages : [];
-      return messages.map((message) => ({
-        id: message.id,
-        sender: message.from || '',
-        from: message.from || '',
-        to: message.to || '',
-        subject: message.subject || '',
-        date: message.date || null,
-        preview: message.snippet || '',
-        snippet: message.snippet || '',
-        source: 'google',
-        folder,
-      }));
+      return await this._listGoogleEmails({ ...opts, limit }, folder);
     } catch (_) {
       try {
-        const params = new URLSearchParams();
-        params.set('top', String(limit));
-        if (opts.query) params.set('search', String(opts.query));
-        const result = await this.client.get(`/api/v1/integrations/microsoft365/outlook/messages?${params.toString()}`);
-        const messages = Array.isArray(result.value) ? result.value : [];
-        return messages.map((message) => ({
-          id: message.id,
-          sender: message.from?.emailAddress?.address || '',
-          from: message.from?.emailAddress?.address || '',
-          to: Array.isArray(message.toRecipients)
-            ? message.toRecipients.map((entry) => entry.emailAddress?.address).filter(Boolean).join(', ')
-            : '',
-          subject: message.subject || '',
-          date: message.receivedDateTime || null,
-          preview: message.bodyPreview || '',
-          snippet: message.bodyPreview || '',
-          source: 'microsoft365',
-          folder,
-        }));
+        return await this._listMicrosoftEmails({ ...opts, limit }, folder);
       } catch (_) {
-        const params = new URLSearchParams();
-        params.set('folder', folder);
-        params.set('limit', String(limit));
-        const result = await this.client.get(`/api/v1/email?${params.toString()}`);
-        const emails = result.emails || result.data || [];
-        return emails.map((email) => ({
-          ...email,
-          sender: email.sender || email.from || '',
-          preview: email.preview || email.snippet || email.body || '',
-          source: email.source || 'workspace',
-        }));
+        return this._listWorkspaceEmails({ ...opts, limit }, folder);
       }
     }
   }

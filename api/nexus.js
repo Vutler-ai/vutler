@@ -46,7 +46,7 @@ const CONSENT_SOURCE_CATALOG = {
   },
   mail: {
     apps: ['apple_mail', 'outlook'],
-    actions: ['list_emails', 'search_emails'],
+    actions: ['list_emails', 'search_emails', 'send_email_on_behalf'],
   },
   calendar: {
     apps: ['apple_calendar', 'outlook_calendar'],

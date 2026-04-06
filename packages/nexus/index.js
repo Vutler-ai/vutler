@@ -41,6 +41,7 @@ class NexusNode {
       const { AVControlProvider } = require('./lib/providers/av-control');
       const { ClipboardProvider } = require('./lib/providers/clipboard');
       const { WorkspaceEmailProvider } = require('./lib/providers/workspace-email');
+      const { WorkspaceMailProvider } = require('./lib/providers/workspace-mail');
 
       const perms = this.permissions;
       this.providers.fs = new FilesystemProvider(perms.filesystem || {});
@@ -57,11 +58,14 @@ class NexusNode {
         server: this.server,
         apiKey: this.key,
       });
+      this.providers.workspaceMail = new WorkspaceMailProvider({
+        server: this.server,
+        apiKey: this.key,
+      });
 
       const workspaceBacked = this.mode === 'enterprise' || this.type === 'docker';
       if (workspaceBacked) {
         const sharedConfig = { server: this.server, apiKey: this.key };
-        const { WorkspaceMailProvider } = require('./lib/providers/workspace-mail');
         const { WorkspaceCalendarProvider } = require('./lib/providers/workspace-calendar');
         const { WorkspaceContactsProvider } = require('./lib/providers/workspace-contacts');
         const { WorkspaceDriveProvider } = require('./lib/providers/workspace-drive');

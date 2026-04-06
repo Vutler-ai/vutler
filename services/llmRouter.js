@@ -299,16 +299,33 @@ function analyzeEmailIntent(message = '') {
       hasExplicitRecipient: false,
       directSend: false,
       draftOnly: false,
+      onBehalfRequested: false,
+      personalMailboxMentioned: null,
     };
   }
 
   const draftOnly = DRAFT_EMAIL_PATTERNS.some((pattern) => pattern.test(text));
   const directSend = !draftOnly && DIRECT_EMAIL_SEND_PATTERNS.some((pattern) => pattern.test(text));
+  const normalized = text.toLowerCase();
+  const onBehalfRequested =
+    /\bon my behalf\b/i.test(text)
+    || /\ben mon nom\b/i.test(text)
+    || /\bfrom my\b/i.test(text)
+    || /\buse my\b/i.test(text)
+    || /\bavec mon\b/i.test(text)
+    || /\bdepuis mon\b/i.test(text);
+  const personalMailboxMentioned = normalized.includes('gmail') || normalized.includes('google')
+    ? 'google'
+    : (normalized.includes('outlook') || normalized.includes('microsoft 365') || normalized.includes('office 365'))
+      ? 'microsoft365'
+      : null;
 
   return {
     hasExplicitRecipient: EMAIL_ADDRESS_PATTERN.test(text),
     directSend,
     draftOnly,
+    onBehalfRequested,
+    personalMailboxMentioned,
   };
 }
 
@@ -1587,11 +1604,18 @@ async function chat(agent, messages, db, opts = {}) {
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
   let nexusTools = [];
   let nexusNodeId = null;
+  let mailboxSourceOptions = [];
+  let outboundEmailSourceOptions = [];
   const latestUserMessage = extractLatestUserMessage(messages);
   const emailIntent = analyzeEmailIntent(latestUserMessage);
   if (workspaceId) {
     try {
-      const { getNexusToolsForWorkspace, getOnlineNexusNode } = require('./nexusTools');
+      const {
+        getNexusToolsForWorkspace,
+        getOnlineNexusNode,
+        getMailboxSourceOptionsForWorkspace,
+        getEmailSendSourceOptionsForWorkspace,
+      } = require('./nexusTools');
       const onlineNexusNode = await getOnlineNexusNode(workspaceId, db);
       nexusNodeId = onlineNexusNode?.id || null;
       const calendarCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar')
@@ -1603,9 +1627,18 @@ async function chat(agent, messages, db, opts = {}) {
         workspaceCalendarAvailable: calendarCapabilityEffective,
         workspaceContactsAvailable: true,
       });
+      mailboxSourceOptions = await getMailboxSourceOptionsForWorkspace(workspaceId, db, {
+        emailCapabilityEffective,
+        workspaceMailAvailable: isProviderAvailable(runtimeCapabilityAvailability, 'email'),
+      });
+      outboundEmailSourceOptions = await getEmailSendSourceOptionsForWorkspace(workspaceId, db, {
+        emailCapabilityEffective,
+      });
     } catch (_) {
       nexusTools = [];
       nexusNodeId = null;
+      mailboxSourceOptions = [];
+      outboundEmailSourceOptions = [];
     }
   }
   const allowedSocialPlatforms = hasSocialMediaAccess
@@ -1657,6 +1690,22 @@ async function chat(agent, messages, db, opts = {}) {
   }
   if (emailCapabilityEffective && (hasSendEmailTool || hasDraftEmailTool)) {
     effectiveSystemPrompt += '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, act directly through the available email tool. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
+    if (outboundEmailSourceOptions.length > 0) {
+      const personalSources = outboundEmailSourceOptions.filter((entry) => entry.key !== 'agent');
+      if (personalSources.length > 0) {
+        effectiveSystemPrompt += '\n\nUse send_email or draft_email without a source override for the provisioned agent mailbox. Use source=google or source=microsoft365 only when the user explicitly wants you to write from their own mailbox or says "on my behalf". Personal mailbox sends are approval-gated and must not silently fall back to the agent mailbox.';
+      }
+      if (personalSources.length > 1) {
+        const labels = personalSources.map((entry) => entry.label).join(', ');
+        if (emailIntent.onBehalfRequested && !emailIntent.personalMailboxMentioned) {
+          effectiveSystemPrompt += `\n\nMultiple personal mailbox sources are available in this run: ${labels}. The user asked for an on-behalf email but did not name the source. Ask one short clarification question before calling send_email or draft_email.`;
+        } else {
+          effectiveSystemPrompt += `\n\nIf the user asks for a personal mailbox send and does not specify whether they mean ${labels}, ask one short clarification question instead of guessing.`;
+        }
+      } else if (personalSources.length === 1 && emailIntent.onBehalfRequested && !emailIntent.personalMailboxMentioned) {
+        effectiveSystemPrompt += `\n\nThe only available personal mailbox source in this run is ${personalSources[0].label}. If the user asks to write on their behalf, use source=${personalSources[0].key} and expect approval before delivery.`;
+      }
+    }
     if (emailIntent.directSend && emailIntent.hasExplicitRecipient && hasSendEmailTool) {
       effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present. Do not inspect mailboxes or contacts first. Use send_email immediately.';
     } else if (emailIntent.draftOnly && emailIntent.hasExplicitRecipient && hasDraftEmailTool) {
@@ -1666,6 +1715,14 @@ async function chat(agent, messages, db, opts = {}) {
     effectiveSystemPrompt += '\n\nEmail is provisioned for this agent in this run, but no direct email tool is exposed right now. Do not claim you sent, drafted, or inspected email unless a tool call confirms it.';
   } else if (emailCapabilityUnavailableReason) {
     effectiveSystemPrompt += `\n\nEmail is unavailable in this run: ${emailCapabilityUnavailableReason}. Do not claim you can inspect mailboxes, send email, or confirm an agent email identity unless a tool call explicitly confirms it.`;
+  }
+  const hasReadEmailTool = nexusTools.some((tool) => tool.name === 'read_emails');
+  if (hasReadEmailTool && mailboxSourceOptions.length > 1) {
+    const mailboxLabels = mailboxSourceOptions.map((entry) => entry.label).join(', ');
+    const mailboxKeys = mailboxSourceOptions.map((entry) => entry.key).join(', ');
+    effectiveSystemPrompt += `\n\nMultiple mailbox sources are available in this run: ${mailboxLabels}. For mailbox-reading requests such as "check email", "read my inbox", "search my mail", or "look at recent emails", do not guess the source. Ask one short clarifying question first unless the user explicitly names the mailbox source. After the user answers, pass read_emails.source using one of these values: ${mailboxKeys}.`;
+  } else if (hasReadEmailTool && mailboxSourceOptions.length === 1) {
+    effectiveSystemPrompt += `\n\nMailbox-reading requests in this run use ${mailboxSourceOptions[0].label}.`;
   }
   if (unavailableOverlayProviders.length > 0) {
     const providerNames = unavailableOverlayProviders.map((entry) => entry.key).join(', ');

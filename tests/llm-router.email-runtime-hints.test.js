@@ -8,6 +8,8 @@ describe('llmRouter email runtime hints', () => {
   let emailProvisioning;
   let unavailableEmailProviders;
   let workspaceCapabilityAvailability;
+  let mailboxSourceOptions;
+  let outboundEmailSourceOptions;
 
   beforeEach(() => {
     jest.resetModules();
@@ -26,6 +28,8 @@ describe('llmRouter email runtime hints', () => {
       availableProviders: ['email'],
       unavailableProviders: [],
     };
+    mailboxSourceOptions = [];
+    outboundEmailSourceOptions = [];
 
     jest.doMock('../services/runtimeCapabilityAvailability', () => ({
       resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue(workspaceCapabilityAvailability),
@@ -64,6 +68,8 @@ describe('llmRouter email runtime hints', () => {
         }
         return [];
       }),
+      getMailboxSourceOptionsForWorkspace: jest.fn().mockImplementation(async () => mailboxSourceOptions),
+      getEmailSendSourceOptionsForWorkspace: jest.fn().mockImplementation(async () => outboundEmailSourceOptions),
       NEXUS_TOOL_NAMES: new Set(['send_email', 'draft_email']),
     }));
 
@@ -182,6 +188,8 @@ describe('llmRouter email runtime hints', () => {
         }
         return [];
       }),
+      getMailboxSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
+      getEmailSendSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
       NEXUS_TOOL_NAMES: new Set(['send_email']),
     }));
 
@@ -289,5 +297,234 @@ describe('llmRouter email runtime hints', () => {
     const toolNames = (recordedBodies[0].tools || []).map((tool) => tool.function.name);
     expect(toolNames).not.toContain('send_email');
     expect(toolNames).not.toContain('draft_email');
+  });
+
+  test('tells the agent to ask before reading email when multiple mailbox sources are available', async () => {
+    jest.resetModules();
+    recordedBodies = [];
+    mailboxSourceOptions = [
+      { key: 'local', label: 'Nexus Local desktop mail' },
+      { key: 'google', label: 'Google mail' },
+      { key: 'microsoft365', label: 'Microsoft 365 / Outlook mail' },
+    ];
+
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue(workspaceCapabilityAvailability),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn((availability, provider) => Boolean(availability?.providerStates?.[provider]?.available)),
+      inferProviderForSkill: jest.fn(() => null),
+    }));
+
+    jest.doMock('../services/agentProvisioningService', () => ({
+      resolveAgentEmailProvisioning: jest.fn().mockImplementation(async () => emailProvisioning),
+      filterProvisionedSkillKeys: jest.fn((skills = []) => skills),
+      getProvisioningReasonForSkill: jest.fn(() => null),
+      getUnavailableAgentProviders: jest.fn((providers = []) => (
+        providers.includes('email') ? unavailableEmailProviders : []
+      )),
+    }));
+
+    jest.doMock('../services/nexusTools', () => ({
+      getOnlineNexusNode: jest.fn().mockResolvedValue({ id: 'node-1' }),
+      getNexusToolsForWorkspace: jest.fn().mockResolvedValue([
+        {
+          name: 'read_emails',
+          description: 'Read emails',
+          input_schema: { type: 'object', properties: { source: { type: 'string' } } },
+        },
+      ]),
+      getMailboxSourceOptionsForWorkspace: jest.fn().mockImplementation(async () => mailboxSourceOptions),
+      getEmailSendSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
+      NEXUS_TOOL_NAMES: new Set(['read_emails']),
+    }));
+
+    const realHttps = jest.requireActual('https');
+    jest.doMock('https', () => ({
+      request: jest.fn((options, callback) => {
+        const req = new EventEmitter();
+        let body = '';
+
+        req.write = (chunk) => {
+          body += chunk;
+        };
+
+        req.end = () => {
+          recordedBodies.push(JSON.parse(body));
+
+          const res = new EventEmitter();
+          res.statusCode = 200;
+          res.headers = { 'content-type': 'application/json' };
+          callback(res);
+
+          process.nextTick(() => {
+            res.emit('data', JSON.stringify({
+              id: 'chatcmpl-email-runtime-clarify',
+              model: 'gpt-5.4',
+              choices: [
+                {
+                  finish_reason: 'stop',
+                  message: {
+                    role: 'assistant',
+                    content: 'Done.',
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 12, completion_tokens: 5 },
+            }));
+            res.emit('end');
+          });
+        };
+
+        req.setTimeout = () => {};
+        req.destroy = (err) => {
+          if (err) req.emit('error', err);
+        };
+
+        return req;
+      }),
+      Agent: realHttps.Agent,
+    }));
+
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    chat = require('../services/llmRouter').chat;
+
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are Jarvis.',
+      },
+      [{ role: 'user', content: 'Check my email.' }],
+      { query: jest.fn().mockResolvedValue({ rows: [] }) }
+    );
+
+    expect(result.content).toBe('Done.');
+    expect(recordedBodies).toHaveLength(1);
+    expect(recordedBodies[0].messages[0].content).toContain('Multiple mailbox sources are available in this run');
+    expect(recordedBodies[0].messages[0].content).toContain('Ask one short clarifying question first');
+    expect(recordedBodies[0].messages[0].content).toContain('read_emails.source');
+    expect(recordedBodies[0].messages[0].content).toContain('Nexus Local desktop mail');
+    expect(recordedBodies[0].messages[0].content).toContain('Google mail');
+    expect(recordedBodies[0].messages[0].content).toContain('Microsoft 365 / Outlook mail');
+  });
+
+  test('tells the agent to ask before sending on behalf when multiple personal mailbox sources are available', async () => {
+    jest.resetModules();
+    recordedBodies = [];
+    outboundEmailSourceOptions = [
+      { key: 'agent', label: 'Provisioned agent email' },
+      { key: 'google', label: 'Google mail' },
+      { key: 'microsoft365', label: 'Microsoft 365 / Outlook mail' },
+    ];
+
+    jest.doMock('../services/runtimeCapabilityAvailability', () => ({
+      resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue(workspaceCapabilityAvailability),
+      filterAvailableProviders: jest.fn((providers = []) => providers),
+      getUnavailableProviders: jest.fn(() => []),
+      filterAvailableSkillKeys: jest.fn((skills = []) => skills),
+      isProviderAvailable: jest.fn((availability, provider) => Boolean(availability?.providerStates?.[provider]?.available)),
+      inferProviderForSkill: jest.fn(() => null),
+    }));
+
+    jest.doMock('../services/agentProvisioningService', () => ({
+      resolveAgentEmailProvisioning: jest.fn().mockImplementation(async () => emailProvisioning),
+      filterProvisionedSkillKeys: jest.fn((skills = []) => skills),
+      getProvisioningReasonForSkill: jest.fn(() => null),
+      getUnavailableAgentProviders: jest.fn((providers = []) => (
+        providers.includes('email') ? unavailableEmailProviders : []
+      )),
+    }));
+
+    jest.doMock('../services/nexusTools', () => ({
+      getOnlineNexusNode: jest.fn().mockResolvedValue({ id: 'node-1' }),
+      getNexusToolsForWorkspace: jest.fn().mockResolvedValue([
+        {
+          name: 'send_email',
+          description: 'Send email',
+          input_schema: { type: 'object', properties: { source: { type: 'string' }, to: { type: 'string' } } },
+        },
+        {
+          name: 'draft_email',
+          description: 'Draft email',
+          input_schema: { type: 'object', properties: { source: { type: 'string' }, to: { type: 'string' } } },
+        },
+      ]),
+      getMailboxSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
+      getEmailSendSourceOptionsForWorkspace: jest.fn().mockImplementation(async () => outboundEmailSourceOptions),
+      NEXUS_TOOL_NAMES: new Set(['send_email', 'draft_email']),
+    }));
+
+    const realHttps = jest.requireActual('https');
+    jest.doMock('https', () => ({
+      request: jest.fn((options, callback) => {
+        const req = new EventEmitter();
+        let body = '';
+
+        req.write = (chunk) => {
+          body += chunk;
+        };
+
+        req.end = () => {
+          recordedBodies.push(JSON.parse(body));
+
+          const res = new EventEmitter();
+          res.statusCode = 200;
+          res.headers = { 'content-type': 'application/json' };
+          callback(res);
+
+          process.nextTick(() => {
+            res.emit('data', JSON.stringify({
+              id: 'chatcmpl-email-runtime-on-behalf',
+              model: 'gpt-5.4',
+              choices: [
+                {
+                  finish_reason: 'stop',
+                  message: {
+                    role: 'assistant',
+                    content: 'Done.',
+                  },
+                },
+              ],
+              usage: { prompt_tokens: 12, completion_tokens: 5 },
+            }));
+            res.emit('end');
+          });
+        };
+
+        req.setTimeout = () => {};
+        req.destroy = (err) => {
+          if (err) req.emit('error', err);
+        };
+
+        return req;
+      }),
+      Agent: realHttps.Agent,
+    }));
+
+    process.env.OPENAI_API_KEY = 'test-openai-key';
+    chat = require('../services/llmRouter').chat;
+
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        system_prompt: 'You are Jarvis.',
+      },
+      [{ role: 'user', content: 'Send this on my behalf to client@example.com.' }],
+      { query: jest.fn().mockResolvedValue({ rows: [] }) }
+    );
+
+    expect(result.content).toBe('Done.');
+    expect(recordedBodies).toHaveLength(1);
+    expect(recordedBodies[0].messages[0].content).toContain('Use send_email or draft_email without a source override for the provisioned agent mailbox.');
+    expect(recordedBodies[0].messages[0].content).toContain('Personal mailbox sends are approval-gated');
+    expect(recordedBodies[0].messages[0].content).toContain('Multiple personal mailbox sources are available in this run');
+    expect(recordedBodies[0].messages[0].content).toContain('Ask one short clarification question before calling send_email or draft_email.');
   });
 });

@@ -28,7 +28,7 @@ const NEXUS_BASE_TOOLS = [
   SKILL_EXECUTION_TOOL,
   {
     name: 'send_email',
-    description: "Send an email immediately from the current agent's workspace email identity. Use this when the user explicitly tells you to send, reply, or forward an email now. Do not look up contacts if the email address is already provided.",
+    description: "Send email using the current agent's provisioned mailbox by default. Use source='google' or source='microsoft365' only when the user explicitly says to write on their behalf or from their own Gmail / Outlook; that path always requires approval. If the user says only 'on my behalf' and multiple personal mailbox sources are available, ask which one before calling this tool.",
     input_schema: {
       type: 'object',
       properties: {
@@ -36,13 +36,14 @@ const NEXUS_BASE_TOOLS = [
         subject: { type: 'string', description: 'Email subject line.' },
         body: { type: 'string', description: 'Final plain-text email body.' },
         htmlBody: { type: 'string', description: 'Optional HTML email body.' },
+        source: { type: 'string', description: "Optional sender source override: omit or use 'agent' for the provisioned agent mailbox, or use 'google', 'microsoft365', or 'outlook' for an explicit on-behalf mailbox." },
       },
       required: ['to', 'subject', 'body'],
     },
   },
   {
     name: 'draft_email',
-    description: 'Create an email draft for later review or manual sending. Use this when the user asks for a draft, asks to review before sending, or does not clearly authorize immediate delivery.',
+    description: "Create an email draft for later review or manual sending. Use source='google' or source='microsoft365' only when the user explicitly wants a personal Gmail / Outlook mailbox; that path is treated as on-behalf mail and stays approval-gated.",
     input_schema: {
       type: 'object',
       properties: {
@@ -50,6 +51,7 @@ const NEXUS_BASE_TOOLS = [
         subject: { type: 'string', description: 'Email subject line.' },
         body: { type: 'string', description: 'Final plain-text email body.' },
         htmlBody: { type: 'string', description: 'Optional HTML email body.' },
+        source: { type: 'string', description: "Optional sender source override: omit or use 'agent' for the provisioned agent mailbox, or use 'google', 'microsoft365', or 'outlook' for an explicit on-behalf mailbox." },
       },
       required: ['to', 'subject', 'body'],
     },
@@ -92,10 +94,11 @@ const NEXUS_BASE_TOOLS = [
   },
   {
     name: 'read_emails',
-    description: "Read recent emails from the user's mail client (Apple Mail or Outlook).",
+    description: "Read recent emails from the selected mailbox source. Use source='local' for Nexus Local desktop mail, source='google' for Gmail, source='microsoft365' for Outlook / Microsoft 365, or source='workspace' for the Vutler workspace mailbox. If the user says only 'check email' and multiple sources are available, ask which source they mean before calling this tool.",
     input_schema: {
       type: 'object',
       properties: {
+        source: { type: 'string', description: "Optional mailbox source override: 'local', 'google', 'microsoft365', 'outlook', or 'workspace'." },
         query: { type: 'string', description: 'Optional search query to filter emails.' },
         limit: { type: 'number', description: 'Maximum number of emails to return (default 10).' },
       },
@@ -317,6 +320,22 @@ function normalizeStringArray(values) {
   ));
 }
 
+function normalizeMailSource(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (['outlook', 'microsoft', 'microsoft_365', 'office365'].includes(normalized)) return 'microsoft365';
+  if (['gmail'].includes(normalized)) return 'google';
+  if (['desktop'].includes(normalized)) return 'local';
+  return normalized;
+}
+
+function normalizeOutboundEmailSource(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'agent';
+  if (['agent', 'provisioned', 'workspace', 'managed', 'default'].includes(normalized)) return 'agent';
+  return normalizeMailSource(normalized);
+}
+
 function getNodeConsentState(node = null) {
   return node?.config?.consent_state || node?.config?.consentState || null;
 }
@@ -369,6 +388,12 @@ function isLocalActionAllowed(gate, requiredActions = []) {
   if (!Array.isArray(requiredActions) || requiredActions.length === 0) return true;
   if (!gate?.restrictive) return true;
   return requiredActions.some((action) => gate.actions.has(action));
+}
+
+function hasExplicitLocalOnBehalfEmailAccess(node = null) {
+  if (!node || isWorkspaceBackedNode(node)) return false;
+  const gate = buildLocalActionGate(node);
+  return gate.actions.has('send_email_on_behalf');
 }
 
 function isRuntimeAvailable(node, runtimeKey, options = {}) {
@@ -485,6 +510,161 @@ async function getOnlineNexusNodeRecord(workspaceId, pool) {
   }
 }
 
+async function getNexusNodeRecordById(workspaceId, nodeId, pool) {
+  if (!workspaceId || !nodeId || !pool?.query) return null;
+
+  try {
+    const result = await pool.query(
+      `SELECT id, name, type, mode, status, config, last_heartbeat, updated_at, created_at
+         FROM tenant_vutler.nexus_nodes
+        WHERE workspace_id = $1
+          AND id::text = $2
+        LIMIT 1`,
+      [workspaceId, String(nodeId)]
+    );
+    return result.rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getConnectedWorkspaceMailSources(workspaceId, pool) {
+  if (!workspaceId || !pool?.query) return [];
+
+  try {
+    const result = await pool.query(
+      `SELECT provider
+         FROM tenant_vutler.workspace_integrations
+        WHERE workspace_id = $1
+          AND connected = TRUE
+          AND provider = ANY($2::text[])`,
+      [workspaceId, ['google', 'microsoft365', 'outlook', 'microsoft', 'office365']]
+    );
+
+    return Array.from(new Set(
+      result.rows
+        .map((row) => normalizeMailSource(row.provider))
+        .filter((value) => value === 'google' || value === 'microsoft365')
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function getLocalMailboxSourceOptions(node, options = {}) {
+  if (!node || isWorkspaceBackedNode(node)) return [];
+  const gate = buildLocalActionGate(node);
+  if (!isRuntimeAvailable(node, 'mail', options)) return [];
+  if (!isLocalActionAllowed(gate, TOOL_GATES.read_emails.localActions)) return [];
+
+  const snapshot = getNodeDiscoverySnapshot(node);
+  const detectedAppKeys = new Set(
+    Array.isArray(snapshot?.detectedApps)
+      ? snapshot.detectedApps.map((app) => String(app.key || '').trim().toLowerCase()).filter(Boolean)
+      : []
+  );
+  const consentState = getNodeConsentState(node);
+  const consentApps = normalizeStringArray(consentState?.sources?.mail?.apps).map((app) => app.toLowerCase());
+  const hasAppleMail = detectedAppKeys.has('mail') || consentApps.includes('apple_mail');
+  const hasOutlook = detectedAppKeys.has('outlook') || consentApps.includes('outlook');
+  const detail = hasAppleMail && hasOutlook
+    ? 'Apple Mail or Outlook detected'
+    : hasAppleMail
+      ? 'Apple Mail detected'
+      : hasOutlook
+        ? 'Outlook detected'
+        : 'Desktop mail on the Nexus Local machine';
+
+  return [{
+    key: 'local',
+    label: 'Nexus Local desktop mail',
+    detail,
+  }];
+}
+
+async function getEmailSendSourceOptionsForWorkspace(workspaceId, pool, options = {}) {
+  const node = await getOnlineNexusNodeRecord(workspaceId, pool);
+  const sources = [];
+
+  if (options.emailCapabilityEffective === true) {
+    sources.push({
+      key: 'agent',
+      label: 'Provisioned agent email',
+      detail: 'Managed Vutler agent mailbox',
+    });
+  }
+
+  if (!node || isWorkspaceBackedNode(node) || !hasExplicitLocalOnBehalfEmailAccess(node)) {
+    return sources;
+  }
+
+  const connected = await getConnectedWorkspaceMailSources(workspaceId, pool);
+
+  if (connected.includes('google')) {
+    sources.push({
+      key: 'google',
+      label: 'Google mail',
+      detail: 'Send using the connected Gmail mailbox on your behalf',
+    });
+  }
+
+  if (connected.includes('microsoft365')) {
+    sources.push({
+      key: 'microsoft365',
+      label: 'Microsoft 365 / Outlook mail',
+      detail: 'Send using the connected Outlook mailbox on your behalf',
+    });
+  }
+
+  return sources;
+}
+
+async function getMailboxSourceOptionsForWorkspace(workspaceId, pool, options = {}) {
+  const node = await getOnlineNexusNodeRecord(workspaceId, pool);
+  if (!node) return [];
+
+  const connected = await getConnectedWorkspaceMailSources(workspaceId, pool);
+  const sources = isWorkspaceBackedNode(node) ? [] : getLocalMailboxSourceOptions(node, options);
+  const gate = buildLocalActionGate(node);
+  const localReadAllowed = isWorkspaceBackedNode(node) || isLocalActionAllowed(gate, TOOL_GATES.read_emails.localActions);
+  const localMailAvailable = !isWorkspaceBackedNode(node) && isRuntimeAvailable(node, 'mail', options);
+  const workspaceMailAvailable = options.workspaceMailAvailable === true;
+
+  if (!localReadAllowed && !isWorkspaceBackedNode(node)) {
+    return [];
+  }
+
+  if (!isWorkspaceBackedNode(node) && !localMailAvailable && !workspaceMailAvailable && connected.length === 0) {
+    return [];
+  }
+
+  if (connected.includes('google')) {
+    sources.push({
+      key: 'google',
+      label: 'Google mail',
+      detail: 'Workspace Gmail integration',
+    });
+  }
+
+  if (connected.includes('microsoft365')) {
+    sources.push({
+      key: 'microsoft365',
+      label: 'Microsoft 365 / Outlook mail',
+      detail: 'Workspace Outlook integration',
+    });
+  }
+
+  if (workspaceMailAvailable) {
+    sources.push({
+      key: 'workspace',
+      label: 'Vutler workspace mail',
+      detail: 'Managed Vutler mailbox',
+    });
+  }
+
+  return sources;
+}
+
 // ── DB lookup: find online Nexus node for workspace ──────────────────────────
 
 async function getOnlineNexusNode(workspaceId, pool) {
@@ -502,6 +682,7 @@ async function getNexusToolsForWorkspace(workspaceId, pool, options = {}) {
     return options.emailCapabilityEffective === true ? getWorkspaceEmailTools() : [];
   }
   const localActionGate = buildLocalActionGate(node);
+  const connectedWorkspaceMailSources = await getConnectedWorkspaceMailSources(workspaceId, pool);
   const visibleTools = options.allowTerminalSessions
     ? NEXUS_TOOLS
     : NEXUS_BASE_TOOLS;
@@ -516,7 +697,15 @@ async function getNexusToolsForWorkspace(workspaceId, pool, options = {}) {
       return false;
     }
 
-    if (!isRuntimeAvailable(node, gate.runtime, options)) {
+    const mailRuntimeAvailable = gate.runtime === 'mail'
+      && !isWorkspaceBackedNode(node)
+      && !isRuntimeAvailable(node, gate.runtime, options)
+      && (
+        options.workspaceMailAvailable === true
+        || connectedWorkspaceMailSources.length > 0
+      );
+
+    if (!isRuntimeAvailable(node, gate.runtime, options) && !mailRuntimeAvailable) {
       return false;
     }
 
@@ -555,12 +744,32 @@ async function executeNexusTool(nodeId, toolName, args, wsConnections) {
   if ((toolName === 'send_email' || toolName === 'draft_email')
     && executionContext.workspaceId
     && executionContext.db) {
+    const nodeRecord = await getNexusNodeRecordById(executionContext.workspaceId, nodeId, executionContext.db);
+    const requestedSource = normalizeOutboundEmailSource(mappedArgs.source || mappedArgs.sender_source);
+
+    if (requestedSource !== 'agent') {
+      if (!nodeRecord || isWorkspaceBackedNode(nodeRecord)) {
+        return {
+          success: false,
+          error: 'Sending email on your behalf requires an online Nexus Local node with explicit local consent.',
+        };
+      }
+
+      if (!hasExplicitLocalOnBehalfEmailAccess(nodeRecord)) {
+        return {
+          success: false,
+          error: 'Nexus Local is not authorized to send email on your behalf yet. Enable "Send on your behalf" in local mail consent first.',
+        };
+      }
+    }
+
     const { EmailAdapter } = require('./skills/adapters/EmailAdapter');
     const adapter = new EmailAdapter();
     return adapter.execute({
       workspaceId: executionContext.workspaceId,
       agentId: mappedArgs.agentId || mappedArgs.agent_id || null,
       agent: executionContext.agent || null,
+      nexusNode: nodeRecord,
       latestUserMessage: executionContext.latestUserMessage || '',
       params: {
         action: toolName === 'send_email' ? 'send_message' : 'draft_message',
@@ -568,6 +777,7 @@ async function executeNexusTool(nodeId, toolName, args, wsConnections) {
         subject: mappedArgs.subject,
         body: mappedArgs.body,
         htmlBody: mappedArgs.htmlBody || mappedArgs.html_body || null,
+        source: requestedSource,
       },
     });
   }
@@ -684,6 +894,8 @@ module.exports = {
   SKILL_EXECUTION_TOOL,
   getOnlineNexusNode,
   getNexusToolsForWorkspace,
+  getMailboxSourceOptionsForWorkspace,
+  getEmailSendSourceOptionsForWorkspace,
   executeNexusTool,
   handleToolResult,
   selectBestOnlineNexusNode,

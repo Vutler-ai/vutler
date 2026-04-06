@@ -168,7 +168,7 @@
       {
         key: 'mail',
         label: 'Mail',
-        description: 'Read and search local desktop mailboxes.',
+        description: 'Read desktop mailboxes and optionally allow explicit send-on-behalf flows for connected Gmail or Outlook accounts.',
         defaultEnabled: true,
         apps: [
           { key: 'apple_mail', label: 'Apple Mail' },
@@ -177,6 +177,7 @@
         actions: [
           { key: 'list_emails', label: 'List emails' },
           { key: 'search_emails', label: 'Search emails' },
+          { key: 'send_email_on_behalf', label: 'Send on your behalf' },
         ],
       },
       {

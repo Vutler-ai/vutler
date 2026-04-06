@@ -117,6 +117,36 @@ Check in this order:
 4. synced folder visibility
 5. agent policy allowance
 
+### Nexus Local Mail Rules
+
+Use these rules when triaging mailbox behavior on Nexus Local:
+
+- `check email` or `read my inbox`
+  - if more than one mailbox source is available, the agent must ask which source the user means
+  - valid mailbox targets are `local`, `google`, `microsoft365`, and `workspace`
+- standard agent email
+  - uses the provisioned Vutler agent mailbox
+  - does not require local `send_email_on_behalf` consent
+- `on my behalf`
+  - means the user wants their own connected Gmail or Microsoft 365 mailbox, not the standard agent mailbox
+  - must never silently fall back to the agent mailbox
+  - requires explicit mailbox source selection if more than one personal mailbox is available
+  - always goes through approval before delivery
+
+### Nexus Local Mail Consent
+
+The local `mail` consent source now includes:
+
+- `list_emails`
+- `search_emails`
+- `send_email_on_behalf`
+
+Interpretation:
+
+- if `send_email_on_behalf` is missing, reading mail may still work but Gmail / Outlook send-on-behalf must stay blocked
+- if Google or Microsoft 365 is connected in the workspace but the local node lacks `send_email_on_behalf`, the runtime should return a consent error instead of guessing
+- if Microsoft 365 send-on-behalf fails after rollout, reconnect the Microsoft 365 integration so the workspace token includes `Mail.Send`
+
 Typical interpretation:
 
 - `denied_consent`

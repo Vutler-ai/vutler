@@ -128,6 +128,8 @@ describe('nexus permission contract', () => {
     const replace = jest.fn();
     const workspaceEmailProvider = { sendEmail: jest.fn(), draftEmail: jest.fn() };
     const WorkspaceEmailProvider = jest.fn(() => workspaceEmailProvider);
+    const workspaceMailProvider = { listEmails: jest.fn(), searchEmails: jest.fn() };
+    const WorkspaceMailProvider = jest.fn(() => workspaceMailProvider);
 
     jest.doMock('../packages/nexus/dashboard/server', () => ({
       createDashboardServer: jest.fn(),
@@ -182,6 +184,9 @@ describe('nexus permission contract', () => {
     jest.doMock('../packages/nexus/lib/providers/workspace-email', () => ({
       WorkspaceEmailProvider,
     }));
+    jest.doMock('../packages/nexus/lib/providers/workspace-mail', () => ({
+      WorkspaceMailProvider,
+    }));
 
     const { NexusNode } = require('../packages/nexus');
 
@@ -197,7 +202,12 @@ describe('nexus permission contract', () => {
       server: 'https://app.vutler.ai',
       apiKey: 'test-api-key',
     });
+    expect(WorkspaceMailProvider).toHaveBeenCalledWith({
+      server: 'https://app.vutler.ai',
+      apiKey: 'test-api-key',
+    });
     expect(node.providers.workspaceEmail).toBe(workspaceEmailProvider);
+    expect(node.providers.workspaceMail).toBe(workspaceMailProvider);
     expect(node.providers.mail).toBeUndefined();
     expect(node.providers.calendar).toBeUndefined();
     expect(node.providers.contacts).toBeUndefined();

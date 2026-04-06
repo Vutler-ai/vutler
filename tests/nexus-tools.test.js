@@ -80,6 +80,90 @@ describe('nexusTools terminal support', () => {
     expect(names).not.toContain('read_clipboard');
   });
 
+  test('getNexusToolsForWorkspace exposes local mail reading when that consent is granted', async () => {
+    const { getNexusToolsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockResolvedValue({
+        rows: [{
+          id: 'node-1',
+          name: 'Nexus Node',
+          status: 'online',
+          type: 'local',
+          mode: 'local',
+          updated_at: freshTimestamp,
+          created_at: freshTimestamp,
+          config: {
+            permissions: {
+              allowedActions: ['list_emails'],
+            },
+            discovery_snapshot: {
+              detectedApps: [{ key: 'mail', label: 'Apple Mail' }],
+              providers: {
+                mail: { available: true },
+              },
+            },
+          },
+        }],
+      }),
+    };
+
+    const tools = await getNexusToolsForWorkspace('ws-1', db);
+    const readEmailsTool = tools.find((tool) => tool.name === 'read_emails');
+
+    expect(readEmailsTool).toBeTruthy();
+    expect(readEmailsTool.input_schema.properties.source).toEqual(expect.objectContaining({
+      type: 'string',
+    }));
+  });
+
+  test('getNexusToolsForWorkspace keeps read_emails available on Nexus Local when workspace mail sources exist', async () => {
+    const { getNexusToolsForWorkspace, getMailboxSourceOptionsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockImplementation(async (sql) => {
+        if (String(sql).includes('FROM tenant_vutler.workspace_integrations')) {
+          return {
+            rows: [
+              { provider: 'google' },
+              { provider: 'microsoft365' },
+            ],
+          };
+        }
+        return {
+          rows: [{
+            id: 'node-1',
+            name: 'Nexus Node',
+            status: 'online',
+            type: 'local',
+            mode: 'local',
+            updated_at: freshTimestamp,
+            created_at: freshTimestamp,
+            config: {
+              permissions: {
+                allowedActions: ['list_emails'],
+              },
+              discovery_snapshot: {
+                detectedApps: [{ key: 'mail', label: 'Apple Mail' }],
+                providers: {
+                  mail: { available: false },
+                },
+              },
+            },
+          }],
+        };
+      }),
+    };
+
+    const tools = await getNexusToolsForWorkspace('ws-1', db, {
+      workspaceMailAvailable: true,
+    });
+    const sources = await getMailboxSourceOptionsForWorkspace('ws-1', db, {
+      workspaceMailAvailable: true,
+    });
+
+    expect(tools.some((tool) => tool.name === 'read_emails')).toBe(true);
+    expect(sources.map((entry) => entry.key)).toEqual(['google', 'microsoft365', 'workspace']);
+  });
+
   test('getNexusToolsForWorkspace exposes direct email tools on local nodes only when the agent email capability is effective', async () => {
     const { getNexusToolsForWorkspace } = require('../services/nexusTools');
     const db = {
@@ -155,6 +239,44 @@ describe('nexusTools terminal support', () => {
     expect(enabledTools.some((tool) => tool.name === 'read_emails')).toBe(true);
     expect(enabledTools.some((tool) => tool.name === 'read_calendar')).toBe(true);
     expect(enabledTools.some((tool) => tool.name === 'read_contacts')).toBe(true);
+  });
+
+  test('getEmailSendSourceOptionsForWorkspace exposes personal mailbox sends only when local on-behalf consent is granted', async () => {
+    const { getEmailSendSourceOptionsForWorkspace } = require('../services/nexusTools');
+    const db = {
+      query: jest.fn().mockImplementation(async (sql) => {
+        if (String(sql).includes('FROM tenant_vutler.workspace_integrations')) {
+          return {
+            rows: [
+              { provider: 'google' },
+              { provider: 'microsoft365' },
+            ],
+          };
+        }
+        return {
+          rows: [{
+            id: 'node-1',
+            name: 'Local Node',
+            status: 'online',
+            type: 'local',
+            mode: 'local',
+            updated_at: freshTimestamp,
+            created_at: freshTimestamp,
+            config: {
+              permissions: {
+                allowedActions: ['list_emails', 'send_email_on_behalf'],
+              },
+            },
+          }],
+        };
+      }),
+    };
+
+    const sources = await getEmailSendSourceOptionsForWorkspace('ws-1', db, {
+      emailCapabilityEffective: true,
+    });
+
+    expect(sources.map((entry) => entry.key)).toEqual(['agent', 'google', 'microsoft365']);
   });
 
   test('selectBestOnlineNexusNode ignores stale online records without heartbeat and prefers a fresh heartbeat node', async () => {
@@ -294,32 +416,85 @@ describe('nexusTools terminal support', () => {
       },
       {
         workspaceId: 'ws-1',
-        db: { query: jest.fn() },
+        db: {
+          query: jest.fn().mockResolvedValue({
+            rows: [{
+              id: 'node-stale',
+              type: 'local',
+              mode: 'local',
+              status: 'online',
+              config: {},
+            }],
+          }),
+        },
         agent: { id: 'agent-1', email: 'nora@starbox-group.com' },
         latestUserMessage: 'Envoie cet email maintenant.',
       }
     );
 
     expect(dispatchNodeActionMock).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledWith({
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws-1',
       agentId: 'agent-1',
       agent: { id: 'agent-1', email: 'nora@starbox-group.com' },
       latestUserMessage: 'Envoie cet email maintenant.',
+      nexusNode: expect.objectContaining({
+        id: 'node-stale',
+        type: 'local',
+        mode: 'local',
+      }),
       params: {
         action: 'send_message',
         to: 'client@example.com',
         subject: 'Hello',
         body: 'Body',
         htmlBody: null,
+        source: 'agent',
       },
-    });
+    }));
     expect(result).toEqual({
       success: true,
       data: {
         id: 'email-1',
         status: 'sent',
       },
+    });
+  });
+
+  test('executeNexusTool blocks on-behalf email when local consent is missing', async () => {
+    const { executeNexusTool } = require('../services/nexusTools');
+    const result = await executeNexusTool(
+      'node-1',
+      'send_email',
+      {
+        to: 'client@example.com',
+        subject: 'Hello',
+        body: 'Body',
+        source: 'google',
+      },
+      {
+        workspaceId: 'ws-1',
+        db: {
+          query: jest.fn().mockResolvedValue({
+            rows: [{
+              id: 'node-1',
+              type: 'local',
+              mode: 'local',
+              status: 'online',
+              config: {
+                permissions: {
+                  allowedActions: ['list_emails'],
+                },
+              },
+            }],
+          }),
+        },
+      }
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Nexus Local is not authorized to send email on your behalf yet. Enable "Send on your behalf" in local mail consent first.',
     });
   });
 });
