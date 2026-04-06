@@ -81,6 +81,9 @@ const MODE_BADGE: Record<string, string> = {
 const inputCls =
   'w-full bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-4 py-2.5 text-white text-sm placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors';
 
+const LOCAL_NEXUS_DISCOVERY_PORTS = [3199, 3200, 3201, 3202] as const;
+const LOCAL_NEXUS_LEGACY_PORTS = [3100, 3101, 3102, 3103] as const;
+
 type LocalConsentSourceKey = 'filesystem' | 'mail' | 'calendar' | 'contacts' | 'clipboard' | 'shell';
 
 interface LocalConsentChoice {
@@ -495,7 +498,39 @@ function DeployModal({
     setLocalSetupState('searching');
     setLocalSetupMessage('Searching for a running local Nexus console…');
 
-    const candidatePorts = [3100, 3101, 3102, 3103, 3199];
+    for (const discoveryPort of LOCAL_NEXUS_DISCOVERY_PORTS) {
+      try {
+        const response = await fetch(`http://localhost:${discoveryPort}/api/discovery`);
+        if (!response.ok) continue;
+        const payload = await response.json().catch(() => null);
+        if (!payload) continue;
+
+        const resolvedPort = Number(payload?.dashboard?.port) || discoveryPort;
+        const setupStateResponse = await fetch(`http://localhost:${resolvedPort}/api/setup-state`).catch(() => null);
+        const setupState = setupStateResponse?.ok
+          ? await setupStateResponse.json().catch(() => payload?.state ?? null)
+          : (payload?.state ?? null);
+
+        setLocalSetupPort(resolvedPort);
+        setLocalSetupState('ready');
+        setLocalSetupMessage(
+          resolvedPort === discoveryPort
+            ? `Local Nexus detected on port ${resolvedPort}.`
+            : `Local Nexus detected on port ${resolvedPort} via discovery gateway ${discoveryPort}.`
+        );
+        if (setupState?.pairing?.active && setupState?.pairing?.code) {
+          setPairCode((current) => current || String(setupState.pairing.code).toUpperCase());
+          setPairingHint(`Active pairing code detected on port ${resolvedPort}.`);
+        } else {
+          setPairingHint(`Local Nexus is running on port ${resolvedPort}. Generate a pair code to continue.`);
+        }
+        return resolvedPort;
+      } catch {
+        // Try the next local discovery gateway.
+      }
+    }
+
+    const candidatePorts = [...LOCAL_NEXUS_LEGACY_PORTS];
     for (const port of candidatePorts) {
       try {
         const response = await fetch(`http://localhost:${port}/api/setup-state`);
@@ -514,7 +549,7 @@ function DeployModal({
         }
         return port;
       } catch {
-        // Try the next known local port.
+        // Try the next known legacy port.
       }
     }
 
@@ -598,7 +633,14 @@ function DeployModal({
 
     const permissions = buildLocalPermissionsFromConsent(localConsent);
     const code = pairCode.trim().toUpperCase();
-    const candidatePorts = localSetupPort ? [localSetupPort, 3100, 3101, 3102, 3103, 3199] : [3100, 3101, 3102, 3103, 3199];
+    const resolvedPort = localSetupPort ?? await detectLocalNexusSetup();
+    if (!resolvedPort) {
+      setPairingState('error');
+      setPairingMessage('No local Nexus runtime detected. Launch the installer first, then retry pairing.');
+      return;
+    }
+
+    const candidatePorts = Array.from(new Set([resolvedPort, ...LOCAL_NEXUS_LEGACY_PORTS]));
 
     for (const port of candidatePorts) {
       try {
@@ -632,7 +674,7 @@ function DeployModal({
 
     setPairingState('error');
     setPairingMessage('No local Nexus runtime accepted that pairing code. Generate a fresh code in the local console and retry.');
-  }, [token, pairCode, localConsent, localNodeName, localSetupPort]);
+  }, [token, pairCode, localConsent, localNodeName, localSetupPort, detectLocalNexusSetup]);
 
   useEffect(() => {
     setLocalPairingBootstrapDone(false);

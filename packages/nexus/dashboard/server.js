@@ -125,6 +125,21 @@ function createDashboardServer(node) {
     if (req.url === '/' || req.url === '/index.html' || req.url === '/onboarding' || req.url === '/onboarding.html') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(indexHtml);
+    } else if (req.url === '/api/discovery') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        ok: true,
+        service: 'vutler-nexus',
+        dashboard: {
+          port: node.port,
+          url: `http://localhost:${node.port}/`,
+        },
+        discovery: {
+          port: node.discoveryPort || node.port,
+          url: `http://localhost:${node.discoveryPort || node.port}/`,
+        },
+        state: getSetupState(),
+      }));
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, mode: node.mode, node_id: node.nodeId }));

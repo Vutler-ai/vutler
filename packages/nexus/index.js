@@ -9,7 +9,9 @@ const { ProfileRegistry } = require('./lib/profile-registry');
 const { EnterprisePolicyEngine } = require('./lib/enterprise-policy-engine');
 const { LocalIntegrationBridge } = require('./lib/local-integration-bridge');
 const { EnterpriseActionExecutor } = require('./lib/enterprise-action-executor');
-const { buildRuntimeConfigFromToken, writeRuntimeConfig } = require('./lib/runtime-config');
+const { buildRuntimeConfigFromToken, readRuntimeConfig, writeRuntimeConfig } = require('./lib/runtime-config');
+
+const LOCAL_DISCOVERY_PORTS = [3199, 3200, 3201, 3202];
 
 class NexusNode {
   constructor(opts = {}) {
@@ -19,6 +21,7 @@ class NexusNode {
     this.name = opts.name || process.env.NODE_NAME || require('os').hostname();
     this.type = opts.type || 'local';
     this.port = opts.port || 3100;
+    this.discoveryPort = opts.discovery_port || null;
     this.mode = opts.mode || 'standard';
     this.sniparaInstanceId = opts.snipara_instance_id || null;
     this.clientName = opts.client_name || null;
@@ -221,6 +224,7 @@ class NexusNode {
     if (this.pollTimer) clearInterval(this.pollTimer);
     if (this.commandTimer) clearInterval(this.commandTimer);
     if (this.healthServer) this.healthServer.close();
+    if (this.discoveryServer) this.discoveryServer.close();
     if (this.offlineMonitor) this.offlineMonitor.stop();
     this.providers.terminal?.shutdown?.();
     if (this.nodeId) {
@@ -1007,6 +1011,88 @@ class NexusNode {
     if (this.healthServer) return;
     this.healthServer = createDashboardServer(this);
     this.healthServer.listen(this.port);
+    this._startDiscoveryBridgeServer();
+  }
+
+  _startDiscoveryBridgeServer() {
+    if (this.discoveryServer) return;
+
+    if (LOCAL_DISCOVERY_PORTS.includes(this.port)) {
+      this.discoveryPort = this.port;
+      return;
+    }
+
+    const runtime = this;
+    const discoveryServer = http.createServer((req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+      }
+
+      if (req.url === '/' || req.url === '/index.html' || req.url === '/onboarding' || req.url === '/onboarding.html') {
+        res.writeHead(302, { Location: `http://localhost:${runtime.port}/` });
+        return res.end();
+      }
+
+      if (req.url === '/health' || req.url === '/api/discovery') {
+        const runtimeConfig = readRuntimeConfig();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          ok: true,
+          service: 'vutler-nexus',
+          dashboard: {
+            port: runtime.port,
+            url: `http://localhost:${runtime.port}/`,
+          },
+          discovery: {
+            port: runtime.discoveryPort,
+            url: runtime.discoveryPort ? `http://localhost:${runtime.discoveryPort}/` : null,
+          },
+          state: {
+            configured: Boolean(runtimeConfig?.deploy_token || runtimeConfig?.api_key || runtime.key || runtime.deployToken),
+            connected: Boolean(runtime.nodeId),
+            mode: runtime.mode || runtimeConfig?.mode || 'local',
+          },
+        }));
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'Not Found' }));
+    });
+
+    const tryListen = (index) => {
+      const port = LOCAL_DISCOVERY_PORTS[index];
+      if (!port) {
+        this.log('[NEXUS] Local discovery bridge unavailable; continuing without localhost discovery shortcut.');
+        return;
+      }
+
+      const onError = (error) => {
+        discoveryServer.removeListener('listening', onListening);
+        if (error && error.code === 'EADDRINUSE') {
+          tryListen(index + 1);
+          return;
+        }
+        this.log(`[NEXUS] Local discovery bridge failed on port ${port}: ${error.message}`);
+      };
+
+      const onListening = () => {
+        discoveryServer.removeListener('error', onError);
+        this.discoveryServer = discoveryServer;
+        this.discoveryPort = port;
+        this.log(`[NEXUS] Local discovery bridge available on http://localhost:${port}`);
+      };
+
+      discoveryServer.once('error', onError);
+      discoveryServer.once('listening', onListening);
+      discoveryServer.listen(port, '127.0.0.1');
+    };
+
+    tryListen(0);
   }
 
   _syncRemoteClients() {
