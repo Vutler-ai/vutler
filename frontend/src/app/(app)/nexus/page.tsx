@@ -317,6 +317,7 @@ function DeployModal({
   const [pairCode, setPairCode] = useState('');
   const [pairingState, setPairingState] = useState<'idle' | 'pairing' | 'paired' | 'error'>('idle');
   const [pairingMessage, setPairingMessage] = useState('');
+  const [pairingHint, setPairingHint] = useState('');
 
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -504,6 +505,12 @@ function DeployModal({
         setLocalSetupPort(port);
         setLocalSetupState('ready');
         setLocalSetupMessage(`Local Nexus detected on port ${port}.`);
+        if (payload?.pairing?.active && payload?.pairing?.code) {
+          setPairCode((current) => current || String(payload.pairing.code).toUpperCase());
+          setPairingHint(`Active pairing code detected on port ${port}.`);
+        } else {
+          setPairingHint(`Local Nexus is running on port ${port}. Generate a pair code to continue.`);
+        }
         return port;
       } catch {
         // Try the next known local port.
@@ -513,8 +520,36 @@ function DeployModal({
     setLocalSetupPort(null);
     setLocalSetupState('error');
     setLocalSetupMessage('No local Nexus console detected on localhost. Launch the installer first, then retry detection.');
+    setPairingHint('');
     return null;
   }, []);
+
+  const generateLocalPairCode = useCallback(async () => {
+    setPairingState('idle');
+    setPairingMessage('');
+
+    const port = localSetupPort ?? await detectLocalNexusSetup();
+    if (!port) return;
+
+    try {
+      const response = await fetch(`http://localhost:${port}/api/pairing/generate`, {
+        method: 'POST',
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.code) {
+        throw new Error(payload?.error || `Could not generate a pairing code on port ${port}`);
+      }
+
+      setLocalSetupPort(port);
+      setPairCode(String(payload.code).toUpperCase());
+      setPairingHint(`Pairing code generated on port ${port}.`);
+      setPairingState('idle');
+      setPairingMessage('Enter this code below, then pair the machine.');
+    } catch (err) {
+      setPairingState('error');
+      setPairingMessage(err instanceof Error ? err.message : 'Could not generate a pairing code from the local Nexus console.');
+    }
+  }, [localSetupPort, detectLocalNexusSetup]);
 
   const pushToLocalNexus = useCallback(async () => {
     if (!token) return;
@@ -1291,13 +1326,21 @@ function DeployModal({
                       <div>
                         <p className="text-white text-sm font-medium">Desktop installer</p>
                         <p className="text-[#6b7280] text-xs mt-0.5">
-                          Install Nexus locally, then send this deploy token directly to the running setup console on `localhost`.
+                          Install Nexus locally, detect the running console on `localhost`, then pair this machine with a short code.
                         </p>
                       </div>
                     </div>
                     <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[#11131d] p-3 space-y-3">
                       <div className="space-y-2">
-                        <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Pair Code</label>
+                        <div className="flex items-center justify-between gap-3">
+                          <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Pair Code</label>
+                          <button
+                            onClick={() => void generateLocalPairCode()}
+                            className="text-xs text-blue-300 hover:text-white transition-colors"
+                          >
+                            Generate From Local Nexus
+                          </button>
+                        </div>
                         <div className="flex items-center gap-2">
                           <input
                             type="text"
@@ -1314,6 +1357,9 @@ function DeployModal({
                             {pairingState === 'pairing' ? 'Pairing…' : 'Pair With Code'}
                           </button>
                         </div>
+                        {pairingHint && (
+                          <p className="text-xs text-blue-300">{pairingHint}</p>
+                        )}
                         <p
                           className={`text-xs ${
                             pairingState === 'error'
@@ -1364,23 +1410,29 @@ function DeployModal({
                         {localSetupMessage || 'If Nexus is already running locally, Vutler can push the token and permissions directly without CLI copy-paste.'}
                       </p>
                     </div>
-                    <div className="border-t border-[rgba(255,255,255,0.05)] pt-3">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg shrink-0">⌨️</span>
-                          <p className="text-[#9ca3af] text-xs font-medium">CLI fallback</p>
+                    <details className="border-t border-[rgba(255,255,255,0.05)] pt-3">
+                      <summary className="flex cursor-pointer items-center gap-2 text-xs text-[#9ca3af] font-medium list-none">
+                        <span className="text-lg shrink-0">⌨️</span>
+                        Advanced fallback: token + CLI
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <p className="text-xs text-[#6b7280]">
+                          Keep this only if localhost pairing is unavailable or blocked by the browser or the local environment.
+                        </p>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-[#9ca3af] text-xs font-medium">CLI setup</p>
+                          <button
+                            onClick={() => copyText(localCliInstructions)}
+                            className="text-xs text-[#6b7280] hover:text-white transition-colors"
+                          >
+                            Copy all
+                          </button>
                         </div>
-                        <button
-                          onClick={() => copyText(localCliInstructions)}
-                          className="text-xs text-[#6b7280] hover:text-white transition-colors"
-                        >
-                          Copy all
-                        </button>
+                        <pre className="text-[#6b7280] text-xs font-mono whitespace-pre-wrap leading-relaxed">
+                          {localCliInstructions}
+                        </pre>
                       </div>
-                      <pre className="text-[#6b7280] text-xs font-mono whitespace-pre-wrap leading-relaxed pl-7">
-                        {localCliInstructions}
-                      </pre>
-                    </div>
+                    </details>
                   </>
                 ) : (
                   <div>
