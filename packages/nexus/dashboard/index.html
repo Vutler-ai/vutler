@@ -345,6 +345,143 @@
       line-height: 1.45;
     }
 
+    .preset-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-bottom: 16px;
+    }
+
+    .preset-card {
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .preset-card h3,
+    .composer-card h3 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+
+    .preset-card p,
+    .composer-meta p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+
+    .pill-row,
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.04);
+      color: #dbeafe;
+    }
+
+    .chip {
+      cursor: pointer;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 12px;
+      color: var(--text);
+      background: rgba(56, 189, 248, 0.08);
+      border-color: rgba(56, 189, 248, 0.16);
+    }
+
+    .chip:hover {
+      background: rgba(56, 189, 248, 0.14);
+    }
+
+    .preset-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .preset-actions button {
+      padding: 10px 12px;
+      font-size: 13px;
+      border-radius: 12px;
+    }
+
+    .composer-card {
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .composer-meta {
+      display: grid;
+      gap: 8px;
+    }
+
+    .preview-box,
+    .session-box {
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(6, 12, 24, 0.72);
+      padding: 12px 14px;
+      color: #d7e7f6;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .history-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .history-item {
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      padding: 12px 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .history-item strong {
+      font-size: 13px;
+      color: var(--text);
+    }
+
+    .history-item span,
+    .history-item code {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .history-item code {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      white-space: pre-wrap;
+      color: #d7e7f6;
+    }
+
     .hint-list {
       display: grid;
       gap: 10px;
@@ -493,36 +630,45 @@
         <div class="panel-head">
           <div>
             <h2>4. Try a command</h2>
-            <p>Use a quick action or send one explicit local action from here. This removes the guesswork after install.</p>
+            <p>Start with one guided local action, then switch to the composer when you know what you want Nexus to do.</p>
           </div>
           <span class="step-pill" id="step-command-badge">Ready</span>
         </div>
-        <div class="quick-actions">
-          <button data-quick-action="list-desktop">List Desktop<small>Checks that folder permission and file browsing work.</small></button>
-          <button data-quick-action="show-pwd">Run <code>pwd</code><small>Verifies the shell bridge is available.</small></button>
-          <button data-quick-action="read-clipboard">Read clipboard<small>Confirms local clipboard access.</small></button>
-          <button data-quick-action="discover">Discover local runtime<small>Summarizes providers, apps, and local readiness.</small></button>
-        </div>
+        <div class="mini-label">Recommended right now</div>
+        <div class="preset-grid" id="recommended-actions"></div>
         <div class="action-grid">
-          <div class="row-2">
-            <div class="field">
-              <label for="action-select">Action</label>
-              <select id="action-select">
-                <option value="shell_exec">shell_exec</option>
-                <option value="list_dir">list_dir</option>
-                <option value="search">search</option>
-                <option value="read_document">read_document</option>
-                <option value="read_clipboard">read_clipboard</option>
-                <option value="discover_local_runtime">discover_local_runtime</option>
-              </select>
+          <div class="composer-card">
+            <h3>Action composer</h3>
+            <div class="composer-meta">
+              <p id="action-help">Choose an action and Nexus will show the exact local request it is about to run.</p>
+              <div class="pill-row" id="action-tags"></div>
+              <div class="chip-row" id="action-examples"></div>
             </div>
-            <div class="field">
-              <label for="action-target">Command / Path / Query</label>
-              <input id="action-target" placeholder="pwd" />
+            <div class="row-2">
+              <div class="field">
+                <label for="action-select">Action</label>
+                <select id="action-select">
+                  <option value="shell_exec">shell_exec</option>
+                  <option value="list_dir">list_dir</option>
+                  <option value="search">search</option>
+                  <option value="read_document">read_document</option>
+                  <option value="read_clipboard">read_clipboard</option>
+                  <option value="discover_local_runtime">discover_local_runtime</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="action-target" id="action-target-label">Command / Path / Query</label>
+                <input id="action-target" placeholder="pwd" />
+              </div>
             </div>
-          </div>
-          <div class="button-row">
-            <button class="primary" id="run-action-btn">Run action</button>
+            <div>
+              <div class="mini-label">Preview</div>
+              <div class="preview-box" id="action-preview">No action prepared yet.</div>
+            </div>
+            <div class="button-row">
+              <button class="primary" id="run-action-btn">Run action</button>
+              <button class="secondary" id="load-example-btn">Load suggested example</button>
+            </div>
           </div>
           <div class="response" id="action-output">No action executed yet.</div>
         </div>
@@ -562,6 +708,18 @@
       <section class="panel">
         <div class="panel-head">
           <div>
+            <h2>Recent actions</h2>
+            <p>The last explicit local commands launched from this console.</p>
+          </div>
+        </div>
+        <div class="history-list" id="recent-actions-list">
+          <div class="hint">No local action executed yet from this session.</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
             <h2>Runtime log</h2>
             <p>Recent local runtime output.</p>
           </div>
@@ -579,6 +737,7 @@
       permissions: null,
       pairingCode: null,
       pairingExpiry: null,
+      recentActions: [],
     };
 
     const folderMap = {
@@ -620,6 +779,145 @@
       },
     };
 
+    const actionCatalog = {
+      shell_exec: {
+        label: 'Terminal command',
+        placeholder: 'pwd',
+        help: 'Runs one explicit shell command through the local shell bridge.',
+        examples: ['pwd', 'ls -la ~/Desktop', 'whoami'],
+        tags: ['shell', 'explicit'],
+        defaultValue: 'pwd',
+        buildArgs: (target) => ({ command: target || 'pwd' }),
+        preview: (target) => ({
+          action: 'shell_exec',
+          args: { command: target || 'pwd' },
+        }),
+      },
+      list_dir: {
+        label: 'Folder path',
+        placeholder: '~/Desktop',
+        help: 'Lists one local folder so you can confirm filesystem access immediately.',
+        examples: ['~/Desktop', '~/Documents', '~/Downloads'],
+        tags: ['files', 'browse'],
+        defaultValue: '~/Desktop',
+        buildArgs: (target) => ({ path: target || '~/Desktop' }),
+        preview: (target) => ({
+          action: 'list_dir',
+          args: { path: target || '~/Desktop' },
+        }),
+      },
+      search: {
+        label: 'Search query',
+        placeholder: 'invoice',
+        help: 'Searches local files and indexed content using one explicit query.',
+        examples: ['invoice', 'contract', 'meeting notes'],
+        tags: ['files', 'search'],
+        defaultValue: 'invoice',
+        buildArgs: (target) => ({ query: target || 'invoice', scope: 'files' }),
+        preview: (target) => ({
+          action: 'search',
+          args: { query: target || 'invoice', scope: 'files' },
+        }),
+      },
+      read_document: {
+        label: 'Document path',
+        placeholder: '~/Documents/brief.pdf',
+        help: 'Reads one local document. Use it after you confirm folder access first.',
+        examples: ['~/Documents/brief.pdf', '~/Downloads/spec.docx'],
+        tags: ['files', 'document'],
+        defaultValue: '',
+        buildArgs: (target) => ({ path: target }),
+        preview: (target) => ({
+          action: 'read_document',
+          args: { path: target || '<path required>' },
+        }),
+      },
+      read_clipboard: {
+        label: 'No input required',
+        placeholder: 'No input required',
+        help: 'Reads the current system clipboard to verify that bridge is live.',
+        examples: [],
+        tags: ['clipboard', 'read-only'],
+        defaultValue: '',
+        buildArgs: () => ({}),
+        preview: () => ({
+          action: 'read_clipboard',
+          args: {},
+        }),
+      },
+      discover_local_runtime: {
+        label: 'No input required',
+        placeholder: 'No input required',
+        help: 'Inspects the local runtime, providers, and supported apps on this machine.',
+        examples: [],
+        tags: ['runtime', 'diagnostics'],
+        defaultValue: '',
+        buildArgs: () => ({}),
+        preview: () => ({
+          action: 'discover_local_runtime',
+          args: {},
+        }),
+      },
+    };
+
+    const commandPresets = [
+      {
+        key: 'discover-runtime',
+        title: 'Check local readiness',
+        description: 'Run one discovery pass to see which local providers and apps are actually available.',
+        action: 'discover_local_runtime',
+        target: '',
+        tags: ['recommended', 'diagnostic'],
+      },
+      {
+        key: 'browse-desktop',
+        title: 'Browse Desktop',
+        description: 'Confirm folder access and see what Nexus can list immediately.',
+        action: 'list_dir',
+        target: '~/Desktop',
+        tags: ['files', 'starter'],
+        requiresAction: 'list_dir',
+        requiresFolder: '~/Desktop',
+      },
+      {
+        key: 'browse-documents',
+        title: 'Browse Documents',
+        description: 'Verify document access in the folder where most working files live.',
+        action: 'list_dir',
+        target: '~/Documents',
+        tags: ['files'],
+        requiresAction: 'list_dir',
+        requiresFolder: '~/Documents',
+      },
+      {
+        key: 'run-pwd',
+        title: 'Run pwd',
+        description: 'Check that the shell bridge is available before attempting more complex commands.',
+        action: 'shell_exec',
+        target: 'pwd',
+        tags: ['shell', 'starter'],
+        requiresAction: 'shell_exec',
+      },
+      {
+        key: 'read-clipboard',
+        title: 'Read clipboard',
+        description: 'Quickly confirm that Nexus can read the current system clipboard.',
+        action: 'read_clipboard',
+        target: '',
+        tags: ['clipboard'],
+        requiresAction: 'read_clipboard',
+      },
+      {
+        key: 'search-files',
+        title: 'Search local files',
+        description: 'Try a real local lookup instead of guessing whether search is active.',
+        action: 'search',
+        target: 'invoice',
+        tags: ['search'],
+        requiresAction: 'search',
+      },
+    ];
+
     async function getJson(url, options) {
       const response = await fetch(url, options);
       const data = await response.json().catch(() => ({}));
@@ -633,6 +931,158 @@
       const el = document.getElementById(id);
       el.className = `response ${type}`;
       el.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    }
+
+    function formatTime(ts) {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function isActionAllowed(action, setup) {
+      if (action === 'discover_local_runtime') return true;
+      return Boolean((setup?.allowed_actions || []).includes(action));
+    }
+
+    function isPresetAvailable(preset, setup, status) {
+      if (!status?.configured && preset.action !== 'discover_local_runtime') {
+        return { ok: false, reason: 'Connect the node first.' };
+      }
+      if (status?.configured && status?.status !== 'connected' && preset.action !== 'discover_local_runtime') {
+        return { ok: false, reason: 'Retry connection before running actions.' };
+      }
+      if (preset.requiresAction && !isActionAllowed(preset.requiresAction, setup)) {
+        return { ok: false, reason: `Enable ${preset.requiresAction} in local permissions.` };
+      }
+      if (preset.requiresFolder && !(setup?.allowed_folders || []).includes(preset.requiresFolder)) {
+        return { ok: false, reason: `Grant ${preset.requiresFolder} first.` };
+      }
+      return { ok: true, reason: 'Ready now.' };
+    }
+
+    function applyActionSelection(action, target = '', options = {}) {
+      const definition = actionCatalog[action] || actionCatalog.discover_local_runtime;
+      const targetInput = document.getElementById('action-target');
+      document.getElementById('action-select').value = action;
+      targetInput.value = target;
+      targetInput.disabled = definition.examples.length === 0 && !definition.defaultValue && action !== 'read_document';
+      updateActionComposer(options.useDefaultExample !== false);
+    }
+
+    function summarizeResult(action, result) {
+      if (!result || typeof result !== 'object') return 'Completed.';
+      if (action === 'list_dir') {
+        return `${(result.entries || []).length} item(s) listed.`;
+      }
+      if (action === 'shell_exec') {
+        const output = String(result.output || '').trim();
+        return output ? output.split('\n').slice(0, 3).join('\n') : 'Command executed.';
+      }
+      if (action === 'search') {
+        return `${(result.results || []).length} local result(s) found.`;
+      }
+      if (action === 'read_document') {
+        const text = String(result.text || result.content || '').trim();
+        return text ? text.slice(0, 180) : 'Document read completed.';
+      }
+      if (action === 'read_clipboard') {
+        return String(result.text || result.value || '').trim() || 'Clipboard read completed.';
+      }
+      if (action === 'discover_local_runtime') {
+        const providers = Object.keys(result.snapshot?.providers || {}).length;
+        return `Discovery completed with ${providers} provider(s) reported.`;
+      }
+      return 'Completed.';
+    }
+
+    function recordRecentAction(action, args, result, status = 'success') {
+      state.recentActions.unshift({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        at: new Date().toISOString(),
+        action,
+        args,
+        result,
+        status,
+        summary: summarizeResult(action, result),
+      });
+      state.recentActions = state.recentActions.slice(0, 8);
+      renderRecentActions();
+    }
+
+    function renderRecentActions() {
+      const el = document.getElementById('recent-actions-list');
+      if (!state.recentActions.length) {
+        el.innerHTML = '<div class="hint">No local action executed yet from this session.</div>';
+        return;
+      }
+
+      el.innerHTML = state.recentActions.map((entry) => `
+        <div class="history-item">
+          <strong>${entry.action}</strong>
+          <span>${formatTime(entry.at)} · ${entry.status === 'success' ? 'Completed' : 'Failed'}</span>
+          <span>${entry.summary}</span>
+          <code>${JSON.stringify(entry.args || {}, null, 2)}</code>
+        </div>
+      `).join('');
+    }
+
+    function renderRecommendedActions(setup, status) {
+      const el = document.getElementById('recommended-actions');
+      const presets = commandPresets.slice(0, 6);
+      el.innerHTML = presets.map((preset) => {
+        const availability = isPresetAvailable(preset, setup, status);
+        return `
+          <div class="preset-card">
+            <div class="pill-row">${preset.tags.map((tag) => `<span class="pill">${tag}</span>`).join('')}</div>
+            <h3>${preset.title}</h3>
+            <p>${preset.description}</p>
+            <div class="inline-note">${availability.reason}</div>
+            <div class="preset-actions">
+              <button
+                class="secondary"
+                type="button"
+                data-preset-load="${preset.key}"
+              >
+                Load in composer
+              </button>
+              <button
+                class="${availability.ok ? 'primary' : 'secondary'}"
+                type="button"
+                data-preset-run="${preset.key}"
+                ${availability.ok ? '' : 'disabled'}
+              >
+                Run now
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateActionComposer(useDefaultExample = true) {
+      const action = document.getElementById('action-select').value;
+      const definition = actionCatalog[action] || actionCatalog.discover_local_runtime;
+      const targetInput = document.getElementById('action-target');
+      const targetLabel = document.getElementById('action-target-label');
+      const help = document.getElementById('action-help');
+      const tags = document.getElementById('action-tags');
+      const examples = document.getElementById('action-examples');
+      const preview = document.getElementById('action-preview');
+
+      targetLabel.textContent = definition.label;
+      targetInput.placeholder = definition.placeholder;
+      targetInput.disabled = definition.examples.length === 0 && !definition.defaultValue && action !== 'read_document';
+      if (useDefaultExample && !targetInput.value && definition.defaultValue) {
+        targetInput.value = definition.defaultValue;
+      }
+      if (targetInput.disabled) targetInput.value = '';
+
+      help.textContent = definition.help;
+      tags.innerHTML = definition.tags.map((tag) => `<span class="pill">${tag}</span>`).join('');
+      examples.innerHTML = definition.examples.length
+        ? definition.examples.map((example) => `<button class="chip" type="button" data-example-value="${example}">${example}</button>`).join('')
+        : '<span class="muted">No input needed for this action.</span>';
+
+      const payload = definition.preview(targetInput.value.trim());
+      preview.textContent = JSON.stringify(payload, null, 2);
     }
 
     function prettyStep(step) {
@@ -700,6 +1150,8 @@
         hints.push('Generate a pairing code here, then enter it from the Vutler Nexus screen to enroll this machine without copying a token.');
       } else if (!status?.configured || status?.status !== 'connected') {
         hints.push('Retry the connection using the saved config. If it still fails, replace the token.');
+      } else {
+        hints.push('Start with a recommended preset, then keep using the action composer for explicit local commands.');
       }
 
       if ((setup?.allowed_folders || []).length === 0) {
@@ -720,6 +1172,11 @@
       document.getElementById('step-connect-badge').textContent = status?.status === 'connected' ? 'Connected' : 'Pending';
       document.getElementById('step-perms-badge').textContent = (setup?.allowed_folders || []).length > 0 ? 'Scoped' : 'Choose access';
       document.getElementById('step-verify-badge').textContent = state.config?.discovery_snapshot ? 'Checked' : 'Ready to check';
+      document.getElementById('step-command-badge').textContent = !setup?.configured
+        ? 'Connect first'
+        : state.recentActions.length > 0
+          ? 'Tested'
+          : 'Ready';
     }
 
     function render(setup, status, config, logs) {
@@ -739,6 +1196,7 @@
       setStatusBadge(status?.status === 'connected');
       renderHints(setup, status);
       renderStepBadges(setup, status);
+      renderRecommendedActions(setup, status);
 
       const pairing = setup?.pairing || null;
       if (pairing?.code) {
@@ -761,6 +1219,8 @@
       if (logs) {
         document.getElementById('logs-output').textContent = logs.length ? logs.slice(-80).join('\n') : 'No runtime logs yet.';
       }
+
+      updateActionComposer(false);
     }
 
     function renderPairingState(setup, status) {
@@ -874,22 +1334,8 @@
     function actionArgsFromForm() {
       const action = document.getElementById('action-select').value;
       const target = document.getElementById('action-target').value.trim();
-      switch (action) {
-        case 'shell_exec':
-          return { action, args: { command: target || 'pwd' } };
-        case 'list_dir':
-          return { action, args: { path: target || '~/Desktop' } };
-        case 'search':
-          return { action, args: { query: target || 'report', scope: 'files' } };
-        case 'read_document':
-          return { action, args: { path: target } };
-        case 'read_clipboard':
-          return { action, args: {} };
-        case 'discover_local_runtime':
-          return { action, args: {} };
-        default:
-          return { action, args: {} };
-      }
+      const definition = actionCatalog[action] || actionCatalog.discover_local_runtime;
+      return { action, args: definition.buildArgs(target) };
     }
 
     async function runCurrentAction() {
@@ -898,33 +1344,33 @@
       try {
         const { action, args } = actionArgsFromForm();
         const result = await runLocalAction(action, args);
+        recordRecentAction(action, args, result, 'success');
         setResponse('action-output', result, 'success');
         await refresh();
       } catch (error) {
+        const { action, args } = actionArgsFromForm();
+        recordRecentAction(action, args, { error: error.message }, 'error');
         setResponse('action-output', error.message, 'error');
       } finally {
         button.disabled = false;
       }
     }
 
-    async function runQuickAction(type) {
-      try {
-        let result;
-        if (type === 'list-desktop') {
-          result = await runLocalAction('list_dir', { path: '~/Desktop' });
-        } else if (type === 'show-pwd') {
-          result = await runLocalAction('shell_exec', { command: 'pwd' });
-        } else if (type === 'read-clipboard') {
-          result = await runLocalAction('read_clipboard', {});
-        } else {
-          result = await runLocalAction('discover_local_runtime', {});
-          setResponse('verify-output', result, 'success');
-        }
-        setResponse('action-output', result, 'success');
-        await refresh();
-      } catch (error) {
-        setResponse('action-output', error.message, 'error');
-      }
+    function findPreset(key) {
+      return commandPresets.find((preset) => preset.key === key) || null;
+    }
+
+    async function runPreset(key) {
+      const preset = findPreset(key);
+      if (!preset) return;
+      applyActionSelection(preset.action, preset.target, { useDefaultExample: false });
+      await runCurrentAction();
+    }
+
+    function loadPreset(key) {
+      const preset = findPreset(key);
+      if (!preset) return;
+      applyActionSelection(preset.action, preset.target, { useDefaultExample: false });
     }
 
     document.getElementById('connect-btn').addEventListener('click', () => connectNode(false));
@@ -938,20 +1384,49 @@
         setResponse('verify-output', error.message, 'error');
       }
     });
+    document.getElementById('action-select').addEventListener('change', () => updateActionComposer(true));
+    document.getElementById('action-target').addEventListener('input', () => updateActionComposer(false));
+    document.getElementById('load-example-btn').addEventListener('click', () => {
+      const action = document.getElementById('action-select').value;
+      const definition = actionCatalog[action] || actionCatalog.discover_local_runtime;
+      if (definition.defaultValue !== undefined) {
+        document.getElementById('action-target').value = definition.defaultValue;
+        updateActionComposer(false);
+      }
+    });
     document.getElementById('verify-btn').addEventListener('click', async () => {
       try {
         const result = await runLocalAction('discover_local_runtime', {});
+        recordRecentAction('discover_local_runtime', {}, result, 'success');
         setResponse('verify-output', result, 'success');
         await refresh();
       } catch (error) {
+        recordRecentAction('discover_local_runtime', {}, { error: error.message }, 'error');
         setResponse('verify-output', error.message, 'error');
       }
     });
     document.getElementById('run-action-btn').addEventListener('click', runCurrentAction);
-    document.querySelectorAll('[data-quick-action]').forEach((button) => {
-      button.addEventListener('click', () => runQuickAction(button.getAttribute('data-quick-action')));
+    document.getElementById('recommended-actions').addEventListener('click', async (event) => {
+      const target = event.target.closest('button');
+      if (!target) return;
+      const loadKey = target.getAttribute('data-preset-load');
+      const runKey = target.getAttribute('data-preset-run');
+      if (loadKey) {
+        loadPreset(loadKey);
+      }
+      if (runKey) {
+        await runPreset(runKey);
+      }
+    });
+    document.getElementById('action-examples').addEventListener('click', (event) => {
+      const target = event.target.closest('[data-example-value]');
+      if (!target) return;
+      document.getElementById('action-target').value = target.getAttribute('data-example-value') || '';
+      updateActionComposer(false);
     });
 
+    updateActionComposer(true);
+    renderRecentActions();
     refresh();
     setInterval(refresh, 8000);
     setInterval(() => renderPairingState(state.setup, state.status), 1000);
