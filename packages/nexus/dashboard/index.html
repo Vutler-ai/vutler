@@ -103,6 +103,49 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
+    .hero-actions {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .hero-actions button,
+    .hero-actions a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      text-decoration: none;
+    }
+
+    .surface-grid {
+      margin-top: 18px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .surface-card {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      display: grid;
+      gap: 6px;
+    }
+
+    .surface-card strong {
+      font-size: 14px;
+      color: var(--text);
+    }
+
+    .surface-card span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
     .hero-stat {
       padding: 14px 16px;
       border-radius: 16px;
@@ -540,6 +583,21 @@
           <strong id="hero-cloud">Loading…</strong>
         </div>
       </div>
+      <div class="hero-actions">
+        <a class="primary" id="open-in-vutler-link" href="https://app.vutler.ai/nexus" target="_blank" rel="noreferrer">Open In Vutler</a>
+        <button class="secondary" id="copy-node-id-btn" type="button">Copy Node ID</button>
+        <button class="secondary" id="copy-local-url-btn" type="button">Copy Local URL</button>
+      </div>
+      <div class="surface-grid">
+        <div class="surface-card">
+          <strong>Use this local console for setup and explicit local checks</strong>
+          <span>Pair the machine, scope permissions, verify providers, and run direct local commands when you need to debug or confirm access.</span>
+        </div>
+        <div class="surface-card">
+          <strong>Use Vutler for agent-driven work and command history</strong>
+          <span>Once connected, open the node in Vutler to dispatch workspace actions, inspect activity, and manage the node from the same place as the rest of your agents.</span>
+        </div>
+      </div>
     </section>
 
     <div class="main-stack">
@@ -933,6 +991,16 @@
       el.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
     }
 
+    async function copyText(value) {
+      if (!value) return false;
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
     function formatTime(ts) {
       return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
@@ -1168,6 +1236,29 @@
       document.getElementById('hint-list').innerHTML = hints.map((hint) => `<div class="hint">${hint}</div>`).join('');
     }
 
+    function resolveWorkspaceNodeUrl(setup, status) {
+      const server = setup?.server || status?.cloud_server || 'https://app.vutler.ai';
+      const nodeId = status?.node_id || setup?.node_id || '';
+      const base = String(server || '').replace(/\/+$/, '');
+      return nodeId ? `${base}/nexus/${nodeId}` : `${base}/nexus`;
+    }
+
+    function renderHeroActions(setup, status) {
+      const openLink = document.getElementById('open-in-vutler-link');
+      const nodeId = status?.node_id || setup?.node_id || '';
+      const localUrl = `${window.location.origin}/`;
+      openLink.href = resolveWorkspaceNodeUrl(setup, status);
+      openLink.textContent = nodeId ? 'Open Node In Vutler' : 'Open Nexus In Vutler';
+
+      const copyNodeButton = document.getElementById('copy-node-id-btn');
+      copyNodeButton.disabled = !nodeId;
+      copyNodeButton.textContent = nodeId ? 'Copy Node ID' : 'Node ID Pending';
+
+      const copyLocalButton = document.getElementById('copy-local-url-btn');
+      copyLocalButton.textContent = 'Copy Local URL';
+      copyLocalButton.dataset.url = localUrl;
+    }
+
     function renderStepBadges(setup, status) {
       document.getElementById('step-connect-badge').textContent = status?.status === 'connected' ? 'Connected' : 'Pending';
       document.getElementById('step-perms-badge').textContent = (setup?.allowed_folders || []).length > 0 ? 'Scoped' : 'Choose access';
@@ -1195,6 +1286,7 @@
 
       setStatusBadge(status?.status === 'connected');
       renderHints(setup, status);
+      renderHeroActions(setup, status);
       renderStepBadges(setup, status);
       renderRecommendedActions(setup, status);
 
@@ -1376,6 +1468,26 @@
     document.getElementById('connect-btn').addEventListener('click', () => connectNode(false));
     document.getElementById('retry-connect-btn').addEventListener('click', () => connectNode(true));
     document.getElementById('generate-pair-code-btn').addEventListener('click', generatePairCode);
+    document.getElementById('copy-node-id-btn').addEventListener('click', async () => {
+      const nodeId = state.status?.node_id || state.setup?.node_id || '';
+      const ok = await copyText(nodeId);
+      if (ok) {
+        document.getElementById('copy-node-id-btn').textContent = 'Node ID Copied';
+        setTimeout(() => {
+          document.getElementById('copy-node-id-btn').textContent = nodeId ? 'Copy Node ID' : 'Node ID Pending';
+        }, 1800);
+      }
+    });
+    document.getElementById('copy-local-url-btn').addEventListener('click', async () => {
+      const value = document.getElementById('copy-local-url-btn').dataset.url || `${window.location.origin}/`;
+      const ok = await copyText(value);
+      if (ok) {
+        document.getElementById('copy-local-url-btn').textContent = 'Local URL Copied';
+        setTimeout(() => {
+          document.getElementById('copy-local-url-btn').textContent = 'Copy Local URL';
+        }, 1800);
+      }
+    });
     document.getElementById('save-perms-btn').addEventListener('click', async () => {
       try {
         await savePermissions();
