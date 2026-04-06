@@ -15,6 +15,10 @@ const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const memoryRuntime = createMemoryRuntimeService();
 
+function getWorkspaceId(req) {
+  return req?.workspaceId || req?.headers?.['x-workspace-id'] || DEFAULT_WORKSPACE;
+}
+
 // ── Agent response helper (runs async, does not block user) ──
 async function _triggerAgentResponse(req, channelId, wsId) {
   try {
@@ -23,9 +27,10 @@ async function _triggerAgentResponse(req, channelId, wsId) {
       `SELECT a.id, a.name, a.username, a.model, a.provider, a.system_prompt, a.temperature, a.max_tokens
        FROM ${SCHEMA}.chat_channel_members cm
        JOIN ${SCHEMA}.agents a ON a.id::text = cm.user_id
-       WHERE cm.channel_id = $1
+       JOIN ${SCHEMA}.chat_channels c ON c.id = cm.channel_id
+       WHERE cm.channel_id = $1 AND c.workspace_id = $2 AND a.workspace_id = $2
        LIMIT 1`,
-      [channelId]
+      [channelId, wsId]
     );
 
     if (agentResult.rows.length === 0) return; // No agent in channel
@@ -37,10 +42,10 @@ async function _triggerAgentResponse(req, channelId, wsId) {
     const historyResult = await pool.query(
       `SELECT sender_id, sender_name, content, created_at
        FROM ${SCHEMA}.chat_messages
-       WHERE channel_id = $1
+       WHERE channel_id = $1 AND workspace_id = $2
        ORDER BY created_at DESC
        LIMIT 20`,
-      [channelId]
+      [channelId, wsId]
     );
 
     const messages = historyResult.rows.reverse().map((m) => ({
@@ -134,7 +139,7 @@ async function _triggerAgentResponse(req, channelId, wsId) {
 // GET /channels — list all channels
 router.get('/channels', async (req, res) => {
   try {
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceId(req);
     const result = await pool.query(
       `SELECT c.*, 
         (SELECT COUNT(*) FROM ${SCHEMA}.chat_messages m WHERE m.channel_id = c.id) as message_count,
@@ -159,9 +164,10 @@ router.get('/messages', async (req, res) => {
       return res.status(400).json({ success: false, error: 'channel_id is required' });
     }
 
-    let query = `SELECT * FROM ${SCHEMA}.chat_messages WHERE channel_id = $1`;
-    const params = [channel_id];
-    let paramIdx = 2;
+    const wsId = getWorkspaceId(req);
+    let query = `SELECT * FROM ${SCHEMA}.chat_messages WHERE channel_id = $1 AND workspace_id = $2`;
+    const params = [channel_id, wsId];
+    let paramIdx = 3;
 
     if (before) {
       query += ` AND created_at < $${paramIdx}`;
@@ -195,7 +201,15 @@ router.post('/send', async (req, res) => {
 
     const sId = sender_id || req.headers['x-user-id'] || 'user';
     const sName = sender_name || req.headers['x-user-name'] || 'User';
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceId(req);
+
+    const channelResult = await pool.query(
+      `SELECT id FROM ${SCHEMA}.chat_channels WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
+      [channel_id, wsId]
+    );
+    if (channelResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Channel not found' });
+    }
 
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.chat_messages (channel_id, sender_id, sender_name, content, message_type, parent_id, workspace_id)
@@ -209,8 +223,8 @@ router.post('/send', async (req, res) => {
 
     // Trigger agent response async — but NOT if sender is an agent (prevents loop)
     const isAgentSender = await pool.query(
-      `SELECT id FROM ${SCHEMA}.agents WHERE id::text = $1 OR username = $2 LIMIT 1`,
-      [sId, sName.toLowerCase()]
+      `SELECT id FROM ${SCHEMA}.agents WHERE workspace_id = $3 AND (id::text = $1 OR username = $2) LIMIT 1`,
+      [sId, sName.toLowerCase(), wsId]
     );
     if (isAgentSender.rows.length === 0) {
       _triggerAgentResponse(req, channel_id, wsId);
@@ -231,7 +245,7 @@ router.post('/channels', async (req, res) => {
       return res.status(400).json({ success: false, error: 'name is required' });
     }
 
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceId(req);
     const createdBy = req.headers['x-user-id'] || 'system';
 
     // For DM channels, return existing if found
@@ -275,7 +289,7 @@ router.post('/channels', async (req, res) => {
 // GET /agents — list available agents
 router.get('/agents', async (req, res) => {
   try {
-    const wsId = req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceId(req);
     const result = await pool.query(
       `SELECT id, name, username, status, avatar, role, description, model, provider
        FROM ${SCHEMA}.agents
@@ -293,9 +307,14 @@ router.get('/agents', async (req, res) => {
 // GET /channels/:id/members — list channel members
 router.get('/channels/:id/members', async (req, res) => {
   try {
+    const wsId = getWorkspaceId(req);
     const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.chat_channel_members WHERE channel_id = $1 ORDER BY joined_at ASC`,
-      [req.params.id]
+      `SELECT cm.*
+       FROM ${SCHEMA}.chat_channel_members cm
+       JOIN ${SCHEMA}.chat_channels c ON c.id = cm.channel_id
+       WHERE cm.channel_id = $1 AND c.workspace_id = $2
+       ORDER BY cm.joined_at ASC`,
+      [req.params.id, wsId]
     );
     res.json({ success: true, data: result.rows });
   } catch (err) {
@@ -310,6 +329,14 @@ router.post('/channels/:id/members', async (req, res) => {
     const { user_id, role = 'member' } = req.body;
     if (!user_id) {
       return res.status(400).json({ success: false, error: 'user_id is required' });
+    }
+    const wsId = getWorkspaceId(req);
+    const channelResult = await pool.query(
+      `SELECT id FROM ${SCHEMA}.chat_channels WHERE id = $1 AND workspace_id = $2 LIMIT 1`,
+      [req.params.id, wsId]
+    );
+    if (channelResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Channel not found' });
     }
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.chat_channel_members (channel_id, user_id, role)
