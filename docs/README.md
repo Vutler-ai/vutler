@@ -7,6 +7,7 @@
 - [Staging Deploy and Validation Runbook](runbooks/staging-deploy-validation.md) is the operational path for migrations, deploy, smoke, and e2e checks on the Vutler staging VPS.
 - [Production Deploy From Clean Artifact](runbooks/production-deploy-clean-artifact.md) is the canonical production deploy path from an exact pushed commit.
 - [Production Rollback From Rollback Note](runbooks/production-rollback-clean-artifact.md) explains how to roll back to the previous Docker images without using the dirty VPS checkout.
+- [Agent Email Delivery Regression Runbook](runbooks/agent-email-delivery-regression.md) covers the outbound agent-email path, Postal overlay, suppression checks, and live verification steps when an agent appears unable to send.
 - [Production Ops Hardening Plan](runbooks/production-ops-hardening-plan.md) tracks the current release, backup, deploy-gate, observability, and secret-hygiene priorities.
 - [Database Backup And Restore](runbooks/database-backup-restore.md) documents verified logical backups, retention, and restore drill expectations.
 - [VUTLER_API_KEY Rotation Runbook](runbooks/vutler-api-key-rotation.md) covers runtime API key rotation without breaking smoke validation.
