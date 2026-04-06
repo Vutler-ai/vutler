@@ -314,6 +314,9 @@ function DeployModal({
   const [localSetupPort, setLocalSetupPort] = useState<number | null>(null);
   const [localSetupState, setLocalSetupState] = useState<'idle' | 'searching' | 'ready' | 'sending' | 'sent' | 'error'>('idle');
   const [localSetupMessage, setLocalSetupMessage] = useState('');
+  const [pairCode, setPairCode] = useState('');
+  const [pairingState, setPairingState] = useState<'idle' | 'pairing' | 'paired' | 'error'>('idle');
+  const [pairingMessage, setPairingMessage] = useState('');
 
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -550,6 +553,50 @@ function DeployModal({
       setLocalSetupMessage(err instanceof Error ? err.message : 'Could not send the deploy token to local Nexus.');
     }
   }, [token, localSetupPort, detectLocalNexusSetup, localConsent, localNodeName]);
+
+  const pairLocalNexusByCode = useCallback(async () => {
+    if (!token || !pairCode.trim()) return;
+
+    setPairingState('pairing');
+    setPairingMessage('Pairing the local Nexus runtime…');
+
+    const permissions = buildLocalPermissionsFromConsent(localConsent);
+    const code = pairCode.trim().toUpperCase();
+    const candidatePorts = localSetupPort ? [localSetupPort, 3100, 3101, 3102, 3103, 3199] : [3100, 3101, 3102, 3103, 3199];
+
+    for (const port of candidatePorts) {
+      try {
+        const response = await fetch(`http://localhost:${port}/api/pairing/claim`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            code,
+            token,
+            nodeName: localNodeName.trim() || undefined,
+            permissions,
+          }),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.success) {
+          continue;
+        }
+
+        setLocalSetupPort(port);
+        setPairingState('paired');
+        setPairingMessage(`Machine paired successfully on port ${port}.`);
+        setLocalSetupState('sent');
+        setLocalSetupMessage(`Local Nexus connected on port ${port}.`);
+        return;
+      } catch {
+        // Try the next known local port.
+      }
+    }
+
+    setPairingState('error');
+    setPairingMessage('No local Nexus runtime accepted that pairing code. Generate a fresh code in the local console and retry.');
+  }, [token, pairCode, localConsent, localNodeName, localSetupPort]);
 
   useEffect(() => {
     if (step !== 'local-token') return;
@@ -1249,6 +1296,36 @@ function DeployModal({
                       </div>
                     </div>
                     <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[#11131d] p-3 space-y-3">
+                      <div className="space-y-2">
+                        <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Pair Code</label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={pairCode}
+                            onChange={(e) => setPairCode(e.target.value.toUpperCase())}
+                            placeholder="ABC123"
+                            className="flex-1 bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-xs font-mono tracking-[0.3em] placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors"
+                          />
+                          <button
+                            onClick={() => void pairLocalNexusByCode()}
+                            disabled={!token || !pairCode.trim() || pairingState === 'pairing'}
+                            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
+                          >
+                            {pairingState === 'pairing' ? 'Pairing…' : 'Pair With Code'}
+                          </button>
+                        </div>
+                        <p
+                          className={`text-xs ${
+                            pairingState === 'error'
+                              ? 'text-red-400'
+                              : pairingState === 'paired'
+                                ? 'text-emerald-400'
+                                : 'text-[#6b7280]'
+                          }`}
+                        >
+                          {pairingMessage || 'Generate a short code in the local Nexus console, then enter it here to enroll this machine without copying the token.'}
+                        </p>
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => void pushToLocalNexus()}

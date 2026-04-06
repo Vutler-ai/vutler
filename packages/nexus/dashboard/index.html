@@ -410,9 +410,25 @@
         <div class="panel-head">
           <div>
             <h2>1. Connect the node</h2>
-            <p>Paste the deploy token from Vutler, keep or rename this machine, then connect. After that, Nexus can register and receive commands from your workspace.</p>
+            <p>Pair this machine with Vutler using a short code, or paste a deploy token manually if needed. After that, Nexus can register and receive commands from your workspace.</p>
           </div>
           <span class="step-pill" id="step-connect-badge">Pending</span>
+        </div>
+        <div class="inline-note">
+          <strong style="display:block;color:#e5edf7;margin-bottom:8px;">Recommended: pair with Vutler</strong>
+          <div class="button-row" style="margin-top:0;">
+            <button class="secondary" id="generate-pair-code-btn">Generate pairing code</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px;">
+            <div style="min-width:120px;">
+              <div class="mini-label" style="margin-bottom:4px;">Pair code</div>
+              <div id="pair-code-display" style="font-family:ui-monospace, SFMono-Regular, Menlo, monospace;font-size:28px;letter-spacing:0.22em;color:#7dd3fc;">------</div>
+            </div>
+            <div style="flex:1;min-width:220px;">
+              <div class="mini-label" style="margin-bottom:4px;">Status</div>
+              <div id="pair-code-status" class="muted">Generate a code here, then enter it in the Vutler Nexus screen.</div>
+            </div>
+          </div>
         </div>
         <div class="field">
           <label for="node-name">Local node name</label>
@@ -561,6 +577,8 @@
       status: null,
       config: null,
       permissions: null,
+      pairingCode: null,
+      pairingExpiry: null,
     };
 
     const folderMap = {
@@ -679,7 +697,7 @@
     function renderHints(setup, status) {
       const hints = [];
       if (!setup?.configured) {
-        hints.push('Paste the deploy token from Vutler, then connect the node from step 1.');
+        hints.push('Generate a pairing code here, then enter it from the Vutler Nexus screen to enroll this machine without copying a token.');
       } else if (!status?.configured || status?.status !== 'connected') {
         hints.push('Retry the connection using the saved config. If it still fails, replace the token.');
       }
@@ -722,6 +740,16 @@
       renderHints(setup, status);
       renderStepBadges(setup, status);
 
+      const pairing = setup?.pairing || null;
+      if (pairing?.code) {
+        state.pairingCode = pairing.code;
+        state.pairingExpiry = pairing.expires_at ? new Date(pairing.expires_at).getTime() : null;
+      } else {
+        state.pairingCode = null;
+        state.pairingExpiry = null;
+      }
+      renderPairingState(setup, status);
+
       if (!document.getElementById('node-name').value) {
         document.getElementById('node-name').value = setup?.node_name || status?.name || '';
       }
@@ -733,6 +761,32 @@
       if (logs) {
         document.getElementById('logs-output').textContent = logs.length ? logs.slice(-80).join('\n') : 'No runtime logs yet.';
       }
+    }
+
+    function renderPairingState(setup, status) {
+      const pairing = setup?.pairing || null;
+      const codeEl = document.getElementById('pair-code-display');
+      const statusEl = document.getElementById('pair-code-status');
+
+      if (pairing?.paired_at && status?.status === 'connected') {
+        codeEl.textContent = pairing.code || 'PAIRED';
+        statusEl.textContent = 'Machine paired and connected to Vutler.';
+        return;
+      }
+
+      if (pairing?.code) {
+        codeEl.textContent = pairing.code;
+        const remaining = state.pairingExpiry ? Math.max(0, Math.floor((state.pairingExpiry - Date.now()) / 1000)) : 0;
+        const min = Math.floor(remaining / 60);
+        const sec = String(remaining % 60).padStart(2, '0');
+        statusEl.textContent = remaining > 0
+          ? `Enter this code in Vutler Nexus. Expires in ${min}:${sec}.`
+          : 'Code expired. Generate a new one.';
+        return;
+      }
+
+      codeEl.textContent = '------';
+      statusEl.textContent = 'Generate a code here, then enter it in the Vutler Nexus screen.';
     }
 
     async function refresh() {
@@ -786,6 +840,23 @@
         await refresh();
       } catch (error) {
         setResponse('verify-output', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function generatePairCode() {
+      const button = document.getElementById('generate-pair-code-btn');
+      button.disabled = true;
+      try {
+        const result = await getJson('/api/pairing/generate', {
+          method: 'POST',
+        });
+        state.pairingCode = result.code || null;
+        state.pairingExpiry = result.expires_at ? new Date(result.expires_at).getTime() : null;
+        renderPairingState({ pairing: { code: result.code, expires_at: result.expires_at, paired_at: null } }, state.status);
+      } catch (error) {
+        document.getElementById('pair-code-status').textContent = error.message;
       } finally {
         button.disabled = false;
       }
@@ -858,6 +929,7 @@
 
     document.getElementById('connect-btn').addEventListener('click', () => connectNode(false));
     document.getElementById('retry-connect-btn').addEventListener('click', () => connectNode(true));
+    document.getElementById('generate-pair-code-btn').addEventListener('click', generatePairCode);
     document.getElementById('save-perms-btn').addEventListener('click', async () => {
       try {
         await savePermissions();
@@ -882,6 +954,7 @@
 
     refresh();
     setInterval(refresh, 8000);
+    setInterval(() => renderPairingState(state.setup, state.status), 1000);
   </script>
 </body>
 </html>

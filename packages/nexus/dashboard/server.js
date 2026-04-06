@@ -11,6 +11,16 @@ function createDashboardServer(node) {
   const pairingState = { code: null, expiresAt: 0, pairedAt: null };
   const permissionEngine = getPermissionEngine();
 
+  function getPairingState() {
+    const active = Boolean(pairingState.code && Date.now() <= pairingState.expiresAt);
+    return {
+      active,
+      code: active ? pairingState.code : null,
+      expires_at: active ? new Date(pairingState.expiresAt).toISOString() : null,
+      paired_at: pairingState.pairedAt,
+    };
+  }
+
   function getSetupState() {
     const runtimeConfig = readRuntimeConfig();
     const permissions = permissionEngine.getPermissions();
@@ -29,6 +39,7 @@ function createDashboardServer(node) {
       allowed_folders: permissions.allowedFolders || [],
       allowed_actions: permissions.allowedActions || [],
       permissions,
+      pairing: getPairingState(),
       next_step: !configured
         ? 'connect'
         : !connected
@@ -78,6 +89,28 @@ function createDashboardServer(node) {
     }).catch(() => {});
   }
 
+  async function configureAndConnect({ token, nodeName, serverUrl, permissions }) {
+    if (permissions) {
+      permissionEngine.replace(permissions);
+      node.permissions = permissionEngine.getPermissions();
+    }
+
+    if (token) {
+      node.configureFromDeployToken(token, {
+        nodeName: nodeName || node.name,
+        server: serverUrl || node.server,
+        permissions: node.permissions,
+      });
+    }
+
+    if (!node.key && !node.deployToken) {
+      throw new Error('A deploy token is required before Nexus can connect.');
+    }
+
+    await node.connect();
+    await syncPermissionsToCloud();
+  }
+
   return http.createServer((req, res) => {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -111,30 +144,12 @@ function createDashboardServer(node) {
             ? data.permissions
             : null;
 
-          if (permissions) {
-            permissionEngine.replace(permissions);
-            node.permissions = permissionEngine.getPermissions();
-          }
-
-          if (token) {
-            node.configureFromDeployToken(token, {
-              nodeName: nodeName || node.name,
-              server: serverUrl || node.server,
-              permissions: node.permissions,
-            });
-          }
-
-          if (!node.key && !node.deployToken) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({
-              success: false,
-              error: 'A deploy token is required before Nexus can connect.',
-              state: getSetupState(),
-            }));
-          }
-
-          await node.connect();
-          await syncPermissionsToCloud();
+          await configureAndConnect({
+            token,
+            nodeName,
+            serverUrl,
+            permissions,
+          });
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, state: getSetupState() }));
@@ -182,8 +197,58 @@ function createDashboardServer(node) {
       res.end(JSON.stringify({
         code: pairingState.code,
         ttl_seconds: 300,
+        expires_at: new Date(pairingState.expiresAt).toISOString(),
         pairing_url: `http://localhost:${node.port}/onboarding?code=${pairingState.code}`,
       }));
+    } else if (req.url === '/api/pairing/claim' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const code = String(data.code || '').trim().toUpperCase();
+          const token = typeof data.token === 'string' ? data.token.trim() : '';
+          const nodeName = typeof data.nodeName === 'string' ? data.nodeName.trim() : '';
+          const serverUrl = typeof data.server === 'string' ? data.server.trim() : '';
+          const permissions = data.permissions && typeof data.permissions === 'object'
+            ? data.permissions
+            : null;
+
+          const expired = !pairingState.code || Date.now() > pairingState.expiresAt;
+          if (expired || !code || code !== pairingState.code) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+              success: false,
+              error: 'Invalid or expired pairing code.',
+              pairing: getPairingState(),
+              state: getSetupState(),
+            }));
+          }
+
+          await configureAndConnect({
+            token,
+            nodeName,
+            serverUrl,
+            permissions,
+          });
+
+          pairingState.pairedAt = new Date().toISOString();
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            pairing: getPairingState(),
+            state: getSetupState(),
+          }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: error.message,
+            pairing: getPairingState(),
+            state: getSetupState(),
+          }));
+        }
+      });
     } else if (req.url && req.url.startsWith('/api/pairing/status')) {
       const url = new URL(req.url, `http://localhost:${node.port}`);
       const code = url.searchParams.get('code');
@@ -196,6 +261,7 @@ function createDashboardServer(node) {
         paired,
         expired,
         paired_at: pairingState.pairedAt,
+        current: getPairingState(),
       }));
     } else if (req.url === '/api/status') {
       const agents = Array.isArray(node.agents)
