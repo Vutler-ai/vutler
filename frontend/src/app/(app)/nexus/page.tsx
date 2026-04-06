@@ -515,10 +515,11 @@ function DeployModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl w-full max-w-lg mx-4 p-6 space-y-5">
+      <div className="flex min-h-full items-start justify-center px-4 py-4 sm:items-center sm:py-6">
+        <div className="flex w-full max-w-lg max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl border border-[rgba(255,255,255,0.07)] bg-[#14151f] p-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -531,7 +532,7 @@ function DeployModal({
         </div>
 
         {billing && (
-          <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-4 py-3 flex items-center justify-between gap-3">
+          <div className="mt-5 rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] px-4 py-3 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs text-[#6b7280] uppercase tracking-wide">Billing plan</p>
               <p className="text-sm text-white font-medium">{formatProviderLabel(billing.planId)}</p>
@@ -544,6 +545,8 @@ function DeployModal({
             </div>
           </div>
         )}
+
+        <div className="mt-5 flex-1 overflow-y-auto pr-1">
 
         {/* ── Step: select mode ── */}
         {step === 'select' && (
@@ -1217,6 +1220,8 @@ function DeployModal({
             </button>
           </div>
         )}
+        </div>
+        </div>
       </div>
     </div>
   );
