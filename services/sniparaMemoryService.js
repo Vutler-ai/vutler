@@ -20,6 +20,10 @@ const { logMemoryEvent, summarizeMemoryTypes } = require('./memoryTelemetryServi
 
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const DEFAULT_COUNT_LIMIT = 200;
+const SNIPARA_MEMORY_LIST_TIMEOUT_MS = Number(process.env.SNIPARA_MEMORY_LIST_TIMEOUT_MS || 30_000);
+const SNIPARA_MEMORY_RECALL_TIMEOUT_MS = Number(process.env.SNIPARA_MEMORY_RECALL_TIMEOUT_MS || 30_000);
+const SNIPARA_MEMORY_WRITE_TIMEOUT_MS = Number(process.env.SNIPARA_MEMORY_WRITE_TIMEOUT_MS || 20_000);
+const SNIPARA_MEMORY_DOCUMENT_TIMEOUT_MS = Number(process.env.SNIPARA_MEMORY_DOCUMENT_TIMEOUT_MS || 20_000);
 
 function normalizeWorkspaceId(workspaceId) {
   return workspaceId || DEFAULT_WORKSPACE;
@@ -460,6 +464,7 @@ async function listStoredMemories({ db, workspaceId, search, limit = 50, offset 
         limit: pageSize,
         offset,
       },
+      timeoutMs: SNIPARA_MEMORY_LIST_TIMEOUT_MS,
     });
   } catch (err) {
     error = serializeSniparaError(err);
@@ -551,6 +556,7 @@ async function loadDocumentFromCandidates({ db, workspaceId, paths = [] }) {
       workspaceId,
       toolName: 'rlm_load_document',
       args: { path },
+      timeoutMs: SNIPARA_MEMORY_DOCUMENT_TIMEOUT_MS,
     }).catch(() => '');
 
     if (!doc) continue;
@@ -664,7 +670,13 @@ async function recallWithBindings({ db, workspaceId, bindings, query, limit = 20
     if (normalizedScope === 'instance' && agentId) args.agent_id = agentId;
     if (normalizedScope === 'human_agent' && agentId) args.agent_id = agentId;
 
-    const raw = await callSniparaTool({ db, workspaceId, toolName: 'rlm_recall', args }).catch(() => []);
+    const raw = await callSniparaTool({
+      db,
+      workspaceId,
+      toolName: 'rlm_recall',
+      args,
+      timeoutMs: SNIPARA_MEMORY_RECALL_TIMEOUT_MS,
+    }).catch(() => []);
     const normalized = normalizeMemories(raw, normalizedScope);
     for (const memory of normalized) {
       const dedupeKey = memory.id || `${memory.scope_key}|${canonicalizeText(memory.text)}|${memory.created_at}`;
@@ -928,6 +940,7 @@ async function rememberScopedMemory({
     workspaceId,
     toolName: 'rlm_remember',
     args,
+    timeoutMs: SNIPARA_MEMORY_WRITE_TIMEOUT_MS,
   });
 
   return target;
@@ -976,6 +989,7 @@ async function promoteAgentMemoryToTemplate({ db, workspaceId, agent, memoryId, 
       category: bindings.instance.category,
       limit: 1,
     },
+    timeoutMs: SNIPARA_MEMORY_RECALL_TIMEOUT_MS,
   }).catch(() => []);
 
   const raw = JSON.stringify(recalled || '');

@@ -320,4 +320,76 @@ describe('sniparaResolver', () => {
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
+
+  test('isolates the short circuit per tool so a recall failure does not block remember', async () => {
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM tenant_vutler.workspace_settings')) {
+          return {
+            rows: [
+              { key: 'snipara_api_key', value: 'workspace-key' },
+              { key: 'snipara_api_url', value: 'https://workspace.snipara.test/mcp' },
+            ],
+          };
+        }
+        if (sql.includes('FROM tenant_vutler.workspaces')) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      }),
+    };
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: jest.fn(async () => 'service unavailable'),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: jest.fn(async () => JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          result: {
+            structuredContent: { ok: true },
+          },
+        })),
+      });
+
+    const {
+      callSniparaTool,
+      clearSniparaConfigCache,
+      clearSniparaFailureCache,
+      getSniparaFailureState,
+    } = require('../services/sniparaResolver');
+    clearSniparaConfigCache();
+    clearSniparaFailureCache();
+
+    await expect(callSniparaTool({
+      db,
+      workspaceId: 'ws-6',
+      toolName: 'rlm_recall',
+      args: { query: 'user preference' },
+    })).rejects.toMatchObject({
+      name: 'SniparaToolError',
+      statusCode: 503,
+      code: 'http_error',
+    });
+
+    expect(getSniparaFailureState('ws-6', 'rlm_recall')).toMatchObject({
+      open: true,
+      tool_name: 'rlm_recall',
+    });
+    expect(getSniparaFailureState('ws-6', 'rlm_remember')).toBeNull();
+
+    await expect(callSniparaTool({
+      db,
+      workspaceId: 'ws-6',
+      toolName: 'rlm_remember',
+      args: { text: 'remember this' },
+    })).resolves.toEqual({ ok: true });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
 });

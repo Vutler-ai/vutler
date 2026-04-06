@@ -62,4 +62,52 @@ describe('sniparaMemoryService diagnostics', () => {
 
     warn.mockRestore();
   });
+
+  test('uses longer dedicated timeouts for memory reads and writes', async () => {
+    const callSniparaTool = jest.fn()
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce([]);
+
+    jest.doMock('../services/sniparaResolver', () => ({
+      callSniparaTool,
+      serializeSniparaError: jest.fn((error) => ({
+        message: error.message,
+        status_code: error.statusCode || null,
+        tool_name: error.toolName || null,
+      })),
+    }));
+
+    const { rememberAgentMemory, listAgentMemories } = require('../services/sniparaMemoryService');
+
+    await rememberAgentMemory({
+      db: null,
+      workspaceId: 'ws-2',
+      agent: { id: 'agent-1', username: 'mike', role: 'Engineering' },
+      text: 'Remember this preference',
+      type: 'fact',
+    });
+
+    await listAgentMemories({
+      db: null,
+      workspaceId: 'ws-2',
+      agentIdOrUsername: 'mike',
+      fallbackAgent: { id: 'agent-1', username: 'mike', role: 'Engineering' },
+      limit: 5,
+    });
+
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        toolName: 'rlm_remember',
+        timeoutMs: 20000,
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        toolName: 'rlm_memories',
+        timeoutMs: 30000,
+      })
+    );
+  });
 });

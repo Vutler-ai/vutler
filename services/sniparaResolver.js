@@ -34,6 +34,10 @@ function normalizeWorkspaceId(workspaceId) {
   return workspaceId || DEFAULT_WORKSPACE;
 }
 
+function buildFailureCacheKey(workspaceId, toolName = '') {
+  return `${normalizeWorkspaceId(workspaceId)}::${String(toolName || '*')}`;
+}
+
 function parseSettingValue(value) {
   if (value == null) return null;
   if (typeof value === 'string') return value;
@@ -198,16 +202,15 @@ function shouldCacheSniparaFailure(error) {
   return false;
 }
 
-function getSniparaFailureState(workspaceId) {
-  const key = normalizeWorkspaceId(workspaceId);
-  const entry = failureCache.get(key);
+function materializeFailureState(key, entry) {
   if (!entry) return null;
   if (entry.until <= Date.now()) {
     failureCache.delete(key);
     return null;
   }
   return {
-    workspace_id: key,
+    workspace_id: entry.workspaceId,
+    tool_name: entry.toolName || null,
     open: true,
     retry_at: new Date(entry.until).toISOString(),
     ttl_ms: Math.max(0, entry.until - Date.now()),
@@ -215,28 +218,60 @@ function getSniparaFailureState(workspaceId) {
   };
 }
 
-function cacheSniparaFailure(workspaceId, error) {
+function getSniparaFailureState(workspaceId, toolName = null) {
+  const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
+  if (toolName) {
+    return materializeFailureState(
+      buildFailureCacheKey(normalizedWorkspaceId, toolName),
+      failureCache.get(buildFailureCacheKey(normalizedWorkspaceId, toolName))
+    );
+  }
+
+  for (const [key, entry] of failureCache.entries()) {
+    if (entry?.workspaceId !== normalizedWorkspaceId) continue;
+    const state = materializeFailureState(key, entry);
+    if (state) return state;
+  }
+
+  return null;
+}
+
+function cacheSniparaFailure(workspaceId, toolName, error) {
   if (!shouldCacheSniparaFailure(error)) return;
-  const key = normalizeWorkspaceId(workspaceId);
+  const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
+  const resolvedToolName = toolName || error?.toolName || '';
+  const key = buildFailureCacheKey(normalizedWorkspaceId, resolvedToolName);
   failureCache.set(key, {
+    workspaceId: normalizedWorkspaceId,
+    toolName: resolvedToolName || null,
     until: Date.now() + FAILURE_TTL_MS,
     error: serializeSniparaError(error),
   });
 }
 
-function clearSniparaFailureCache(workspaceId) {
+function clearSniparaFailureCache(workspaceId, toolName = null) {
   if (!workspaceId) {
     failureCache.clear();
     return;
   }
-  failureCache.delete(normalizeWorkspaceId(workspaceId));
+  const normalizedWorkspaceId = normalizeWorkspaceId(workspaceId);
+  if (toolName) {
+    failureCache.delete(buildFailureCacheKey(normalizedWorkspaceId, toolName));
+    return;
+  }
+
+  for (const key of failureCache.keys()) {
+    if (key === normalizedWorkspaceId || key.startsWith(`${normalizedWorkspaceId}::`)) {
+      failureCache.delete(key);
+    }
+  }
 }
 
 async function callSniparaTool({ db, workspaceId, toolName, args = {}, timeoutMs = 15_000, bypassFailureCache = false }) {
   const config = await resolveSniparaConfig(db, workspaceId);
   if (!config.configured || !config.apiKey || !config.apiUrl) return null;
   const resolvedWorkspaceId = normalizeWorkspaceId(workspaceId);
-  const failureState = !bypassFailureCache ? getSniparaFailureState(resolvedWorkspaceId) : null;
+  const failureState = !bypassFailureCache ? getSniparaFailureState(resolvedWorkspaceId, toolName) : null;
   if (failureState?.open) {
     throw new SniparaToolError(
       `Snipara ${toolName} short-circuited after recent failure`,
@@ -315,11 +350,11 @@ async function callSniparaTool({ db, workspaceId, toolName, args = {}, timeoutMs
       });
     }
 
-    clearSniparaFailureCache(resolvedWorkspaceId);
+    clearSniparaFailureCache(resolvedWorkspaceId, toolName);
     return parseSniparaResult(payload);
   } catch (error) {
     if (error instanceof SniparaToolError) {
-      cacheSniparaFailure(resolvedWorkspaceId, error);
+      cacheSniparaFailure(resolvedWorkspaceId, toolName, error);
       throw error;
     }
     const wrapped = new SniparaToolError(
@@ -334,7 +369,7 @@ async function callSniparaTool({ db, workspaceId, toolName, args = {}, timeoutMs
         causeMessage: error?.message || null,
       }
     );
-    cacheSniparaFailure(resolvedWorkspaceId, wrapped);
+    cacheSniparaFailure(resolvedWorkspaceId, toolName, wrapped);
     throw wrapped;
   } finally {
     clearTimeout(timeout);
