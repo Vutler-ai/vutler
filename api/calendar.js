@@ -126,6 +126,7 @@ router.get('/', async (req, res) => {
   try {
     const columns = await ensureSchema();
     const { start, end, source } = req.query;
+    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
 
     // Decide which sources to include
     const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || (source && source.startsWith('agent'));
@@ -139,8 +140,8 @@ router.get('/', async (req, res) => {
     if (wantStored) {
       const storedPromise = (async () => {
         let query = `SELECT ${buildStoredEventSelect(columns)} FROM ${SCHEMA}.calendar_events`;
-        const params = [];
-        const conditions = [];
+        const params = [workspaceId];
+        const conditions = ['workspace_id = $1'];
         if (start) { params.push(start); conditions.push(`start_time >= $${params.length}`); }
         if (end)   { params.push(end);   conditions.push(`end_time <= $${params.length}`); }
         if (source && source !== 'all') {
@@ -280,13 +281,14 @@ router.put('/events/:id', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Virtual events are read-only. Edit the source entity directly.' });
     }
     await ensureSchema();
+    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
     const { title, start, end, allDay, description, location, color } = req.body;
     const r = await pool.query(
       `UPDATE ${SCHEMA}.calendar_events SET title=COALESCE($2,title), description=COALESCE($3,description),
        start_time=COALESCE($4,start_time), end_time=COALESCE($5,end_time), all_day=COALESCE($6,all_day),
        location=COALESCE($7,location), color=COALESCE($8,color), updated_at=NOW()
-       WHERE id=$1 RETURNING *`,
-      [req.params.id, title, description, start, end, allDay, location, color]
+       WHERE id=$1 AND workspace_id = $9 RETURNING *`,
+      [req.params.id, title, description, start, end, allDay, location, color, workspaceId]
     );
     if (!r.rows.length) return res.status(404).json({ success: false, error: 'Event not found' });
     res.json({ success: true, event: r.rows[0] });
@@ -301,7 +303,8 @@ router.delete('/events/:id', async (req, res) => {
     if (req.params.id.startsWith('virtual-')) {
       return res.status(403).json({ success: false, error: 'Virtual events cannot be deleted. Edit the source entity directly.' });
     }
-    await pool.query(`DELETE FROM ${SCHEMA}.calendar_events WHERE id=$1`, [req.params.id]);
+    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    await pool.query(`DELETE FROM ${SCHEMA}.calendar_events WHERE id=$1 AND workspace_id = $2`, [req.params.id, workspaceId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
