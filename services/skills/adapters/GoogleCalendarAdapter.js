@@ -8,8 +8,20 @@ const {
   getFreeBusy,
 } = require('../../google/googleApi');
 const pool = require('../../../lib/vaultbrix');
+const { getExistingColumns } = require('../../../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
+let calendarColumns = null;
+
+async function getCalendarColumns() {
+  if (calendarColumns) return calendarColumns;
+  calendarColumns = await getExistingColumns(pool, SCHEMA, 'calendar_events');
+  return calendarColumns;
+}
+
+function hasColumn(columns, columnName) {
+  return Boolean(columns && columns.has(columnName));
+}
 
 class GoogleCalendarAdapter {
   async execute(context) {
@@ -59,6 +71,7 @@ class GoogleCalendarAdapter {
   }
 
   async _create(workspaceId, params) {
+    const columns = await getCalendarColumns();
     const event = params.event || params;
     const created = await createCalendarEvent(workspaceId, {
       summary: event.summary || event.title,
@@ -70,21 +83,33 @@ class GoogleCalendarAdapter {
     });
 
     try {
+      const insertColumns = ['workspace_id', 'title', 'description', 'start_time', 'end_time', 'location'];
+      const insertValues = [
+        workspaceId,
+        created.summary,
+        created.description || '',
+        created.start?.dateTime || created.start?.date,
+        created.end?.dateTime || created.end?.date,
+        created.location || '',
+      ];
+      if (hasColumn(columns, 'source')) {
+        insertColumns.push('source');
+        insertValues.push('google');
+      }
+      if (hasColumn(columns, 'source_id')) {
+        insertColumns.push('source_id');
+        insertValues.push(created.id);
+      }
+      if (hasColumn(columns, 'metadata')) {
+        insertColumns.push('metadata');
+        insertValues.push(JSON.stringify({ googleEventId: created.id, htmlLink: created.htmlLink }));
+      }
       await pool.query(
         `INSERT INTO ${SCHEMA}.calendar_events
-          (workspace_id, title, description, start_time, end_time, location, source, source_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, 'google', $7, $8::jsonb)
+          (${insertColumns.join(', ')})
+         VALUES (${insertValues.map((_, index) => `$${index + 1}`).join(', ')})
          ON CONFLICT DO NOTHING`,
-        [
-          workspaceId,
-          created.summary,
-          created.description || '',
-          created.start?.dateTime || created.start?.date,
-          created.end?.dateTime || created.end?.date,
-          created.location || '',
-          created.id,
-          JSON.stringify({ googleEventId: created.id, htmlLink: created.htmlLink }),
-        ]
+        insertValues
       );
     } catch (err) {
       console.warn('[GoogleCalendarAdapter] Local mirror insert failed:', err.message);
@@ -103,21 +128,29 @@ class GoogleCalendarAdapter {
   }
 
   async _update(workspaceId, params) {
+    const columns = await getCalendarColumns();
     const { eventId, ...fields } = params.event || params;
     if (!eventId) return { success: false, error: 'eventId is required for update' };
 
     const updated = await updateCalendarEvent(workspaceId, { eventId, ...fields });
 
     try {
+      const whereClauses = ['workspace_id = $4'];
+      if (hasColumn(columns, 'source')) whereClauses.push(`source = 'google'`);
+      if (hasColumn(columns, 'source_id')) {
+        whereClauses.push('source_id = $5');
+      } else if (hasColumn(columns, 'metadata')) {
+        whereClauses.push(`metadata->>'googleEventId' = $5`);
+      } else {
+        whereClauses.push('1 = 0');
+      }
       await pool.query(
         `UPDATE ${SCHEMA}.calendar_events
             SET title = COALESCE($1, title),
                 start_time = COALESCE($2, start_time),
                 end_time = COALESCE($3, end_time),
                 updated_at = NOW()
-          WHERE workspace_id = $4
-            AND source = 'google'
-            AND source_id = $5`,
+          WHERE ${whereClauses.join(' AND ')}`,
         [fields.summary, fields.start, fields.end, workspaceId, eventId]
       );
     } catch (err) {
@@ -128,17 +161,25 @@ class GoogleCalendarAdapter {
   }
 
   async _delete(workspaceId, params) {
+    const columns = await getCalendarColumns();
     const eventId = params.eventId || params.event?.eventId;
     if (!eventId) return { success: false, error: 'eventId is required for delete' };
 
     await deleteCalendarEvent(workspaceId, { eventId });
 
     try {
+      const whereClauses = ['workspace_id = $1'];
+      if (hasColumn(columns, 'source')) whereClauses.push(`source = 'google'`);
+      if (hasColumn(columns, 'source_id')) {
+        whereClauses.push('source_id = $2');
+      } else if (hasColumn(columns, 'metadata')) {
+        whereClauses.push(`metadata->>'googleEventId' = $2`);
+      } else {
+        whereClauses.push('1 = 0');
+      }
       await pool.query(
         `DELETE FROM ${SCHEMA}.calendar_events
-          WHERE workspace_id = $1
-            AND source = 'google'
-            AND source_id = $2`,
+          WHERE ${whereClauses.join(' AND ')}`,
         [workspaceId, eventId]
       );
     } catch (err) {

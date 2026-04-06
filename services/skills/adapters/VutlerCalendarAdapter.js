@@ -1,8 +1,36 @@
 'use strict';
 
 const pool = require('../../../lib/vaultbrix');
+const { getExistingColumns } = require('../../../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
+let calendarColumns = null;
+
+async function getCalendarColumns() {
+  if (calendarColumns) return calendarColumns;
+  calendarColumns = await getExistingColumns(pool, SCHEMA, 'calendar_events');
+  return calendarColumns;
+}
+
+function hasColumn(columns, columnName) {
+  return Boolean(columns && columns.has(columnName));
+}
+
+function buildSelectList(columns) {
+  return [
+    'id',
+    'title',
+    'description',
+    'start_time',
+    'end_time',
+    'all_day',
+    'location',
+    'color',
+    hasColumn(columns, 'source') ? 'source' : `'manual' AS source`,
+    hasColumn(columns, 'source_id') ? 'source_id' : 'NULL::text AS source_id',
+    hasColumn(columns, 'metadata') ? 'metadata' : `'{}'::jsonb AS metadata`,
+  ].join(', ');
+}
 
 class VutlerCalendarAdapter {
   async execute(context) {
@@ -24,6 +52,7 @@ class VutlerCalendarAdapter {
   }
 
   async _list(workspaceId, params) {
+    const columns = await getCalendarColumns();
     const clauses = ['workspace_id = $1'];
     const values = [workspaceId];
 
@@ -37,7 +66,7 @@ class VutlerCalendarAdapter {
     }
 
     const result = await pool.query(
-      `SELECT id, title, description, start_time, end_time, all_day, location, color, source, source_id, metadata
+      `SELECT ${buildSelectList(columns)}
        FROM ${SCHEMA}.calendar_events
        WHERE ${clauses.join(' AND ')}
        ORDER BY start_time ASC
@@ -67,6 +96,7 @@ class VutlerCalendarAdapter {
   }
 
   async _create(workspaceId, params) {
+    const columns = await getCalendarColumns();
     const event = params.event || params;
     const title = event.summary || event.title;
     const start = event.start;
@@ -75,24 +105,36 @@ class VutlerCalendarAdapter {
       return { success: false, error: 'title/summary and start are required' };
     }
 
+    const insertColumns = ['workspace_id', 'title', 'description', 'start_time', 'end_time', 'all_day', 'location', 'color'];
+    const insertValues = [
+      workspaceId,
+      title,
+      event.description || '',
+      start,
+      end,
+      Boolean(event.allDay),
+      event.location || '',
+      event.color || '#3b82f6',
+    ];
+    if (hasColumn(columns, 'source')) {
+      insertColumns.push('source');
+      insertValues.push(event.source || params.source || 'manual');
+    }
+    if (hasColumn(columns, 'source_id')) {
+      insertColumns.push('source_id');
+      insertValues.push(event.sourceId || params.source_id || null);
+    }
+    if (hasColumn(columns, 'metadata')) {
+      insertColumns.push('metadata');
+      insertValues.push(JSON.stringify(event.metadata || params.metadata || {}));
+    }
+
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.calendar_events
-        (workspace_id, title, description, start_time, end_time, all_day, location, color, source, source_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 'manual'), $10, $11::jsonb)
-       RETURNING id, title, description, start_time, end_time, all_day, location, color, source, source_id, metadata`,
-      [
-        workspaceId,
-        title,
-        event.description || '',
-        start,
-        end,
-        Boolean(event.allDay),
-        event.location || '',
-        event.color || '#3b82f6',
-        event.source || params.source || 'manual',
-        event.sourceId || params.source_id || null,
-        JSON.stringify(event.metadata || params.metadata || {}),
-      ]
+        (${insertColumns.join(', ')})
+       VALUES (${insertValues.map((_, index) => `$${index + 1}`).join(', ')})
+       RETURNING *`,
+      insertValues
     );
 
     const created = result.rows[0];

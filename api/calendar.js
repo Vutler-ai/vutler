@@ -7,21 +7,62 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
+const { getExistingColumns, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 const SCHEMA = 'tenant_vutler';
 
 /* ── Schema migration (safe to re-run) ──────────────────────────────────────── */
 let _schemaReady = false;
+let _calendarColumns = null;
+
+async function loadCalendarColumns(forceRefresh = false) {
+  if (!forceRefresh && _calendarColumns) return _calendarColumns;
+  const columns = await getExistingColumns(pool, SCHEMA, 'calendar_events');
+  _calendarColumns = columns;
+  return columns;
+}
+
 async function ensureSchema() {
-  if (_schemaReady) return;
-  try {
-    await pool.query(`
-      ALTER TABLE ${SCHEMA}.calendar_events
-        ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual',
-        ADD COLUMN IF NOT EXISTS source_id TEXT,
-        ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'
-    `);
-  } catch (_) { /* columns may already exist or table missing — handled per route */ }
+  if (_schemaReady && _calendarColumns) return _calendarColumns;
+  if (runtimeSchemaMutationsAllowed()) {
+    try {
+      await pool.query(`
+        ALTER TABLE ${SCHEMA}.calendar_events
+          ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual',
+          ADD COLUMN IF NOT EXISTS source_id TEXT,
+          ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'
+      `);
+    } catch (_) { /* columns may already exist or table missing — handled per route */ }
+  }
+  await loadCalendarColumns(true).catch(() => {
+    _calendarColumns = null;
+  });
   _schemaReady = true;
+  return _calendarColumns;
+}
+
+function hasColumn(columns, columnName) {
+  return Boolean(columns && columns.has(columnName));
+}
+
+function buildStoredEventSelect(columns) {
+  const sourceExpr = hasColumn(columns, 'source') ? 'source' : `'manual' AS source`;
+  const sourceIdExpr = hasColumn(columns, 'source_id') ? 'source_id' : 'NULL::text AS source_id';
+  const metadataExpr = hasColumn(columns, 'metadata') ? 'metadata' : `'{}'::jsonb AS metadata`;
+  return [
+    'id',
+    'title',
+    'description',
+    'start_time',
+    'end_time',
+    'all_day',
+    'location',
+    'color',
+    sourceExpr,
+    sourceIdExpr,
+    metadataExpr,
+    'created_at',
+    'updated_at',
+  ].join(', ');
 }
 
 /* ── Virtual-event builders ─────────────────────────────────────────────────── */
@@ -83,7 +124,7 @@ async function fetchBillingEvents(start, end) {
 // GET /api/v1/calendar — merged stored + virtual events
 router.get('/', async (req, res) => {
   try {
-    await ensureSchema();
+    const columns = await ensureSchema();
     const { start, end, source } = req.query;
 
     // Decide which sources to include
@@ -97,7 +138,7 @@ router.get('/', async (req, res) => {
     // 1. Stored events
     if (wantStored) {
       const storedPromise = (async () => {
-        let query = `SELECT * FROM ${SCHEMA}.calendar_events`;
+        let query = `SELECT ${buildStoredEventSelect(columns)} FROM ${SCHEMA}.calendar_events`;
         const params = [];
         const conditions = [];
         if (start) { params.push(start); conditions.push(`start_time >= $${params.length}`); }
@@ -187,19 +228,44 @@ router.get('/events', async (req, res) => {
 // POST /api/v1/calendar/events
 router.post('/events', async (req, res) => {
   try {
-    await ensureSchema();
+    const columns = await ensureSchema();
     const { title, start, end, allDay, description, location, color, source, source_id, metadata } = req.body;
     if (!title || !start) return res.status(400).json({ success: false, error: 'title and start required' });
+
+    const insertColumns = ['workspace_id', 'title', 'description', 'start_time', 'end_time', 'all_day', 'location', 'color'];
+    const insertValues = [
+      req.workspaceId || '00000000-0000-0000-0000-000000000001',
+      title,
+      description || '',
+      start,
+      end || start,
+      allDay || false,
+      location || '',
+      color || '#3b82f6',
+    ];
+    if (hasColumn(columns, 'source')) {
+      insertColumns.push('source');
+      insertValues.push(source || 'manual');
+    }
+    if (hasColumn(columns, 'source_id')) {
+      insertColumns.push('source_id');
+      insertValues.push(source_id || null);
+    }
+    if (hasColumn(columns, 'metadata')) {
+      insertColumns.push('metadata');
+      insertValues.push(JSON.stringify(metadata || {}));
+    }
+
     const r = await pool.query(
-      `INSERT INTO ${SCHEMA}.calendar_events (title, description, start_time, end_time, all_day, location, color, source, source_id, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [title, description||'', start, end||start, allDay||false, location||'', color||'#3b82f6', source||'manual', source_id||null, JSON.stringify(metadata||{})]
+      `INSERT INTO ${SCHEMA}.calendar_events (${insertColumns.join(', ')})
+       VALUES (${insertValues.map((_, index) => `$${index + 1}`).join(',')}) RETURNING *`,
+      insertValues
     );
     const e = r.rows[0];
     res.json({ success: true, event: {
       id: e.id, title: e.title, start: e.start_time, end: e.end_time,
       allDay: e.all_day, description: e.description, location: e.location, color: e.color,
-      source: e.source, sourceId: e.source_id, readOnly: false, metadata: e.metadata,
+      source: e.source || 'manual', sourceId: e.source_id || null, readOnly: false, metadata: e.metadata || {},
     }});
   } catch (err) {
     console.error('[CALENDAR] Create error:', err.message);
