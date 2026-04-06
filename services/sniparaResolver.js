@@ -187,7 +187,14 @@ function shouldCacheSniparaFailure(error) {
   if (!error) return false;
   if (error.code === 'circuit_open') return false;
   if (error.code === 'timeout' || error.code === 'request_failed' || error.code === 'invalid_json') return true;
-  if (Number.isFinite(error.statusCode)) return error.statusCode >= 400;
+  if (Number.isFinite(error.statusCode)) {
+    // Keep the circuit breaker for infra/auth failures, not task-level business errors.
+    return error.statusCode === 401
+      || error.statusCode === 403
+      || error.statusCode === 408
+      || error.statusCode === 429
+      || error.statusCode >= 500;
+  }
   return false;
 }
 

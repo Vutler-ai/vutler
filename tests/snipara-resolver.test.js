@@ -184,7 +184,86 @@ describe('sniparaResolver', () => {
     });
   });
 
-  test('opens a short circuit after a recent failure and bypasses fetch until cache is cleared', async () => {
+  test('opens a short circuit after a recent server failure and bypasses fetch until cache is cleared', async () => {
+    const db = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('FROM tenant_vutler.workspace_settings')) {
+          return {
+            rows: [
+              { key: 'snipara_api_key', value: 'workspace-key' },
+              { key: 'snipara_api_url', value: 'https://workspace.snipara.test/mcp' },
+            ],
+          };
+        }
+        if (sql.includes('FROM tenant_vutler.workspaces')) {
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      }),
+    };
+
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: jest.fn(async () => 'service unavailable'),
+    });
+
+    const {
+      callSniparaTool,
+      clearSniparaConfigCache,
+      clearSniparaFailureCache,
+      getSniparaFailureState,
+    } = require('../services/sniparaResolver');
+    clearSniparaConfigCache();
+
+    await expect(callSniparaTool({
+      db,
+      workspaceId: 'ws-5',
+      toolName: 'rlm_recall',
+      args: { query: 'user preference' },
+    })).rejects.toMatchObject({
+      name: 'SniparaToolError',
+      statusCode: 503,
+      code: 'http_error',
+    });
+
+    expect(getSniparaFailureState('ws-5')).toMatchObject({
+      open: true,
+      error: expect.objectContaining({
+        status_code: 503,
+        tool_name: 'rlm_recall',
+      }),
+    });
+
+    await expect(callSniparaTool({
+      db,
+      workspaceId: 'ws-5',
+      toolName: 'rlm_recall',
+      args: { query: 'user preference' },
+    })).rejects.toMatchObject({
+      name: 'SniparaToolError',
+      code: 'circuit_open',
+      statusCode: 503,
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    clearSniparaFailureCache('ws-5');
+    await expect(callSniparaTool({
+      db,
+      workspaceId: 'ws-5',
+      toolName: 'rlm_recall',
+      args: { query: 'user preference' },
+    })).rejects.toMatchObject({
+      name: 'SniparaToolError',
+      statusCode: 503,
+      code: 'http_error',
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not open a short circuit after a recoverable 404 tool failure', async () => {
     const db = {
       query: jest.fn(async (sql) => {
         if (sql.includes('FROM tenant_vutler.workspace_settings')) {
@@ -205,13 +284,12 @@ describe('sniparaResolver', () => {
     global.fetch.mockResolvedValue({
       ok: false,
       status: 404,
-      text: jest.fn(async () => '404 page not found'),
+      text: jest.fn(async () => 'Task not found or not assigned to agent'),
     });
 
     const {
       callSniparaTool,
       clearSniparaConfigCache,
-      clearSniparaFailureCache,
       getSniparaFailureState,
     } = require('../services/sniparaResolver');
     clearSniparaConfigCache();
@@ -219,41 +297,21 @@ describe('sniparaResolver', () => {
     await expect(callSniparaTool({
       db,
       workspaceId: 'ws-5',
-      toolName: 'rlm_recall',
-      args: { query: 'user preference' },
+      toolName: 'rlm_task_complete',
+      args: { task_id: 'task-1' },
     })).rejects.toMatchObject({
       name: 'SniparaToolError',
       statusCode: 404,
       code: 'http_error',
     });
 
-    expect(getSniparaFailureState('ws-5')).toMatchObject({
-      open: true,
-      error: expect.objectContaining({
-        status_code: 404,
-        tool_name: 'rlm_recall',
-      }),
-    });
+    expect(getSniparaFailureState('ws-5')).toBeNull();
 
     await expect(callSniparaTool({
       db,
       workspaceId: 'ws-5',
-      toolName: 'rlm_recall',
-      args: { query: 'user preference' },
-    })).rejects.toMatchObject({
-      name: 'SniparaToolError',
-      code: 'circuit_open',
-      statusCode: 404,
-    });
-
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-
-    clearSniparaFailureCache('ws-5');
-    await expect(callSniparaTool({
-      db,
-      workspaceId: 'ws-5',
-      toolName: 'rlm_recall',
-      args: { query: 'user preference' },
+      toolName: 'rlm_task_complete',
+      args: { task_id: 'task-1' },
     })).rejects.toMatchObject({
       name: 'SniparaToolError',
       statusCode: 404,

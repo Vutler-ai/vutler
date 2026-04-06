@@ -1,7 +1,11 @@
 'use strict';
 
 const pool = require('../lib/vaultbrix');
-const { DEFAULT_WORKSPACE, DEFAULT_SNIPARA_SWARM_ID } = require('./sniparaResolver');
+const {
+  DEFAULT_WORKSPACE,
+  DEFAULT_SNIPARA_SWARM_ID,
+  clearSniparaFailureCache,
+} = require('./sniparaResolver');
 const { createSniparaGateway } = require('./snipara/gateway');
 
 function normalizeWorkspaceId(workspaceId) {
@@ -25,6 +29,24 @@ function normalizeEvidence(evidence) {
   if (Array.isArray(evidence)) return evidence;
   if (typeof evidence === 'object') return [evidence];
   return [{ type: 'note', text: String(evidence) }];
+}
+
+function collectSniparaErrorText(error) {
+  return [
+    error?.message,
+    error?.responsePreview,
+    error?.causeMessage,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function isAgentNotInSwarmError(error) {
+  return /agent not in swarm/i.test(collectSniparaErrorText(error));
+}
+
+function isTaskAssignmentError(error) {
+  return /not assigned to agent|task not found or not assigned/i.test(collectSniparaErrorText(error));
 }
 
 class SniparaTaskAdapter {
@@ -81,8 +103,9 @@ class SniparaTaskAdapter {
     try {
       return await attemptClaim(agentId);
     } catch (err) {
-      if (!/Agent not in swarm/i.test(String(err.message || err))) throw err;
+      if (!isAgentNotInSwarmError(err)) throw err;
 
+      clearSniparaFailureCache(ws);
       const joined = await this.call(ws, 'rlm_swarm_join', {
         swarm_id: swarmId,
         agent_id: agentId,
@@ -115,7 +138,8 @@ class SniparaTaskAdapter {
     try {
       return await attemptComplete();
     } catch (err) {
-      if (!/not assigned to agent/i.test(String(err.message || err))) throw err;
+      if (!isTaskAssignmentError(err)) throw err;
+      clearSniparaFailureCache(ws);
       await this.claimTask(ws, { taskId, agentId });
       return attemptComplete();
     }
