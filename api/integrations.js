@@ -134,6 +134,14 @@ const CONNECTOR_AGENT_CAPABILITY_MAP = {
   microsoft365: ['email', 'calendar'],
   social_media: ['social'],
 };
+const DEDICATED_CONNECT_PROVIDERS = new Map([
+  ['google', { mode: 'oauth', path: '/api/v1/integrations/google/connect' }],
+  ['github', { mode: 'oauth', path: '/api/v1/integrations/github/connect' }],
+  ['microsoft365', { mode: 'oauth', path: '/api/v1/integrations/microsoft365/connect' }],
+  ['chatgpt', { mode: 'device_auth', path: '/api/v1/integrations/chatgpt/connect' }],
+  ['jira', { mode: 'api_token', path: '/api/v1/integrations/jira/connect' }],
+]);
+const TOKEN_BACKED_PROVIDERS = new Set(['google', 'github', 'microsoft365', 'chatgpt']);
 
 // In-memory store for pending device auth sessions: workspaceId → { device_auth_id, user_code, interval, expires_at }
 const deviceAuthSessions = new Map();
@@ -578,6 +586,14 @@ router.get('/', async (req, res) => {
         c.source,
         COALESCE(wi.connected, FALSE) AS connected,
         COALESCE(wi.status, 'disconnected') AS status,
+        COALESCE(wi.config, '{}'::jsonb) AS config,
+        COALESCE(wi.credentials, '{}'::jsonb) AS credentials,
+        COALESCE(wi.scopes, '[]'::jsonb) AS scopes,
+        wi.access_token,
+        wi.refresh_token,
+        wi.token_expires_at,
+        wi.disconnected_at,
+        COALESCE(wi.metadata, '{}'::jsonb) AS metadata,
         wi.connected_at,
         wi.connected_by,
         wi.updated_at
@@ -590,26 +606,27 @@ router.get('/', async (req, res) => {
       [workspaceId]
     );
 
-    const integrations = result.rows.map((row) => ({
-      constReadiness: getConnectorReadiness(row.provider),
-      row,
-    })).map(({ row, constReadiness }) => ({
-      provider: row.provider,
-      id: row.provider,
-      name: row.name,
-      description: row.description,
-      icon: row.icon,
-      category: row.category,
-      source: row.source,
-      connected: row.connected,
-      status: row.status,
-      connected_at: row.connected_at,
-      connected_by: row.connected_by,
-      updated_at: row.updated_at,
-      readiness: constReadiness.readiness,
-      readiness_label: constReadiness.label,
-      readiness_description: constReadiness.description,
-    }));
+    const integrations = result.rows.map((row) => {
+      const constReadiness = getConnectorReadiness(row.provider);
+      const normalizedRow = normalizeIntegrationConnection(row);
+      return {
+        provider: normalizedRow.provider,
+        id: normalizedRow.provider,
+        name: normalizedRow.name,
+        description: normalizedRow.description,
+        icon: normalizedRow.icon,
+        category: normalizedRow.category,
+        source: normalizedRow.source,
+        connected: normalizedRow.connected,
+        status: normalizedRow.status,
+        connected_at: normalizedRow.connected_at,
+        connected_by: normalizedRow.connected_by,
+        updated_at: normalizedRow.updated_at,
+        readiness: constReadiness.readiness,
+        readiness_label: constReadiness.label,
+        readiness_description: constReadiness.description,
+      };
+    });
 
     res.json({ success: true, integrations });
   } catch (err) {
@@ -722,6 +739,14 @@ router.get('/:provider/status', async (req, res) => {
         c.source,
         COALESCE(wi.connected, FALSE) AS connected,
         COALESCE(wi.status, 'disconnected') AS status,
+        COALESCE(wi.config, '{}'::jsonb) AS config,
+        COALESCE(wi.credentials, '{}'::jsonb) AS credentials,
+        COALESCE(wi.scopes, '[]'::jsonb) AS scopes,
+        wi.access_token,
+        wi.refresh_token,
+        wi.token_expires_at,
+        wi.disconnected_at,
+        COALESCE(wi.metadata, '{}'::jsonb) AS metadata,
         wi.connected_at,
         wi.connected_by
       FROM ${SCHEMA}.integrations_catalog c
@@ -736,7 +761,7 @@ router.get('/:provider/status', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Integration not found' });
     }
 
-    res.json(result.rows[0]);
+    res.json(normalizeIntegrationConnection(result.rows[0]));
   } catch (err) {
     console.error('[INTEGRATIONS] Status error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1785,6 +1810,39 @@ function buildProviderOverrideMap(rows = []) {
   return { providersWithOverrides, allowedProviders };
 }
 
+function isNonEmptyObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0);
+}
+
+function hasUsableAuthMaterial(row = {}) {
+  if (TOKEN_BACKED_PROVIDERS.has(row.provider)) {
+    return Boolean(row.access_token || row.refresh_token) || isNonEmptyObject(row.credentials);
+  }
+
+  if (row.provider === 'jira') {
+    return isNonEmptyObject(row.credentials);
+  }
+
+  return isNonEmptyObject(row.credentials) || isNonEmptyObject(row.config) || (Array.isArray(row.scopes) && row.scopes.length > 0);
+}
+
+function normalizeIntegrationConnection(row = {}) {
+  if (!row || !row.provider) return row;
+  if (!row.connected) return row;
+
+  const missingAuthMaterial = !hasUsableAuthMaterial(row);
+  const staleConnectedRow = row.status === 'connected' && Boolean(row.disconnected_at);
+
+  if (!missingAuthMaterial && !staleConnectedRow) return row;
+
+  return {
+    ...row,
+    connected: false,
+    status: 'failed',
+    runtime_connection_reason: 'Saved connector record has no usable authentication material. Reconnect required.',
+  };
+}
+
 function buildAgentConnectorState({
   integration,
   relatedCapabilities = [],
@@ -1886,27 +1944,28 @@ async function persistJiraIntegrationConnection({
 }
 
 function buildIntegrationDetailPayload(row) {
-  const readiness = getConnectorReadiness(row?.provider);
-  const accessModel = getConnectorAccessModel(row?.provider);
-  const config = row?.config && typeof row.config === 'object' ? { ...row.config } : {};
-  const credentials = row?.credentials && typeof row.credentials === 'object' ? row.credentials : {};
-  const health = row?.metadata && typeof row.metadata === 'object' && row.metadata.health
-    ? row.metadata.health
+  const normalizedRow = normalizeIntegrationConnection(row);
+  const readiness = getConnectorReadiness(normalizedRow?.provider);
+  const accessModel = getConnectorAccessModel(normalizedRow?.provider);
+  const config = normalizedRow?.config && typeof normalizedRow.config === 'object' ? { ...normalizedRow.config } : {};
+  const credentials = normalizedRow?.credentials && typeof normalizedRow.credentials === 'object' ? normalizedRow.credentials : {};
+  const health = normalizedRow?.metadata && typeof normalizedRow.metadata === 'object' && normalizedRow.metadata.health
+    ? normalizedRow.metadata.health
     : null;
-  const requestedScopes = getRequestedScopes(row?.provider, row?.default_scopes);
-  const grantedScopes = Array.isArray(row?.scopes) ? row.scopes : [];
-  const validatedScopes = getValidatedScopes(row?.provider, grantedScopes, health, row?.connected);
-  const capabilities = buildIntegrationCapabilities(row?.provider, health, row?.connected);
+  const requestedScopes = getRequestedScopes(normalizedRow?.provider, normalizedRow?.default_scopes);
+  const grantedScopes = Array.isArray(normalizedRow?.scopes) ? normalizedRow.scopes : [];
+  const validatedScopes = getValidatedScopes(normalizedRow?.provider, grantedScopes, health, normalizedRow?.connected);
+  const capabilities = buildIntegrationCapabilities(normalizedRow?.provider, health, normalizedRow?.connected);
   const unsupportedCapabilities = capabilities.filter((capability) => capability.status === 'unsupported');
   const runtimeState = buildRuntimeState({
-    row,
+    row: normalizedRow,
     readiness,
     health,
     capabilities,
   });
   const missingScopes = requestedScopes.filter((scope) => !grantedScopes.includes(scope));
 
-  if (row?.provider === 'jira') {
+  if (normalizedRow?.provider === 'jira') {
     if (typeof credentials.baseUrl === 'string' && credentials.baseUrl) {
       config.baseUrl = credentials.baseUrl;
     }
@@ -1917,18 +1976,18 @@ function buildIntegrationDetailPayload(row) {
   }
 
   return {
-    provider: row.provider,
-    id: row.provider,
-    name: row.name,
-    description: row.description,
-    icon: row.icon,
-    category: row.category,
-    source: row.source,
-    connected: row.connected,
-    status: row.status,
-    connected_at: row.connected_at,
-    connected_by: row.connected_by,
-    scopes: row.scopes || [],
+    provider: normalizedRow.provider,
+    id: normalizedRow.provider,
+    name: normalizedRow.name,
+    description: normalizedRow.description,
+    icon: normalizedRow.icon,
+    category: normalizedRow.category,
+    source: normalizedRow.source,
+    connected: normalizedRow.connected,
+    status: normalizedRow.status,
+    connected_at: normalizedRow.connected_at,
+    connected_by: normalizedRow.connected_by,
+    scopes: normalizedRow.scopes || [],
     config,
     readiness: readiness.readiness,
     readiness_label: readiness.label,
@@ -1947,7 +2006,7 @@ function buildIntegrationDetailPayload(row) {
     unsupported_capabilities: unsupportedCapabilities,
     health,
     usage: { api_calls_today: 0, rate_limit_remaining: 1000 },
-    webhook_url: `/api/v1/webhooks/${row.provider}`,
+    webhook_url: `/api/v1/webhooks/${normalizedRow.provider}`,
   };
 }
 
@@ -2045,6 +2104,16 @@ router.post('/:provider/connect', async (req, res) => {
     await ensureReady();
     const workspaceId = getWorkspaceId(req);
     const { provider } = req.params;
+    const dedicatedConnect = DEDICATED_CONNECT_PROVIDERS.get(provider);
+
+    if (dedicatedConnect) {
+      return res.status(409).json({
+        success: false,
+        error: `${provider} requires its dedicated ${dedicatedConnect.mode} connection flow`,
+        connect_mode: dedicatedConnect.mode,
+        connect_path: dedicatedConnect.path,
+      });
+    }
 
     const cat = await pool.query(
       `SELECT provider, source, default_scopes FROM ${SCHEMA}.integrations_catalog WHERE provider = $1 AND is_enabled = TRUE LIMIT 1`,
@@ -2244,6 +2313,14 @@ router.get('/agent/:agentId/readiness', async (req, res) => {
         c.icon,
         COALESCE(wi.connected, FALSE) AS connected,
         COALESCE(wi.status, 'disconnected') AS status,
+        COALESCE(wi.config, '{}'::jsonb) AS config,
+        COALESCE(wi.credentials, '{}'::jsonb) AS credentials,
+        COALESCE(wi.scopes, '[]'::jsonb) AS scopes,
+        wi.access_token,
+        wi.refresh_token,
+        wi.token_expires_at,
+        wi.disconnected_at,
+        COALESCE(wi.metadata, '{}'::jsonb) AS metadata,
         wi.connected_at
       FROM ${SCHEMA}.integrations_catalog c
       LEFT JOIN ${SCHEMA}.workspace_integrations wi
@@ -2263,7 +2340,8 @@ router.get('/agent/:agentId/readiness', async (req, res) => {
     );
     const { providersWithOverrides, allowedProviders } = buildProviderOverrideMap(overridesResult.rows);
 
-    const connectors = integrationsResult.rows.map((row) => {
+    const connectors = integrationsResult.rows.map((rawRow) => {
+      const row = normalizeIntegrationConnection(rawRow);
       const readiness = getConnectorReadiness(row.provider);
       const accessModel = getConnectorAccessModel(row.provider);
       const relatedCapabilities = CONNECTOR_AGENT_CAPABILITY_MAP[row.provider] || [];
@@ -2598,5 +2676,6 @@ router._private = {
   validateJiraCredentials,
   persistJiraIntegrationConnection,
   buildIntegrationDetailPayload,
+  normalizeIntegrationConnection,
 };
 module.exports.refreshChatGPTToken = refreshChatGPTToken;
