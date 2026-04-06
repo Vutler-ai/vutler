@@ -1624,17 +1624,17 @@ function ActionDispatchPanel({
   nodeId: string;
   onCommandSettled?: () => void;
 }) {
-  const [activeAction, setActiveAction] = useState<ActionType>('search');
+  const [activeAction, setActiveAction] = useState<ActionType>('list_dir');
   const [dispatching, setDispatching] = useState(false);
   const [result, setResult] = useState<NexusDispatchResult | null>(null);
   const [command, setCommand] = useState<NexusCommandStatus<NexusDispatchResult> | null>(null);
   const [commandError, setCommandError] = useState('');
 
   // Per-action form state
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState('report');
   const [searchScope, setSearchScope] = useState('');
   const [docPath, setDocPath] = useState('');
-  const [dirPath, setDirPath] = useState('');
+  const [dirPath, setDirPath] = useState('~/Desktop');
   const [dirRecursive, setDirRecursive] = useState(false);
   const [dirPattern, setDirPattern] = useState('');
   const [emailLimit, setEmailLimit] = useState(10);
@@ -1643,7 +1643,7 @@ function ActionDispatchPanel({
   const [calDays, setCalDays] = useState(7);
   const [contactQuery, setContactQuery] = useState('');
   const [contactLimit, setContactLimit] = useState(50);
-  const [shellCmd, setShellCmd] = useState('');
+  const [shellCmd, setShellCmd] = useState('pwd');
   const ACTION_KEYS = Object.keys(ACTION_CONFIGS) as ActionType[];
 
   const canDispatch = (): boolean => {
@@ -1780,6 +1780,30 @@ function ActionDispatchPanel({
     clearResults();
   };
 
+  const applyQuickAction = (preset: 'desktop' | 'documents-search' | 'clipboard' | 'pwd') => {
+    clearResults();
+    switch (preset) {
+      case 'desktop':
+        setActiveAction('list_dir');
+        setDirPath('~/Desktop');
+        setDirPattern('');
+        setDirRecursive(false);
+        break;
+      case 'documents-search':
+        setActiveAction('search');
+        setSearchQuery('report');
+        setSearchScope('~/Documents');
+        break;
+      case 'clipboard':
+        setActiveAction('read_clipboard');
+        break;
+      case 'pwd':
+        setActiveAction('shell_exec');
+        setShellCmd('pwd');
+        break;
+    }
+  };
+
   const activeCommandId = command?.id || result?.taskId || '';
 
   return (
@@ -1787,10 +1811,48 @@ function ActionDispatchPanel({
       {/* Header */}
       <div className="px-5 py-4 border-b border-[rgba(255,255,255,0.07)]">
         <h2 className="text-sm font-semibold text-white">Dispatch Action</h2>
-        <p className="text-xs text-[#6b7280] mt-0.5">Send a typed command to this node and follow its runtime progress</p>
+        <p className="text-xs text-[#6b7280] mt-0.5">Start with one concrete local action, then switch to the typed command you need</p>
       </div>
 
       <div className="p-5 space-y-5">
+        <div>
+          <p className="text-xs text-[#9ca3af] uppercase tracking-wide mb-2">First Commands</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => applyQuickAction('desktop')}
+              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
+            >
+              <p className="text-sm text-white font-medium">List Desktop</p>
+              <p className="text-xs text-[#6b7280] mt-1">Check file access on `~/Desktop`.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => applyQuickAction('documents-search')}
+              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
+            >
+              <p className="text-sm text-white font-medium">Search Documents</p>
+              <p className="text-xs text-[#6b7280] mt-1">Look for `report` inside `~/Documents`.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => applyQuickAction('clipboard')}
+              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
+            >
+              <p className="text-sm text-white font-medium">Read Clipboard</p>
+              <p className="text-xs text-[#6b7280] mt-1">Verify the local clipboard bridge.</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => applyQuickAction('pwd')}
+              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
+            >
+              <p className="text-sm text-white font-medium">Run `pwd`</p>
+              <p className="text-xs text-[#6b7280] mt-1">Validate the shell runtime path.</p>
+            </button>
+          </div>
+        </div>
+
         {/* Action type tabs */}
         <div className="flex flex-wrap gap-1.5">
           {ACTION_KEYS.map((key) => {
