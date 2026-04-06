@@ -9,6 +9,7 @@ const { ProfileRegistry } = require('./lib/profile-registry');
 const { EnterprisePolicyEngine } = require('./lib/enterprise-policy-engine');
 const { LocalIntegrationBridge } = require('./lib/local-integration-bridge');
 const { EnterpriseActionExecutor } = require('./lib/enterprise-action-executor');
+const { buildRuntimeConfigFromToken, writeRuntimeConfig } = require('./lib/runtime-config');
 
 class NexusNode {
   constructor(opts = {}) {
@@ -105,6 +106,7 @@ class NexusNode {
     this.localIntegrationBridge = new LocalIntegrationBridge(this.providers);
     this.enterpriseActionExecutor = new EnterpriseActionExecutor(this.providers);
     this.discoverySnapshot = opts.discovery_snapshot || opts.discoverySnapshot || null;
+    this._connectPromise = null;
     this._syncPermissionSnapshot();
 
     // Offline monitor (enterprise only)
@@ -116,6 +118,18 @@ class NexusNode {
   }
 
   async connect() {
+    if (this._connectPromise) return this._connectPromise;
+    if (this.nodeId && this.heartbeatTimer) return this;
+
+    this._connectPromise = this._connectInternal();
+    try {
+      return await this._connectPromise;
+    } finally {
+      this._connectPromise = null;
+    }
+  }
+
+  async _connectInternal() {
     // 1. Register node via REST API
     console.log(`[Nexus] Connecting to ${this.server}...`);
     const regResult = await this._apiCall('POST', '/api/v1/nexus/register', {
@@ -213,6 +227,52 @@ class NexusNode {
       await this._apiCall('DELETE', `/api/v1/nexus/${this.nodeId}`);
     }
     console.log('[Nexus] Disconnected.');
+  }
+
+  startDashboardOnly() {
+    this._startDashboardServer();
+    this.log(`[NEXUS] Setup dashboard available on http://localhost:${this.port}`);
+    return this;
+  }
+
+  configureFromDeployToken(token, overrides = {}) {
+    const nextConfig = buildRuntimeConfigFromToken(token, {
+      nodeName: overrides.nodeName || this.name,
+      server: overrides.server || this.server,
+      permissions: overrides.permissions || undefined,
+    });
+
+    writeRuntimeConfig(nextConfig);
+
+    this.config = {
+      ...this.config,
+      seats: nextConfig.seats || this.config.seats,
+      primary_agent: nextConfig.primary_agent || this.config.primary_agent,
+      available_pool: nextConfig.available_pool || this.config.available_pool,
+      allow_create: nextConfig.allow_create ?? this.config.allow_create,
+      routing_rules: nextConfig.routing_rules || this.config.routing_rules,
+      auto_spawn_rules: nextConfig.auto_spawn_rules || this.config.auto_spawn_rules,
+      offline_config: nextConfig.offline_config || this.config.offline_config,
+      deploy_token: nextConfig.deploy_token,
+      permissions: nextConfig.permissions || this.config.permissions,
+      server: nextConfig.server || this.config.server,
+      key: nextConfig.api_key || nextConfig.deploy_token || this.config.key,
+    };
+
+    this.key = nextConfig.api_key || nextConfig.deploy_token || null;
+    this.deployToken = nextConfig.deploy_token;
+    this.server = nextConfig.server || this.server;
+    this.name = nextConfig.node_name || this.name;
+    this.mode = nextConfig.mode || this.mode;
+    this.sniparaInstanceId = nextConfig.snipara_instance_id || this.sniparaInstanceId;
+    this.clientName = nextConfig.client_name || this.clientName;
+    this.filesystemRoot = nextConfig.filesystem_root || this.filesystemRoot;
+    this.permissions = nextConfig.permissions || this.permissions;
+    this.offlineConfig = nextConfig.offline_config || this.offlineConfig;
+
+    this._syncPermissionSnapshot();
+    this._syncRemoteClients();
+    return nextConfig;
   }
 
   _startHeartbeat() {
@@ -944,8 +1004,29 @@ class NexusNode {
   }
 
   _startDashboardServer() {
+    if (this.healthServer) return;
     this.healthServer = createDashboardServer(this);
     this.healthServer.listen(this.port);
+  }
+
+  _syncRemoteClients() {
+    const syncProviderClient = (provider) => {
+      if (!provider) return;
+      if (provider.client) {
+        provider.client.server = this.server;
+        provider.client.apiKey = this.key;
+      }
+      if ('server' in provider) provider.server = this.server;
+      if ('apiKey' in provider) provider.apiKey = this.key;
+    };
+
+    Object.values(this.providers || {}).forEach(syncProviderClient);
+    this.agentManager.cloudApiUrl = this.server;
+    this.agentManager.apiKey = this.key;
+    this.agentManager.profileRegistry.server = this.server;
+    this.agentManager.profileRegistry.apiKey = this.key;
+    this.profileRegistry.server = this.server;
+    this.profileRegistry.apiKey = this.key;
   }
 
   async _apiCall(method, path, body) {

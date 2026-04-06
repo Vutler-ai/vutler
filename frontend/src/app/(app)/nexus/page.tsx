@@ -1165,17 +1165,20 @@ function DeployModal({
                 {step === 'local-token' ? (
                   <>
                     <div className="flex items-start gap-3">
-                      <span className="text-lg shrink-0">📱</span>
+                      <span className="text-lg shrink-0">💿</span>
                       <div>
-                        <p className="text-white text-sm font-medium">QR Onboarding (recommended)</p>
-                        <p className="text-[#6b7280] text-xs mt-0.5">Open the app after install — it will guide you through pairing, folder permissions, and health check.</p>
+                        <p className="text-white text-sm font-medium">Desktop installer</p>
+                        <p className="text-[#6b7280] text-xs mt-0.5">
+                          The `.dmg` / `.exe` package installs and launches the local runtime, but it does not inject this deploy token automatically.
+                          Use the token from step 2 with the CLI commands below to connect the node.
+                        </p>
                       </div>
                     </div>
                     <div className="border-t border-[rgba(255,255,255,0.05)] pt-3">
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center gap-2">
                           <span className="text-lg shrink-0">⌨️</span>
-                          <p className="text-[#9ca3af] text-xs font-medium">Or use CLI</p>
+                          <p className="text-[#9ca3af] text-xs font-medium">CLI setup</p>
                         </div>
                         <button
                           onClick={() => copyText(localCliInstructions)}

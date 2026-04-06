@@ -1,39 +1,17 @@
 #!/usr/bin/env node
 const { Command } = require('commander');
 const { NexusNode } = require('../index');
+const {
+  getConfigPath,
+  readRuntimeConfig,
+  writeRuntimeConfig,
+  buildRuntimeConfigFromToken,
+} = require('../lib/runtime-config');
 
 const program = new Command();
 program.name('vutler-nexus').version('0.1.0').description('Vutler Nexus Agent Runtime');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function getConfigPath() {
-  const os = require('os');
-  const path = require('path');
-  return path.join(os.homedir(), '.vutler', 'nexus.json');
-}
-
-function readConfig() {
-  const fs = require('fs');
-  const configPath = getConfigPath();
-  try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (e) {
-    return null;
-  }
-}
-
-function decodeDeployToken(token) {
-  // Deploy tokens are structured as: header.payload.signature (base64url encoded parts)
-  const parts = token.split('.');
-  if (parts.length !== 3) throw new Error('Invalid token format — expected header.payload.signature');
-
-  const payload = parts[1];
-  // base64url → base64 → Buffer
-  const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-  const json = Buffer.from(base64, 'base64').toString('utf8');
-  return JSON.parse(json);
-}
 
 function parseJsonEnv(name, fallback = undefined) {
   const raw = process.env[name];
@@ -65,56 +43,15 @@ function parseNumEnv(name, fallback = undefined) {
 program.command('init <token>')
   .description('Initialize Nexus with a deploy token')
   .action((token) => {
-    const fs = require('fs');
-    const path = require('path');
-    const os = require('os');
-
-    let payload;
+    let config;
     try {
-      payload = decodeDeployToken(token);
+      config = buildRuntimeConfigFromToken(token);
     } catch (e) {
-      console.error('Error: Failed to decode token —', e.message);
+      console.error('Error:', e.message);
       process.exit(1);
     }
 
-    // Check expiry
-    if (payload.exp && Date.now() / 1000 > payload.exp) {
-      console.error('Error: Token has expired.');
-      process.exit(1);
-    }
-
-    const configDir = path.join(os.homedir(), '.vutler');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
-
-    const config = {
-      deploy_token: token,
-      api_key: payload.api_key || null,
-      mode: payload.mode || 'standard',
-      node_id: payload.node_id || null,
-      node_name: payload.node_name || payload.name || null,
-      snipara_instance_id: payload.snipara_instance_id || null,
-      permissions: payload.permissions || {},
-      server: payload.server || 'https://app.vutler.ai',
-      updated_at: new Date().toISOString(),
-    };
-
-    // Enterprise-only fields
-    if (payload.mode === 'enterprise') {
-      config.client_name = payload.client_name || null;
-      config.filesystem_root = payload.filesystem_root || null;
-      config.seats = payload.seats || null;
-      config.max_seats = payload.max_seats || null;
-      config.primary_agent = payload.primary_agent || null;
-      config.available_pool = payload.available_pool || [];
-      config.allow_create = payload.allow_create ?? false;
-      config.routing_rules = payload.routing_rules || [];
-      config.auto_spawn_rules = payload.auto_spawn_rules || [];
-      config.offline_config = payload.offline_config || {};
-    }
-
-    fs.writeFileSync(getConfigPath(), JSON.stringify(config, null, 2));
+    writeRuntimeConfig(config);
 
     console.log('Config saved to ~/.vutler/nexus.json');
     console.log('');
@@ -124,7 +61,7 @@ program.command('init <token>')
     console.log('  snipara_instance_id: ', config.snipara_instance_id || '(none)');
     console.log('  permissions:         ', JSON.stringify(config.permissions));
 
-    if (payload.mode === 'enterprise') {
+    if (config.mode === 'enterprise') {
       console.log('  client_name:         ', config.client_name || '(none)');
       console.log('  filesystem_root:     ', config.filesystem_root || '(none)');
       console.log('  seats:               ', config.seats || '(none)');
@@ -146,7 +83,7 @@ program.command('start')
     try { localConfig = JSON.parse(require('fs').readFileSync('.vutler-nexus.json', 'utf8')); } catch(e) {}
 
     // Global config from ~/.vutler/nexus.json (preferred)
-    const globalConfig = readConfig() || {};
+    const globalConfig = readRuntimeConfig() || {};
     const envConfig = {
       mode: process.env.NEXUS_MODE || undefined,
       type: process.env.NEXUS_TYPE || undefined,
@@ -174,10 +111,6 @@ program.command('start')
     const key = opts.key || localConfig.key || globalConfig.deploy_token || envConfig.deploy_token;
     const apiKey = opts.key || localConfig.key || globalConfig.api_key || envConfig.api_key || null;
     const runtimeKey = apiKey || key;
-    if (!runtimeKey) {
-      console.error('Error: No API key or deploy token found. Run `vutler-nexus init <token>` or pass --key.');
-      process.exit(1);
-    }
 
     const node = new NexusNode({
       key: runtimeKey,
@@ -185,7 +118,7 @@ program.command('start')
       port: parseInt(opts.port || envConfig.port || 3100, 10),
       type: opts.type || envConfig.type || 'local',
       server: opts.url || opts.server || localConfig.server || globalConfig.server || envConfig.server || 'https://app.vutler.ai',
-      mode: envConfig.mode || globalConfig.mode,
+      mode: envConfig.mode || globalConfig.mode || 'local',
       snipara_instance_id: envConfig.snipara_instance_id || globalConfig.snipara_instance_id,
       client_name: envConfig.client_name || globalConfig.client_name,
       filesystem_root: envConfig.filesystem_root || globalConfig.filesystem_root,
@@ -203,7 +136,13 @@ program.command('start')
       llm: envConfig.llm || globalConfig.llm,
     });
 
-    await node.connect();
+    if (!runtimeKey) {
+      console.log('[Nexus] No deploy token configured. Starting local setup dashboard...');
+      node.startDashboardOnly();
+      console.log(`[Nexus] Open http://localhost:${parseInt(opts.port || envConfig.port || 3100, 10)} to complete setup.`);
+    } else {
+      await node.connect();
+    }
 
     process.on('SIGINT', async () => {
       await node.disconnect();
@@ -246,7 +185,7 @@ program.command('status')
     const http = require('http');
     const https = require('https');
 
-    const config = readConfig();
+    const config = readRuntimeConfig();
     if (!config) {
       console.log('No config found. Run `vutler-nexus init <token>` first.');
       process.exit(1);

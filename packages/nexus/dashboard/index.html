@@ -1,128 +1,887 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vutler Nexus</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0a0b14;color:#e2e8f0;font-family:system-ui,-apple-system,sans-serif;font-size:14px;min-height:100vh}
-  header{padding:20px 24px;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;gap:12px}
-  header h1{font-size:18px;font-weight:600;letter-spacing:-0.3px}
-  header .node-name{color:#94a3b8;font-size:13px}
-  .badge{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
-  .badge-local{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
-  .badge-enterprise{background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3)}
-  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
-  .dot-green{background:#4ade80;box-shadow:0 0 6px #4ade80}
-  .dot-red{background:#f87171;box-shadow:0 0 6px #f87171}
-  main{padding:20px 24px;display:grid;gap:16px;grid-template-columns:1fr 1fr;max-width:1100px}
-  .card{background:#14151f;border:1px solid rgba(255,255,255,0.07);border-radius:10px;padding:16px}
-  .card.full{grid-column:1/-1}
-  .card h2{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#64748b;margin-bottom:12px}
-  .stat{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
-  .stat:last-child{border-bottom:none}
-  .stat-label{color:#64748b}
-  .stat-value{color:#e2e8f0;font-family:monospace;font-size:13px}
-  table{width:100%;border-collapse:collapse}
-  th{text-align:left;color:#64748b;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.07)}
-  td{padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:13px;vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  .status-pill{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
-  .s-completed{background:rgba(34,197,94,0.12);color:#4ade80}
-  .s-failed{background:rgba(248,113,113,0.12);color:#f87171}
-  .s-in_progress{background:rgba(251,191,36,0.12);color:#fbbf24}
-  .s-pending{background:rgba(148,163,184,0.12);color:#94a3b8}
-  pre{background:#0d0e1a;border:1px solid rgba(255,255,255,0.06);border-radius:6px;padding:12px;overflow-y:auto;max-height:180px;font-size:12px;color:#94a3b8;line-height:1.6;white-space:pre-wrap;word-break:break-all}
-  .providers{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
-  .chip{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:2px 8px;font-size:12px;color:#94a3b8}
-  .refresh{margin-left:auto;font-size:11px;color:#475569}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vutler Nexus Local</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(9, 18, 33, 0.84);
+      --panel-strong: #0d1627;
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #e5edf7;
+      --muted: #8ba0bd;
+      --soft: #59708e;
+      --accent: #38bdf8;
+      --accent-2: #22c55e;
+      --warn: #f59e0b;
+      --danger: #f87171;
+      --shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 32%),
+        radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 28%),
+        linear-gradient(180deg, #08101d 0%, #091221 55%, #060d18 100%);
+      font-family: "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 24px auto 40px;
+      display: grid;
+      gap: 18px;
+      grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.85fr);
+    }
+
+    .hero, .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .hero {
+      grid-column: 1 / -1;
+      padding: 28px 28px 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -40px -80px auto;
+      width: 260px;
+      height: 260px;
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.2), transparent 70%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.18);
+      color: #b8e8fb;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    h1 {
+      margin: 16px 0 10px;
+      font-size: clamp(30px, 4vw, 42px);
+      line-height: 1.02;
+      letter-spacing: -0.04em;
+      max-width: 720px;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 760px;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .hero-grid {
+      margin-top: 24px;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .hero-stat {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .hero-stat label {
+      display: block;
+      color: var(--soft);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .hero-stat strong {
+      display: block;
+      font-size: 15px;
+      color: var(--text);
+      word-break: break-word;
+    }
+
+    .main-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel {
+      padding: 22px;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      margin-bottom: 18px;
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .panel-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .step-pill, .status-pill {
+      white-space: nowrap;
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }
+
+    .step-pill { background: rgba(255,255,255,0.04); color: #cbd5e1; }
+    .status-connected { background: rgba(34, 197, 94, 0.12); color: #86efac; border-color: rgba(34, 197, 94, 0.22); }
+    .status-pending { background: rgba(245, 158, 11, 0.12); color: #fcd34d; border-color: rgba(245, 158, 11, 0.22); }
+    .status-idle { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border-color: rgba(148, 163, 184, 0.16); }
+
+    .field, .check-grid, .action-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .field label, .mini-label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--soft);
+      font-weight: 600;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(6, 12, 24, 0.88);
+      color: var(--text);
+      padding: 13px 14px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.18s ease, transform 0.18s ease;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: rgba(56, 189, 248, 0.65);
+      transform: translateY(-1px);
+    }
+
+    textarea {
+      min-height: 138px;
+      resize: vertical;
+      line-height: 1.55;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+
+    .row-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      border: 0;
+      cursor: pointer;
+      border-radius: 14px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      transition: transform 0.18s ease, opacity 0.18s ease, background 0.18s ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: 0.55; cursor: wait; transform: none; }
+
+    .primary { background: linear-gradient(135deg, #0ea5e9, #38bdf8); color: #04111f; }
+    .secondary { background: rgba(255,255,255,0.06); color: var(--text); border: 1px solid rgba(255,255,255,0.08); }
+    .success { background: linear-gradient(135deg, #22c55e, #4ade80); color: #06210e; }
+
+    .check-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .choice {
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(8, 14, 26, 0.88);
+      padding: 14px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .choice input {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      accent-color: var(--accent);
+    }
+
+    .choice strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .choice span {
+      color: var(--muted);
+      display: block;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+
+    .inline-note, .response, .log-box {
+      border-radius: 16px;
+      padding: 14px 16px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(6, 12, 24, 0.8);
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+
+    .response, .log-box {
+      white-space: pre-wrap;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      overflow: auto;
+      max-height: 360px;
+      color: #cfe3f8;
+    }
+
+    .response.error { color: #fecaca; border-color: rgba(248, 113, 113, 0.24); }
+    .response.success { color: #d9ffe7; border-color: rgba(34, 197, 94, 0.24); }
+
+    .status-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .status-item:last-child { border-bottom: 0; }
+    .status-item label {
+      color: var(--soft);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .status-item strong {
+      font-size: 13px;
+      text-align: right;
+      word-break: break-word;
+    }
+
+    .quick-actions {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin-bottom: 14px;
+    }
+
+    .quick-actions button {
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      border: 1px solid rgba(255,255,255,0.08);
+      text-align: left;
+      min-height: 70px;
+    }
+
+    .quick-actions button small {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-weight: 500;
+      line-height: 1.45;
+    }
+
+    .hint-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .hint {
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 13px;
+    }
+
+    .muted { color: var(--muted); }
+    .hidden { display: none !important; }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+        width: min(100vw - 24px, 1180px);
+        margin: 12px auto 24px;
+      }
+
+      .hero-grid, .check-grid, .row-2, .quick-actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
 <body>
-<header>
-  <h1>Vutler Nexus</h1>
-  <span class="node-name" id="node-name">—</span>
-  <span class="badge badge-local" id="mode-badge">local</span>
-  <span class="refresh" id="last-refresh">Refreshing…</span>
-</header>
-<main>
-  <div class="card">
-    <h2>Status</h2>
-    <div class="stat"><span class="stat-label">Connection</span><span class="stat-value" id="s-conn">—</span></div>
-    <div class="stat"><span class="stat-label">Node ID</span><span class="stat-value" id="s-id">—</span></div>
-    <div class="stat"><span class="stat-label">Role</span><span class="stat-value" id="s-role">—</span></div>
-    <div class="stat"><span class="stat-label">Uptime</span><span class="stat-value" id="s-uptime">—</span></div>
-    <div class="stat"><span class="stat-label">Cloud Server</span><span class="stat-value" id="s-server">—</span></div>
-    <div class="stat"><span class="stat-label">Agents</span><span class="stat-value" id="s-agents">—</span></div>
-    <div class="stat"><span class="stat-label">Heap Used</span><span class="stat-value" id="s-heap">—</span></div>
-  </div>
-  <div class="card">
-    <h2>Config</h2>
-    <div class="stat"><span class="stat-label">Mode</span><span class="stat-value" id="c-mode">—</span></div>
-    <div class="stat"><span class="stat-label">Filesystem Root</span><span class="stat-value" id="c-fs">—</span></div>
-    <div class="stat"><span class="stat-label">Offline</span><span class="stat-value" id="c-offline">—</span></div>
-    <div class="stat" style="align-items:flex-start;flex-direction:column;gap:6px">
-      <span class="stat-label">Providers</span>
-      <div class="providers" id="c-providers"></div>
+  <div class="shell">
+    <section class="hero">
+      <div class="eyebrow">Nexus Local Console</div>
+      <h1>Install locally, connect once, then act from here.</h1>
+      <p>
+        This console keeps the local Nexus setup tight: connect the node with your deploy token, grant only the local access you want,
+        verify the runtime, then test a command immediately from the same page.
+      </p>
+      <div class="hero-grid">
+        <div class="hero-stat">
+          <label>Connection</label>
+          <strong id="hero-connection">Loading…</strong>
+        </div>
+        <div class="hero-stat">
+          <label>Next Step</label>
+          <strong id="hero-next-step">Loading…</strong>
+        </div>
+        <div class="hero-stat">
+          <label>Node</label>
+          <strong id="hero-node">Loading…</strong>
+        </div>
+        <div class="hero-stat">
+          <label>Cloud</label>
+          <strong id="hero-cloud">Loading…</strong>
+        </div>
+      </div>
+    </section>
+
+    <div class="main-stack">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>1. Connect the node</h2>
+            <p>Paste the deploy token from Vutler, keep or rename this machine, then connect. After that, Nexus can register and receive commands from your workspace.</p>
+          </div>
+          <span class="step-pill" id="step-connect-badge">Pending</span>
+        </div>
+        <div class="field">
+          <label for="node-name">Local node name</label>
+          <input id="node-name" placeholder="My MacBook" />
+        </div>
+        <div class="field" style="margin-top:12px;">
+          <label for="deploy-token">Deploy token</label>
+          <textarea id="deploy-token" placeholder="Paste the token generated in Vutler"></textarea>
+        </div>
+        <div class="button-row">
+          <button class="primary" id="connect-btn">Save token and connect</button>
+          <button class="secondary" id="retry-connect-btn">Retry with saved config</button>
+        </div>
+        <div class="inline-note" style="margin-top:14px;">
+          The installer can launch Nexus, but the runtime only becomes useful once this machine has a deploy token and a clear local permission scope.
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>2. Keep local access minimal</h2>
+            <p>Enable only the folders and local capabilities you want Nexus to use on this machine. You can adjust this later.</p>
+          </div>
+          <span class="step-pill" id="step-perms-badge">Pending</span>
+        </div>
+        <div class="mini-label">Folders</div>
+        <div class="check-grid">
+          <label class="choice"><input type="checkbox" data-folder="documents"><div><strong>Documents</strong><span>Project docs, briefs, exports, working files.</span></div></label>
+          <label class="choice"><input type="checkbox" data-folder="desktop"><div><strong>Desktop</strong><span>Scratch files and quick-drop material.</span></div></label>
+          <label class="choice"><input type="checkbox" data-folder="downloads"><div><strong>Downloads</strong><span>Imported spreadsheets, PDFs, installers, attachments.</span></div></label>
+        </div>
+        <div class="mini-label" style="margin-top:14px;">Capabilities</div>
+        <div class="check-grid">
+          <label class="choice"><input type="checkbox" data-source="filesystem"><div><strong>Files & search</strong><span>Search, list folders, read documents, open files.</span></div></label>
+          <label class="choice"><input type="checkbox" data-source="shell"><div><strong>Shell</strong><span>Run terminal commands from Nexus when explicitly requested.</span></div></label>
+          <label class="choice"><input type="checkbox" data-source="clipboard"><div><strong>Clipboard</strong><span>Read the current clipboard content.</span></div></label>
+          <label class="choice"><input type="checkbox" data-source="mail"><div><strong>Mail</strong><span>Read local mailboxes when the OS allows it.</span></div></label>
+          <label class="choice"><input type="checkbox" data-source="calendar"><div><strong>Calendar</strong><span>Read local calendars and upcoming events.</span></div></label>
+          <label class="choice"><input type="checkbox" data-source="contacts"><div><strong>Contacts</strong><span>Search local contacts.</span></div></label>
+        </div>
+        <div class="button-row">
+          <button class="secondary" id="save-perms-btn">Save local permissions</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>3. Verify the runtime</h2>
+            <p>Run one local discovery pass to confirm the runtime is alive and local providers are loading correctly.</p>
+          </div>
+          <span class="step-pill" id="step-verify-badge">Pending</span>
+        </div>
+        <div class="button-row">
+          <button class="success" id="verify-btn">Run readiness check</button>
+        </div>
+        <div class="response" id="verify-output" style="margin-top:14px;">No readiness check executed yet.</div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>4. Try a command</h2>
+            <p>Use a quick action or send one explicit local action from here. This removes the guesswork after install.</p>
+          </div>
+          <span class="step-pill" id="step-command-badge">Ready</span>
+        </div>
+        <div class="quick-actions">
+          <button data-quick-action="list-desktop">List Desktop<small>Checks that folder permission and file browsing work.</small></button>
+          <button data-quick-action="show-pwd">Run <code>pwd</code><small>Verifies the shell bridge is available.</small></button>
+          <button data-quick-action="read-clipboard">Read clipboard<small>Confirms local clipboard access.</small></button>
+          <button data-quick-action="discover">Discover local runtime<small>Summarizes providers, apps, and local readiness.</small></button>
+        </div>
+        <div class="action-grid">
+          <div class="row-2">
+            <div class="field">
+              <label for="action-select">Action</label>
+              <select id="action-select">
+                <option value="shell_exec">shell_exec</option>
+                <option value="list_dir">list_dir</option>
+                <option value="search">search</option>
+                <option value="read_document">read_document</option>
+                <option value="read_clipboard">read_clipboard</option>
+                <option value="discover_local_runtime">discover_local_runtime</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="action-target">Command / Path / Query</label>
+              <input id="action-target" placeholder="pwd" />
+            </div>
+          </div>
+          <div class="button-row">
+            <button class="primary" id="run-action-btn">Run action</button>
+          </div>
+          <div class="response" id="action-output">No action executed yet.</div>
+        </div>
+      </section>
     </div>
+
+    <aside class="main-stack">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Runtime status</h2>
+            <p>Live local state for this machine.</p>
+          </div>
+          <span class="status-pill status-idle" id="status-badge">Loading</span>
+        </div>
+        <div class="status-list">
+          <div class="status-item"><label>Configured</label><strong id="status-configured">—</strong></div>
+          <div class="status-item"><label>Connected</label><strong id="status-connected">—</strong></div>
+          <div class="status-item"><label>Node ID</label><strong id="status-node-id">—</strong></div>
+          <div class="status-item"><label>Mode</label><strong id="status-mode">—</strong></div>
+          <div class="status-item"><label>Allowed folders</label><strong id="status-folders">—</strong></div>
+          <div class="status-item"><label>Agents</label><strong id="status-agents">—</strong></div>
+          <div class="status-item"><label>Cloud server</label><strong id="status-server">—</strong></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>What to do next</h2>
+            <p>Only the steps that matter right now.</p>
+          </div>
+        </div>
+        <div class="hint-list" id="hint-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Runtime log</h2>
+            <p>Recent local runtime output.</p>
+          </div>
+        </div>
+        <div class="log-box" id="logs-output">Loading…</div>
+      </section>
+    </aside>
   </div>
-  <div class="card full">
-    <h2>Recent Tasks</h2>
-    <table>
-      <thead><tr><th>Title</th><th>Status</th><th>Time</th></tr></thead>
-      <tbody id="tasks-body"><tr><td colspan="3" style="color:#475569">No tasks yet.</td></tr></tbody>
-    </table>
-  </div>
-  <div class="card full">
-    <h2>Logs</h2>
-    <pre id="logs-pre">Loading…</pre>
-  </div>
-</main>
-<script>
-  function fmt(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return[h>0?h+'h':'',m>0?m+'m':'',sec+'s'].filter(Boolean).join(' ')}
-  function mb(b){return(b/1024/1024).toFixed(1)+' MB'}
-  async function refresh(){
-    try{
-      const [st,tasks,logs,cfg]=await Promise.all([
-        fetch('/api/status').then(r=>r.json()),
-        fetch('/api/tasks').then(r=>r.json()),
-        fetch('/api/logs').then(r=>r.json()),
-        fetch('/api/config').then(r=>r.json()),
-      ]);
-      document.getElementById('node-name').textContent=st.name||'—';
-      const badge=document.getElementById('mode-badge');
-      badge.textContent=st.mode||'local';
-      badge.className='badge '+(st.mode==='enterprise'?'badge-enterprise':'badge-local');
-      const conn=st.status==='connected';
-      document.getElementById('s-conn').innerHTML=`<span class="dot ${conn?'dot-green':'dot-red'}"></span>${st.status}`;
-      document.getElementById('s-id').textContent=st.node_id||'—';
-      document.getElementById('s-role').textContent=st.role||'—';
-      document.getElementById('s-uptime').textContent=fmt(st.uptime||0);
-      document.getElementById('s-server').textContent=st.cloud_server||'—';
-      document.getElementById('s-agents').textContent=st.agents??'0';
-      document.getElementById('s-heap').textContent=st.memory?mb(st.memory.heapUsed):'—';
-      document.getElementById('c-mode').textContent=cfg.mode||'—';
-      document.getElementById('c-fs').textContent=cfg.filesystem_root||'—';
-      document.getElementById('c-offline').textContent=cfg.offline_enabled?'enabled':'disabled';
-      const pEl=document.getElementById('c-providers');
-      pEl.innerHTML=(cfg.providers||[]).map(p=>`<span class="chip">${p}</span>`).join('');
-      const tbody=document.getElementById('tasks-body');
-      if(tasks.length===0){tbody.innerHTML='<tr><td colspan="3" style="color:#475569">No tasks yet.</td></tr>';}
-      else{tbody.innerHTML=tasks.slice(-10).reverse().map(t=>{
-        const sc='s-'+(t.status||'pending');
-        const time=t.completedAt||t.startedAt||t.createdAt||'';
-        const timeStr=time?new Date(time).toLocaleTimeString():'—';
-        return`<tr><td>${t.title||'—'}</td><td><span class="status-pill ${sc}">${t.status||'pending'}</span></td><td style="color:#64748b">${timeStr}</td></tr>`;
-      }).join('');}
-      const pre=document.getElementById('logs-pre');
-      pre.textContent=logs.length?(logs.slice(-50).join('\n')):'No logs yet.';
-      pre.scrollTop=pre.scrollHeight;
-      document.getElementById('last-refresh').textContent='Updated '+new Date().toLocaleTimeString();
-    }catch(e){document.getElementById('last-refresh').textContent='Error: '+e.message;}
-  }
-  refresh();
-  setInterval(refresh,5000);
-</script>
+
+  <script>
+    const state = {
+      setup: null,
+      status: null,
+      config: null,
+      permissions: null,
+    };
+
+    const folderMap = {
+      documents: '~/Documents',
+      desktop: '~/Desktop',
+      downloads: '~/Downloads',
+    };
+
+    const sourceCatalog = {
+      filesystem: {
+        enabled: true,
+        apps: ['finder', 'preview', 'synced_drives'],
+        actions: ['search', 'read_document', 'list_dir', 'open_file'],
+      },
+      shell: {
+        enabled: false,
+        apps: ['terminal'],
+        actions: ['shell_exec', 'terminal_open', 'terminal_exec', 'terminal_read', 'terminal_snapshot', 'terminal_close'],
+      },
+      clipboard: {
+        enabled: false,
+        apps: ['system_clipboard'],
+        actions: ['read_clipboard'],
+      },
+      mail: {
+        enabled: false,
+        apps: ['apple_mail', 'outlook'],
+        actions: ['list_emails', 'search_emails', 'send_email_on_behalf'],
+      },
+      calendar: {
+        enabled: false,
+        apps: ['apple_calendar', 'outlook_calendar'],
+        actions: ['read_calendar'],
+      },
+      contacts: {
+        enabled: false,
+        apps: ['apple_contacts', 'outlook_contacts'],
+        actions: ['read_contacts', 'search_contacts'],
+      },
+    };
+
+    async function getJson(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed (${response.status})`);
+      }
+      return data;
+    }
+
+    function setResponse(id, value, type = 'success') {
+      const el = document.getElementById(id);
+      el.className = `response ${type}`;
+      el.textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    }
+
+    function prettyStep(step) {
+      switch (step) {
+        case 'connect': return 'Connect this node';
+        case 'permissions': return 'Choose local access';
+        case 'ready': return 'Run a first command';
+        default: return 'Review setup';
+      }
+    }
+
+    function setStatusBadge(connected) {
+      const badge = document.getElementById('status-badge');
+      if (connected) {
+        badge.className = 'status-pill status-connected';
+        badge.textContent = 'Connected';
+      } else {
+        badge.className = 'status-pill status-pending';
+        badge.textContent = 'Needs setup';
+      }
+    }
+
+    function buildPermissionsPayload() {
+      const checkedFolders = Object.entries(folderMap)
+        .filter(([key]) => document.querySelector(`[data-folder="${key}"]`)?.checked)
+        .map(([, value]) => value);
+
+      const sources = {};
+      const allowedActions = [];
+      Object.entries(sourceCatalog).forEach(([key, template]) => {
+        const enabled = Boolean(document.querySelector(`[data-source="${key}"]`)?.checked);
+        sources[key] = {
+          enabled,
+          apps: enabled ? template.apps.slice() : [],
+          actions: enabled ? template.actions.slice() : [],
+          ...(key === 'filesystem' ? { allowedFolders: checkedFolders.slice() } : {}),
+        };
+        if (enabled) allowedActions.push(...template.actions);
+      });
+
+      return {
+        allowedFolders: checkedFolders,
+        allowedActions: Array.from(new Set(allowedActions)),
+        consent: { sources },
+      };
+    }
+
+    function applyPermissionsToForm(permissions) {
+      const folders = new Set(permissions?.allowedFolders || []);
+      Object.entries(folderMap).forEach(([key, value]) => {
+        const input = document.querySelector(`[data-folder="${key}"]`);
+        if (input) input.checked = folders.has(value);
+      });
+
+      const sources = permissions?.consent?.sources || {};
+      Object.keys(sourceCatalog).forEach((key) => {
+        const input = document.querySelector(`[data-source="${key}"]`);
+        if (input) input.checked = Boolean(sources[key]?.enabled);
+      });
+    }
+
+    function renderHints(setup, status) {
+      const hints = [];
+      if (!setup?.configured) {
+        hints.push('Paste the deploy token from Vutler, then connect the node from step 1.');
+      } else if (!status?.configured || status?.status !== 'connected') {
+        hints.push('Retry the connection using the saved config. If it still fails, replace the token.');
+      }
+
+      if ((setup?.allowed_folders || []).length === 0) {
+        hints.push('Pick at least one local folder. Without that, file actions stay blocked by design.');
+      }
+
+      const actions = setup?.allowed_actions || [];
+      if (!actions.includes('shell_exec')) {
+        hints.push('Enable Shell only if you want Nexus to execute terminal commands locally.');
+      }
+
+      hints.push('Use the quick actions section to run a first explicit command and confirm the UX is working end to end.');
+
+      document.getElementById('hint-list').innerHTML = hints.map((hint) => `<div class="hint">${hint}</div>`).join('');
+    }
+
+    function renderStepBadges(setup, status) {
+      document.getElementById('step-connect-badge').textContent = status?.status === 'connected' ? 'Connected' : 'Pending';
+      document.getElementById('step-perms-badge').textContent = (setup?.allowed_folders || []).length > 0 ? 'Scoped' : 'Choose access';
+      document.getElementById('step-verify-badge').textContent = state.config?.discovery_snapshot ? 'Checked' : 'Ready to check';
+    }
+
+    function render(setup, status, config, logs) {
+      document.getElementById('hero-connection').textContent = status?.status === 'connected' ? 'Connected to Vutler' : 'Waiting for connection';
+      document.getElementById('hero-next-step').textContent = prettyStep(setup?.next_step);
+      document.getElementById('hero-node').textContent = status?.name || setup?.node_name || 'This machine';
+      document.getElementById('hero-cloud').textContent = setup?.server || status?.cloud_server || 'https://app.vutler.ai';
+
+      document.getElementById('status-configured').textContent = setup?.configured ? 'Yes' : 'No';
+      document.getElementById('status-connected').textContent = status?.status || 'disconnected';
+      document.getElementById('status-node-id').textContent = status?.node_id || setup?.node_id || '—';
+      document.getElementById('status-mode').textContent = status?.mode || setup?.mode || 'local';
+      document.getElementById('status-folders').textContent = (setup?.allowed_folders || []).length ? setup.allowed_folders.join(', ') : 'None';
+      document.getElementById('status-agents').textContent = String(status?.agents ?? 0);
+      document.getElementById('status-server').textContent = status?.cloud_server || setup?.server || '—';
+
+      setStatusBadge(status?.status === 'connected');
+      renderHints(setup, status);
+      renderStepBadges(setup, status);
+
+      if (!document.getElementById('node-name').value) {
+        document.getElementById('node-name').value = setup?.node_name || status?.name || '';
+      }
+
+      if (setup?.has_deploy_token && !document.getElementById('deploy-token').value) {
+        document.getElementById('deploy-token').placeholder = 'Saved deploy token already present. Paste a new one only if you want to replace it.';
+      }
+
+      if (logs) {
+        document.getElementById('logs-output').textContent = logs.length ? logs.slice(-80).join('\n') : 'No runtime logs yet.';
+      }
+    }
+
+    async function refresh() {
+      try {
+        const [setup, status, config, permissions, logs] = await Promise.all([
+          getJson('/api/setup-state'),
+          getJson('/api/status'),
+          getJson('/api/config'),
+          getJson('/api/permissions'),
+          getJson('/api/logs'),
+        ]);
+
+        state.setup = setup;
+        state.status = status;
+        state.config = config;
+        state.permissions = permissions;
+        applyPermissionsToForm(permissions);
+        render(setup, status, config, logs);
+      } catch (error) {
+        document.getElementById('logs-output').textContent = `Failed to refresh runtime state: ${error.message}`;
+      }
+    }
+
+    async function savePermissions() {
+      const permissions = buildPermissionsPayload();
+      await getJson('/api/permissions/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions }),
+      });
+      await refresh();
+    }
+
+    async function connectNode(useSavedOnly = false) {
+      const permissions = buildPermissionsPayload();
+      const token = useSavedOnly ? '' : document.getElementById('deploy-token').value.trim();
+      const nodeName = document.getElementById('node-name').value.trim();
+      const button = useSavedOnly ? document.getElementById('retry-connect-btn') : document.getElementById('connect-btn');
+      button.disabled = true;
+      try {
+        const result = await getJson('/api/setup/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            nodeName,
+            permissions,
+          }),
+        });
+        setResponse('verify-output', result.state || 'Connected.', 'success');
+        await refresh();
+      } catch (error) {
+        setResponse('verify-output', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function runLocalAction(action, args = {}) {
+      const result = await getJson('/api/local/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, args }),
+      });
+      return result.result;
+    }
+
+    function actionArgsFromForm() {
+      const action = document.getElementById('action-select').value;
+      const target = document.getElementById('action-target').value.trim();
+      switch (action) {
+        case 'shell_exec':
+          return { action, args: { command: target || 'pwd' } };
+        case 'list_dir':
+          return { action, args: { path: target || '~/Desktop' } };
+        case 'search':
+          return { action, args: { query: target || 'report', scope: 'files' } };
+        case 'read_document':
+          return { action, args: { path: target } };
+        case 'read_clipboard':
+          return { action, args: {} };
+        case 'discover_local_runtime':
+          return { action, args: {} };
+        default:
+          return { action, args: {} };
+      }
+    }
+
+    async function runCurrentAction() {
+      const button = document.getElementById('run-action-btn');
+      button.disabled = true;
+      try {
+        const { action, args } = actionArgsFromForm();
+        const result = await runLocalAction(action, args);
+        setResponse('action-output', result, 'success');
+        await refresh();
+      } catch (error) {
+        setResponse('action-output', error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function runQuickAction(type) {
+      try {
+        let result;
+        if (type === 'list-desktop') {
+          result = await runLocalAction('list_dir', { path: '~/Desktop' });
+        } else if (type === 'show-pwd') {
+          result = await runLocalAction('shell_exec', { command: 'pwd' });
+        } else if (type === 'read-clipboard') {
+          result = await runLocalAction('read_clipboard', {});
+        } else {
+          result = await runLocalAction('discover_local_runtime', {});
+          setResponse('verify-output', result, 'success');
+        }
+        setResponse('action-output', result, 'success');
+        await refresh();
+      } catch (error) {
+        setResponse('action-output', error.message, 'error');
+      }
+    }
+
+    document.getElementById('connect-btn').addEventListener('click', () => connectNode(false));
+    document.getElementById('retry-connect-btn').addEventListener('click', () => connectNode(true));
+    document.getElementById('save-perms-btn').addEventListener('click', async () => {
+      try {
+        await savePermissions();
+        setResponse('verify-output', 'Local permissions saved.', 'success');
+      } catch (error) {
+        setResponse('verify-output', error.message, 'error');
+      }
+    });
+    document.getElementById('verify-btn').addEventListener('click', async () => {
+      try {
+        const result = await runLocalAction('discover_local_runtime', {});
+        setResponse('verify-output', result, 'success');
+        await refresh();
+      } catch (error) {
+        setResponse('verify-output', error.message, 'error');
+      }
+    });
+    document.getElementById('run-action-btn').addEventListener('click', runCurrentAction);
+    document.querySelectorAll('[data-quick-action]').forEach((button) => {
+      button.addEventListener('click', () => runQuickAction(button.getAttribute('data-quick-action')));
+    });
+
+    refresh();
+    setInterval(refresh, 8000);
+  </script>
 </body>
 </html>

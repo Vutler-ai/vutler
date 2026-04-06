@@ -2,13 +2,42 @@ const crypto = require('crypto');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { getPermissionEngine } = require('../lib/permission-engine');
+const { readRuntimeConfig } = require('../lib/runtime-config');
 
 function createDashboardServer(node) {
   const indexHtml = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-  const onboardingHtml = fs.readFileSync(path.join(__dirname, 'onboarding.html'), 'utf8');
   const pairingState = { code: null, expiresAt: 0, pairedAt: null };
   const permissionEngine = getPermissionEngine();
+
+  function getSetupState() {
+    const runtimeConfig = readRuntimeConfig();
+    const permissions = permissionEngine.getPermissions();
+    const configured = Boolean(runtimeConfig?.deploy_token || runtimeConfig?.api_key);
+    const connected = Boolean(node.nodeId);
+    return {
+      configured,
+      connected,
+      setup_mode: !connected,
+      has_deploy_token: Boolean(runtimeConfig?.deploy_token),
+      has_api_key: Boolean(runtimeConfig?.api_key),
+      node_name: runtimeConfig?.node_name || node.name || os.hostname(),
+      node_id: node.nodeId || runtimeConfig?.node_id || null,
+      mode: runtimeConfig?.mode || node.mode || 'local',
+      server: runtimeConfig?.server || node.server || 'https://app.vutler.ai',
+      allowed_folders: permissions.allowedFolders || [],
+      allowed_actions: permissions.allowedActions || [],
+      permissions,
+      next_step: !configured
+        ? 'connect'
+        : !connected
+          ? 'connect'
+          : (permissions.allowedFolders || []).length === 0
+            ? 'permissions'
+            : 'ready',
+    };
+  }
 
   function createPairingCode() {
     return crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -53,15 +82,91 @@ function createDashboardServer(node) {
     // CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    if (req.url === '/' || req.url === '/index.html') {
+    if (req.url === '/' || req.url === '/index.html' || req.url === '/onboarding' || req.url === '/onboarding.html') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(indexHtml);
-    } else if (req.url === '/onboarding' || req.url === '/onboarding.html') {
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(onboardingHtml);
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, mode: node.mode, node_id: node.nodeId }));
+    } else if (req.url === '/api/setup-state') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getSetupState()));
+    } else if (req.url === '/api/setup/connect' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const token = typeof data.token === 'string' ? data.token.trim() : '';
+          const nodeName = typeof data.nodeName === 'string' ? data.nodeName.trim() : '';
+          const serverUrl = typeof data.server === 'string' ? data.server.trim() : '';
+          const permissions = data.permissions && typeof data.permissions === 'object'
+            ? data.permissions
+            : null;
+
+          if (permissions) {
+            permissionEngine.replace(permissions);
+            node.permissions = permissionEngine.getPermissions();
+          }
+
+          if (token) {
+            node.configureFromDeployToken(token, {
+              nodeName: nodeName || node.name,
+              server: serverUrl || node.server,
+              permissions: node.permissions,
+            });
+          }
+
+          if (!node.key && !node.deployToken) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({
+              success: false,
+              error: 'A deploy token is required before Nexus can connect.',
+              state: getSetupState(),
+            }));
+          }
+
+          await node.connect();
+          await syncPermissionsToCloud();
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, state: getSetupState() }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: error.message, state: getSetupState() }));
+        }
+      });
+    } else if (req.url === '/api/local/dispatch' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        try {
+          const data = body ? JSON.parse(body) : {};
+          const action = String(data.action || '').trim();
+          if (!action) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ success: false, error: 'action is required' }));
+          }
+
+          const result = await node._dispatchNodeAction({
+            id: `local-ui-${Date.now()}`,
+            payload: {
+              action,
+              args: data.args && typeof data.args === 'object' ? data.args : {},
+            },
+          });
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, result }));
+        } catch (error) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: false,
+            error: error.message,
+            result: error.result || null,
+          }));
+        }
+      });
     } else if (req.url === '/api/pairing/generate' && req.method === 'POST') {
       pairingState.code = createPairingCode();
       pairingState.expiresAt = Date.now() + 5 * 60 * 1000;
@@ -89,6 +194,7 @@ function createDashboardServer(node) {
       const agents = Array.isArray(node.agents)
         ? node.agents
         : (node.agentManager && typeof node.agentManager.getStatus === 'function' ? node.agentManager.getStatus() : []);
+      const runtimeConfig = readRuntimeConfig();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         node_id: node.nodeId,
@@ -102,6 +208,7 @@ function createDashboardServer(node) {
         client_name: node.clientName,
         agents: agents.length,
         memory: process.memoryUsage(),
+        configured: Boolean(runtimeConfig?.deploy_token || runtimeConfig?.api_key),
       }));
     } else if (req.url === '/api/permissions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -163,6 +270,7 @@ function createDashboardServer(node) {
         permissions: node.permissions || {},
         filesystem_root: node.filesystemRoot,
         offline_enabled: node.offlineConfig?.enabled || false,
+        discovery_snapshot: node.discoverySnapshot || null,
       }));
     } else if (req.url === '/agents' && req.method === 'GET') {
       const agents = node.agentManager && typeof node.agentManager.getStatus === 'function'

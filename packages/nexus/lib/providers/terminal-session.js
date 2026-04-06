@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const os = require('os');
 const { randomUUID } = require('crypto');
 const { spawn } = require('child_process');
 
@@ -9,6 +10,15 @@ const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_WAIT_MS = 150;
 const MAX_WAIT_MS = 5_000;
 const CWD_QUERY_TIMEOUT_MS = 1_500;
+
+function expandUserPath(value) {
+  const input = String(value || '');
+  if (input === '~') return os.homedir();
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,7 +57,7 @@ class TerminalSessionProvider {
   }
 
   async open(options = {}) {
-    const cwd = path.resolve(options.cwd || this.defaultCwd);
+    const cwd = path.resolve(expandUserPath(options.cwd || this.defaultCwd));
     const shellSpec = this._getShellSpec(options.shell);
     const env = {
       ...process.env,

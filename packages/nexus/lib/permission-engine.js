@@ -38,6 +38,15 @@ const CONSENT_SOURCE_TEMPLATES = {
   },
 };
 
+function expandUserPath(value) {
+  const input = String(value || '');
+  if (input === '~') return os.homedir();
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
+
 function normalizeStringArray(values, allowed) {
   if (!Array.isArray(values)) return [];
   const next = values
@@ -53,7 +62,7 @@ function normalizeFolderArray(folders) {
   return Array.from(new Set(
     folders
       .filter(Boolean)
-      .map((folder) => path.resolve(String(folder)))
+      .map((folder) => path.resolve(expandUserPath(folder)))
   ));
 }
 
@@ -180,7 +189,7 @@ class PermissionEngine {
    */
   validate(targetPath, action) {
     const perms = this._load();
-    const resolved = path.resolve(targetPath);
+    const resolved = path.resolve(expandUserPath(targetPath));
 
     const folderGranted = perms.allowedFolders.some(
       (folder) => resolved.startsWith(path.resolve(folder) + path.sep) ||
@@ -207,7 +216,7 @@ class PermissionEngine {
    */
   grant(folderPath) {
     const perms = normalizePermissions(this._load());
-    const resolved = path.resolve(folderPath);
+    const resolved = path.resolve(expandUserPath(folderPath));
     if (!perms.allowedFolders.includes(resolved)) {
       perms.allowedFolders.push(resolved);
       perms.consent.sources.filesystem.enabled = true;
@@ -223,7 +232,7 @@ class PermissionEngine {
    */
   revoke(folderPath) {
     const perms = normalizePermissions(this._load());
-    const resolved = path.resolve(folderPath);
+    const resolved = path.resolve(expandUserPath(folderPath));
     const before = perms.allowedFolders.length;
     perms.allowedFolders = perms.allowedFolders.filter((f) => f !== resolved);
     if (perms.allowedFolders.length !== before) {

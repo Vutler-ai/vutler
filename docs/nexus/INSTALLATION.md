@@ -138,21 +138,19 @@ const options = {
 };
 ```
 
-## First-Run Setup via QR Onboarding
+## First-Run Setup
 
-### Desktop Installer (Recommended)
+### Desktop Installer
 
 1. **Download & Run Installer**
    - macOS: Double-click `nexus-mac.dmg` → Drag Nexus.app to Applications → Launch
    - Windows: Double-click `nexus-windows.exe` → Follow installer → Auto-launches
 
-2. **Dashboard Opens Automatically**
-   - URL: `http://localhost:3100`
-   - If port 3100 is busy, retries on 3101, 3102, etc.
-
-3. **Onboarding Flow**
-   - Click "Get Started" or scan QR code with your phone
-   - QR code contains pairing token (valid for 5 minutes)
+2. **What the installer actually does**
+   - The package installs the local Nexus runtime and launches the bundled command
+   - It does **not** embed or consume a Vutler deploy token automatically
+   - If the runtime is already configured, it may open the local dashboard/onboarding page on `http://localhost:3100`
+   - If no deploy token has been initialized yet, use the CLI flow below
 
 ### Manual Setup (From Source)
 
@@ -165,35 +163,45 @@ node index.js
 # Dashboard available at http://localhost:3100
 ```
 
-### QR Code Pairing Steps
+### Token-Based CLI Setup
 
-**Step 1: Generate Pairing Code**
-- Dashboard shows QR code on load
-- Code is 6 characters: e.g., `A3K9M2`
-- Pairing endpoint: `GET /api/pairing/generate`
-- Expires in 5 minutes
+This is the current reliable way to connect a local Nexus node to Vutler Cloud:
 
-**Step 2: Scan with Mobile or Dashboard**
-- If scanning with phone: Any device can capture QR
-- If using dashboard on same machine: Click "Enter Code Manually"
-- Code confirms device identity to Vutler Cloud
+```bash
+npm install -g @vutler/nexus
+vutler-nexus init <DEPLOY_TOKEN>
+vutler-nexus start
+```
 
-**Step 3: Select Permissions**
+What this does:
+- `init` stores the deploy token in `~/.vutler/nexus.json`
+- `start` launches the local runtime and connects it to `https://app.vutler.ai`
+- Once configured, the local dashboard can run consent review and health checks
+
+### Local Dashboard / Onboarding
+
+If the local dashboard is reachable, it can expose a pairing code and consent review UI on top of the running node.
+That local UI should be treated as a runtime-side onboarding surface, not as the primary installation/authentication flow.
+
+Current constraint:
+- The desktop installer itself does not ask for a token and does not complete cloud registration on its own
+
+If the local UI is available, it can still help with:
+- reviewing permissions
+- selecting folders
+- running a local health check
+
+**Permission review**
 - **Documents**: ~/Documents folder (default enabled)
 - **Desktop**: ~/Desktop folder
 - **Downloads**: ~/Downloads folder
 - **Custom Folders**: Add any additional paths
 - Each toggle writes to `~/.vutler/permissions.json`
 
-**Step 4: Verify Connection**
+**Health check**
 - Dashboard pings Nexus health endpoint
 - Confirms WebSocket connected to Vutler Cloud
 - Shows "Connection Verified ✓"
-
-**Step 5: Complete Onboarding**
-- Click "Confirm & Start Using Nexus"
-- Auth token saved to `~/.vutler/nexus.json`
-- Redirect to main dashboard
 
 ### Troubleshooting Onboarding
 
@@ -202,12 +210,12 @@ node index.js
 - Verify port 3100 not blocked by firewall
 - Check browser console for errors
 
-**Pairing code expired?**
-- Click "Generate New Code"
-- Codes auto-refresh every 5 minutes
+**No token configured yet?**
+- Run `vutler-nexus init <DEPLOY_TOKEN>` first
+- Then restart with `vutler-nexus start`
 
 **"Connection Verified" fails?**
-- Confirm `VUTLER_KEY` environment variable is set
+- Confirm a deploy token or API key is present in `~/.vutler/nexus.json`
 - Verify internet connection to `api.vutler.ai`
 - Check Nexus logs: `tail -f ~/.vutler/logs/nexus.log`
 

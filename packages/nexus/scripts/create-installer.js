@@ -52,7 +52,7 @@ export HOME="$HOME_DIR"
 export PORT="\${PORT:-3100}"
 "\$BIN" start --port "\${PORT}" --type local >/tmp/vutler-nexus.log 2>&1 &
 sleep 3
-open "http://localhost:\${PORT}/onboarding" || true
+open "http://localhost:\${PORT}/" || true
 wait
 `;
   fs.writeFileSync(path.join(macosDir, 'Vutler Nexus'), launcher);
@@ -79,7 +79,8 @@ wait
   const readme = `Vutler Nexus
 
 Drag "Vutler Nexus.app" to /Applications, or double-click it from this disk image.
-The app starts the local Nexus node and opens the onboarding page automatically.
+The app launches the local Nexus runtime command. It does not inject a Vutler deploy token automatically.
+Initialize the node with a deploy token first, then start Nexus to connect it to Vutler Cloud.
 `;
   fs.writeFileSync(path.join(stagingDir, 'README.txt'), readme);
 
@@ -130,7 +131,7 @@ Register-ScheduledTask -TaskName "VutlerNexus" -Action $action -Trigger $trigger
 # Start now
 Start-Process "$dest\\VutlerNexus.exe"
 Start-Sleep -Seconds 3
-Start-Process "http://localhost:3100/onboarding"
+Start-Process "http://localhost:3100/"
 Write-Host "Vutler Nexus installed successfully."
 `;
   fs.writeFileSync(path.join(DIST, 'install.ps1'), psInstall);

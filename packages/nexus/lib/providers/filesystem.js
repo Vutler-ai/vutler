@@ -1,5 +1,15 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+
+function expandUserPath(value) {
+  const input = String(value || '');
+  if (input === '~') return os.homedir();
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2));
+  }
+  return input;
+}
 
 function inferMimeType(filePath) {
   const ext = path.extname(String(filePath || '')).toLowerCase();
@@ -27,7 +37,7 @@ class FilesystemProvider {
   }
 
   _resolve(p) {
-    const resolved = path.resolve(this.root, p);
+    const resolved = path.resolve(this.root, expandUserPath(p));
     if (!resolved.startsWith(path.resolve(this.root)) && this.root !== '/') {
       throw new Error('Path escape blocked: ' + p);
     }
