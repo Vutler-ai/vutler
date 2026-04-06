@@ -318,6 +318,7 @@ function DeployModal({
   const [pairingState, setPairingState] = useState<'idle' | 'pairing' | 'paired' | 'error'>('idle');
   const [pairingMessage, setPairingMessage] = useState('');
   const [pairingHint, setPairingHint] = useState('');
+  const [localPairingBootstrapDone, setLocalPairingBootstrapDone] = useState(false);
 
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -524,11 +525,11 @@ function DeployModal({
     return null;
   }, []);
 
-  const generateLocalPairCode = useCallback(async () => {
+  const generateLocalPairCode = useCallback(async (preferredPort?: number) => {
     setPairingState('idle');
     setPairingMessage('');
 
-    const port = localSetupPort ?? await detectLocalNexusSetup();
+    const port = preferredPort ?? localSetupPort ?? await detectLocalNexusSetup();
     if (!port) return;
 
     try {
@@ -634,9 +635,30 @@ function DeployModal({
   }, [token, pairCode, localConsent, localNodeName, localSetupPort]);
 
   useEffect(() => {
-    if (step !== 'local-token') return;
-    void detectLocalNexusSetup();
-  }, [step, detectLocalNexusSetup]);
+    setLocalPairingBootstrapDone(false);
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== 'local-token' || localPairingBootstrapDone) return;
+
+    let cancelled = false;
+    setLocalPairingBootstrapDone(true);
+
+    const bootstrap = async () => {
+      const port = await detectLocalNexusSetup();
+      if (cancelled) return;
+
+      if (port && !pairCode.trim()) {
+        await generateLocalPairCode(port);
+      }
+    };
+
+    void bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [step, pairCode, localPairingBootstrapDone, detectLocalNexusSetup, generateLocalPairCode]);
 
   const localCliInstructions = `npm install -g @vutler/nexus\nvutler-nexus init ${token || '<token>'}\nvutler-nexus start`;
   const enterpriseDockerInstructions = `git clone https://github.com/Vutler-ai/vutler.git\ncd vutler/packages/nexus\ncat > .env <<'EOF'\nNEXUS_TOKEN=${token || '<token>'}\nNEXUS_SERVER=https://app.vutler.ai\nNODE_NAME=${nodeName.trim() || '<enterprise-node-name>'}\nEOF\ndocker compose up -d --build`;
