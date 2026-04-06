@@ -110,4 +110,53 @@ describe('sniparaMemoryService diagnostics', () => {
       })
     );
   });
+
+  test('retries memory writes once when the failure cache is stale', async () => {
+    const circuitOpen = Object.assign(new Error('Snipara rlm_remember short-circuited after recent failure'), {
+      name: 'SniparaToolError',
+      statusCode: 503,
+      toolName: 'rlm_remember',
+      workspaceId: 'ws-3',
+      code: 'circuit_open',
+    });
+    const callSniparaTool = jest.fn()
+      .mockRejectedValueOnce(circuitOpen)
+      .mockResolvedValueOnce({ ok: true });
+
+    jest.doMock('../services/sniparaResolver', () => ({
+      callSniparaTool,
+      serializeSniparaError: jest.fn((error) => ({
+        message: error.message,
+        status_code: error.statusCode || null,
+        tool_name: error.toolName || null,
+        code: error.code || null,
+      })),
+    }));
+
+    const { rememberAgentMemory } = require('../services/sniparaMemoryService');
+
+    await expect(rememberAgentMemory({
+      db: null,
+      workspaceId: 'ws-3',
+      agent: { id: 'agent-1', username: 'mike', role: 'Engineering' },
+      text: 'Remember this after a stale circuit breaker',
+      type: 'fact',
+    })).resolves.toMatchObject({
+      scope: 'agent',
+    });
+
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        toolName: 'rlm_remember',
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        toolName: 'rlm_remember',
+        bypassFailureCache: true,
+      })
+    );
+  });
 });

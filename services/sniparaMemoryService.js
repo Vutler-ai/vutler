@@ -29,6 +29,18 @@ function normalizeWorkspaceId(workspaceId) {
   return workspaceId || DEFAULT_WORKSPACE;
 }
 
+async function callSniparaMemoryTool(invocation) {
+  try {
+    return await callSniparaTool(invocation);
+  } catch (error) {
+    if (error?.code !== 'circuit_open') throw error;
+    return callSniparaTool({
+      ...invocation,
+      bypassFailureCache: true,
+    });
+  }
+}
+
 function normalizeRole(role) {
   return String(role || 'general').toLowerCase()
     .replace(/[^a-z0-9-_]/g, '-')
@@ -455,7 +467,7 @@ async function listStoredMemories({ db, workspaceId, search, limit = 50, offset 
   let error = null;
 
   try {
-    raw = await callSniparaTool({
+    raw = await callSniparaMemoryTool({
       db,
       workspaceId,
       toolName: 'rlm_memories',
@@ -551,7 +563,7 @@ async function collectStoredScopeMemories({
 
 async function loadDocumentFromCandidates({ db, workspaceId, paths = [] }) {
   for (const path of paths) {
-    const doc = await callSniparaTool({
+    const doc = await callSniparaMemoryTool({
       db,
       workspaceId,
       toolName: 'rlm_load_document',
@@ -670,7 +682,7 @@ async function recallWithBindings({ db, workspaceId, bindings, query, limit = 20
     if (normalizedScope === 'instance' && agentId) args.agent_id = agentId;
     if (normalizedScope === 'human_agent' && agentId) args.agent_id = agentId;
 
-    const raw = await callSniparaTool({
+    const raw = await callSniparaMemoryTool({
       db,
       workspaceId,
       toolName: 'rlm_recall',
@@ -935,7 +947,7 @@ async function rememberScopedMemory({
   if (effectiveScopeKey === 'instance') args.agent_id = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
   if (effectiveScopeKey === 'human_agent') args.agent_id = bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef;
 
-  await callSniparaTool({
+  await callSniparaMemoryTool({
     db,
     workspaceId,
     toolName: 'rlm_remember',
@@ -978,7 +990,7 @@ async function softDeleteAgentMemory({ db, workspaceId, agent, memoryId }) {
 
 async function promoteAgentMemoryToTemplate({ db, workspaceId, agent, memoryId, role }) {
   const bindings = buildAgentMemoryBindings({ ...agent, role: role || agent.role }, workspaceId);
-  const recalled = await callSniparaTool({
+  const recalled = await callSniparaMemoryTool({
     db,
     workspaceId,
     toolName: 'rlm_recall',
