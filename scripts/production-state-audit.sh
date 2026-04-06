@@ -152,11 +152,21 @@ done
 API_HEALTH="$(container_health vutler-api)"
 API_REVISION="$(container_env_value vutler-api VUTLER_RELEASE_REVISION)"
 WORKER_REVISION="$(container_env_value vutler-sandbox-worker VUTLER_RELEASE_REVISION)"
+API_POSTAL_URL="$(container_env_value vutler-api POSTAL_API_URL)"
+API_POSTAL_INTERNAL_URL="$(container_env_value vutler-api POSTAL_INTERNAL_API_URL)"
 if [ -n "${DEPLOY_COMMIT:-}" ] && [ -n "$API_REVISION" ] && [ "$DEPLOY_COMMIT" != "$API_REVISION" ]; then
   warn "current-release commit ($DEPLOY_COMMIT) differs from live API revision ($API_REVISION)"
 fi
 if [ -n "$API_REVISION" ] && [ -n "$WORKER_REVISION" ] && [ "$API_REVISION" != "$WORKER_REVISION" ]; then
   warn "API and sandbox worker revisions differ"
+fi
+case "$API_POSTAL_URL" in
+  "http://localhost:8082"|"http://127.0.0.1:8082")
+    warn "POSTAL_API_URL points to $API_POSTAL_URL inside vutler-api; use http://postal-web:5000 instead"
+    ;;
+esac
+if [ -z "$API_POSTAL_INTERNAL_URL" ]; then
+  warn "POSTAL_INTERNAL_API_URL is missing from vutler-api"
 fi
 
 section "repo"

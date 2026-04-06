@@ -5,13 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../lib/vaultbrix');
-const axios = require('axios');
+const { sendPostalMail } = require('../services/postalMailer');
 const SCHEMA = 'tenant_vutler';
-
-// Postal configuration
-const POSTAL_API_URL = process.env.POSTAL_API_URL || 'http://localhost:8082';
-const POSTAL_API_KEY = process.env.POSTAL_API_KEY;
-const POSTAL_HOST = process.env.POSTAL_HOST || 'mail.vutler.ai';
 
 // SECURITY: workspace scoped (audit 2026-03-29)
 router.use((req, res, next) => {
@@ -23,26 +18,30 @@ router.use((req, res, next) => {
  * Send email via Postal HTTP API
  */
 async function sendViaPostal({ from, to, subject, body, htmlBody }) {
-  const payload = {
-    to: Array.isArray(to) ? to : [to],
+  const result = await sendPostalMail({
+    to,
     from: from || 'jarvis@vutler.ai',
-    subject: subject,
+    subject,
     plain_body: body || '',
-  };
-  if (htmlBody) payload.html_body = htmlBody;
+    html_body: htmlBody || undefined,
+  });
 
-  const resp = await axios.post(
-    POSTAL_API_URL + '/api/v1/send/message',
-    payload,
-    {
-      headers: {
-        'X-Server-API-Key': POSTAL_API_KEY,
-        'Content-Type': 'application/json',
-        'Host': POSTAL_HOST
-      }
-    }
-  );
-  return resp.data;
+  if (result?.skipped) {
+    const error = new Error(result.reason || 'Postal delivery was skipped.');
+    error.response = { data: result };
+    throw error;
+  }
+
+  if (result?.success === false) {
+    const error = new Error(result.error || result.reason || 'Postal delivery failed.');
+    error.response = { data: result };
+    throw error;
+  }
+
+  return {
+    data: result?.data || result,
+    raw: result,
+  };
 }
 
 // GET /api/v1/email — handles ?folder= query param (frontend compat)

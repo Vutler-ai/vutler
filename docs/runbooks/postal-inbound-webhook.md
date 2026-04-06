@@ -12,12 +12,15 @@ This runbook covers the production configuration for Postal inbound mail deliver
 Set these on the API service:
 
 ```bash
-POSTAL_API_URL=http://127.0.0.1:8082
+POSTAL_API_URL=http://postal-web:5000
+POSTAL_INTERNAL_API_URL=http://postal-web:5000
 POSTAL_HOST=mail.vutler.ai
 POSTAL_API_KEY=postal_your_server_api_key_here
 POSTAL_INBOUND_WEBHOOK_KEY=your_postal_public_key_body_here
 POSTAL_REQUIRE_WEBHOOK_SIGNATURE=true
 ```
+
+`POSTAL_API_URL` and `POSTAL_INTERNAL_API_URL` should target the internal Postal web container when `vutler-api` runs in Docker. Using `localhost:8082` inside the API container points back to `vutler-api` itself, not to Postal.
 
 Recommended defense in depth:
 

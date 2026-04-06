@@ -15,6 +15,7 @@ const coordinatorPrompt = require('../services/coordinatorPrompt');
 const { recordCreditTransaction } = require('../services/creditLedger');
 const { CryptoService } = require('../services/crypto');
 const { ensureManagedProvider, resolveManagedProfile } = require('../services/managedProviderService');
+const { sendPostalMail: deliverPostalMail } = require('../services/postalMailer');
 const { syncWorkspacePlan } = require('../services/workspacePlanService');
 const { buildSpriteAvatar } = require('../lib/avatarPath');
 const {
@@ -952,10 +953,6 @@ router.delete('/me', async (req, res) => {
 
 // ── Password reset helpers ────────────────────────────────────────────────────
 
-const http = require('http');
-const POSTAL_ENDPOINT = 'http://localhost:8082';
-const POSTAL_HOST = 'mail.vutler.ai';
-
 async function ensureResetTokensTable(pool) {
   if (!runtimeSchemaMutationsAllowed()) {
     await assertTableExists(pool, SCHEMA, 'password_reset_tokens', {
@@ -976,37 +973,20 @@ async function ensureResetTokensTable(pool) {
   `);
 }
 
-function sendPostalMail({ to, subject, plain_body, html_body }) {
-  return new Promise((resolve, reject) => {
-    const apiKey = process.env.POSTAL_API_KEY;
-    if (!apiKey) return resolve({ skipped: true }); // silently skip if not configured
-    const postData = JSON.stringify({
-      to: [to],
-      from: 'noreply@vutler.ai',
-      subject,
-      plain_body,
-      html_body,
-    });
-    const req = http.request({
-      hostname: '127.0.0.1',
-      port: 8082,
-      path: '/api/v1/send/message',
-      method: 'POST',
-      headers: {
-        'Host': POSTAL_HOST,
-        'X-Server-API-Key': apiKey,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData),
-      },
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => { try { resolve(JSON.parse(data)); } catch { resolve({}); } });
-    });
-    req.on('error', (e) => { console.error('[AUTH] Postal error:', e.message); resolve({}); });
-    req.write(postData);
-    req.end();
+async function sendPasswordResetMail({ to, subject, plain_body, html_body }) {
+  const result = await deliverPostalMail({
+    to,
+    from: 'noreply@vutler.ai',
+    subject,
+    plain_body,
+    html_body,
   });
+
+  if (result?.success === false) {
+    console.error('[AUTH] Postal error:', result.error || result.reason || 'Unknown Postal failure');
+  }
+
+  return result;
 }
 
 // POST /api/v1/auth/forgot-password
@@ -1033,7 +1013,7 @@ router.post('/forgot-password', async (req, res) => {
         [token, user.rows[0].id, user.rows[0].email, expiresAt]
       );
       const resetUrl = `${process.env.APP_URL || 'https://app.vutler.ai'}/reset-password?token=${token}`;
-      await sendPostalMail({
+      await sendPasswordResetMail({
         to: email,
         subject: 'Reset your Vutler password',
         plain_body: `Hi ${user.rows[0].name || 'there'},\n\nClick the link below to reset your password (valid 1 hour):\n\n${resetUrl}\n\nIf you didn't request this, ignore this email.`,

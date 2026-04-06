@@ -1,0 +1,37 @@
+name: postal2
+
+services:
+  postal-web:
+    image: postal-authfix:latest
+    networks:
+      postal-net:
+        aliases:
+          - postal-web
+      app-net:
+        aliases:
+          - postal-web
+
+  postal-smtp:
+    image: postal-authfix:latest
+    networks:
+      postal-net:
+        aliases:
+          - postal-smtp
+
+  postal-worker:
+    image: postal-authfix:latest
+    networks:
+      postal-net:
+        aliases:
+          - postal-worker
+      app-net:
+        aliases:
+          - postal-worker
+
+networks:
+  postal-net:
+    external: true
+    name: postal2_postal-net
+  app-net:
+    external: true
+    name: vutler_vutler-network

@@ -170,6 +170,33 @@ RELEASE
   cp "$release_file" "$CURRENT_RELEASE_FILE"
 }
 
+upsert_env_var() {
+  local file_path=$1
+  local var_name=$2
+  local value=$3
+  if grep -q "^${var_name}=" "$file_path" 2>/dev/null; then
+    sed -i "s|^${var_name}=.*|${var_name}=${value}|" "$file_path"
+  else
+    printf '%s=%s\n' "$var_name" "$value" >> "$file_path"
+  fi
+}
+
+normalize_postal_env() {
+  local file_path=$1
+  local postal_api_url
+  postal_api_url="$(sed -n 's/^POSTAL_API_URL=//p' "$file_path" | head -1)"
+
+  case "$postal_api_url" in
+    ""|"http://localhost:8082"|"http://127.0.0.1:8082")
+      upsert_env_var "$file_path" "POSTAL_API_URL" "http://postal-web:5000"
+      ;;
+  esac
+
+  if ! grep -q '^POSTAL_INTERNAL_API_URL=' "$file_path" 2>/dev/null; then
+    printf '%s=%s\n' "POSTAL_INTERNAL_API_URL" "http://postal-web:5000" >> "$file_path"
+  fi
+}
+
 [ -f "$ROLLBACK_NOTE" ] || fail "Rollback note not found: $ROLLBACK_NOTE"
 # shellcheck disable=SC1090
 . "$ROLLBACK_NOTE"
@@ -192,6 +219,7 @@ fi
 strip_release_env_vars "$API_ENV_FILE"
 require_env_var "$API_ENV_FILE" "JWT_SECRET"
 require_env_var "$API_ENV_FILE" "VUTLER_API_KEY"
+normalize_postal_env "$API_ENV_FILE"
 
 log "Restarting vutler-api on previous image"
 docker rm -f vutler-api >/dev/null 2>&1 || true
