@@ -26,6 +26,8 @@ describe('llmRouter codex legacy tool normalization', () => {
         },
       ]),
       getOnlineNexusNode: jest.fn().mockResolvedValue({ id: 'node-1' }),
+      getMailboxSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
+      getEmailSendSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
       NEXUS_TOOL_NAMES: new Set(['search_files']),
       executeNexusTool: jest.fn(),
     }));

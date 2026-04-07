@@ -1232,6 +1232,183 @@ function httpPost(hostname, path, headers, body, timeoutMs = 60000) {
   });
 }
 
+function cloneResponsesContentPart(part = {}) {
+  if (typeof part === 'string') return { type: 'output_text', text: part };
+  if (!part || typeof part !== 'object') return { type: 'output_text', text: '' };
+
+  const textValue = typeof part.text === 'string'
+    ? part.text
+    : (typeof part.output_text === 'string'
+      ? part.output_text
+      : (typeof part.text?.value === 'string' ? part.text.value : ''));
+
+  return {
+    ...part,
+    text: textValue,
+  };
+}
+
+function cloneResponsesOutputItem(item = {}) {
+  if (!item || typeof item !== 'object') return null;
+  return {
+    ...item,
+    content: Array.isArray(item.content) ? item.content.map((part) => cloneResponsesContentPart(part)) : item.content,
+  };
+}
+
+function mergeResponsesOutputItem(existing = {}, incoming = {}) {
+  const next = {
+    ...existing,
+    ...incoming,
+  };
+
+  if (Array.isArray(existing.content) || Array.isArray(incoming.content)) {
+    next.content = Array.isArray(incoming.content)
+      ? incoming.content.map((part) => cloneResponsesContentPart(part))
+      : (Array.isArray(existing.content) ? existing.content.map((part) => cloneResponsesContentPart(part)) : []);
+  }
+
+  if (incoming.arguments !== undefined) {
+    next.arguments = incoming.arguments;
+  } else if (existing.arguments !== undefined) {
+    next.arguments = existing.arguments;
+  }
+
+  return next;
+}
+
+function createResponsesStreamAccumulator() {
+  return {
+    response: {
+      output: [],
+      output_text: '',
+    },
+    indexByItemId: new Map(),
+  };
+}
+
+function upsertResponsesOutputItem(state, item, outputIndex = null) {
+  const normalizedItem = cloneResponsesOutputItem(item);
+  if (!normalizedItem) return null;
+
+  const explicitIndex = Number.isInteger(outputIndex) && outputIndex >= 0 ? outputIndex : null;
+  const itemId = normalizedItem.id || normalizedItem.call_id || null;
+  const knownIndex = itemId && state.indexByItemId.has(itemId) ? state.indexByItemId.get(itemId) : null;
+  const targetIndex = explicitIndex ?? knownIndex;
+
+  if (targetIndex !== null) {
+    const existing = state.response.output[targetIndex] || {};
+    state.response.output[targetIndex] = mergeResponsesOutputItem(existing, normalizedItem);
+    if (itemId) state.indexByItemId.set(itemId, targetIndex);
+    return state.response.output[targetIndex];
+  }
+
+  const nextIndex = state.response.output.length;
+  state.response.output.push(normalizedItem);
+  if (itemId) state.indexByItemId.set(itemId, nextIndex);
+  return normalizedItem;
+}
+
+function ensureResponsesMessageItem(state, { itemId = null, outputIndex = null } = {}) {
+  if (itemId && state.indexByItemId.has(itemId)) {
+    const existingIndex = state.indexByItemId.get(itemId);
+    const existing = state.response.output[existingIndex];
+    if (existing?.type === 'message') return existing;
+  }
+
+  if (Number.isInteger(outputIndex) && outputIndex >= 0) {
+    const existing = state.response.output[outputIndex];
+    if (existing?.type === 'message') return existing;
+    return upsertResponsesOutputItem(state, {
+      id: itemId || `message-${outputIndex}`,
+      type: 'message',
+      role: 'assistant',
+      content: [],
+    }, outputIndex);
+  }
+
+  const messageIndex = state.response.output.findIndex((item) => item?.type === 'message');
+  if (messageIndex >= 0) return state.response.output[messageIndex];
+
+  return upsertResponsesOutputItem(state, {
+    id: itemId || `message-${state.response.output.length}`,
+    type: 'message',
+    role: 'assistant',
+    content: [],
+  });
+}
+
+function appendResponsesTextChunk(state, { text = '', itemId = null, outputIndex = null, contentIndex = null } = {}) {
+  if (!text) return;
+
+  const messageItem = ensureResponsesMessageItem(state, { itemId, outputIndex });
+  if (!Array.isArray(messageItem.content)) {
+    messageItem.content = [];
+  }
+
+  const explicitContentIndex = Number.isInteger(contentIndex) && contentIndex >= 0 ? contentIndex : null;
+  const targetIndex = explicitContentIndex ?? (messageItem.content.length > 0 ? messageItem.content.length - 1 : 0);
+  const existingPart = messageItem.content[targetIndex];
+
+  if (existingPart && typeof existingPart.text === 'string') {
+    messageItem.content[targetIndex] = {
+      ...existingPart,
+      text: existingPart.text + text,
+    };
+  } else {
+    messageItem.content[targetIndex] = {
+      type: 'output_text',
+      text,
+    };
+  }
+
+  state.response.output_text = `${state.response.output_text || ''}${text}`;
+}
+
+function appendResponsesFunctionArguments(state, { delta = '', itemId = null, outputIndex = null } = {}) {
+  if (!delta) return;
+
+  const target = upsertResponsesOutputItem(state, {
+    id: itemId || `function-call-${outputIndex ?? state.response.output.length}`,
+    type: 'function_call',
+    arguments: '',
+  }, outputIndex);
+
+  target.arguments = `${typeof target.arguments === 'string' ? target.arguments : ''}${delta}`;
+}
+
+function mergeResponsesFinalObject(state, response = {}) {
+  if (!response || typeof response !== 'object') return;
+
+  if (response.id) state.response.id = response.id;
+  if (response.model) state.response.model = response.model;
+  if (response.status) state.response.status = response.status;
+  if (response.usage) state.response.usage = response.usage;
+  if (response.error) state.response.error = response.error;
+  if (typeof response.output_text === 'string' && response.output_text.trim()) {
+    state.response.output_text = response.output_text;
+  }
+
+  if (Array.isArray(response.output)) {
+    response.output.forEach((item, index) => {
+      upsertResponsesOutputItem(state, item, index);
+    });
+  }
+}
+
+function buildResponsesStreamResult(state) {
+  const hasOutputItems = Array.isArray(state.response.output) && state.response.output.length > 0;
+  const hasOutputText = typeof state.response.output_text === 'string' && state.response.output_text.length > 0;
+  const hasMetadata = Boolean(state.response.id || state.response.model || state.response.status || state.response.usage);
+  if (!hasOutputItems && !hasOutputText && !hasMetadata) return null;
+
+  return {
+    ...state.response,
+    output: hasOutputItems ? state.response.output : [],
+    output_text: state.response.output_text || '',
+  };
+}
+
 // Stream SSE response from Codex/Responses API and collect the final response object
 function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
@@ -1250,10 +1427,10 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
       }
 
       let raw = '';
-      let lastResponseObj = null;
+      const streamState = createResponsesStreamAccumulator();
       res.on('data', c => { raw += c; });
       res.on('end', () => {
-        // Parse SSE events: collect all "response.completed" or last "response.*" event
+        // Parse SSE events: collect the final response object plus any streamed deltas.
         const lines = raw.split('\n');
         for (const line of lines) {
           if (line.startsWith('data: ')) {
@@ -1261,22 +1438,61 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
             if (!payload || payload === '[DONE]') continue;
             try {
               const evt = JSON.parse(payload);
-              // Prefer the completed response event
               if (evt.type === 'response.completed' && evt.response) {
-                lastResponseObj = evt.response;
+                mergeResponsesFinalObject(streamState, evt.response);
               } else if (evt.type === 'response.done' && evt.response) {
-                lastResponseObj = evt.response;
+                mergeResponsesFinalObject(streamState, evt.response);
+              } else if ((evt.type === 'response.output_item.added' || evt.type === 'response.output_item.done') && evt.item) {
+                upsertResponsesOutputItem(streamState, evt.item, evt.output_index);
+              } else if ((evt.type === 'response.content_part.added' || evt.type === 'response.content_part.done') && evt.part) {
+                const messageItem = ensureResponsesMessageItem(streamState, {
+                  itemId: evt.item_id || evt.output_item_id || null,
+                  outputIndex: evt.output_index,
+                });
+                if (!Array.isArray(messageItem.content)) {
+                  messageItem.content = [];
+                }
+                const partIndex = Number.isInteger(evt.content_index) && evt.content_index >= 0
+                  ? evt.content_index
+                  : messageItem.content.length;
+                messageItem.content[partIndex] = cloneResponsesContentPart(evt.part);
+              } else if (evt.type === 'response.output_text.delta') {
+                appendResponsesTextChunk(streamState, {
+                  text: evt.delta || '',
+                  itemId: evt.item_id || evt.output_item_id || null,
+                  outputIndex: evt.output_index,
+                  contentIndex: evt.content_index,
+                });
+              } else if (evt.type === 'response.output_text.done') {
+                appendResponsesTextChunk(streamState, {
+                  text: evt.text || '',
+                  itemId: evt.item_id || evt.output_item_id || null,
+                  outputIndex: evt.output_index,
+                  contentIndex: evt.content_index,
+                });
+              } else if (evt.type === 'response.function_call_arguments.delta') {
+                appendResponsesFunctionArguments(streamState, {
+                  delta: evt.delta || '',
+                  itemId: evt.item_id || evt.output_item_id || null,
+                  outputIndex: evt.output_index,
+                });
+              } else if (evt.type === 'response.function_call_arguments.done') {
+                upsertResponsesOutputItem(streamState, {
+                  id: evt.item_id || evt.output_item_id || null,
+                  type: 'function_call',
+                  arguments: evt.arguments || '',
+                }, evt.output_index);
               } else if (evt.output_text !== undefined) {
-                // Some endpoints return the final object directly
-                lastResponseObj = evt;
+                mergeResponsesFinalObject(streamState, evt);
               }
             } catch (_) {
               continue;
             }
           }
         }
-        if (lastResponseObj) {
-          resolve(lastResponseObj);
+        const result = buildResponsesStreamResult(streamState);
+        if (result) {
+          resolve(result);
         } else {
           // Fallback: try to parse the entire raw as JSON (non-streaming response)
           try { resolve(JSON.parse(raw)); }
@@ -1290,6 +1506,45 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
     req.write(data);
     req.end();
   });
+}
+
+function extractResponsesTextFromPart(part) {
+  if (typeof part === 'string') return part;
+  if (!part || typeof part !== 'object') return '';
+  if (typeof part.text === 'string') return part.text;
+  if (typeof part.output_text === 'string') return part.output_text;
+  if (typeof part.text?.value === 'string') return part.text.value;
+  return '';
+}
+
+function extractResponsesTextContent(outputItems = []) {
+  return outputItems
+    .filter((item) => item?.type === 'message')
+    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+    .map((part) => extractResponsesTextFromPart(part))
+    .filter(Boolean)
+    .join('');
+}
+
+function extractResponsesToolCalls(outputItems = []) {
+  return outputItems
+    .filter((item) => item?.type === 'function_call' || item?.type === 'tool_call')
+    .map((item) => normalizeToolCall({
+      id: item.id || item.call_id,
+      call_id: item.call_id || item.id,
+      name: item.name || item.function?.name,
+      arguments: (() => {
+        const rawArguments = item.arguments ?? item.function?.arguments ?? '{}';
+        if (rawArguments && typeof rawArguments === 'object') {
+          return rawArguments;
+        }
+        try {
+          return JSON.parse(rawArguments || '{}');
+        } catch (_) {
+          return {};
+        }
+      })(),
+    }));
 }
 
 function normalizeResponse(provider, model, result, latency_ms) {
@@ -1319,24 +1574,8 @@ function normalizeResponse(provider, model, result, latency_ms) {
   // Responses API format (Codex): output is an array of items
   if (result.output && !result.choices) {
     const outputItems = Array.isArray(result.output) ? result.output : [];
-    const textContent = outputItems
-      .filter(o => o.type === 'message')
-      .flatMap(o => (o.content || []).filter(c => c.type === 'output_text').map(c => c.text))
-      .join('');
-    const toolCalls = outputItems
-      .filter((item) => item.type === 'function_call')
-      .map((item) => normalizeToolCall({
-        id: item.id || item.call_id,
-        call_id: item.call_id || item.id,
-        name: item.name,
-        arguments: (() => {
-          try {
-            return JSON.parse(item.arguments || '{}');
-          } catch (_) {
-            return {};
-          }
-        })(),
-      }));
+    const textContent = extractResponsesTextContent(outputItems);
+    const toolCalls = extractResponsesToolCalls(outputItems);
     return {
       content: textContent || result.output_text || '',
       tool_calls: toolCalls.length > 0 ? toolCalls : null,

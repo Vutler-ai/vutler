@@ -80,6 +80,8 @@ describe('llmRouter nexus tool orchestration', () => {
     jest.doMock('../services/nexusTools', () => ({
       getNexusToolsForWorkspace: jest.fn().mockImplementation(async () => nexusTools),
       getOnlineNexusNode: jest.fn().mockImplementation(async () => onlineNexusNode),
+      getMailboxSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
+      getEmailSendSourceOptionsForWorkspace: jest.fn().mockResolvedValue([]),
       NEXUS_TOOL_NAMES: new Set(['search_files', 'send_email', 'draft_email', 'read_emails', 'read_contacts']),
     }));
 
