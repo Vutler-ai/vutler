@@ -17,6 +17,7 @@ export interface NexusFirstCommandPreset {
   action: NexusFirstCommandAction;
   value: string;
   valueLabel: string;
+  scope?: string;
 }
 
 export const NEXUS_FIRST_COMMAND_PRESETS: NexusFirstCommandPreset[] = [
@@ -35,6 +36,7 @@ export const NEXUS_FIRST_COMMAND_PRESETS: NexusFirstCommandPreset[] = [
     action: 'search',
     value: 'report',
     valueLabel: 'Query',
+    scope: '~/Documents',
   },
   {
     key: 'clipboard',

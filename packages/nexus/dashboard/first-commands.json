@@ -1,0 +1,35 @@
+[
+  {
+    "key": "desktop",
+    "title": "List Desktop",
+    "description": "Check file access on `~/Desktop`.",
+    "action": "list_dir",
+    "value": "~/Desktop",
+    "valueLabel": "Path"
+  },
+  {
+    "key": "documents-search",
+    "title": "Search Documents",
+    "description": "Look for `report` inside `~/Documents`.",
+    "action": "search",
+    "value": "report",
+    "valueLabel": "Query",
+    "scope": "~/Documents"
+  },
+  {
+    "key": "clipboard",
+    "title": "Read Clipboard",
+    "description": "Verify the local clipboard bridge.",
+    "action": "read_clipboard",
+    "value": "",
+    "valueLabel": "Input"
+  },
+  {
+    "key": "pwd",
+    "title": "Run `pwd`",
+    "description": "Validate the shell runtime path.",
+    "action": "shell_exec",
+    "value": "pwd",
+    "valueLabel": "Command"
+  }
+]

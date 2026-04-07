@@ -8,6 +8,9 @@ const { readRuntimeConfig } = require('../lib/runtime-config');
 
 function createDashboardServer(node) {
   const indexHtml = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  const firstCommandPresets = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'first-commands.json'), 'utf8')
+  );
   const pairingState = { code: null, expiresAt: 0, pairedAt: null };
   const permissionEngine = getPermissionEngine();
 
@@ -152,6 +155,9 @@ function createDashboardServer(node) {
         },
         state: getSetupState(),
       }));
+    } else if (req.url === '/api/first-commands') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ presets: firstCommandPresets }));
     } else if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, mode: node.mode, node_id: node.nodeId }));

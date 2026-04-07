@@ -831,6 +831,7 @@
       pairingCode: null,
       pairingExpiry: null,
       recentActions: [],
+      firstCommands: [],
     };
 
     const folderMap = {
@@ -953,63 +954,34 @@
       },
     };
 
-    const commandPresets = [
-      {
-        key: 'discover-runtime',
-        title: 'Check local readiness',
-        description: 'Run one discovery pass to see which local providers and apps are actually available.',
-        action: 'discover_local_runtime',
-        target: '',
-        tags: ['recommended', 'diagnostic'],
-      },
-      {
-        key: 'browse-desktop',
-        title: 'Browse Desktop',
-        description: 'Confirm folder access and see what Nexus can list immediately.',
-        action: 'list_dir',
-        target: '~/Desktop',
-        tags: ['files', 'starter'],
-        requiresAction: 'list_dir',
-        requiresFolder: '~/Desktop',
-      },
-      {
-        key: 'browse-documents',
-        title: 'Browse Documents',
-        description: 'Verify document access in the folder where most working files live.',
-        action: 'list_dir',
-        target: '~/Documents',
-        tags: ['files'],
-        requiresAction: 'list_dir',
-        requiresFolder: '~/Documents',
-      },
-      {
-        key: 'run-pwd',
-        title: 'Run pwd',
-        description: 'Check that the shell bridge is available before attempting more complex commands.',
-        action: 'shell_exec',
-        target: 'pwd',
-        tags: ['shell', 'starter'],
-        requiresAction: 'shell_exec',
-      },
-      {
-        key: 'read-clipboard',
-        title: 'Read clipboard',
-        description: 'Quickly confirm that Nexus can read the current system clipboard.',
-        action: 'read_clipboard',
-        target: '',
-        tags: ['clipboard'],
-        requiresAction: 'read_clipboard',
-      },
-      {
-        key: 'search-files',
-        title: 'Search local files',
-        description: 'Try a real local lookup instead of guessing whether search is active.',
-        action: 'search',
-        target: 'invoice',
-        tags: ['search'],
-        requiresAction: 'search',
-      },
-    ];
+    function inferPresetTags(preset) {
+      switch (preset.action) {
+        case 'list_dir':
+          return ['files', 'starter'];
+        case 'search':
+          return ['search'];
+        case 'read_clipboard':
+          return ['clipboard'];
+        case 'shell_exec':
+          return ['shell', 'starter'];
+        default:
+          return ['local'];
+      }
+    }
+
+    function buildCommandPresets(seed) {
+      return (Array.isArray(seed) ? seed : []).map((preset) => ({
+        key: preset.key,
+        title: preset.title,
+        description: preset.description,
+        action: preset.action,
+        target: preset.value || '',
+        scope: preset.scope || '',
+        tags: inferPresetTags(preset),
+        requiresAction: preset.action,
+        requiresFolder: preset.action === 'list_dir' ? (preset.value || '') : null,
+      }));
+    }
 
     async function getJson(url, options) {
       const response = await fetch(url, options);
@@ -1129,7 +1101,12 @@
 
     function renderRecommendedActions(setup, status) {
       const el = document.getElementById('recommended-actions');
-      const presets = commandPresets.slice(0, 6);
+      const presets = buildCommandPresets(state.firstCommands);
+      if (!presets.length) {
+        el.innerHTML = '<div class="hint">Recommended actions will appear here once the local console loads its shared presets.</div>';
+        return;
+      }
+
       el.innerHTML = presets.map((preset) => {
         const availability = isPresetAvailable(preset, setup, status);
         return `
@@ -1185,6 +1162,10 @@
         : '<span class="muted">No input needed for this action.</span>';
 
       const payload = definition.preview(targetInput.value.trim());
+      const selectedPreset = buildCommandPresets(state.firstCommands).find((preset) => preset.action === action && preset.target === targetInput.value.trim());
+      if (action === 'search' && selectedPreset?.scope) {
+        payload.args.scope = selectedPreset.scope;
+      }
       preview.textContent = JSON.stringify(payload, null, 2);
     }
 
@@ -1266,7 +1247,7 @@
         hints.push('Enable Shell only if you want Nexus to execute terminal commands locally.');
       }
 
-      hints.push('Use the quick actions section to run a first explicit command and confirm the UX is working end to end.');
+      hints.push('Use the recommended actions section to run a first explicit command and confirm the UX is working end to end.');
 
       document.getElementById('hint-list').innerHTML = hints.map((hint) => `<div class="hint">${hint}</div>`).join('');
     }
@@ -1410,18 +1391,20 @@
 
     async function refresh() {
       try {
-        const [setup, status, config, permissions, logs] = await Promise.all([
+        const [setup, status, config, permissions, logs, firstCommands] = await Promise.all([
           getJson('/api/setup-state'),
           getJson('/api/status'),
           getJson('/api/config'),
           getJson('/api/permissions'),
           getJson('/api/logs'),
+          getJson('/api/first-commands'),
         ]);
 
         state.setup = setup;
         state.status = status;
         state.config = config;
         state.permissions = permissions;
+        state.firstCommands = Array.isArray(firstCommands?.presets) ? firstCommands.presets : [];
         applyPermissionsToForm(permissions);
         render(setup, status, config, logs);
       } catch (error) {
@@ -1494,7 +1477,12 @@
       const action = document.getElementById('action-select').value;
       const target = document.getElementById('action-target').value.trim();
       const definition = actionCatalog[action] || actionCatalog.discover_local_runtime;
-      return { action, args: definition.buildArgs(target) };
+      const args = definition.buildArgs(target);
+      const selectedPreset = buildCommandPresets(state.firstCommands).find((preset) => preset.action === action && preset.target === target);
+      if (action === 'search' && selectedPreset?.scope) {
+        args.scope = selectedPreset.scope;
+      }
+      return { action, args };
     }
 
     async function runCurrentAction() {
@@ -1516,7 +1504,7 @@
     }
 
     function findPreset(key) {
-      return commandPresets.find((preset) => preset.key === key) || null;
+      return buildCommandPresets(state.firstCommands).find((preset) => preset.key === key) || null;
     }
 
     async function runPreset(key) {

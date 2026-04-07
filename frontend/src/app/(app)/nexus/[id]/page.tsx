@@ -1801,7 +1801,7 @@ function ActionDispatchPanel({
       case 'search':
         setActiveAction('search');
         setSearchQuery(preset.value);
-        setSearchScope('~/Documents');
+        setSearchScope(preset.scope || '');
         break;
       case 'read_clipboard':
         setActiveAction('read_clipboard');
