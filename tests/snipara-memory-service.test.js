@@ -25,6 +25,11 @@ describe('sniparaMemoryService', () => {
     });
   });
 
+  test('rejects missing workspace ids when building memory bindings', () => {
+    expect(() => buildAgentMemoryBindings({ id: 'agent-1', username: 'mike' }))
+      .toThrow('workspaceId is required for Snipara memory calls');
+  });
+
   test('filters tombstones and internal memories from dashboard lists', () => {
     const memories = normalizeMemories({
       memories: [

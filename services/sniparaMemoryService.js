@@ -26,7 +26,9 @@ const SNIPARA_MEMORY_WRITE_TIMEOUT_MS = Number(process.env.SNIPARA_MEMORY_WRITE_
 const SNIPARA_MEMORY_DOCUMENT_TIMEOUT_MS = Number(process.env.SNIPARA_MEMORY_DOCUMENT_TIMEOUT_MS || 20_000);
 
 function normalizeWorkspaceId(workspaceId) {
-  return workspaceId || DEFAULT_WORKSPACE;
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for Snipara memory calls');
 }
 
 async function callSniparaMemoryTool(invocation) {
@@ -84,7 +86,7 @@ function normalizeHumanContext(humanContext = {}) {
   };
 }
 
-function buildAgentMemoryBindings(agent = {}, workspaceId = DEFAULT_WORKSPACE, humanContext = null) {
+function buildAgentMemoryBindings(agent = {}, workspaceId, humanContext = null) {
   const ws = normalizeWorkspaceId(workspaceId);
   const agentRef = deriveAgentRef(
     agent.username ||
@@ -612,7 +614,7 @@ async function listStoredMemories({ db, workspaceId, search, limit = 50, offset 
   } catch (err) {
     error = serializeSniparaError(err);
     console.warn('[SniparaMemory] listStoredMemories failed:', {
-      workspaceId: normalizeWorkspaceId(workspaceId),
+      workspaceId: typeof workspaceId === 'string' ? workspaceId.trim() || null : workspaceId || null,
       search,
       status_code: error?.status_code || null,
       message: error?.message || String(err?.message || err),
