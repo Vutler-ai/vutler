@@ -35,12 +35,23 @@ const {
 } = require('../services/vault');
 const { runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function workspaceId(req) {
-  return req.workspaceId || DEFAULT_WORKSPACE;
+  const headerWorkspaceId = typeof req.headers?.['x-workspace-id'] === 'string'
+    ? req.headers['x-workspace-id'].trim()
+    : '';
+  return req.vaultWorkspaceId || req.workspaceId || req.user?.workspaceId || headerWorkspaceId || null;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  const wsId = workspaceId(req);
+  if (!wsId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+
+  req.vaultWorkspaceId = wsId;
+  next();
 }
 
 /**
@@ -78,6 +89,8 @@ if (runtimeSchemaMutationsAllowed()) {
     console.error('[Vault] Failed to ensure table on startup:', err.message),
   );
 }
+
+router.use('/vault', ensureWorkspaceContext);
 
 // ── GET /api/v1/vault — list all secrets (masked) ────────────────────────────
 
@@ -347,3 +360,7 @@ router.post('/vault/resolve', requireVaultApiKey, async (req, res) => {
 });
 
 module.exports = router;
+router._private = {
+  workspaceId,
+  ensureWorkspaceContext,
+};
