@@ -45,7 +45,9 @@ const ACTIVE_TASK_STATUSES = new Set(['pending', 'in_progress', 'open']);
 const FAILED_TASK_STATUSES = new Set(['failed', 'cancelled', 'stalled', 'blocked', 'timed_out', 'timeout']);
 
 function normalizeWorkspaceId(workspaceId) {
-  return workspaceId || DEFAULT_WORKSPACE;
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for run engine operations');
 }
 
 function buildWakeAt(delayMs) {
@@ -2695,4 +2697,5 @@ function getRunEngine(options) {
 module.exports = {
   OrchestrationRunEngine,
   getRunEngine,
+  normalizeWorkspaceId,
 };
