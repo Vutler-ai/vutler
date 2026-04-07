@@ -492,7 +492,7 @@ router.post("/", async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb) RETURNING *`,
       [agentId, name, username, finalEmail, serializeType(type)||"bot", role||null, mbti||null, finalModel, provider||null,
        description||"", finalSystemPrompt, temperature||0.7, max_tokens||4096,
-       normalizedAvatar || buildSpriteAvatar(username), ws, capabilities, JSON.stringify(config)]
+       normalizedAvatar || buildSpriteAvatar(username), ws, JSON.stringify(capabilities), JSON.stringify(config)]
     );
 
     // Register email route for inbound routing
