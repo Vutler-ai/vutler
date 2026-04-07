@@ -307,6 +307,9 @@ function StatusBadge({ status }: { status: string }) {
 const inputCls =
   'w-full bg-[#0a0b14] border border-[rgba(255,255,255,0.07)] rounded-lg px-3 py-2 text-white text-sm placeholder-[#4b5563] focus:outline-none focus:border-[#3b82f6] transition-colors';
 
+const LOCAL_NEXUS_DISCOVERY_PORTS = [3199, 3200, 3201, 3202] as const;
+const LOCAL_NEXUS_LEGACY_PORTS = [3100, 3101, 3102, 3103] as const;
+
 const EVENT_PROVIDER_OPTIONS: Array<{
   value: NexusEnterpriseEventSubscriptionProvider;
   label: string;
@@ -2745,6 +2748,175 @@ function RuntimeObservabilityCard({
   );
 }
 
+function LocalRuntimeConsoleCard({ node }: { node: NodeDetail }) {
+  const [detectedPort, setDetectedPort] = useState<number | null>(null);
+  const [localState, setLocalState] = useState<'idle' | 'searching' | 'ready' | 'error'>('idle');
+  const [reconnectState, setReconnectState] = useState<'idle' | 'reconnecting' | 'success' | 'error'>('idle');
+  const [message, setMessage] = useState('Search localhost to reopen the paired local Nexus console for this node.');
+
+  const detectMatchingLocalConsole = useCallback(async () => {
+    if (typeof window === 'undefined') return null;
+
+    setLocalState('searching');
+    setReconnectState('idle');
+    setMessage('Searching localhost for the local Nexus console attached to this node…');
+
+    for (const discoveryPort of LOCAL_NEXUS_DISCOVERY_PORTS) {
+      try {
+        const discoveryResponse = await fetch(`http://localhost:${discoveryPort}/api/discovery`);
+        if (!discoveryResponse.ok) continue;
+        const discoveryPayload = await discoveryResponse.json().catch(() => null);
+        if (!discoveryPayload) continue;
+
+        const resolvedPort = Number(discoveryPayload?.dashboard?.port) || discoveryPort;
+        const setupResponse = await fetch(`http://localhost:${resolvedPort}/api/setup-state`).catch(() => null);
+        const setupState = setupResponse?.ok ? await setupResponse.json().catch(() => null) : null;
+        if (!setupState) continue;
+        if (setupState?.node_id !== node.id) continue;
+
+        setDetectedPort(resolvedPort);
+        setLocalState('ready');
+        setMessage(`Local Nexus console detected on port ${resolvedPort} for this node.`);
+        return resolvedPort;
+      } catch {
+        // Try next bridge port.
+      }
+    }
+
+    for (const port of LOCAL_NEXUS_LEGACY_PORTS) {
+      try {
+        const setupResponse = await fetch(`http://localhost:${port}/api/setup-state`);
+        if (!setupResponse.ok) continue;
+        const setupState = await setupResponse.json().catch(() => null);
+        if (!setupState || setupState?.node_id !== node.id) continue;
+
+        setDetectedPort(port);
+        setLocalState('ready');
+        setMessage(`Local Nexus console detected on port ${port} for this node.`);
+        return port;
+      } catch {
+        // Try next legacy port.
+      }
+    }
+
+    setDetectedPort(null);
+    setLocalState('error');
+    setMessage('No local Nexus console matching this node was detected on localhost. Launch the local runtime on this machine, then retry.');
+    return null;
+  }, [node.id]);
+
+  useEffect(() => {
+    void detectMatchingLocalConsole();
+  }, [detectMatchingLocalConsole]);
+
+  const handleReconnect = useCallback(async () => {
+    const port = detectedPort ?? await detectMatchingLocalConsole();
+    if (!port) return;
+
+    setReconnectState('reconnecting');
+    setMessage('Requesting the local runtime to reconnect with its saved config…');
+
+    try {
+      const response = await fetch(`http://localhost:${port}/api/setup/connect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.error || `Reconnect failed on port ${port}`);
+      }
+
+      setReconnectState('success');
+      setLocalState('ready');
+      setMessage(`Local runtime reconnected on port ${port}.`);
+    } catch (err) {
+      setReconnectState('error');
+      setMessage(err instanceof Error ? err.message : 'Could not reconnect the local runtime.');
+    }
+  }, [detectedPort, detectMatchingLocalConsole]);
+
+  const localConsoleUrl = detectedPort ? `http://localhost:${detectedPort}/` : null;
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-5">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Local Console</h2>
+          <p className="text-xs text-[#6b7280] mt-0.5">
+            Reopen the paired local runtime or ask it to reconnect without returning to the install flow.
+          </p>
+        </div>
+        <span className={`px-2.5 py-1 rounded-full border text-xs ${
+          localState === 'ready'
+            ? 'bg-emerald-900/20 text-emerald-400 border-emerald-500/30'
+            : localState === 'searching'
+              ? 'bg-blue-900/20 text-blue-300 border-blue-500/30'
+              : 'bg-[#111827] text-[#9ca3af] border-[rgba(255,255,255,0.08)]'
+        }`}>
+          {localState === 'ready' ? 'Detected' : localState === 'searching' ? 'Searching' : 'Not found'}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+          <p className="text-xs text-[#6b7280] uppercase tracking-wide">Node</p>
+          <p className="text-sm text-white mt-1">{node.name}</p>
+          <p className="text-[11px] text-[#6b7280] mt-2 font-mono break-all">{node.id}</p>
+        </div>
+        <div className="rounded-xl bg-[#0a0b14] border border-[rgba(255,255,255,0.06)] p-3">
+          <p className="text-xs text-[#6b7280] uppercase tracking-wide">Local console</p>
+          <p className="text-sm text-white mt-1">{localConsoleUrl || 'Not detected yet'}</p>
+          <p className="text-[11px] text-[#6b7280] mt-2">
+            Works only on the same machine where the local Nexus runtime is running.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {localConsoleUrl && (
+          <a
+            href={localConsoleUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="px-3 py-2 bg-[#3b82f6] hover:bg-[#2563eb] text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            Open Local Console
+          </a>
+        )}
+        <button
+          type="button"
+          onClick={() => void handleReconnect()}
+          disabled={reconnectState === 'reconnecting' || localState === 'searching'}
+          className="px-3 py-2 bg-[#1e293b] hover:bg-[#334155] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          {reconnectState === 'reconnecting' ? 'Reconnecting…' : 'Reconnect Local Runtime'}
+        </button>
+        <button
+          type="button"
+          onClick={() => void detectMatchingLocalConsole()}
+          disabled={localState === 'searching' || reconnectState === 'reconnecting'}
+          className="px-3 py-2 bg-[#111827] hover:bg-[#172033] disabled:opacity-50 text-[#d1d5db] border border-[rgba(255,255,255,0.08)] rounded-lg text-sm transition-colors"
+        >
+          {localState === 'searching' ? 'Searching…' : 'Retry Local Detection'}
+        </button>
+      </div>
+
+      <p className={`mt-4 text-xs ${
+        reconnectState === 'error' || localState === 'error'
+          ? 'text-red-400'
+          : reconnectState === 'success'
+            ? 'text-emerald-400'
+            : 'text-[#6b7280]'
+      }`}>
+        {message}
+      </p>
+    </section>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NexusNodePage({ params }: { params: Promise<{ id: string }> }) {
@@ -2915,6 +3087,10 @@ export default function NexusNodePage({ params }: { params: Promise<{ id: string
           </div>
         </dl>
       </section>
+
+      {!isEnterprise && (
+        <LocalRuntimeConsoleCard node={node} />
+      )}
 
       {/* Capabilities */}
       <CapabilitiesCard nodeId={id} node={node} />
