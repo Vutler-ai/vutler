@@ -140,6 +140,40 @@ let nexusTablesPromise = null;
 let nexusNodesPromise = null;
 let nexusCommandsPromise = null;
 
+function getWorkspaceContext(req) {
+  const headerWorkspaceId = typeof req.headers?.['x-workspace-id'] === 'string'
+    ? req.headers['x-workspace-id'].trim()
+    : '';
+  return req.nexusWorkspaceId || req.workspaceId || req.user?.workspaceId || headerWorkspaceId || null;
+}
+
+function requiresExplicitWorkspaceContext(req) {
+  const path = typeof req.path === 'string' ? req.path : '';
+  if (path === '/register' || path === '/local-token') {
+    return false;
+  }
+  return true;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  if (!requiresExplicitWorkspaceContext(req)) {
+    return next();
+  }
+
+  const workspaceId = getWorkspaceContext(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+
+  req.nexusWorkspaceId = workspaceId;
+  if (!req.workspaceId) {
+    req.workspaceId = workspaceId;
+  }
+  next();
+}
+
+router.use(ensureWorkspaceContext);
+
 function cleanObject(input = {}) {
   return Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined && value !== null && value !== ''));
 }
@@ -3049,4 +3083,7 @@ router._private = {
   persistNodeDiscoverySnapshot,
   buildNodeConsentState,
   getNodeConsentState,
+  getWorkspaceContext,
+  ensureWorkspaceContext,
+  requiresExplicitWorkspaceContext,
 };
