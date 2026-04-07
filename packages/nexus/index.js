@@ -10,6 +10,7 @@ const { EnterprisePolicyEngine } = require('./lib/enterprise-policy-engine');
 const { LocalIntegrationBridge } = require('./lib/local-integration-bridge');
 const { EnterpriseActionExecutor } = require('./lib/enterprise-action-executor');
 const { buildRuntimeConfigFromToken, readRuntimeConfig, writeRuntimeConfig } = require('./lib/runtime-config');
+const { listDiscoveryInstances, upsertDiscoveryInstance, removeDiscoveryInstance } = require('./lib/discovery-registry');
 
 const LOCAL_DISCOVERY_PORTS = [3199, 3200, 3201, 3202];
 const DASHBOARD_PORT_FALLBACK_ATTEMPTS = 6;
@@ -44,6 +45,7 @@ class NexusNode {
     this.filesystemRoot = opts.filesystem_root || null;
     this.role = opts.role || 'general';
     this.deployToken = opts.deploy_token || null;
+    this.runtimeId = opts.runtime_id || `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
     this.nodeId = null;
     this.ws = null;
     this.agents = [];
@@ -230,6 +232,7 @@ class NexusNode {
 
     // 5. Start local dashboard server
     await this._startDashboardServer();
+    this._syncDiscoveryRegistry();
     
     console.log(`[Nexus] Node "${this.name}" online. Listening on port ${this.port}`);
     return this;
@@ -243,6 +246,7 @@ class NexusNode {
     if (this.discoveryServer) this.discoveryServer.close();
     if (this.offlineMonitor) this.offlineMonitor.stop();
     this.providers.terminal?.shutdown?.();
+    removeDiscoveryInstance(this.runtimeId);
     if (this.nodeId) {
       await this._apiCall('DELETE', `/api/v1/nexus/${this.nodeId}`);
     }
@@ -251,6 +255,7 @@ class NexusNode {
 
   async startDashboardOnly() {
     await this._startDashboardServer();
+    this._syncDiscoveryRegistry();
     this.log(`[NEXUS] Setup dashboard available on http://localhost:${this.port}`);
     return this;
   }
@@ -1060,6 +1065,7 @@ class NexusNode {
             this.log(`[NEXUS] Dashboard port ${requestedPort} busy; using ${port} instead.`);
           }
           this.port = port;
+          this._syncDiscoveryRegistry();
           this._startDiscoveryBridgeServer();
           resolve();
         };
@@ -1080,6 +1086,7 @@ class NexusNode {
 
     if (LOCAL_DISCOVERY_PORTS.includes(this.port)) {
       this.discoveryPort = this.port;
+      this._syncDiscoveryRegistry();
       return;
     }
 
@@ -1113,6 +1120,7 @@ class NexusNode {
             port: runtime.discoveryPort,
             url: runtime.discoveryPort ? `http://localhost:${runtime.discoveryPort}/` : null,
           },
+          instances: listDiscoveryInstances(),
           state: {
             configured: Boolean(runtimeConfig?.deploy_token || runtimeConfig?.api_key || runtime.key || runtime.deployToken),
             connected: Boolean(runtime.nodeId),
@@ -1145,6 +1153,7 @@ class NexusNode {
         discoveryServer.removeListener('error', onError);
         this.discoveryServer = discoveryServer;
         this.discoveryPort = port;
+        this._syncDiscoveryRegistry();
         this.log(`[NEXUS] Local discovery bridge available on http://localhost:${port}`);
       };
 
@@ -1154,6 +1163,26 @@ class NexusNode {
     };
 
     tryListen(0);
+  }
+
+  _syncDiscoveryRegistry() {
+    try {
+      upsertDiscoveryInstance({
+        runtime_id: this.runtimeId,
+        pid: process.pid,
+        port: this.port,
+        discovery_port: this.discoveryPort,
+        node_id: this.nodeId,
+        node_name: this.name,
+        mode: this.mode,
+        server: this.server,
+        connected: Boolean(this.nodeId),
+        setup_mode: !this.nodeId,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.log(`[NEXUS] Failed to update local discovery registry: ${error.message}`);
+    }
   }
 
   _syncRemoteClients() {

@@ -110,6 +110,18 @@ interface LocalConsentSourceState {
 
 type LocalConsentState = Record<LocalConsentSourceKey, LocalConsentSourceState>;
 
+interface LocalDiscoveryInstance {
+  runtime_id?: string;
+  port?: number;
+  discovery_port?: number | null;
+  node_id?: string | null;
+  node_name?: string | null;
+  mode?: string;
+  connected?: boolean;
+  setup_mode?: boolean;
+  updated_at?: string;
+}
+
 const LOCAL_CONSENT_DEFINITIONS: LocalConsentDefinition[] = [
   {
     key: 'filesystem',
@@ -537,6 +549,40 @@ function DeployModal({
         if (!response.ok) continue;
         const payload = await response.json().catch(() => null);
         if (!payload) continue;
+
+        const instances: LocalDiscoveryInstance[] = Array.isArray(payload?.instances) ? payload.instances : [];
+        const expectedName = localNodeName.trim().toLowerCase();
+        const preferredInstance = expectedName
+          ? instances.find((instance) => String(instance?.node_name || '').trim().toLowerCase() === expectedName)
+          : instances.find((instance) => instance?.setup_mode)
+              || instances.find((instance) => !instance?.connected)
+              || null;
+        if (preferredInstance?.port) {
+          const resolvedPort = Number(preferredInstance.port);
+          const setupStateResponse = await fetch(`http://localhost:${resolvedPort}/api/setup-state`).catch(() => null);
+          const setupState = setupStateResponse?.ok
+            ? await setupStateResponse.json().catch(() => payload?.state ?? null)
+            : (payload?.state ?? null);
+
+          setLocalSetupPort(resolvedPort);
+          setLocalSetupState('ready');
+          setLocalSetupMessage(
+            instances.length > 1
+              ? `Multiple local Nexus runtimes detected. Using port ${resolvedPort} for this setup flow.`
+              : `Local Nexus detected on port ${resolvedPort}.`
+          );
+          if (setupState?.pairing?.active && setupState?.pairing?.code) {
+            setPairCode((current) => current || String(setupState.pairing.code).toUpperCase());
+            setPairingHint(`Active pairing code detected on port ${resolvedPort}.`);
+          } else {
+            setPairingHint(
+              instances.length > 1
+                ? `Using the runtime on port ${resolvedPort}. Generate a pair code there to continue.`
+                : `Local Nexus is running on port ${resolvedPort}. Generate a pair code to continue.`
+            );
+          }
+          return resolvedPort;
+        }
 
         const resolvedPort = Number(payload?.dashboard?.port) || discoveryPort;
         const setupStateResponse = await fetch(`http://localhost:${resolvedPort}/api/setup-state`).catch(() => null);

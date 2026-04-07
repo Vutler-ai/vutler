@@ -114,6 +114,18 @@ interface EnhancedNexusCapabilities extends NexusCapabilities {
   diagnostics?: NodeLocalDiagnostic[];
 }
 
+interface LocalDiscoveryInstance {
+  runtime_id?: string;
+  port?: number;
+  discovery_port?: number | null;
+  node_id?: string | null;
+  node_name?: string | null;
+  mode?: string;
+  connected?: boolean;
+  setup_mode?: boolean;
+  updated_at?: string;
+}
+
 type ActionType =
   | 'search'
   | 'read_document'
@@ -2752,6 +2764,20 @@ function LocalRuntimeConsoleCard({ node }: { node: NodeDetail }) {
         if (!discoveryResponse.ok) continue;
         const discoveryPayload = await discoveryResponse.json().catch(() => null);
         if (!discoveryPayload) continue;
+
+        const discoveryInstances: LocalDiscoveryInstance[] = Array.isArray(discoveryPayload?.instances) ? discoveryPayload.instances : [];
+        const matchedInstance = discoveryInstances.find((instance) => instance?.node_id === node.id);
+        if (matchedInstance?.port) {
+          const resolvedPort = Number(matchedInstance.port);
+          setDetectedPort(resolvedPort);
+          setLocalState('ready');
+          setMessage(
+            discoveryInstances.length > 1
+              ? `Local Nexus console detected on port ${resolvedPort} for this node. ${discoveryInstances.length} runtimes are currently registered on this machine.`
+              : `Local Nexus console detected on port ${resolvedPort} for this node.`
+          );
+          return resolvedPort;
+        }
 
         const resolvedPort = Number(discoveryPayload?.dashboard?.port) || discoveryPort;
         const setupResponse = await fetch(`http://localhost:${resolvedPort}/api/setup-state`).catch(() => null);

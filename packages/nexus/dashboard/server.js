@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { getPermissionEngine } = require('../lib/permission-engine');
+const { listDiscoveryInstances } = require('../lib/discovery-registry');
 const { readRuntimeConfig } = require('../lib/runtime-config');
 
 function createDashboardServer(node) {
@@ -153,6 +154,7 @@ function createDashboardServer(node) {
           port: node.discoveryPort || node.port,
           url: `http://localhost:${node.discoveryPort || node.port}/`,
         },
+        instances: listDiscoveryInstances(),
         state: getSetupState(),
       }));
     } else if (req.url === '/api/first-commands') {
