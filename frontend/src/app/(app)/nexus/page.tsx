@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { getNodes, deployLocal, deployEnterprise, deleteNode } from '@/lib/api/endpoints/nexus';
 import {
@@ -307,6 +307,7 @@ function DeployModal({
   initialProfileKey?: string;
   billing?: NexusBillingSnapshot | null;
 }) {
+  const router = useRouter();
   const [step, setStep] = useState<DeployStep>(initialMode === 'local' ? 'local-config' : initialMode === 'enterprise' ? 'ent-basics' : 'select');
   const [mode, setMode] = useState<DeployMode>(initialMode ?? 'local');
   const [token, setToken] = useState('');
@@ -322,6 +323,7 @@ function DeployModal({
   const [pairingMessage, setPairingMessage] = useState('');
   const [pairingHint, setPairingHint] = useState('');
   const [localPairingBootstrapDone, setLocalPairingBootstrapDone] = useState(false);
+  const [localRedirecting, setLocalRedirecting] = useState(false);
 
   // Workspace agents (enterprise only)
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -425,6 +427,36 @@ function DeployModal({
   }, [initialProfileKey]);
 
   const selectedProfile = enterpriseProfiles.find((profile) => profile.key === profileKey) || null;
+
+  const redirectToConnectedLocalNode = useCallback(async (preferredNodeId?: string | null) => {
+    const directNodeId = typeof preferredNodeId === 'string' && preferredNodeId.trim()
+      ? preferredNodeId.trim()
+      : '';
+
+    if (directNodeId) {
+      setLocalRedirecting(true);
+      onClose();
+      router.push(`/nexus/${directNodeId}`);
+      return;
+    }
+
+    const expectedName = localNodeName.trim().toLowerCase();
+    try {
+      const data = await getNodes();
+      const localNodes = (data.nodes ?? []).filter((node) => node.mode !== 'enterprise');
+      const exactMatch = expectedName
+        ? localNodes.find((node) => String(node.name || '').trim().toLowerCase() === expectedName)
+        : null;
+      const match = exactMatch || (localNodes.length === 1 ? localNodes[0] : null);
+      if (!match?.id) return;
+
+      setLocalRedirecting(true);
+      onClose();
+      router.push(`/nexus/${match.id}`);
+    } catch {
+      // Keep the modal open if node lookup fails; the local runtime is already connected.
+    }
+  }, [localNodeName, onClose, router]);
 
   const handleGenerate = async () => {
     setError('');
@@ -561,6 +593,7 @@ function DeployModal({
   }, []);
 
   const generateLocalPairCode = useCallback(async (preferredPort?: number) => {
+    if (localRedirecting) return;
     setPairingState('idle');
     setPairingMessage('');
 
@@ -585,10 +618,10 @@ function DeployModal({
       setPairingState('error');
       setPairingMessage(err instanceof Error ? err.message : 'Could not generate a pairing code from the local Nexus console.');
     }
-  }, [localSetupPort, detectLocalNexusSetup]);
+  }, [localRedirecting, localSetupPort, detectLocalNexusSetup]);
 
   const pushToLocalNexus = useCallback(async () => {
-    if (!token) return;
+    if (!token || localRedirecting) return;
 
     setError('');
     setLocalSetupState('sending');
@@ -619,14 +652,17 @@ function DeployModal({
       setLocalSetupPort(port);
       setLocalSetupState('sent');
       setLocalSetupMessage(`Local Nexus connected on port ${port}.`);
+      setPairingState('paired');
+      setPairingMessage('Local Nexus connected. Opening the node in Vutler…');
+      void redirectToConnectedLocalNode(payload?.state?.node_id || payload?.state?.links?.node_url?.split('/').pop() || null);
     } catch (err) {
       setLocalSetupState('error');
       setLocalSetupMessage(err instanceof Error ? err.message : 'Could not send the deploy token to local Nexus.');
     }
-  }, [token, localSetupPort, detectLocalNexusSetup, localConsent, localNodeName]);
+  }, [token, localRedirecting, localSetupPort, detectLocalNexusSetup, localConsent, localNodeName, redirectToConnectedLocalNode]);
 
   const pairLocalNexusByCode = useCallback(async () => {
-    if (!token || !pairCode.trim()) return;
+    if (!token || !pairCode.trim() || localRedirecting) return;
 
     setPairingState('pairing');
     setPairingMessage('Pairing the local Nexus runtime…');
@@ -663,9 +699,10 @@ function DeployModal({
 
         setLocalSetupPort(port);
         setPairingState('paired');
-        setPairingMessage(`Machine paired successfully on port ${port}.`);
+        setPairingMessage(`Machine paired successfully on port ${port}. Opening the node in Vutler…`);
         setLocalSetupState('sent');
         setLocalSetupMessage(`Local Nexus connected on port ${port}.`);
+        void redirectToConnectedLocalNode(payload?.state?.node_id || payload?.state?.links?.node_url?.split('/').pop() || null);
         return;
       } catch {
         // Try the next known local port.
@@ -674,7 +711,7 @@ function DeployModal({
 
     setPairingState('error');
     setPairingMessage('No local Nexus runtime accepted that pairing code. Generate a fresh code in the local console and retry.');
-  }, [token, pairCode, localConsent, localNodeName, localSetupPort, detectLocalNexusSetup]);
+  }, [token, pairCode, localRedirecting, localConsent, localNodeName, localSetupPort, detectLocalNexusSetup, redirectToConnectedLocalNode]);
 
   useEffect(() => {
     setLocalPairingBootstrapDone(false);
@@ -1400,6 +1437,7 @@ function DeployModal({
                           <label className="text-xs text-[#9ca3af] uppercase tracking-wide">Pair Code</label>
                           <button
                             onClick={() => void generateLocalPairCode()}
+                            disabled={localRedirecting}
                             className="text-xs text-blue-300 hover:text-white transition-colors"
                           >
                             Generate From Local Nexus
@@ -1415,10 +1453,10 @@ function DeployModal({
                           />
                           <button
                             onClick={() => void pairLocalNexusByCode()}
-                            disabled={!token || !pairCode.trim() || pairingState === 'pairing'}
+                            disabled={!token || !pairCode.trim() || pairingState === 'pairing' || localRedirecting}
                             className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
                           >
-                            {pairingState === 'pairing' ? 'Pairing…' : 'Pair With Code'}
+                            {localRedirecting ? 'Opening Node…' : pairingState === 'pairing' ? 'Pairing…' : 'Pair With Code'}
                           </button>
                         </div>
                         {pairingHint && (
@@ -1439,14 +1477,14 @@ function DeployModal({
                       <div className="flex flex-wrap gap-2">
                         <button
                           onClick={() => void pushToLocalNexus()}
-                          disabled={!token || localSetupState === 'sending'}
+                          disabled={!token || localSetupState === 'sending' || localRedirecting}
                           className="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors"
                         >
-                          {localSetupState === 'sending' ? 'Sending…' : 'Send To Local Nexus'}
+                          {localRedirecting ? 'Opening Node…' : localSetupState === 'sending' ? 'Sending…' : 'Send To Local Nexus'}
                         </button>
                         <button
                           onClick={() => void detectLocalNexusSetup()}
-                          disabled={localSetupState === 'searching'}
+                          disabled={localSetupState === 'searching' || localRedirecting}
                           className="px-3 py-2 bg-[#1e293b] hover:bg-[#334155] disabled:opacity-50 text-white rounded-lg text-xs transition-colors"
                         >
                           {localSetupState === 'searching' ? 'Searching…' : 'Retry Detection'}
