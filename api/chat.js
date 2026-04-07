@@ -12,12 +12,29 @@ const { createMemoryRuntimeService } = require('../services/memory/runtime');
 const { resolveAgentRecord } = require('../services/sniparaMemoryService');
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const memoryRuntime = createMemoryRuntimeService();
 
 function getWorkspaceId(req) {
-  return req?.workspaceId || req?.headers?.['x-workspace-id'] || DEFAULT_WORKSPACE;
+  const headerWorkspaceId = typeof req?.headers?.['x-workspace-id'] === 'string'
+    ? req.headers['x-workspace-id'].trim()
+    : '';
+  return req?.chatWorkspaceId || req?.workspaceId || req?.user?.workspaceId || headerWorkspaceId || null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+
+  req.chatWorkspaceId = workspaceId;
+  if (!req.workspaceId) {
+    req.workspaceId = workspaceId;
+  }
+  next();
+}
+
+router.use(ensureWorkspaceContext);
 
 // ── Agent response helper (runs async, does not block user) ──
 async function _triggerAgentResponse(req, channelId, wsId) {
@@ -353,3 +370,7 @@ router.post('/channels/:id/members', async (req, res) => {
 });
 
 module.exports = router;
+router._private = {
+  getWorkspaceId,
+  ensureWorkspaceContext,
+};
