@@ -494,8 +494,44 @@ async function ensureReady() {
 }
 
 function getWorkspaceId(req) {
-  return req.workspaceId || DEFAULT_WORKSPACE;
+  const headerWorkspaceId = typeof req.headers?.['x-workspace-id'] === 'string'
+    ? req.headers['x-workspace-id'].trim()
+    : '';
+  const queryWorkspaceId = typeof req.query?.workspace_id === 'string'
+    ? req.query.workspace_id.trim()
+    : '';
+  return req.integrationWorkspaceId || req.workspaceId || req.user?.workspaceId || headerWorkspaceId || queryWorkspaceId || null;
 }
+
+function requiresExplicitWorkspaceContext(req) {
+  const path = typeof req.path === 'string' ? req.path : '';
+  if (path === '/available' || path === '/submissions') {
+    return false;
+  }
+  if (path.endsWith('/callback')) {
+    return false;
+  }
+  return true;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  if (!requiresExplicitWorkspaceContext(req)) {
+    return next();
+  }
+
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+
+  req.integrationWorkspaceId = workspaceId;
+  if (!req.workspaceId) {
+    req.workspaceId = workspaceId;
+  }
+  next();
+}
+
+router.use(ensureWorkspaceContext);
 
 async function addLog({ workspaceId, provider, action, status = 'success', durationMs = null, errorMessage = null, payload = {} }) {
   try {
@@ -875,7 +911,7 @@ router.get('/google/connect', (req, res) => {
   }
 
   const state = crypto.randomBytes(32).toString('hex');
-  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+  const workspaceId = getWorkspaceId(req);
   // Store state → workspaceId mapping for callback verification
   oauthStateStore.set(state, { workspaceId, provider: 'google', createdAt: Date.now() });
 
@@ -992,7 +1028,7 @@ router.get('/github/connect', (req, res) => {
   }
 
   const state = crypto.randomBytes(32).toString('hex');
-  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+  const workspaceId = getWorkspaceId(req);
   oauthStateStore.set(state, { workspaceId, provider: 'github', createdAt: Date.now() });
 
   const params = new URLSearchParams({
@@ -1088,7 +1124,7 @@ router.get('/microsoft365/connect', (req, res) => {
   }
 
   const state = crypto.randomBytes(32).toString('hex');
-  const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+  const workspaceId = getWorkspaceId(req);
   oauthStateStore.set(state, { workspaceId, provider: 'microsoft365', createdAt: Date.now() });
 
   const params = new URLSearchParams({
@@ -2714,6 +2750,9 @@ router._private = {
   buildIntegrationDetailPayload,
   normalizeIntegrationConnection,
   clearIntegrationRuntimeCaches,
+  getWorkspaceId,
+  ensureWorkspaceContext,
+  requiresExplicitWorkspaceContext,
   oauthStateStore,
   deviceAuthSessions,
 };
