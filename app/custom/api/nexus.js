@@ -10,6 +10,29 @@ const router = express.Router();
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
+function getWorkspaceId(req) {
+  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    if (value) return value;
+  }
+  return null;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+router.use(ensureWorkspaceContext);
+
 function mapNode(row) {
   return {
     id: row.id,
@@ -37,7 +60,7 @@ router.get('/nexus', authenticateAgent, async (req, res) => {
       return res.status(503).json({ success: false, error: 'Database not available' });
     }
 
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceId(req);
     const result = await pg.query(
       `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE workspace_id = $1 ORDER BY created_at DESC`,
       [workspaceId]
@@ -78,7 +101,7 @@ router.post('/nexus', authenticateAgent, async (req, res) => {
       });
     }
 
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceId(req);
     const insert = await pg.query(
       `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
        VALUES ($1, $2, $3, 'offline', $4, $5, $6::jsonb, '[]'::jsonb)
@@ -112,7 +135,7 @@ router.get('/nexus/:id', authenticateAgent, async (req, res) => {
     }
 
     const { id } = req.params;
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceId(req);
 
     const result = await pg.query(
       `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id = $1 AND workspace_id = $2`,
@@ -152,7 +175,7 @@ router.patch('/nexus/:id', authenticateAgent, async (req, res) => {
     }
 
     const { id } = req.params;
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceId(req);
 
     // Check node exists and belongs to workspace
     const existing = await pg.query(
@@ -230,7 +253,7 @@ router.delete('/nexus/:id', authenticateAgent, async (req, res) => {
     }
 
     const { id } = req.params;
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceId(req);
 
     const result = await pg.query(
       `DELETE FROM ${SCHEMA}.nexus_nodes WHERE id = $1 AND workspace_id = $2 RETURNING id`,
@@ -259,3 +282,7 @@ router.delete('/nexus/:id', authenticateAgent, async (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  getWorkspaceId,
+  ensureWorkspaceContext,
+};

@@ -37,8 +37,27 @@ function getPool(req) {
 }
 
 function wsId(req) {
-  return req.workspaceId || req.headers['x-workspace-id'] || DEFAULT_WORKSPACE;
+  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    if (value) return value;
+  }
+  return null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = wsId(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+router.use(ensureWorkspaceContext);
 
 function normaliseChannel(row) {
   return {
@@ -1016,3 +1035,7 @@ router.post('/chat/jarvis/bootstrap', async (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  wsId,
+  ensureWorkspaceContext,
+};

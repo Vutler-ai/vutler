@@ -20,8 +20,27 @@ const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 function wsId(req) {
-  return req.workspaceId || DEFAULT_WORKSPACE;
+  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    if (value) return value;
+  }
+  return null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = wsId(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+router.use(ensureWorkspaceContext);
 
 function resolveSwarmCoordinator(req, capability = null) {
   const candidate = req.app.locals.swarmCoordinator;
@@ -663,4 +682,6 @@ module.exports.__test = {
   HTASK_LEVELS,
   normalizeHtaskLevel,
   getDefaultChildHtaskLevel,
+  wsId,
+  ensureWorkspaceContext,
 };

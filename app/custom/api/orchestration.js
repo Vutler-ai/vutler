@@ -17,8 +17,27 @@ const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 function workspaceIdOf(req) {
-  return req.workspaceId || DEFAULT_WORKSPACE;
+  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    if (value) return value;
+  }
+  return null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = workspaceIdOf(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+router.use(ensureWorkspaceContext);
 
 function asDate(value) {
   const date = value ? new Date(value) : null;
@@ -202,3 +221,7 @@ router.post('/runs/:id/cancel', authenticateAgent, async (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  workspaceIdOf,
+  ensureWorkspaceContext,
+};
