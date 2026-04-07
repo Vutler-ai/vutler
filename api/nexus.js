@@ -1612,7 +1612,19 @@ router.post('/register', async (req, res) => {
       ...(config?.permissions ? { consent_state: buildNodeConsentState(config.permissions) } : {}),
     };
 
-    let workspaceId = DEFAULT_WORKSPACE;
+    const explicitWorkspaceId = (() => {
+      const candidates = [
+        getWorkspaceContext(req),
+        req.body?.workspaceId,
+        req.body?.workspace_id,
+      ];
+      for (const candidate of candidates) {
+        const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+        if (value) return value;
+      }
+      return null;
+    })();
+    let workspaceId = explicitWorkspaceId;
     let nodeId;
     let authMethod;
     const isDev = process.env.NODE_ENV !== 'production';
@@ -1630,6 +1642,9 @@ router.post('/register', async (req, res) => {
       } catch (_) { /* DB down in dev — ignore */ }
 
       if (!authMethod) {
+        if (!workspaceId) {
+          return res.status(400).json({ success: false, error: 'workspace context is required' });
+        }
         console.warn('[NEXUS] Dev mode — accepting key without DB validation');
         authMethod = 'dev_mode';
       }

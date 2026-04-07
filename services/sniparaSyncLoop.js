@@ -56,8 +56,11 @@ class SniparaSyncLoop {
   async getWorkspaceIds() {
     const ids = new Set();
 
-    if (process.env.SNIPARA_SWARM_ID) {
-      ids.add(DEFAULT_WORKSPACE);
+    const envWorkspaceId = typeof process.env.SNIPARA_WORKSPACE_ID === 'string'
+      ? process.env.SNIPARA_WORKSPACE_ID.trim()
+      : '';
+    if (process.env.SNIPARA_SWARM_ID && envWorkspaceId) {
+      ids.add(envWorkspaceId);
     }
 
     try {
