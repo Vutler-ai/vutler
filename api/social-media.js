@@ -237,6 +237,24 @@ router.delete('/accounts/platform/:platform', async (req, res) => {
     const { platform } = req.params;
     if (!workspaceId) return res.status(400).json({ success: false, error: 'workspaceId required' });
 
+    const existing = await pool.query(
+      `SELECT platform_account_id
+       FROM ${SCHEMA}.social_accounts
+       WHERE workspace_id = $1 AND platform = $2`,
+      [workspaceId, platform]
+    );
+
+    await Promise.all(
+      existing.rows
+        .map((row) => row.platform_account_id)
+        .filter(Boolean)
+        .map((remoteAccountId) => (
+          disconnectSocialAccount(remoteAccountId).catch((err) => {
+            console.warn('[SocialMedia] remote disconnect error:', err.message);
+          })
+        ))
+    );
+
     const { rowCount } = await pool.query(
       `DELETE FROM ${SCHEMA}.social_accounts WHERE workspace_id = $1 AND platform = $2`,
       [workspaceId, platform]
