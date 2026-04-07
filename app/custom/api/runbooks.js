@@ -28,9 +28,31 @@ const {
 const router = express.Router();
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
-function wsId(req) {
-  return req.headers['x-workspace-id'] || req.workspaceId || DEFAULT_WORKSPACE;
+function getWorkspaceId(req) {
+  const candidates = [
+    req.headers?.['x-workspace-id'],
+    req.workspaceId,
+  ];
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    if (value) return value;
+  }
+  return null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+router.use(ensureWorkspaceContext);
 
 // ── POST /runbooks/parse ──────────────────────────────────────────────────────
 // Parse free text or raw JSON into a structured runbook for preview.
@@ -54,7 +76,7 @@ router.post('/runbooks/parse', authenticateAgent, async (req, res) => {
       runbook = await parseRunbookFromText(text);
     }
 
-    const workspaceId = wsId(req);
+    const workspaceId = getWorkspaceId(req);
     const validation = await validateRunbook(runbook, workspaceId);
 
     res.json({
@@ -82,7 +104,7 @@ router.post('/runbooks/execute', authenticateAgent, async (req, res) => {
       return res.status(400).json({ success: false, error: '"runbook" is required' });
     }
 
-    const workspaceId = wsId(req);
+    const workspaceId = getWorkspaceId(req);
     let runbook;
 
     // Accept either a pre-parsed runbook object or raw JSON/text
@@ -130,7 +152,7 @@ router.post('/runbooks/execute', authenticateAgent, async (req, res) => {
 
 router.get('/runbooks', authenticateAgent, async (req, res) => {
   try {
-    const workspaceId = wsId(req);
+    const workspaceId = getWorkspaceId(req);
     const limit = parseInt(req.query.limit) || 50;
     const status = req.query.status || undefined;
 
@@ -196,3 +218,7 @@ router.post('/runbooks/:id/approve/:stepOrder', authenticateAgent, async (req, r
 });
 
 module.exports = router;
+module.exports._private = {
+  getWorkspaceId,
+  ensureWorkspaceContext,
+};
