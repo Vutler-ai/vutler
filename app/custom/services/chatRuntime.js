@@ -596,6 +596,7 @@ async function handleMessage(message) {
   const bypassSwarmForDirectEmail = emailIntent.directSend
     && emailIntent.hasExplicitRecipient
     && agentHasProvisionedEmail(targetAgent, targetAgentEmailProvisioning);
+  const bypassSwarmRouting = bypassSwarmForDirectEmail || shouldBypassSwarmRouting(resolution);
 
   const swarmCoordinator = getSwarmCoordinator();
   const history = await getRecentHistory(message.channel_id, channelAgents, workspaceId, 10);
@@ -621,17 +622,17 @@ async function handleMessage(message) {
     availableAgents: allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
     db: pool,
   }).catch(() => orchestrationDefaults);
-  const orchestration = bypassSwarmForDirectEmail
+  const orchestration = bypassSwarmRouting
     ? {
         ...orchestrationDefaults,
         ...resolvedOrchestration,
-        domains: resolvedOrchestration.domains || ['email'],
+        domains: resolvedOrchestration.domains || (bypassSwarmForDirectEmail ? ['email'] : []),
         primaryDelegate: null,
         delegatedAgents: [],
       }
     : resolvedOrchestration;
 
-  if (!bypassSwarmForDirectEmail) {
+  if (!bypassSwarmRouting) {
     try {
       const routing = await swarmCoordinator.analyzeAndRoute(
         {
