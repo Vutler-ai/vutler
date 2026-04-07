@@ -22,6 +22,12 @@ const STALL_THRESHOLD = Number(process.env.WATCHDOG_STALL_THRESHOLD_MS) || 600_0
 const VISIBLE_ROOT_FOLLOW_UP_MS = Number(process.env.WATCHDOG_VISIBLE_ROOT_FOLLOW_UP_MS) || 900_000; // 15 min
 const MAX_NUDGES = 3;
 
+function resolveTaskWorkspaceId(task) {
+  const value = typeof task?.workspace_id === 'string' ? task.workspace_id.trim() : task?.workspace_id;
+  if (value) return value;
+  throw new Error('workspace_id is required for watchdog task operations');
+}
+
 class AgentWatchdog {
   constructor(options = {}) {
     this.checkIntervalMs = options.checkIntervalMs || CHECK_INTERVAL;
@@ -194,7 +200,7 @@ class AgentWatchdog {
     if (nextTask.assigned_agent) {
       const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
       const coordinator = getSwarmCoordinator();
-      const workspaceId = nextTask.workspace_id || DEFAULT_WORKSPACE;
+      const workspaceId = resolveTaskWorkspaceId(nextTask);
 
       try {
         await coordinator.postTaskMessageToAgentChannel(
@@ -239,7 +245,8 @@ class AgentWatchdog {
       [task_id]
     );
     const task = result.rows[0] || null;
-    const workspaceId = task?.workspace_id || DEFAULT_WORKSPACE;
+    if (!task) return;
+    const workspaceId = resolveTaskWorkspaceId(task);
 
     const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
     const coordinator = getSwarmCoordinator();
@@ -265,7 +272,8 @@ class AgentWatchdog {
       [task_id]
     );
     const task = result.rows[0] || null;
-    const workspaceId = task?.workspace_id || DEFAULT_WORKSPACE;
+    if (!task) return;
+    const workspaceId = resolveTaskWorkspaceId(task);
 
     const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
     const coordinator = getSwarmCoordinator();
@@ -443,7 +451,7 @@ class AgentWatchdog {
 
     const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
     const coordinator = getSwarmCoordinator();
-    const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+    const workspaceId = resolveTaskWorkspaceId(task);
 
     try {
       await coordinator.postTaskMessageToAgentChannel(
@@ -559,10 +567,10 @@ class AgentWatchdog {
         description: `[Re-dispatched from stalled task — original agent: ${task.assigned_agent}]\n\n${task.description || ''}`,
         priority: task.priority || 'high',
         for_agent_id: agentId,
-      }, task.workspace_id || DEFAULT_WORKSPACE);
+      }, resolveTaskWorkspaceId(task));
 
       // Notify team
-      const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+      const workspaceId = resolveTaskWorkspaceId(task);
       const channelId = await coordinator.getTeamChannelId(workspaceId);
       await coordinator.postSystemMessage(
         workspaceId,
