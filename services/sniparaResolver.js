@@ -31,7 +31,9 @@ class SniparaToolError extends Error {
 }
 
 function normalizeWorkspaceId(workspaceId) {
-  return workspaceId || DEFAULT_WORKSPACE;
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for Snipara resolver calls');
 }
 
 function buildFailureCacheKey(workspaceId, toolName = '') {
@@ -59,7 +61,7 @@ function buildSniparaProjectUrl(projectSlug, fallbackUrl = DEFAULT_SNIPARA_URL) 
   return `https://api.snipara.com/mcp/${slug}` || fallbackUrl;
 }
 
-async function resolveSniparaConfig(db, workspaceId = DEFAULT_WORKSPACE) {
+async function resolveSniparaConfig(db, workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
   const cached = cache.get(ws);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -376,7 +378,7 @@ async function callSniparaTool({ db, workspaceId, toolName, args = {}, timeoutMs
   }
 }
 
-async function probeSniparaHealth({ db, workspaceId = DEFAULT_WORKSPACE, timeoutMs = 5_000 } = {}) {
+async function probeSniparaHealth({ db, workspaceId, timeoutMs = 5_000 } = {}) {
   const resolvedWorkspaceId = normalizeWorkspaceId(workspaceId);
   const resolved = await resolveSniparaConfig(db, resolvedWorkspaceId);
 

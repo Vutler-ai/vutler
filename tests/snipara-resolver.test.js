@@ -85,6 +85,15 @@ describe('sniparaResolver', () => {
     });
   });
 
+  test('rejects missing workspace ids before resolving Snipara config', async () => {
+    const db = { query: jest.fn() };
+    const { resolveSniparaConfig, clearSniparaConfigCache } = require('../services/sniparaResolver');
+    clearSniparaConfigCache();
+
+    await expect(resolveSniparaConfig(db)).rejects.toThrow('workspaceId is required for Snipara resolver calls');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
   test('surfaces HTTP diagnostics when a Snipara tool call fails', async () => {
     const db = {
       query: jest.fn(async (sql) => {

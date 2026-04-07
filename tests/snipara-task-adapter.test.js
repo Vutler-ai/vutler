@@ -227,4 +227,23 @@ describe('SniparaTaskAdapter', () => {
       args: expect.objectContaining({ agent_id: 'mike-local', swarm_id: 'swarm-1' }),
     }));
   });
+
+  test('rejects missing workspace ids before calling Snipara', async () => {
+    const createSniparaGateway = jest.fn();
+
+    jest.doMock('../lib/vaultbrix', () => ({ query: jest.fn() }));
+    jest.doMock('../services/snipara/gateway', () => ({
+      createSniparaGateway,
+    }));
+    jest.doMock('../services/sniparaResolver', () => ({
+      DEFAULT_SNIPARA_SWARM_ID: 'swarm-default',
+      clearSniparaFailureCache: jest.fn(),
+    }));
+
+    const { SniparaTaskAdapter } = require('../services/sniparaTaskAdapter');
+    const adapter = new SniparaTaskAdapter();
+
+    await expect(adapter.listTasks()).rejects.toThrow('workspaceId is required for Snipara task adapter calls');
+    expect(createSniparaGateway).not.toHaveBeenCalled();
+  });
 });

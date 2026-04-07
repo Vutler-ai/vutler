@@ -2,14 +2,15 @@
 
 const pool = require('../lib/vaultbrix');
 const {
-  DEFAULT_WORKSPACE,
   DEFAULT_SNIPARA_SWARM_ID,
   clearSniparaFailureCache,
 } = require('./sniparaResolver');
 const { createSniparaGateway } = require('./snipara/gateway');
 
-function normalizeWorkspaceId(workspaceId) {
-  return workspaceId || DEFAULT_WORKSPACE;
+function resolveRequiredWorkspaceId(workspaceId) {
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for Snipara task adapter calls');
 }
 
 function normalizePriority(priority) {
@@ -50,8 +51,8 @@ function isTaskAssignmentError(error) {
 }
 
 class SniparaTaskAdapter {
-  async resolve(workspaceId = DEFAULT_WORKSPACE) {
-    const ws = normalizeWorkspaceId(workspaceId);
+  async resolve(workspaceId) {
+    const ws = resolveRequiredWorkspaceId(workspaceId);
     const config = await createSniparaGateway({ db: pool, workspaceId: ws }).resolveConfig();
     const swarmId = config?.swarmId || DEFAULT_SNIPARA_SWARM_ID || null;
 
@@ -63,7 +64,7 @@ class SniparaTaskAdapter {
   }
 
   async call(workspaceId, toolName, args = {}) {
-    const ws = normalizeWorkspaceId(workspaceId);
+    const ws = resolveRequiredWorkspaceId(workspaceId);
     const result = await createSniparaGateway({ db: pool, workspaceId: ws }).call(toolName, args);
 
     if (result == null) {
@@ -238,4 +239,5 @@ module.exports = {
   getSniparaTaskAdapter,
   normalizePriority,
   normalizeEvidence,
+  resolveRequiredWorkspaceId,
 };
