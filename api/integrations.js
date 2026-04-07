@@ -18,6 +18,8 @@ const {
 const { resolveAgentCapabilityMatrix } = require('../services/agentCapabilityMatrixService');
 const googleApi = require('../services/google/googleApi');
 const microsoftGraphApi = require('../services/microsoft/graphApi');
+const { clearTokenCache: clearGoogleTokenCache } = require('../services/google/tokenManager');
+const { clearTokenCache: clearMicrosoftTokenCache } = require('../services/microsoft/tokenManager');
 
 const router = express.Router();
 
@@ -189,6 +191,24 @@ function httpsPost(options, body) {
     if (body) req.write(body);
     req.end();
   });
+}
+
+function clearIntegrationRuntimeCaches(workspaceId, provider) {
+  if (!workspaceId || !provider) return;
+
+  if (provider === 'google') {
+    clearGoogleTokenCache(workspaceId);
+    return;
+  }
+
+  if (provider === 'microsoft365') {
+    clearMicrosoftTokenCache(workspaceId);
+    return;
+  }
+
+  if (provider === 'chatgpt') {
+    deviceAuthSessions.delete(workspaceId);
+  }
 }
 
 // PKCE helpers for ChatGPT OAuth
@@ -944,6 +964,7 @@ router.get('/google/callback', async (req, res) => {
       ]
     );
 
+    clearIntegrationRuntimeCaches(workspaceId, 'google');
     const health = await finalizeWorkspaceIntegrationHealth({ workspaceId, provider: 'google' });
     await addLog({
       workspaceId,
@@ -1161,6 +1182,7 @@ router.get('/microsoft365/callback', async (req, res) => {
       ]
     );
 
+    clearIntegrationRuntimeCaches(workspaceId, 'microsoft365');
     const health = await finalizeWorkspaceIntegrationHealth({ workspaceId, provider: 'microsoft365' });
     await addLog({
       workspaceId,
@@ -2216,6 +2238,10 @@ router.patch('/:provider/toggle', async (req, res) => {
       [workspaceId, provider, nextConnected]
     );
 
+    if (!nextConnected) {
+      clearIntegrationRuntimeCaches(workspaceId, provider);
+    }
+
     await addLog({ workspaceId, provider, action: nextConnected ? 'connect' : 'disconnect' });
 
     res.json({ success: true, integration: result.rows[0] });
@@ -2231,20 +2257,30 @@ router.delete('/:provider/disconnect', async (req, res) => {
     await ensureReady();
     const workspaceId = getWorkspaceId(req);
     const { provider } = req.params;
+    const clearStoredTokens = TOKEN_BACKED_PROVIDERS.has(provider);
+    const clearChatGptIdToken = provider === 'chatgpt';
 
     const result = await pool.query(
       `INSERT INTO ${SCHEMA}.workspace_integrations
-        (workspace_id, provider, source, connected, status, connected_at, disconnected_at, updated_at)
-       VALUES ($1, $2, 'internal', FALSE, 'disconnected', NULL, NOW(), NOW())
+        (workspace_id, provider, source, connected, status, access_token, refresh_token, token_expires_at, metadata, connected_at, disconnected_at, updated_at)
+       VALUES ($1, $2, 'internal', FALSE, 'disconnected', NULL, NULL, NULL, CASE WHEN $4 THEN '{}'::jsonb ELSE NULL END, NULL, NOW(), NOW())
        ON CONFLICT (workspace_id, provider) DO UPDATE SET
          connected = FALSE,
          status = 'disconnected',
+         access_token = CASE WHEN $3 THEN NULL ELSE ${SCHEMA}.workspace_integrations.access_token END,
+         refresh_token = CASE WHEN $3 THEN NULL ELSE ${SCHEMA}.workspace_integrations.refresh_token END,
+         token_expires_at = CASE WHEN $3 THEN NULL ELSE ${SCHEMA}.workspace_integrations.token_expires_at END,
+         metadata = CASE
+           WHEN $4 THEN COALESCE(${SCHEMA}.workspace_integrations.metadata, '{}'::jsonb) - 'id_token'
+           ELSE ${SCHEMA}.workspace_integrations.metadata
+         END,
          disconnected_at = NOW(),
          updated_at = NOW()
        RETURNING workspace_id, provider, source, connected, status, connected_at, disconnected_at, updated_at`,
-      [workspaceId, provider]
+      [workspaceId, provider, clearStoredTokens, clearChatGptIdToken]
     );
 
+    clearIntegrationRuntimeCaches(workspaceId, provider);
     await addLog({ workspaceId, provider, action: 'disconnect' });
 
     res.json({ success: true, integration: result.rows[0], message: `${provider} disconnected` });
@@ -2677,5 +2713,8 @@ router._private = {
   persistJiraIntegrationConnection,
   buildIntegrationDetailPayload,
   normalizeIntegrationConnection,
+  clearIntegrationRuntimeCaches,
+  oauthStateStore,
+  deviceAuthSessions,
 };
 module.exports.refreshChatGPTToken = refreshChatGPTToken;
