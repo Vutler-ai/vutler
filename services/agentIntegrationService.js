@@ -230,17 +230,76 @@ async function listConnectedWorkspaceIntegrationProviders(workspaceId, db = pool
     if (err?.code !== '42P01') throw err;
   }
 
-  for (const provider of await listConnectedSocialPlatforms(workspaceId, db)) {
+  const socialOverrides = await getSocialIntegrationOverrides(workspaceId, db).catch(() => ({
+    blockedProviders: new Set(),
+    blockedAggregate: false,
+  }));
+
+  for (const provider of socialOverrides.blockedProviders) {
+    connected.delete(provider);
+  }
+  if (socialOverrides.blockedAggregate) {
+    connected.delete('social_media');
+  }
+
+  for (const provider of await listConnectedSocialPlatforms(workspaceId, db, socialOverrides)) {
     connected.add(provider);
+  }
+  if (!socialOverrides.blockedAggregate && Array.from(connected).some((provider) => SOCIAL_PROVIDERS.has(provider))) {
     connected.add('social_media');
   }
 
   return connected;
 }
 
-async function listConnectedSocialPlatforms(workspaceId, db = pool) {
+async function getSocialIntegrationOverrides(workspaceId, db = pool) {
+  if (!workspaceId) {
+    return {
+      blockedProviders: new Set(),
+      blockedAggregate: false,
+    };
+  }
+
+  const blockedProviders = new Set();
+  let blockedAggregate = false;
+
+  try {
+    const result = await db.query(
+      `SELECT provider, connected
+       FROM ${SCHEMA}.workspace_integrations
+       WHERE workspace_id = $1
+         AND provider = ANY($2::text[])`,
+      [workspaceId, ['social_media', ...Array.from(SOCIAL_PROVIDERS)]]
+    );
+
+    for (const row of result.rows) {
+      const provider = normalizeProvider(toInternalPlatform(row.provider));
+      if (row.connected === true) continue;
+      if (provider === 'social_media') {
+        blockedAggregate = true;
+        continue;
+      }
+      if (SOCIAL_PROVIDERS.has(provider)) {
+        blockedProviders.add(provider);
+      }
+    }
+  } catch (err) {
+    if (err?.code !== '42P01') throw err;
+  }
+
+  return {
+    blockedProviders,
+    blockedAggregate,
+  };
+}
+
+async function listConnectedSocialPlatforms(workspaceId, db = pool, overrideState = null) {
   if (!workspaceId) return [];
 
+  const socialOverrides = overrideState || await getSocialIntegrationOverrides(workspaceId, db).catch(() => ({
+    blockedProviders: new Set(),
+    blockedAggregate: false,
+  }));
   const connectedPlatforms = new Set();
   try {
     const socialRows = await db.query(
@@ -250,6 +309,7 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
       [workspaceId]
     );
     for (const platform of normalizeAgentIntegrationProviders(socialRows.rows.map((row) => row.platform))) {
+      if (socialOverrides.blockedProviders.has(platform)) continue;
       connectedPlatforms.add(platform);
     }
   } catch (err) {
@@ -266,6 +326,7 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
       [workspaceId, Array.from(SOCIAL_PROVIDERS)]
     );
     for (const provider of normalizeAgentIntegrationProviders(integrationRows.rows.map((row) => toInternalPlatform(row.provider)))) {
+      if (socialOverrides.blockedProviders.has(provider)) continue;
       connectedPlatforms.add(provider);
     }
   } catch (err) {
@@ -286,6 +347,7 @@ async function listConnectedSocialPlatforms(workspaceId, db = pool) {
         .map((account) => toInternalPlatform(account?.platform || account?.type))
         .filter((platform) => SOCIAL_PROVIDERS.has(normalizeProvider(platform)))
     )) {
+      if (socialOverrides.blockedProviders.has(platform)) continue;
       connectedPlatforms.add(platform);
     }
 
