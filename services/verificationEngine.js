@@ -46,6 +46,12 @@ const VERIFIER_AGENT = {
   max_tokens: 2048,
 };
 
+function resolveTaskWorkspaceId(task) {
+  const value = typeof task?.workspace_id === 'string' ? task.workspace_id.trim() : task?.workspace_id;
+  if (value) return value;
+  throw new Error('workspace_id is required for verification tasks');
+}
+
 class VerificationEngine {
   constructor(options = {}) {
     this.passThreshold = options.passThreshold || PASS_THRESHOLD;
@@ -102,7 +108,10 @@ class VerificationEngine {
 
     let verdict;
     try {
-      const llmResult = await chat(VERIFIER_AGENT, [
+      const llmResult = await chat({
+        ...VERIFIER_AGENT,
+        workspace_id: resolveTaskWorkspaceId(task),
+      }, [
         { role: 'user', content: prompt },
       ]);
       verdict = this._parseVerdict(llmResult.content);
@@ -273,7 +282,7 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
   }
 
   async _requestRevision(task, webhookData, verdict, retryCount) {
-    const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+    const workspaceId = resolveTaskWorkspaceId(task);
 
     // Update retry count
     await this.recordVerdict(task, verdict, { retryCount });
@@ -307,7 +316,7 @@ Score each criterion 0-10. Overall pass threshold: ${this.passThreshold}/10.`;
   }
 
   async _escalate(task, webhookData, verdict) {
-    const workspaceId = task.workspace_id || DEFAULT_WORKSPACE;
+    const workspaceId = resolveTaskWorkspaceId(task);
 
     // Mark task as needing escalation
     await this.recordVerdict(task, verdict);
@@ -367,4 +376,4 @@ function getVerificationEngine(options) {
   return singleton;
 }
 
-module.exports = { VerificationEngine, getVerificationEngine };
+module.exports = { VerificationEngine, getVerificationEngine, resolveTaskWorkspaceId };
