@@ -85,7 +85,7 @@ router.post('/', async (req, res) => {
 // GET /reminders/check — must be before /:id
 router.get('/reminders/check', async (req, res) => {
   try {
-    const reminders = await taskRouter.checkReminders();
+    const reminders = await taskRouter.checkReminders(workspaceIdOf(req));
     res.json({ success: true, data: reminders });
   } catch (err) {
     console.error('[TasksAPI] GET /reminders/check error:', err.message);
@@ -96,7 +96,7 @@ router.get('/reminders/check', async (req, res) => {
 // GET /overdue
 router.get('/overdue', async (req, res) => {
   try {
-    const tasks = await taskRouter.getOverdueTasks();
+    const tasks = await taskRouter.getOverdueTasks(workspaceIdOf(req));
     res.json({ success: true, data: tasks });
   } catch (err) {
     console.error('[TasksAPI] GET /overdue error:', err.message);
@@ -107,7 +107,7 @@ router.get('/overdue', async (req, res) => {
 // GET /due
 router.get('/due', async (req, res) => {
   try {
-    const tasks = await taskRouter.getDueTasks();
+    const tasks = await taskRouter.getDueTasks(workspaceIdOf(req));
     res.json({ success: true, data: tasks });
   } catch (err) {
     console.error('[TasksAPI] GET /due error:', err.message);

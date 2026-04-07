@@ -273,10 +273,17 @@ async function updateTask(taskId, updates, workspaceId) {
   }
 }
 
-async function getDueTasks() {
+async function getDueTasks(workspaceId) {
   try {
+    const params = [];
+    const conditions = [`due_date < NOW() + INTERVAL '2 hours'`, `status NOT IN ('done', 'cancelled')`];
+    if (workspaceId) {
+      params.push(workspaceId);
+      conditions.push(`workspace_id = $${params.length}`);
+    }
     const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.tasks WHERE due_date < NOW() + INTERVAL '2 hours' AND status NOT IN ('done', 'cancelled') ORDER BY due_date ASC`
+      `SELECT * FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} ORDER BY due_date ASC`,
+      params
     );
     return result.rows;
   } catch (err) {
@@ -285,10 +292,17 @@ async function getDueTasks() {
   }
 }
 
-async function getOverdueTasks() {
+async function getOverdueTasks(workspaceId) {
   try {
+    const params = [];
+    const conditions = [`due_date < NOW()`, `status NOT IN ('done', 'cancelled')`];
+    if (workspaceId) {
+      params.push(workspaceId);
+      conditions.push(`workspace_id = $${params.length}`);
+    }
     const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.tasks WHERE due_date < NOW() AND status NOT IN ('done', 'cancelled') ORDER BY due_date ASC`
+      `SELECT * FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} ORDER BY due_date ASC`,
+      params
     );
     return result.rows;
   } catch (err) {
@@ -297,10 +311,17 @@ async function getOverdueTasks() {
   }
 }
 
-async function checkReminders() {
+async function checkReminders(workspaceId) {
   try {
+    const params = [];
+    const conditions = [`reminder_at <= NOW()`, `status IN ('open', 'in_progress')`];
+    if (workspaceId) {
+      params.push(workspaceId);
+      conditions.push(`workspace_id = $${params.length}`);
+    }
     const result = await pool.query(
-      `SELECT * FROM ${SCHEMA}.tasks WHERE reminder_at <= NOW() AND status IN ('open', 'in_progress') ORDER BY reminder_at ASC`
+      `SELECT * FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} ORDER BY reminder_at ASC`,
+      params
     );
     return result.rows;
   } catch (err) {
