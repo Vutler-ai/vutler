@@ -5,7 +5,6 @@ const router = express.Router();
 const { decryptProviderSecret, encryptProviderSecret } = require("../services/providerSecrets");
 
 const SCHEMA = "tenant_vutler";
-const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
 
 const MODEL_CATALOG = {
   openai: [
@@ -46,7 +45,27 @@ const DEFAULT_BASE_URLS = {
   groq: "https://api.groq.com/openai/v1"
 };
 
-const getWorkspaceId = (req) => req.workspaceId || req.headers["x-workspace-id"] || req.query.workspace_id || DEFAULT_WORKSPACE;
+const getWorkspaceId = (req) => {
+  const headerWorkspaceId = typeof req.headers?.["x-workspace-id"] === "string"
+    ? req.headers["x-workspace-id"].trim()
+    : "";
+  const queryWorkspaceId = typeof req.query?.workspace_id === "string"
+    ? req.query.workspace_id.trim()
+    : "";
+  return req.llmWorkspaceId || req.workspaceId || req.user?.workspaceId || headerWorkspaceId || queryWorkspaceId || null;
+};
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: "workspace context is required" });
+  }
+
+  req.llmWorkspaceId = workspaceId;
+  next();
+}
+
+router.use(ensureWorkspaceContext);
 
 const maskApiKey = (apiKey) => {
   if (!apiKey) return null;
@@ -250,3 +269,8 @@ router.get("/models", async (_req, res) => {
 });
 
 module.exports = router;
+router._private = {
+  getWorkspaceId,
+  ensureWorkspaceContext,
+  testConnection,
+};
