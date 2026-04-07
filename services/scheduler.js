@@ -49,6 +49,12 @@ const MAX_SCHEDULE_JITTER_MS = Number(process.env.SCHEDULER_MAX_JITTER_MS) || 5_
 const _activeTimers = new Map();
 let schedulerSchemaPromise = null;
 
+function resolveRequiredWorkspaceId(workspaceId) {
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for schedule creation');
+}
+
 // ── Cron parsing / next-run computation ─────────────────────────────────────
 
 /**
@@ -772,9 +778,10 @@ const SCHEDULE_TOOL = {
  */
 async function handleScheduleTool(toolInput, { workspaceId, agentId, createdBy } = {}) {
   const { cron, description, task_title, task_description, priority } = toolInput;
+  const resolvedWorkspaceId = resolveRequiredWorkspaceId(workspaceId);
 
   const schedule = await createSchedule({
-    workspaceId: workspaceId || DEFAULT_WORKSPACE,
+    workspaceId: resolvedWorkspaceId,
     agentId:     agentId     || null,
     cron,
     description,
@@ -826,6 +833,7 @@ module.exports = {
   handleScheduleTool,
 
   // Utils (exported for testing)
+  resolveRequiredWorkspaceId,
   parseCron,
   getNextRun,
   cronMatchesDate,
