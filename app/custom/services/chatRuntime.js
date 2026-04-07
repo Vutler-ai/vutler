@@ -66,10 +66,12 @@ const agentCache = new Map();
 const memoryRuntime = createMemoryRuntimeService();
 
 function normalizeWorkspaceId(workspaceId) {
-  return workspaceId || DEFAULT_WORKSPACE;
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for chat runtime operations');
 }
 
-function getSoulCacheKey(agent, workspaceId = DEFAULT_WORKSPACE) {
+function getSoulCacheKey(agent, workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId || agent?.workspace_id);
   const agentName = agent?.username || String(agent?.name || '').toLowerCase() || String(agent?.id || 'unknown-agent');
   return `${ws}:${agentName}`;
@@ -98,7 +100,7 @@ function buildChatMemoryQuery(message = {}, history = [], humanContext = null) {
   ].filter(Boolean).join('\n').trim();
 }
 
-async function hydrateAgent(agent, workspaceId = DEFAULT_WORKSPACE) {
+async function hydrateAgent(agent, workspaceId) {
   if (!agent) return agent;
   const ws = normalizeWorkspaceId(workspaceId || agent.workspace_id);
   const agentRef = agent.id || agent.username || agent.agent_id;
@@ -133,7 +135,7 @@ function buildFailureMessage(err) {
   return String(err?.message || err || 'Unknown error').slice(0, 4000);
 }
 
-async function sniparaCall(toolName, args = {}, workspaceId = DEFAULT_WORKSPACE) {
+async function sniparaCall(toolName, args = {}, workspaceId) {
   const gateway = createSniparaGateway({ db: pool, workspaceId });
   const config = await gateway.resolveConfig();
   if (!config.configured) {
@@ -149,7 +151,7 @@ async function sniparaCall(toolName, args = {}, workspaceId = DEFAULT_WORKSPACE)
   }
 }
 
-async function loadAgents(workspaceId = DEFAULT_WORKSPACE) {
+async function loadAgents(workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
   const cached = agentCache.get(ws);
   const now = Date.now();
@@ -166,7 +168,7 @@ async function loadAgents(workspaceId = DEFAULT_WORKSPACE) {
   return result.rows;
 }
 
-async function getChannelAgents(channelId, workspaceId = DEFAULT_WORKSPACE) {
+async function getChannelAgents(channelId, workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
   const result = await pool.query(
     `SELECT cm.user_id, cm.role AS channel_role,
@@ -281,7 +283,7 @@ function appendPlacementInstruction(prompt, instruction) {
   return `${basePrompt}\n\n## Workspace Tools\n${extraInstruction}\n`;
 }
 
-async function getRecentHistory(channelId, channelAgents = [], workspaceId = DEFAULT_WORKSPACE, limit = 10) {
+async function getRecentHistory(channelId, channelAgents = [], workspaceId, limit = 10) {
   const ws = normalizeWorkspaceId(workspaceId);
   let result;
 
@@ -386,7 +388,7 @@ function rememberInteraction(agent, workspaceId, userMessage, agentResponse, hum
   });
 }
 
-async function claimMessage(messageId, workspaceId = DEFAULT_WORKSPACE) {
+async function claimMessage(messageId, workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
 
   if (processingColumnsAvailable !== false) {
@@ -420,7 +422,7 @@ async function claimMessage(messageId, workspaceId = DEFAULT_WORKSPACE) {
   return legacy.rows[0] || null;
 }
 
-async function markProcessed(messageId, workspaceId = DEFAULT_WORKSPACE) {
+async function markProcessed(messageId, workspaceId) {
   const ws = normalizeWorkspaceId(workspaceId);
   if (processingColumnsAvailable !== false) {
     try {
@@ -814,7 +816,7 @@ async function handleMessage(message) {
   rememberInteraction(executionAgent, workspaceId, message.content, response.content, humanContext);
 }
 
-async function processMessageById(messageId, workspaceId = DEFAULT_WORKSPACE) {
+async function processMessageById(messageId, workspaceId) {
   const claimed = await claimMessage(messageId, workspaceId);
   if (!claimed) return null;
 
@@ -953,6 +955,7 @@ module.exports = {
     markProcessed,
     handleMessage,
     pollOnce,
+    normalizeWorkspaceId,
     resolveRequestedAgent,
     findJarvisAgent,
     sortAgentsDeterministically,
