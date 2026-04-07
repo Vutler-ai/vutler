@@ -45,6 +45,80 @@ function getPlatformData(platform) {
   return undefined;
 }
 
+async function refreshWorkspaceSocialIntegrationState(workspaceId, db = pool) {
+  if (!workspaceId || !db) return { connectedPlatforms: [], socialConnected: false };
+
+  const { rows } = await db.query(
+    `SELECT DISTINCT platform
+     FROM ${SCHEMA}.social_accounts
+     WHERE workspace_id = $1`,
+    [workspaceId]
+  );
+  const connectedPlatforms = Array.from(new Set(
+    rows
+      .map((row) => toInternalPlatform(row?.platform || ''))
+      .filter((platform) => SOCIAL_PROVIDERS.includes(platform))
+  ));
+  const connectedPlatformSet = new Set(connectedPlatforms);
+
+  for (const provider of SOCIAL_PROVIDERS) {
+    const connected = connectedPlatformSet.has(provider);
+    const status = connected ? 'connected' : 'disconnected';
+    const updateResult = await db.query(
+      `UPDATE ${SCHEMA}.workspace_integrations
+          SET connected = $3,
+              status = $4,
+              connected_at = CASE
+                WHEN $3 THEN COALESCE(connected_at, NOW())
+                ELSE NULL
+              END,
+              updated_at = NOW()
+        WHERE workspace_id = $1
+          AND provider = $2`,
+      [workspaceId, provider, connected, status]
+    );
+
+    if (connected && updateResult.rowCount === 0) {
+      await db.query(
+        `INSERT INTO ${SCHEMA}.workspace_integrations
+          (workspace_id, provider, connected, status, connected_at, updated_at)
+         VALUES ($1, $2, TRUE, 'connected', NOW(), NOW())`,
+        [workspaceId, provider]
+      );
+    }
+  }
+
+  const socialConnected = connectedPlatforms.length > 0;
+  const socialStatus = socialConnected ? 'connected' : 'disconnected';
+  const socialUpdate = await db.query(
+    `UPDATE ${SCHEMA}.workspace_integrations
+        SET connected = $2,
+            status = $3,
+            connected_at = CASE
+              WHEN $2 THEN COALESCE(connected_at, NOW())
+              ELSE NULL
+            END,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND provider = 'social_media'`,
+    [workspaceId, socialConnected, socialStatus]
+  );
+
+  if (socialConnected && socialUpdate.rowCount === 0) {
+    await db.query(
+      `INSERT INTO ${SCHEMA}.workspace_integrations
+        (workspace_id, provider, connected, status, connected_at, updated_at)
+       VALUES ($1, 'social_media', TRUE, 'connected', NOW(), NOW())`,
+      [workspaceId]
+    );
+  }
+
+  return {
+    connectedPlatforms,
+    socialConnected,
+  };
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /**
@@ -145,6 +219,7 @@ router.delete('/accounts/:id', async (req, res) => {
         : `DELETE FROM ${SCHEMA}.social_accounts WHERE id = $2 AND workspace_id = $1`,
       [workspaceId, remoteAccountId || id]
     );
+    await refreshWorkspaceSocialIntegrationState(workspaceId);
 
     res.json({ success: true });
   } catch (err) {
@@ -166,6 +241,7 @@ router.delete('/accounts/platform/:platform', async (req, res) => {
       `DELETE FROM ${SCHEMA}.social_accounts WHERE workspace_id = $1 AND platform = $2`,
       [workspaceId, platform]
     );
+    await refreshWorkspaceSocialIntegrationState(workspaceId);
 
     res.json({ success: true, deleted: rowCount });
   } catch (err) {
@@ -338,34 +414,7 @@ async function syncAccounts(workspaceId) {
     [workspaceId]
   ).catch(() => {});
 
-  for (const provider of connectedPlatforms) {
-    if (!SOCIAL_PROVIDERS.includes(provider)) continue;
-    await pool.query(
-      `INSERT INTO ${SCHEMA}.workspace_integrations
-        (workspace_id, provider, connected, status, connected_at, updated_at)
-       VALUES ($1, $2, TRUE, 'connected', NOW(), NOW())
-       ON CONFLICT (workspace_id, provider) DO UPDATE SET
-         connected = TRUE,
-         status = 'connected',
-         connected_at = COALESCE(${SCHEMA}.workspace_integrations.connected_at, NOW()),
-         updated_at = NOW()`,
-      [workspaceId, provider]
-    ).catch(() => {});
-  }
-
-  if (connectedPlatforms.size > 0) {
-    await pool.query(
-      `INSERT INTO ${SCHEMA}.workspace_integrations
-        (workspace_id, provider, connected, status, connected_at, updated_at)
-       VALUES ($1, 'social_media', TRUE, 'connected', NOW(), NOW())
-       ON CONFLICT (workspace_id, provider) DO UPDATE SET
-         connected = TRUE,
-         status = 'connected',
-         connected_at = COALESCE(${SCHEMA}.workspace_integrations.connected_at, NOW()),
-         updated_at = NOW()`,
-      [workspaceId]
-    ).catch(() => {});
-  }
+  await refreshWorkspaceSocialIntegrationState(workspaceId).catch(() => {});
 }
 
 async function loadWorkspaceAccounts(workspaceId) {
@@ -451,3 +500,6 @@ async function checkSocialPostsQuota(workspaceId) {
 
 module.exports = router;
 module.exports.checkSocialPostsQuota = checkSocialPostsQuota;
+module.exports.__test = {
+  refreshWorkspaceSocialIntegrationState,
+};
