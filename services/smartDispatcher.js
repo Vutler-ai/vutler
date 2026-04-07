@@ -142,8 +142,13 @@ class SmartDispatcher {
    * Check if agent has worked on similar tasks via Snipara memory recall.
    */
   async _memoryRelevanceScore(agentId, task) {
+    const workspaceId = task?.workspace_id || task?.workspaceId || null;
+    if (!workspaceId) {
+      return 0.2;
+    }
+
     try {
-      const gateway = createSniparaGateway();
+      const gateway = createSniparaGateway({ workspaceId });
       const result = await gateway.memory.recallForAgent(
         {
           username: agentId,

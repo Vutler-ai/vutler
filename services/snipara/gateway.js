@@ -1,6 +1,6 @@
 'use strict';
 
-const { callSniparaTool, resolveSniparaConfig, DEFAULT_WORKSPACE } = require('../sniparaResolver');
+const { callSniparaTool, resolveSniparaConfig } = require('../sniparaResolver');
 const { buildAgentMemoryBindings, normalizeImportance } = require('../sniparaMemoryService');
 
 function extractSniparaText(response) {
@@ -23,6 +23,14 @@ function extractSniparaText(response) {
   } catch (_) {
     return '';
   }
+}
+
+function resolveRequiredWorkspaceId(...candidates) {
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    if (value) return value;
+  }
+  throw new Error('workspaceId is required for Snipara gateway calls');
 }
 
 class SniparaGateway {
@@ -59,7 +67,8 @@ class SniparaGateway {
       }),
       forget: (input = {}) => this.call('rlm_forget', input),
       rememberForAgent: (agent, input = {}) => {
-        const bindings = buildAgentMemoryBindings(agent, input.workspaceId || this.workspaceId);
+        const workspaceId = resolveRequiredWorkspaceId(input.workspaceId, this.workspaceId);
+        const bindings = buildAgentMemoryBindings(agent, workspaceId);
         return this.call('rlm_remember', {
           text: input.text,
           type: input.type || 'fact',
@@ -68,10 +77,11 @@ class SniparaGateway {
           category: bindings.instance.category,
           agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
           metadata: input.metadata,
-        }, { workspaceId: input.workspaceId || this.workspaceId });
+        }, { workspaceId });
       },
       recallForAgent: (agent, input = {}) => {
-        const bindings = buildAgentMemoryBindings(agent, input.workspaceId || this.workspaceId);
+        const workspaceId = resolveRequiredWorkspaceId(input.workspaceId, this.workspaceId);
+        const bindings = buildAgentMemoryBindings(agent, workspaceId);
         return this.call('rlm_recall', {
           query: input.query,
           scope: bindings.instance.scope,
@@ -79,7 +89,7 @@ class SniparaGateway {
           agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
           type: input.type,
           limit: input.limit,
-        }, { workspaceId: input.workspaceId || this.workspaceId });
+        }, { workspaceId });
       },
     };
 
@@ -131,9 +141,10 @@ class SniparaGateway {
   }
 
   async call(toolName, args = {}, overrides = {}) {
+    const workspaceId = resolveRequiredWorkspaceId(overrides.workspaceId, this.workspaceId);
     return callSniparaTool({
       db: overrides.db || this.db,
-      workspaceId: overrides.workspaceId || this.workspaceId || DEFAULT_WORKSPACE,
+      workspaceId,
       toolName,
       args,
       timeoutMs: overrides.timeoutMs || this.timeoutMs,
@@ -141,9 +152,10 @@ class SniparaGateway {
   }
 
   async resolveConfig(overrides = {}) {
+    const workspaceId = resolveRequiredWorkspaceId(overrides.workspaceId, this.workspaceId);
     return resolveSniparaConfig(
       overrides.db || this.db,
-      overrides.workspaceId || this.workspaceId || DEFAULT_WORKSPACE
+      workspaceId
     );
   }
 
@@ -165,4 +177,5 @@ module.exports = {
   SniparaGateway,
   createSniparaGateway,
   extractSniparaText,
+  resolveRequiredWorkspaceId,
 };
