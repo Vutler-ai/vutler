@@ -12,6 +12,22 @@ const { EnterpriseActionExecutor } = require('./lib/enterprise-action-executor')
 const { buildRuntimeConfigFromToken, readRuntimeConfig, writeRuntimeConfig } = require('./lib/runtime-config');
 
 const LOCAL_DISCOVERY_PORTS = [3199, 3200, 3201, 3202];
+const DASHBOARD_PORT_FALLBACK_ATTEMPTS = 6;
+
+function buildDashboardCandidatePorts(preferredPort) {
+  const basePort = Number.parseInt(preferredPort, 10) || 3100;
+  const candidates = [];
+
+  for (let offset = 0; candidates.length < DASHBOARD_PORT_FALLBACK_ATTEMPTS; offset += 1) {
+    const candidate = basePort + offset;
+    if (offset > 0 && LOCAL_DISCOVERY_PORTS.includes(candidate) && !LOCAL_DISCOVERY_PORTS.includes(basePort)) {
+      continue;
+    }
+    candidates.push(candidate);
+  }
+
+  return candidates;
+}
 
 class NexusNode {
   constructor(opts = {}) {
@@ -213,7 +229,7 @@ class NexusNode {
     this._startCommandPoll();
 
     // 5. Start local dashboard server
-    this._startDashboardServer();
+    await this._startDashboardServer();
     
     console.log(`[Nexus] Node "${this.name}" online. Listening on port ${this.port}`);
     return this;
@@ -233,8 +249,8 @@ class NexusNode {
     console.log('[Nexus] Disconnected.');
   }
 
-  startDashboardOnly() {
-    this._startDashboardServer();
+  async startDashboardOnly() {
+    await this._startDashboardServer();
     this.log(`[NEXUS] Setup dashboard available on http://localhost:${this.port}`);
     return this;
   }
@@ -1008,10 +1024,55 @@ class NexusNode {
   }
 
   _startDashboardServer() {
-    if (this.healthServer) return;
+    if (this._dashboardReadyPromise) return this._dashboardReadyPromise;
+
     this.healthServer = createDashboardServer(this);
-    this.healthServer.listen(this.port);
-    this._startDiscoveryBridgeServer();
+    const requestedPort = Number.parseInt(this.port, 10) || 3100;
+    const candidatePorts = buildDashboardCandidatePorts(requestedPort);
+
+    this._dashboardReadyPromise = new Promise((resolve, reject) => {
+      const server = this.healthServer;
+
+      const tryListen = (index) => {
+        const port = candidatePorts[index];
+        if (!port) {
+          this.healthServer = null;
+          this._dashboardReadyPromise = null;
+          reject(new Error(`Could not bind Nexus dashboard near port ${requestedPort}`));
+          return;
+        }
+
+        const onError = (error) => {
+          server.removeListener('listening', onListening);
+          server.removeListener('error', onError);
+          if (error && error.code === 'EADDRINUSE') {
+            tryListen(index + 1);
+            return;
+          }
+          this.healthServer = null;
+          this._dashboardReadyPromise = null;
+          reject(error);
+        };
+
+        const onListening = () => {
+          server.removeListener('error', onError);
+          if (port !== requestedPort) {
+            this.log(`[NEXUS] Dashboard port ${requestedPort} busy; using ${port} instead.`);
+          }
+          this.port = port;
+          this._startDiscoveryBridgeServer();
+          resolve();
+        };
+
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(port);
+      };
+
+      tryListen(0);
+    });
+
+    return this._dashboardReadyPromise;
   }
 
   _startDiscoveryBridgeServer() {

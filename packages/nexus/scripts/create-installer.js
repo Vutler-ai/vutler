@@ -52,7 +52,17 @@ export HOME="$HOME_DIR"
 export PORT="\${PORT:-3100}"
 "\$BIN" start --port "\${PORT}" --type local >/tmp/vutler-nexus.log 2>&1 &
 sleep 3
-open "http://localhost:\${PORT}/" || true
+OPENED_URL=""
+for candidate in 3199 3200 3201 3202 "\${PORT}"; do
+  if command -v nc >/dev/null 2>&1 && nc -z localhost "\${candidate}" >/dev/null 2>&1; then
+    open "http://localhost:\${candidate}/" || true
+    OPENED_URL="http://localhost:\${candidate}/"
+    break
+  fi
+done
+if [ -z "\${OPENED_URL}" ]; then
+  open "http://localhost:3199/" || open "http://localhost:\${PORT}/" || true
+fi
 wait
 `;
   fs.writeFileSync(path.join(macosDir, 'Vutler Nexus'), launcher);
@@ -131,7 +141,19 @@ Register-ScheduledTask -TaskName "VutlerNexus" -Action $action -Trigger $trigger
 # Start now
 Start-Process "$dest\\VutlerNexus.exe"
 Start-Sleep -Seconds 3
-Start-Process "http://localhost:3100/"
+$portEnv = if ($env:PORT) { [int]$env:PORT } else { 3100 }
+$candidatePorts = @(3199, 3200, 3201, 3202, $portEnv)
+$opened = $false
+foreach ($port in $candidatePorts) {
+  if (Test-NetConnection -ComputerName localhost -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue) {
+    Start-Process "http://localhost:$port/"
+    $opened = $true
+    break
+  }
+}
+if (-not $opened) {
+  Start-Process "http://localhost:3199/"
+}
 Write-Host "Vutler Nexus installed successfully."
 `;
   fs.writeFileSync(path.join(DIST, 'install.ps1'), psInstall);

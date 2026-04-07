@@ -138,8 +138,8 @@ program.command('start')
 
     if (!runtimeKey) {
       console.log('[Nexus] No deploy token configured. Starting local setup dashboard...');
-      node.startDashboardOnly();
-      console.log(`[Nexus] Open http://localhost:${parseInt(opts.port || envConfig.port || 3100, 10)} to complete setup.`);
+      await node.startDashboardOnly();
+      console.log(`[Nexus] Open http://localhost:${node.discoveryPort || node.port} to complete setup.`);
     } else {
       await node.connect();
     }
