@@ -49,7 +49,6 @@ const SCHEMA = "tenant_vutler";
 const MINIMAL_PROMPT = (agentName) => `You are ${agentName}, an AI agent on Vutler. Load your context from Snipara at startup (rlm_recall). Adapt your tools and knowledge based on your user's needs. Persist learnings via rlm_remember.`;
 const COORDINATOR_NAME = (process.env.VUTLER_COORDINATOR_NAME || 'Jarvis').toLowerCase();
 const MAX_SKILLS = 8;
-const DEFAULT_WORKSPACE = "00000000-0000-0000-0000-000000000001";
 
 /** Serialize type for DB: array → JSON string, string → as-is */
 function serializeType(type) {
@@ -91,8 +90,26 @@ async function generateAgentEmail(username, workspaceId, entitlements = null) {
 }
 
 function getWorkspaceId(req) {
-  return req.workspaceId || DEFAULT_WORKSPACE;
+  const headerWorkspaceId = typeof req.headers?.['x-workspace-id'] === 'string'
+    ? req.headers['x-workspace-id'].trim()
+    : '';
+  return req.agentsWorkspaceId || req.workspaceId || req.user?.workspaceId || headerWorkspaceId || null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+
+  req.agentsWorkspaceId = workspaceId;
+  if (!req.workspaceId) {
+    req.workspaceId = workspaceId;
+  }
+  next();
+}
+
+router.use(ensureWorkspaceContext);
 
 async function findAgentByRef(agentRef, workspaceId, columns = '*') {
   return pool.query(
@@ -1127,3 +1144,7 @@ router.put("/:id/llm-config", async (req, res) => {
 });
 
 module.exports = router;
+router._private = {
+  getWorkspaceId,
+  ensureWorkspaceContext,
+};
