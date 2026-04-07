@@ -21,6 +21,17 @@ function createDashboardServer(node) {
     };
   }
 
+  function buildWorkspaceLinks(runtimeConfig = readRuntimeConfig()) {
+    const server = runtimeConfig?.server || node.server || 'https://app.vutler.ai';
+    const baseUrl = String(server || 'https://app.vutler.ai').replace(/\/+$/, '');
+    const nodeId = node.nodeId || runtimeConfig?.node_id || null;
+    return {
+      base_url: baseUrl,
+      nexus_url: `${baseUrl}/nexus`,
+      node_url: nodeId ? `${baseUrl}/nexus/${nodeId}` : null,
+    };
+  }
+
   function getSetupState() {
     const runtimeConfig = readRuntimeConfig();
     const permissions = permissionEngine.getPermissions();
@@ -39,6 +50,7 @@ function createDashboardServer(node) {
       allowed_folders: permissions.allowedFolders || [],
       allowed_actions: permissions.allowedActions || [],
       permissions,
+      links: buildWorkspaceLinks(runtimeConfig),
       pairing: getPairingState(),
       next_step: !configured
         ? 'connect'
@@ -297,6 +309,7 @@ function createDashboardServer(node) {
         agents: agents.length,
         memory: process.memoryUsage(),
         configured: Boolean(runtimeConfig?.deploy_token || runtimeConfig?.api_key),
+        links: buildWorkspaceLinks(runtimeConfig),
       }));
     } else if (req.url === '/api/permissions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -146,6 +146,27 @@
       line-height: 1.55;
     }
 
+    .handoff-panel {
+      border-radius: 20px;
+      border: 1px solid rgba(56, 189, 248, 0.18);
+      background:
+        linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(34, 197, 94, 0.08)),
+        rgba(8, 16, 29, 0.92);
+    }
+
+    .handoff-panel h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: -0.03em;
+    }
+
+    .handoff-panel p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 14px;
+    }
+
     .hero-stat {
       padding: 14px 16px;
       border-radius: 16px;
@@ -601,6 +622,20 @@
     </section>
 
     <div class="main-stack">
+      <section class="panel handoff-panel hidden" id="handoff-panel">
+        <div class="panel-head" style="margin-bottom:10px;">
+          <div>
+            <h2 id="handoff-title">Continue in Vutler</h2>
+            <p id="handoff-copy">This machine is connected. Open the exact node page in Vutler to dispatch workspace actions and inspect node activity.</p>
+          </div>
+          <span class="step-pill" id="handoff-badge">Ready</span>
+        </div>
+        <div class="button-row" style="margin-top:0;">
+          <a class="primary" id="handoff-open-node-link" href="https://app.vutler.ai/nexus" target="_blank" rel="noreferrer">Open This Node In Vutler</a>
+          <a class="secondary" id="handoff-open-nexus-link" href="https://app.vutler.ai/nexus" target="_blank" rel="noreferrer">Open Nexus Workspace</a>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -1237,10 +1272,11 @@
     }
 
     function resolveWorkspaceNodeUrl(setup, status) {
-      const server = setup?.server || status?.cloud_server || 'https://app.vutler.ai';
-      const nodeId = status?.node_id || setup?.node_id || '';
-      const base = String(server || '').replace(/\/+$/, '');
-      return nodeId ? `${base}/nexus/${nodeId}` : `${base}/nexus`;
+      return status?.links?.node_url || setup?.links?.node_url || status?.links?.nexus_url || setup?.links?.nexus_url || 'https://app.vutler.ai/nexus';
+    }
+
+    function resolveWorkspaceNexusUrl(setup, status) {
+      return status?.links?.nexus_url || setup?.links?.nexus_url || 'https://app.vutler.ai/nexus';
     }
 
     function renderHeroActions(setup, status) {
@@ -1257,6 +1293,36 @@
       const copyLocalButton = document.getElementById('copy-local-url-btn');
       copyLocalButton.textContent = 'Copy Local URL';
       copyLocalButton.dataset.url = localUrl;
+    }
+
+    function renderHandoffPanel(setup, status) {
+      const panel = document.getElementById('handoff-panel');
+      const badge = document.getElementById('handoff-badge');
+      const title = document.getElementById('handoff-title');
+      const copy = document.getElementById('handoff-copy');
+      const nodeLink = document.getElementById('handoff-open-node-link');
+      const nexusLink = document.getElementById('handoff-open-nexus-link');
+      const nodeId = status?.node_id || setup?.node_id || '';
+      const nodeName = status?.name || setup?.node_name || 'this machine';
+      const connected = status?.status === 'connected';
+      const nodeUrl = resolveWorkspaceNodeUrl(setup, status);
+      const nexusUrl = resolveWorkspaceNexusUrl(setup, status);
+
+      nodeLink.href = nodeUrl;
+      nexusLink.href = nexusUrl;
+
+      if (!nodeId) {
+        panel.classList.add('hidden');
+        return;
+      }
+
+      panel.classList.remove('hidden');
+      badge.textContent = connected ? 'Connected' : 'Registered';
+      title.textContent = connected ? 'Continue from the exact Vutler node page' : 'Node registered in Vutler';
+      copy.textContent = connected
+        ? `${nodeName} is connected as node ${nodeId}. Open this exact node in Vutler to dispatch workspace actions, inspect command history, and manage the runtime from the workspace.`
+        : `${nodeName} is registered in Vutler as node ${nodeId}. Finish connection, then continue from the exact node page in the workspace.`;
+      nodeLink.textContent = connected ? 'Open This Connected Node' : 'Open Registered Node';
     }
 
     function renderStepBadges(setup, status) {
@@ -1287,6 +1353,7 @@
       setStatusBadge(status?.status === 'connected');
       renderHints(setup, status);
       renderHeroActions(setup, status);
+      renderHandoffPanel(setup, status);
       renderStepBadges(setup, status);
       renderRecommendedActions(setup, status);
 
