@@ -72,6 +72,12 @@ CREATE INDEX IF NOT EXISTS idx_runbooks_status
 
 let _tableEnsured = false;
 
+function resolveRequiredWorkspaceId(workspaceId) {
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for runbook operations');
+}
+
 async function ensureTable() {
   if (_tableEnsured) return;
   try {
@@ -192,7 +198,8 @@ function parseRunbookFromJSON(json) {
  * @param {string} [workspaceId]
  * @returns {Promise<{ valid: boolean, errors: string[] }>}
  */
-async function validateRunbook(runbook, workspaceId = DEFAULT_WORKSPACE) {
+async function validateRunbook(runbook, workspaceId) {
+  const resolvedWorkspaceId = resolveRequiredWorkspaceId(workspaceId);
   const errors = [];
 
   if (!runbook.name || !runbook.name.trim()) {
@@ -219,7 +226,7 @@ async function validateRunbook(runbook, workspaceId = DEFAULT_WORKSPACE) {
         const row = await pool.query(
           `SELECT id FROM ${SCHEMA}.vault_secrets
            WHERE workspace_id = $1 AND label = $2 LIMIT 1`,
-          [workspaceId, step.target]
+          [resolvedWorkspaceId, step.target]
         );
         if (row.rows.length === 0) {
           errors.push(`Step ${step.order}: vault secret "${step.target}" not found`);
@@ -247,9 +254,9 @@ async function validateRunbook(runbook, workspaceId = DEFAULT_WORKSPACE) {
  * @returns {Promise<{ runbookId: string, name: string, totalSteps: number, completed: number, failed: number, skipped: number, results: object[] }>}
  */
 async function executeRunbook(runbook, context = {}) {
+  const workspaceId = resolveRequiredWorkspaceId(context.workspaceId);
   await ensureTable();
 
-  const workspaceId = context.workspaceId || DEFAULT_WORKSPACE;
   const createdBy = context.createdBy || null;
 
   // Persist initial record
@@ -522,10 +529,11 @@ async function getRunbookStatus(runbookId) {
  * @param {string} [opts.status]
  * @returns {Promise<object[]>}
  */
-async function listRunbooks(workspaceId = DEFAULT_WORKSPACE, opts = {}) {
+async function listRunbooks(workspaceId, opts = {}) {
+  const resolvedWorkspaceId = resolveRequiredWorkspaceId(workspaceId);
   await ensureTable();
   const limit = Number(opts.limit) || 50;
-  const params = [workspaceId, limit];
+  const params = [resolvedWorkspaceId, limit];
   let where = 'workspace_id = $1';
 
   if (opts.status) {
@@ -624,4 +632,5 @@ module.exports = {
   approveStep,
   isRunbookIntent,
   ensureTable,
+  resolveRequiredWorkspaceId,
 };
