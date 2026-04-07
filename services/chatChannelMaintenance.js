@@ -227,15 +227,29 @@ async function findExistingDmChannelId(pg, { schema = DEFAULT_SCHEMA, workspaceI
   const existing = await pg.query(
     `SELECT c.id
      FROM ${schema}.chat_channels c
-     JOIN ${schema}.chat_channel_members target_cm
-       ON target_cm.channel_id = c.id
-      AND target_cm.user_id = $3
-     LEFT JOIN ${schema}.chat_channel_members self_cm
-       ON self_cm.channel_id = c.id
-      AND self_cm.user_id = $2
      WHERE c.workspace_id = $1
        AND c.type = 'dm'
-       AND (self_cm.user_id IS NOT NULL OR c.created_by = $2)
+       AND EXISTS (
+         SELECT 1
+         FROM ${schema}.chat_channel_members target_cm
+         WHERE target_cm.channel_id = c.id
+           AND target_cm.user_id = $3
+       )
+       AND (
+         EXISTS (
+           SELECT 1
+           FROM ${schema}.chat_channel_members self_cm
+           WHERE self_cm.channel_id = c.id
+             AND self_cm.user_id = $2
+         )
+         OR c.created_by = $2
+       )
+       AND NOT EXISTS (
+         SELECT 1
+         FROM ${schema}.chat_channel_members unexpected_cm
+         WHERE unexpected_cm.channel_id = c.id
+           AND unexpected_cm.user_id NOT IN ($2, $3)
+       )
      ORDER BY c.created_at DESC
      LIMIT 1`,
     [workspaceId, currentUserId, contactId]

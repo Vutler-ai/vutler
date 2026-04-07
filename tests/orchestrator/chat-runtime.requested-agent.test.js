@@ -371,6 +371,10 @@ describe('chatRuntime requested agent resolution', () => {
         primaryDelegate: null,
         delegatedAgents: [],
         reasons: [],
+        availability: {
+          availableProviders: ['email', 'workspace_drive'],
+          unavailableProviders: ['sandbox'],
+        },
       }),
     }));
     jest.doMock('../../services/memory/runtime', () => ({
@@ -419,6 +423,11 @@ describe('chatRuntime requested agent resolution', () => {
       orchestrated_by: 'jarvis',
       executed_by: 'agent-nora',
       reply_to_message_id: 'msg-email-1',
+    });
+    expect(inserts[0].metadata).toMatchObject({
+      orchestration_domains: ['email'],
+      available_runtime_providers: ['email', 'workspace_drive'],
+      unavailable_runtime_providers: ['sandbox'],
     });
   });
 

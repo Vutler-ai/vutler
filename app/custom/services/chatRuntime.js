@@ -613,16 +613,23 @@ async function handleMessage(message) {
     specializationProfile: null,
     recommendations: [],
   };
+  const resolvedOrchestration = await resolveOrchestrationCapabilities({
+    workspaceId,
+    messageText: message.content,
+    history,
+    requestedAgent: targetAgent,
+    availableAgents: allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+    db: pool,
+  }).catch(() => orchestrationDefaults);
   const orchestration = bypassSwarmForDirectEmail
-    ? orchestrationDefaults
-    : await resolveOrchestrationCapabilities({
-        workspaceId,
-        messageText: message.content,
-        history,
-        requestedAgent: targetAgent,
-        availableAgents: allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
-        db: pool,
-      }).catch(() => orchestrationDefaults);
+    ? {
+        ...orchestrationDefaults,
+        ...resolvedOrchestration,
+        domains: resolvedOrchestration.domains || ['email'],
+        primaryDelegate: null,
+        delegatedAgents: [],
+      }
+    : resolvedOrchestration;
 
   if (!bypassSwarmForDirectEmail) {
     try {
