@@ -12,6 +12,7 @@ import {
 import { getClients, createClient, updateClient, deleteClient } from '@/lib/api/endpoints/clients';
 import { getAgents } from '@/lib/api/endpoints/agents';
 import { getAvatarImageUrl } from '@/lib/avatar';
+import { NEXUS_FIRST_COMMAND_PRESETS } from '@/lib/nexus/first-commands';
 import type {
   NexusNode,
   NexusStats,
@@ -1511,6 +1512,25 @@ function DeployModal({
                       >
                         {localSetupMessage || 'If Nexus is already running locally, Vutler can push the token and permissions directly without CLI copy-paste.'}
                       </p>
+                    </div>
+                    <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0d1019] p-3 space-y-3">
+                      <div>
+                        <p className="text-white text-xs font-medium">What opens next in Vutler</p>
+                        <p className="text-[#6b7280] text-xs mt-1">
+                          After pairing, Vutler opens the node detail page with these first commands ready.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                        {NEXUS_FIRST_COMMAND_PRESETS.map((preset) => (
+                          <div
+                            key={preset.key}
+                            className="rounded-lg bg-[#111827] border border-[rgba(255,255,255,0.05)] px-3 py-2"
+                          >
+                            <p className="text-sm text-white font-medium">{preset.title}</p>
+                            <p className="text-xs text-[#6b7280] mt-1">{preset.description}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                     <details className="border-t border-[rgba(255,255,255,0.05)] pt-3">
                       <summary className="flex cursor-pointer items-center gap-2 text-xs text-[#9ca3af] font-medium list-none">

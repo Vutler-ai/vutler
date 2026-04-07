@@ -20,6 +20,11 @@ import {
   updateEnterpriseEventSubscription,
 } from '@/lib/api/endpoints/nexus-enterprise';
 import { getAgents } from '@/lib/api/endpoints/agents';
+import {
+  NEXUS_FIRST_COMMAND_PRESETS,
+  getNexusFirstCommandPreset,
+  type NexusFirstCommandPresetKey,
+} from '@/lib/nexus/first-commands';
 import type {
   NexusAgentStatus,
   NexusSeatsInfo,
@@ -1783,26 +1788,27 @@ function ActionDispatchPanel({
     clearResults();
   };
 
-  const applyQuickAction = (preset: 'desktop' | 'documents-search' | 'clipboard' | 'pwd') => {
+  const applyQuickAction = (presetKey: NexusFirstCommandPresetKey) => {
     clearResults();
-    switch (preset) {
-      case 'desktop':
+    const preset = getNexusFirstCommandPreset(presetKey);
+    switch (preset.action) {
+      case 'list_dir':
         setActiveAction('list_dir');
-        setDirPath('~/Desktop');
+        setDirPath(preset.value);
         setDirPattern('');
         setDirRecursive(false);
         break;
-      case 'documents-search':
+      case 'search':
         setActiveAction('search');
-        setSearchQuery('report');
+        setSearchQuery(preset.value);
         setSearchScope('~/Documents');
         break;
-      case 'clipboard':
+      case 'read_clipboard':
         setActiveAction('read_clipboard');
         break;
-      case 'pwd':
+      case 'shell_exec':
         setActiveAction('shell_exec');
-        setShellCmd('pwd');
+        setShellCmd(preset.value);
         break;
     }
   };
@@ -1821,38 +1827,17 @@ function ActionDispatchPanel({
         <div>
           <p className="text-xs text-[#9ca3af] uppercase tracking-wide mb-2">First Commands</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => applyQuickAction('desktop')}
-              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
-            >
-              <p className="text-sm text-white font-medium">List Desktop</p>
-              <p className="text-xs text-[#6b7280] mt-1">Check file access on `~/Desktop`.</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => applyQuickAction('documents-search')}
-              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
-            >
-              <p className="text-sm text-white font-medium">Search Documents</p>
-              <p className="text-xs text-[#6b7280] mt-1">Look for `report` inside `~/Documents`.</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => applyQuickAction('clipboard')}
-              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
-            >
-              <p className="text-sm text-white font-medium">Read Clipboard</p>
-              <p className="text-xs text-[#6b7280] mt-1">Verify the local clipboard bridge.</p>
-            </button>
-            <button
-              type="button"
-              onClick={() => applyQuickAction('pwd')}
-              className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
-            >
-              <p className="text-sm text-white font-medium">Run `pwd`</p>
-              <p className="text-xs text-[#6b7280] mt-1">Validate the shell runtime path.</p>
-            </button>
+            {NEXUS_FIRST_COMMAND_PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                onClick={() => applyQuickAction(preset.key)}
+                className="text-left rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] hover:border-blue-500/30 hover:bg-blue-900/10 px-3 py-3 transition-colors"
+              >
+                <p className="text-sm text-white font-medium">{preset.title}</p>
+                <p className="text-xs text-[#6b7280] mt-1">{preset.description}</p>
+              </button>
+            ))}
           </div>
         </div>
 
