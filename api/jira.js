@@ -18,11 +18,25 @@ const router = express.Router();
 const crypto = new CryptoService();
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 function getWorkspaceId(req) {
-  return req.workspaceId || DEFAULT_WORKSPACE;
+  const headerWorkspaceId = typeof req.headers?.['x-workspace-id'] === 'string'
+    ? req.headers['x-workspace-id'].trim()
+    : '';
+  return req.jiraWorkspaceId || req.workspaceId || req.user?.workspaceId || headerWorkspaceId || null;
 }
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = getWorkspaceId(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+
+  req.jiraWorkspaceId = workspaceId;
+  next();
+}
+
+router.use(ensureWorkspaceContext);
 
 /**
  * Load and decrypt Jira credentials for a workspace.
@@ -209,3 +223,8 @@ router.post('/issues/:key/transition', async (req, res) => {
 });
 
 module.exports = router;
+router._private = {
+  getWorkspaceId,
+  ensureWorkspaceContext,
+  getJiraCredentials,
+};
