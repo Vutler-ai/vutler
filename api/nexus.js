@@ -1238,7 +1238,7 @@ async function getWorkspaceCommandStats(workspaceId, nodeId = null) {
 router.get('/', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE workspace_id = $1 ORDER BY created_at DESC`,
       [workspaceId]
@@ -1253,7 +1253,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { name, type = 'local', host = null, port = null, api_key = null, config = {} } = req.body || {};
     if (!name) return res.status(400).json({ success: false, error: 'name is required' });
 
@@ -1274,7 +1274,7 @@ router.post('/', async (req, res) => {
 router.get('/deployments', async (req, res) => {
   try {
     await ensureNexusTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const result = await pool.query(
       `SELECT id, agent_id, mode, status, runtime_version, last_heartbeat_at, created_at, updated_at
        FROM ${SCHEMA}.nexus_deployments
@@ -1293,7 +1293,7 @@ router.get('/deployments', async (req, res) => {
 router.get('/keys', async (req, res) => {
   try {
     await ensureApiKeysTable();
-    const keys = await listApiKeys({ workspaceId: req.workspaceId || DEFAULT_WORKSPACE });
+    const keys = await listApiKeys({ workspaceId: getWorkspaceContext(req) });
     res.json({ success: true, keys });
   } catch (err) {
     console.error('[NEXUS] List keys error:', err.message);
@@ -1305,7 +1305,7 @@ router.post('/keys', async (req, res) => {
   try {
     await ensureApiKeysTable();
     const created = await createApiKey({
-      workspaceId: req.workspaceId || DEFAULT_WORKSPACE,
+      workspaceId: getWorkspaceContext(req),
       userId: req.userId || req.user?.id || null,
       name: req.body?.name || 'Nexus key',
     });
@@ -1331,7 +1331,7 @@ router.delete('/keys/:id', async (req, res) => {
   try {
     await ensureApiKeysTable();
     const revoked = await revokeApiKey({
-      workspaceId: req.workspaceId || DEFAULT_WORKSPACE,
+      workspaceId: getWorkspaceContext(req),
       id: req.params.id,
     });
 
@@ -1364,7 +1364,7 @@ router.post('/runtime/heartbeat', requireApiKey, async (req, res) => {
       return res.status(400).json({ success: false, error: 'deploymentId is required' });
     }
 
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const safeStatus = status === 'error' ? 'error' : 'online';
 
     const updateResult = await pool.query(
@@ -1433,7 +1433,7 @@ router.get('/runtime/verify/:deploymentId', async (req, res) => {
   try {
     await ensureNexusTables();
 
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const result = await pool.query(
       `SELECT
         id,
@@ -1486,7 +1486,7 @@ router.get('/runtime/verify/:deploymentId', async (req, res) => {
 router.get('/cli/tokens', async (req, res) => {
   try {
     await ensureApiKeysTable();
-    const keys = await listApiKeys({ workspaceId: req.workspaceId || DEFAULT_WORKSPACE });
+    const keys = await listApiKeys({ workspaceId: getWorkspaceContext(req) });
     const tokens = keys.map((k) => ({
       id: k.id,
       name: k.name,
@@ -1505,7 +1505,7 @@ router.post('/cli/tokens', async (req, res) => {
   try {
     await ensureApiKeysTable();
     const created = await createApiKey({
-      workspaceId: req.workspaceId || DEFAULT_WORKSPACE,
+      workspaceId: getWorkspaceContext(req),
       userId: req.userId || req.user?.id || null,
       name: req.body?.name || 'Nexus key',
     });
@@ -1518,7 +1518,7 @@ router.post('/cli/tokens', async (req, res) => {
 router.delete('/cli/tokens/:id', async (req, res) => {
   try {
     await ensureApiKeysTable();
-    const revoked = await revokeApiKey({ workspaceId: req.workspaceId || DEFAULT_WORKSPACE, id: req.params.id });
+    const revoked = await revokeApiKey({ workspaceId: getWorkspaceContext(req), id: req.params.id });
     if (!revoked) return res.status(404).json({ success: false, error: 'Token not found' });
     res.json({ success: true });
   } catch (err) {
@@ -1539,7 +1539,7 @@ router.get('/status', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     await refreshCommandState(workspaceId);
     const nodesRes = await pool.query(
       `SELECT * FROM ${SCHEMA}.nexus_nodes WHERE workspace_id = $1 ORDER BY created_at DESC`,
@@ -1701,7 +1701,7 @@ async function ensureNexusRoutesTable() {
 router.get('/routes', async (req, res) => {
   try {
     await ensureNexusRoutesTable();
-    const wsId = req.workspaceId || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceContext(req);
     const result = await pool.query(
       `SELECT id, task_type, agent_name, model, status, created_at FROM ${SCHEMA}.nexus_routes WHERE workspace_id = $1 ORDER BY created_at`, [wsId]
     );
@@ -1712,7 +1712,7 @@ router.get('/routes', async (req, res) => {
 router.post('/routes', async (req, res) => {
   try {
     await ensureNexusRoutesTable();
-    const wsId = req.workspaceId || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceContext(req);
     const { task_type, agent_name, model } = req.body || {};
     if (!task_type || !agent_name) return res.status(400).json({ success: false, error: 'task_type and agent_name required' });
     const result = await pool.query(
@@ -1726,7 +1726,7 @@ router.post('/routes', async (req, res) => {
 router.get('/stats', async (req, res) => {
   try {
     await ensureNexusTables();
-    const wsId = req.workspaceId || DEFAULT_WORKSPACE;
+    const wsId = getWorkspaceContext(req);
     const deploys = await pool.query(
       `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE last_heartbeat_at >= NOW() - INTERVAL '24 hours')::int AS routed_today, COUNT(*) FILTER (WHERE status = 'error')::int AS fallbacks FROM ${SCHEMA}.nexus_deployments WHERE workspace_id = $1`, [wsId]
     );
@@ -1753,7 +1753,7 @@ router.post('/smoke-test', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { name, type, status, host, port, api_key, config } = req.body || {};
     const update = await pool.query(
       `UPDATE ${SCHEMA}.nexus_nodes
@@ -1780,7 +1780,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const del = await pool.query(`DELETE FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 RETURNING id`, [req.params.id, workspaceId]);
     if (!del.rows.length) return res.status(404).json({ success: false, error: 'Node not found' });
     res.json({ success: true, deletedId: del.rows[0].id });
@@ -1793,7 +1793,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/:id/deploy', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { agentId, agentName } = req.body || {};
     if (!agentId && !agentName) return res.status(400).json({ success: false, error: 'agentId or agentName is required' });
 
@@ -1825,7 +1825,7 @@ router.post('/:id/deploy', async (req, res) => {
 router.get('/:id/health', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const out = await pool.query(`SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`, [req.params.id, workspaceId]);
     if (!out.rows.length) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -1854,7 +1854,7 @@ router.get('/:id/health', async (req, res) => {
 router.post('/:id/connect', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { status, agents, memory, uptime, api_key, permissions } = req.body || {};
     const currentNode = await loadNodeForWorkspace(workspaceId, req.params.id);
     if (!currentNode) return res.status(404).json({ success: false, error: 'Node not found' });
@@ -1920,7 +1920,7 @@ router.get('/:id/logs', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureNexusTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await pool.query(`SELECT * FROM ${SCHEMA}.nexus_nodes WHERE id::text = $1 AND workspace_id = $2 LIMIT 1`, [req.params.id, workspaceId]);
     if (!node.rows.length) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -1944,7 +1944,7 @@ router.get('/:id/logs', async (req, res) => {
 router.get('/:nodeId/tasks', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId } = req.params;
 
     const nodeRes = await pool.query(
@@ -1973,7 +1973,7 @@ router.get('/:nodeId/tasks', async (req, res) => {
 router.post('/:nodeId/tasks/:taskId/status', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId, taskId } = req.params;
     const { status, output, error: taskError } = req.body || {};
 
@@ -2032,7 +2032,7 @@ router.post('/:nodeId/tasks/:taskId/status', async (req, res) => {
 router.get('/:nodeId/agent-configs', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId } = req.params;
 
     const nodeRes = await pool.query(
@@ -2088,7 +2088,7 @@ router.get('/:nodeId/agent-configs', async (req, res) => {
 router.get('/:nodeId/agent-configs/:agentId', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId, agentId } = req.params;
 
     const nodeRes = await pool.query(
@@ -2136,7 +2136,7 @@ router.get('/:nodeId/commands', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId } = req.params;
 
     const node = await loadNodeForWorkspace(workspaceId, nodeId);
@@ -2210,7 +2210,7 @@ router.get('/:nodeId/commands', async (req, res) => {
 router.post('/:nodeId/commands/:commandId/result', async (req, res) => {
   try {
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId, commandId } = req.params;
     await refreshCommandState(workspaceId, { nodeId, commandId });
     const { status, result, error } = req.body || {};
@@ -2272,7 +2272,7 @@ router.post('/:nodeId/commands/:commandId/result', async (req, res) => {
 router.post('/:nodeId/commands/:commandId/progress', async (req, res) => {
   try {
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId, commandId } = req.params;
     await refreshCommandState(workspaceId, { nodeId, commandId });
     const progress = {
@@ -2312,7 +2312,7 @@ router.post('/:nodeId/governance/audit', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2341,7 +2341,7 @@ router.post('/:nodeId/governance/approvals', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2373,7 +2373,7 @@ router.get('/:nodeId/governance/scopes/resolve', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const scopeKey = typeof req.query.scopeKey === 'string' ? req.query.scopeKey : '';
     if (!scopeKey) return res.status(400).json({ success: false, error: 'scopeKey is required' });
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
@@ -2390,7 +2390,7 @@ router.get('/:nodeId/governance/approvals/:approvalId', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2407,7 +2407,7 @@ router.post('/:nodeId/governance/approvals/:approvalId/runtime-status', async (r
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2430,7 +2430,7 @@ router.get('/nodes/:nodeId/commands', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const { nodeId } = req.params;
     await refreshCommandState(workspaceId, { nodeId });
 
@@ -2464,7 +2464,7 @@ router.get('/nodes/:nodeId/governance/approvals', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2483,7 +2483,7 @@ router.get('/nodes/:nodeId/governance/scopes', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2502,7 +2502,7 @@ router.get('/nodes/:nodeId/governance/audit', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2521,7 +2521,7 @@ router.post('/nodes/:nodeId/governance/approvals/:approvalId/approve', async (re
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2608,7 +2608,7 @@ router.post('/nodes/:nodeId/governance/approvals/:approvalId/reject', async (req
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2652,7 +2652,7 @@ router.post('/nodes/:nodeId/governance/approvals/:approvalId/revoke-scope', asyn
   try {
     await ensureNexusNodesTable();
     await ensureGovernanceTables();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2691,7 +2691,7 @@ router.post('/nodes/:nodeId/governance/approvals/:approvalId/revoke-scope', asyn
 router.post('/:nodeId/agents/create', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const out = await createEnterpriseAgentForNode({ workspaceId, nodeId: req.params.nodeId, body: req.body || {} });
     res.status(201).json(out);
   } catch (err) {
@@ -2704,7 +2704,7 @@ router.get('/nodes/:id', async (req, res) => {
   try {
     await ensureNexusNodesTable();
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     await refreshCommandState(workspaceId, { nodeId: req.params.id });
     const node = await loadNodeForWorkspace(workspaceId, req.params.id);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
@@ -2752,7 +2752,7 @@ router.get('/nodes/:id', async (req, res) => {
 router.get('/nodes/:nodeId/commands/:commandId', async (req, res) => {
   try {
     await ensureNexusCommandsTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     await refreshCommandState(workspaceId, { nodeId: req.params.nodeId, commandId: req.params.commandId });
     const commandRes = await pool.query(
       `SELECT id, command_type, status, payload, progress, result, error,
@@ -2778,7 +2778,7 @@ router.get('/nodes/:nodeId/commands/:commandId', async (req, res) => {
 router.get('/nodes/:nodeId/agents', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
     const agents = (Array.isArray(node.agents_deployed) ? node.agents_deployed : []).map(mapRuntimeAgent);
@@ -2791,7 +2791,7 @@ router.get('/nodes/:nodeId/agents', async (req, res) => {
 router.post('/nodes/:nodeId/agents', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const out = await createEnterpriseAgentForNode({ workspaceId, nodeId: req.params.nodeId, body: req.body || {} });
     res.status(201).json(out.agent);
   } catch (err) {
@@ -2802,7 +2802,7 @@ router.post('/nodes/:nodeId/agents', async (req, res) => {
 router.post('/nodes/:nodeId/agents/spawn', async (_req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = _req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(_req);
     const node = await loadNodeForWorkspace(workspaceId, _req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
     const agentId = _req.body?.agentId || null;
@@ -2839,7 +2839,7 @@ router.post('/nodes/:nodeId/agents/spawn', async (_req, res) => {
 router.post('/nodes/:nodeId/agents/:agentId/stop', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2868,7 +2868,7 @@ router.post('/nodes/:nodeId/agents/:agentId/stop', async (req, res) => {
 router.post('/nodes/:nodeId/dispatch', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2890,7 +2890,7 @@ router.post('/nodes/:nodeId/dispatch', async (req, res) => {
 router.post('/nodes/:nodeId/terminal/open', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2919,7 +2919,7 @@ router.post('/nodes/:nodeId/terminal/open', async (req, res) => {
 router.post('/nodes/:nodeId/terminal/:sessionId/exec', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2947,7 +2947,7 @@ router.post('/nodes/:nodeId/terminal/:sessionId/exec', async (req, res) => {
 router.post('/nodes/:nodeId/terminal/:sessionId/read', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2973,7 +2973,7 @@ router.post('/nodes/:nodeId/terminal/:sessionId/read', async (req, res) => {
 router.get('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -2998,7 +2998,7 @@ router.get('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
 router.delete('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -3023,7 +3023,7 @@ router.delete('/nodes/:nodeId/terminal/:sessionId', async (req, res) => {
 router.post('/nodes/:nodeId/files/base64', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
 
@@ -3048,7 +3048,7 @@ router.post('/nodes/:nodeId/files/base64', async (req, res) => {
 router.get('/nodes/:nodeId/capabilities', async (req, res) => {
   try {
     await ensureNexusNodesTable();
-    const workspaceId = req.workspaceId || DEFAULT_WORKSPACE;
+    const workspaceId = getWorkspaceContext(req);
     const node = await loadNodeForWorkspace(workspaceId, req.params.nodeId);
     if (!node) return res.status(404).json({ success: false, error: 'Node not found' });
     const providerSources = await getNodeProviderSources(workspaceId, node);
