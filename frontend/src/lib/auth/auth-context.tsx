@@ -42,7 +42,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchMe = useCallback(async (): Promise<void> => {
     try {
       const response = await apiFetch<{ user?: UserProfile } | UserProfile>('/api/v1/auth/me');
-      const profile = 'user' in response && response.user ? response.user : response;
+      const profile = 'id' in response ? response : (response.user ?? null);
+      if (!profile) {
+        throw new Error('Missing user profile');
+      }
       setUser(profile);
     } catch {
       // Token invalid or expired
