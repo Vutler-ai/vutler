@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { spawn } = require('child_process');
 const { Command } = require('commander');
 const { NexusNode } = require('../index');
 const {
@@ -36,6 +37,107 @@ function parseNumEnv(name, fallback = undefined) {
   if (raw == null || raw === '') return fallback;
   const value = Number.parseInt(raw, 10);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function openUrl(url) {
+  if (!url) return;
+
+  const platform = process.platform;
+  const command = platform === 'darwin'
+    ? 'open'
+    : platform === 'win32'
+      ? 'cmd'
+      : 'xdg-open';
+  const args = platform === 'win32'
+    ? ['/c', 'start', '', url]
+    : [url];
+
+  try {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch (_) {
+    // Ignore browser launch failures; the URL is still printed to stdout.
+  }
+}
+
+async function handleStart(opts = {}, extra = {}) {
+  const shouldOpenBrowser = extra.openBrowser === true;
+
+  // Legacy local config fallback
+  let localConfig = {};
+  try { localConfig = JSON.parse(require('fs').readFileSync('.vutler-nexus.json', 'utf8')); } catch(e) {}
+
+  // Global config from ~/.vutler/nexus.json (preferred)
+  const globalConfig = readRuntimeConfig() || {};
+  const envConfig = {
+    mode: process.env.NEXUS_MODE || undefined,
+    type: process.env.NEXUS_TYPE || undefined,
+    node_name: process.env.NEXUS_NODE_NAME || undefined,
+    port: parseNumEnv('NEXUS_PORT'),
+    seats: parseNumEnv('NEXUS_SEATS'),
+    primary_agent: process.env.NEXUS_PRIMARY_AGENT || undefined,
+    agents: parseJsonEnv('NEXUS_AGENTS'),
+    routing_rules: parseJsonEnv('NEXUS_ROUTING_RULES'),
+    auto_spawn_rules: parseJsonEnv('NEXUS_AUTO_SPAWN_RULES'),
+    available_pool: parseJsonEnv('NEXUS_AVAILABLE_POOL'),
+    allow_create: parseBoolEnv('NEXUS_ALLOW_CREATE'),
+    offline_config: parseJsonEnv('NEXUS_OFFLINE_CONFIG'),
+    permissions: parseJsonEnv('NEXUS_PERMISSIONS'),
+    llm: parseJsonEnv('NEXUS_LLM'),
+    client_name: process.env.NEXUS_CLIENT_NAME || undefined,
+    filesystem_root: process.env.NEXUS_FILESYSTEM_ROOT || undefined,
+    role: process.env.NEXUS_ROLE || undefined,
+    snipara_instance_id: process.env.NEXUS_SNIPARA_INSTANCE_ID || undefined,
+    api_key: process.env.NEXUS_API_KEY || undefined,
+    deploy_token: process.env.NEXUS_DEPLOY_TOKEN || process.env.NEXUS_TOKEN || undefined,
+    server: process.env.NEXUS_SERVER || undefined,
+  };
+
+  const key = opts.key || localConfig.key || globalConfig.deploy_token || envConfig.deploy_token;
+  const apiKey = opts.key || localConfig.key || globalConfig.api_key || envConfig.api_key || null;
+  const runtimeKey = apiKey || key;
+
+  const node = new NexusNode({
+    key: runtimeKey,
+    name: opts.name || localConfig.name || globalConfig.node_name || globalConfig.name || globalConfig.node_id || envConfig.node_name,
+    port: parseInt(opts.port || envConfig.port || 3100, 10),
+    type: opts.type || envConfig.type || 'local',
+    server: opts.url || opts.server || localConfig.server || globalConfig.server || envConfig.server || 'https://app.vutler.ai',
+    mode: envConfig.mode || globalConfig.mode || 'local',
+    snipara_instance_id: envConfig.snipara_instance_id || globalConfig.snipara_instance_id,
+    client_name: envConfig.client_name || globalConfig.client_name,
+    filesystem_root: envConfig.filesystem_root || globalConfig.filesystem_root,
+    role: envConfig.role || globalConfig.role,
+    deploy_token: globalConfig.deploy_token || envConfig.deploy_token,
+    permissions: envConfig.permissions || globalConfig.permissions,
+    seats: envConfig.seats || globalConfig.seats,
+    primary_agent: envConfig.primary_agent || globalConfig.primary_agent,
+    agents: envConfig.agents || globalConfig.agents,
+    routing_rules: envConfig.routing_rules || globalConfig.routing_rules,
+    auto_spawn_rules: envConfig.auto_spawn_rules || globalConfig.auto_spawn_rules,
+    available_pool: envConfig.available_pool || globalConfig.available_pool,
+    allow_create: envConfig.allow_create ?? globalConfig.allow_create,
+    offline_config: envConfig.offline_config || globalConfig.offline_config,
+    llm: envConfig.llm || globalConfig.llm,
+  });
+
+  if (!runtimeKey) {
+    console.log('[Nexus] No deploy token configured. Starting local setup dashboard...');
+    await node.startDashboardOnly();
+    const localUrl = `http://localhost:${node.discoveryPort || node.port}/`;
+    console.log(`[Nexus] Open ${localUrl} to complete setup.`);
+    if (shouldOpenBrowser) openUrl(localUrl);
+  } else {
+    await node.connect();
+  }
+
+  process.on('SIGINT', async () => {
+    await node.disconnect();
+    process.exit(0);
+  });
 }
 
 // ─── init <token> ────────────────────────────────────────────────────────────
@@ -77,77 +179,9 @@ program.command('start')
   .option('--type <type>', 'Node type (local|docker|kubernetes)', 'local')
   .option('--server <url>', 'Server URL', 'https://app.vutler.ai')
   .option('--url <url>', 'Server URL (alias for --server)')
+  .option('--open-browser', 'Open the local dashboard in the browser')
   .action(async (opts) => {
-    // Legacy local config fallback
-    let localConfig = {};
-    try { localConfig = JSON.parse(require('fs').readFileSync('.vutler-nexus.json', 'utf8')); } catch(e) {}
-
-    // Global config from ~/.vutler/nexus.json (preferred)
-    const globalConfig = readRuntimeConfig() || {};
-    const envConfig = {
-      mode: process.env.NEXUS_MODE || undefined,
-      type: process.env.NEXUS_TYPE || undefined,
-      node_name: process.env.NEXUS_NODE_NAME || undefined,
-      port: parseNumEnv('NEXUS_PORT'),
-      seats: parseNumEnv('NEXUS_SEATS'),
-      primary_agent: process.env.NEXUS_PRIMARY_AGENT || undefined,
-      agents: parseJsonEnv('NEXUS_AGENTS'),
-      routing_rules: parseJsonEnv('NEXUS_ROUTING_RULES'),
-      auto_spawn_rules: parseJsonEnv('NEXUS_AUTO_SPAWN_RULES'),
-      available_pool: parseJsonEnv('NEXUS_AVAILABLE_POOL'),
-      allow_create: parseBoolEnv('NEXUS_ALLOW_CREATE'),
-      offline_config: parseJsonEnv('NEXUS_OFFLINE_CONFIG'),
-      permissions: parseJsonEnv('NEXUS_PERMISSIONS'),
-      llm: parseJsonEnv('NEXUS_LLM'),
-      client_name: process.env.NEXUS_CLIENT_NAME || undefined,
-      filesystem_root: process.env.NEXUS_FILESYSTEM_ROOT || undefined,
-      role: process.env.NEXUS_ROLE || undefined,
-      snipara_instance_id: process.env.NEXUS_SNIPARA_INSTANCE_ID || undefined,
-      api_key: process.env.NEXUS_API_KEY || undefined,
-      deploy_token: process.env.NEXUS_DEPLOY_TOKEN || process.env.NEXUS_TOKEN || undefined,
-      server: process.env.NEXUS_SERVER || undefined,
-    };
-
-    const key = opts.key || localConfig.key || globalConfig.deploy_token || envConfig.deploy_token;
-    const apiKey = opts.key || localConfig.key || globalConfig.api_key || envConfig.api_key || null;
-    const runtimeKey = apiKey || key;
-
-    const node = new NexusNode({
-      key: runtimeKey,
-      name: opts.name || localConfig.name || globalConfig.node_name || globalConfig.name || globalConfig.node_id || envConfig.node_name,
-      port: parseInt(opts.port || envConfig.port || 3100, 10),
-      type: opts.type || envConfig.type || 'local',
-      server: opts.url || opts.server || localConfig.server || globalConfig.server || envConfig.server || 'https://app.vutler.ai',
-      mode: envConfig.mode || globalConfig.mode || 'local',
-      snipara_instance_id: envConfig.snipara_instance_id || globalConfig.snipara_instance_id,
-      client_name: envConfig.client_name || globalConfig.client_name,
-      filesystem_root: envConfig.filesystem_root || globalConfig.filesystem_root,
-      role: envConfig.role || globalConfig.role,
-      deploy_token: globalConfig.deploy_token || envConfig.deploy_token,
-      permissions: envConfig.permissions || globalConfig.permissions,
-      seats: envConfig.seats || globalConfig.seats,
-      primary_agent: envConfig.primary_agent || globalConfig.primary_agent,
-      agents: envConfig.agents || globalConfig.agents,
-      routing_rules: envConfig.routing_rules || globalConfig.routing_rules,
-      auto_spawn_rules: envConfig.auto_spawn_rules || globalConfig.auto_spawn_rules,
-      available_pool: envConfig.available_pool || globalConfig.available_pool,
-      allow_create: envConfig.allow_create ?? globalConfig.allow_create,
-      offline_config: envConfig.offline_config || globalConfig.offline_config,
-      llm: envConfig.llm || globalConfig.llm,
-    });
-
-    if (!runtimeKey) {
-      console.log('[Nexus] No deploy token configured. Starting local setup dashboard...');
-      await node.startDashboardOnly();
-      console.log(`[Nexus] Open http://localhost:${node.discoveryPort || node.port} to complete setup.`);
-    } else {
-      await node.connect();
-    }
-
-    process.on('SIGINT', async () => {
-      await node.disconnect();
-      process.exit(0);
-    });
+    await handleStart(opts, { openBrowser: Boolean(opts.openBrowser) });
   });
 
 // ─── dev ─────────────────────────────────────────────────────────────────────
@@ -677,4 +711,17 @@ program.command('create-agent')
     });
   });
 
-program.parse();
+async function main() {
+  const argv = process.argv.slice(2);
+  if (argv.length === 0) {
+    await handleStart({}, { openBrowser: true });
+    return;
+  }
+
+  await program.parseAsync(process.argv);
+}
+
+main().catch((error) => {
+  console.error(error?.message || error);
+  process.exit(1);
+});

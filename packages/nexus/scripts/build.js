@@ -22,9 +22,11 @@ const targetArg = args.find(a => a.startsWith('--target='))?.split('=')[1] || 'a
 // Ensure dist dir
 fs.mkdirSync(DIST, { recursive: true });
 
+const macTarget = process.arch === 'arm64' ? 'node18-macos-arm64' : 'node18-macos-x64';
+
 // pkg targets
 const targets = {
-  mac: 'node18-macos-x64',
+  mac: macTarget,
   win: 'node18-win-x64',
 };
 

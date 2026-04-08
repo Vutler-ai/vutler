@@ -6,6 +6,14 @@
   "bin": {
     "vutler-nexus": "./bin/cli.js"
   },
+  "pkg": {
+    "assets": [
+      "lib/**/*",
+      "dashboard/**/*",
+      "bin/**/*"
+    ],
+    "outputPath": "dist"
+  },
   "dependencies": {
     "commander": "^12.1.0",
     "ws": "^8.16.0"

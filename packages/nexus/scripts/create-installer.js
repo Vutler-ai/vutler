@@ -43,7 +43,37 @@ function createDmg() {
   fs.copyFileSync(binary, path.join(resourcesDir, 'vutler-nexus'));
   fs.chmodSync(path.join(resourcesDir, 'vutler-nexus'), 0o755);
 
-const launcher = `#!/bin/bash
+  const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Vutler Nexus</string>
+  <key>CFBundleExecutable</key>
+  <string>Vutler Nexus</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.vutler.nexus</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Vutler Nexus</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>`;
+  fs.writeFileSync(path.join(contentsDir, 'Info.plist'), infoPlist);
+
+  const launcher = `#!/bin/bash
 set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 BIN="$APP_DIR/Contents/Resources/vutler-nexus"
@@ -90,7 +120,7 @@ wait
 
 Drag "Vutler Nexus.app" to /Applications, or double-click it from this disk image.
 The app launches the local Nexus runtime command. It does not inject a Vutler deploy token automatically.
-Initialize the node with a deploy token first, then start Nexus to connect it to Vutler Cloud.
+On first launch, Nexus opens a local setup page on localhost where the user can paste the deploy token and continue onboarding.
 `;
   fs.writeFileSync(path.join(stagingDir, 'README.txt'), readme);
 
