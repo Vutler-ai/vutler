@@ -186,7 +186,7 @@ function buildDefaultAccess(agentTypes: string[]): WizardAccessState {
     email: { allowed: types.has('sales') || types.has('support') || types.has('marketing') },
     social: { allowed: types.has('marketing') || types.has('content') },
     drive: { allowed: hasSelection },
-    calendar: { allowed: types.has('sales') || types.has('operations') || types.has('support') },
+    calendar: { allowed: types.has('sales') || types.has('operations') || types.has('support') || types.has('marketing') || types.has('content') },
     tasks: { allowed: technical || types.has('operations') || types.has('support') || types.has('analytics') },
     memory: { allowed: hasSelection },
     sandbox: { allowed: technical },

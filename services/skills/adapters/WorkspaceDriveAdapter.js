@@ -5,7 +5,7 @@ const path = require('path');
 const pool = require('../../../lib/vaultbrix');
 const s3Driver = require('../../../app/custom/services/s3Driver');
 const { resolveWorkspaceDriveRoot, resolveWorkspaceDriveWritePath } = require('../../drivePlacementPolicy');
-const { resolveAgentDriveRoot } = require('../../agentDriveService');
+const { ensureAgentDriveProvisioned, resolveAgentDriveRoot } = require('../../agentDriveService');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -130,9 +130,14 @@ class WorkspaceDriveAdapter {
   async execute(context) {
     const { workspaceId, params = {} } = context;
     const action = params.action || this._inferActionFromSkillKey(context.skillKey);
-    const agentDriveRoot = context.agentId
-      ? await resolveAgentDriveRoot(workspaceId, { id: context.agentId }).catch(() => null)
-      : null;
+    const agentRef = context.agent || (context.agentId ? { id: context.agentId } : null);
+    let agentDriveRoot = null;
+
+    if (agentRef?.id) {
+      const provisioned = await ensureAgentDriveProvisioned(pool, workspaceId, agentRef).catch(() => null);
+      agentDriveRoot = provisioned?.agentRoot
+        || await resolveAgentDriveRoot(workspaceId, agentRef).catch(() => null);
+    }
 
     switch (action) {
       case 'list':

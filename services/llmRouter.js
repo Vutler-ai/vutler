@@ -1895,6 +1895,10 @@ async function chat(agent, messages, db, opts = {}) {
     || agent?.workspaceToolPolicy?.driveRoot
     || '/projects/Vutler';
   const internalPlacementInstruction = agent?.workspaceToolPolicy?.placementInstruction || buildInternalPlacementInstruction();
+  const hasInternalCalendarCreate = agentSkillKeys.includes('vutler_calendar_create');
+  const hasInternalCalendarUpdate = agentSkillKeys.includes('vutler_calendar_update');
+  const hasGoogleCalendarCreate = agentSkillKeys.includes('google_calendar_create');
+  const hasGoogleCalendarUpdate = agentSkillKeys.includes('google_calendar_update');
 
   let effectiveSystemPrompt = agent?.system_prompt || '';
   if (memoryTools.length > 0) {
@@ -1904,6 +1908,13 @@ async function chat(agent, messages, db, opts = {}) {
     effectiveSystemPrompt = effectiveSystemPrompt + memoryInstruction;
   }
   effectiveSystemPrompt += `\n\n${internalPlacementInstruction}`;
+  if (hasInternalCalendarCreate || hasInternalCalendarUpdate) {
+    if (hasGoogleCalendarCreate || hasGoogleCalendarUpdate) {
+      effectiveSystemPrompt += '\n\nBoth the internal Vutler calendar and Google Calendar are writable in this run. If the user asks to create or move an event and does not specify which calendar to use, ask one short clarification question before acting.';
+    } else {
+      effectiveSystemPrompt += '\n\nThe internal Vutler calendar is writable in this run. When the user asks to schedule, create, or update an internal event, use the Vutler calendar skill directly instead of saying that calendar writing is unavailable.';
+    }
+  }
   if (hasSocialMediaAccess) {
     const platformHint = allowedSocialPlatforms.length > 0
       ? ` Limit social posting to these enabled platforms unless the user asks otherwise and you have access: ${allowedSocialPlatforms.join(', ')}.`

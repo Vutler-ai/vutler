@@ -39,12 +39,41 @@ function generateS3Key(virtualPath, fileName) {
   return `${normalized.slice(1)}/${fileName}`;
 }
 
-function buildAgentFolderName(agent = {}) {
+function slugifyAgentFolderSegment(value = '') {
+  const normalized = String(value || '')
+    .trim()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return normalized || '';
+}
+
+function buildLegacyAgentFolderName(agent = {}) {
   const id = String(agent.id || '').trim();
   if (!id) {
     throw new Error('Agent id is required to resolve the assigned drive folder');
   }
   return id;
+}
+
+function buildAgentFolderName(agent = {}) {
+  const username = slugifyAgentFolderSegment(agent.username || '');
+  if (username) return username;
+
+  const name = slugifyAgentFolderSegment(agent.name || '');
+  if (name) return name;
+
+  return buildLegacyAgentFolderName(agent);
+}
+
+function buildAgentFolderCandidates(agent = {}) {
+  return Array.from(new Set([
+    buildAgentFolderName(agent),
+    buildLegacyAgentFolderName(agent),
+  ]));
 }
 
 async function getWorkspaceBucket(pg, workspaceId) {
@@ -104,11 +133,111 @@ async function ensureFolderRecord(pg, workspaceId, folderPath, uploadedBy = null
   );
 }
 
+async function folderRecordExists(pg, workspaceId, folderPath) {
+  const result = await pg.query(
+    `SELECT 1
+     FROM ${SCHEMA}.drive_files
+     WHERE workspace_id = $1
+       AND path = $2
+       AND is_deleted = false
+     LIMIT 1`,
+    [workspaceId, normalizeVirtualPath(folderPath)]
+  );
+
+  return result.rows.length > 0;
+}
+
+async function migrateLegacyAgentDriveRoot(pg, workspaceId, fromRoot, toRoot) {
+  const legacyRoot = normalizeVirtualPath(fromRoot);
+  const nextRoot = normalizeVirtualPath(toRoot);
+  if (!workspaceId || legacyRoot === nextRoot) return false;
+
+  const [legacyExists, nextExists] = await Promise.all([
+    folderRecordExists(pg, workspaceId, legacyRoot),
+    folderRecordExists(pg, workspaceId, nextRoot),
+  ]);
+
+  if (!legacyExists || nextExists) return false;
+
+  const legacyLike = `${legacyRoot}/%`;
+  await pg.query(
+    `UPDATE ${SCHEMA}.drive_files
+        SET path = CASE
+              WHEN path = $2 THEN $3
+              WHEN path LIKE $4 THEN $3 || SUBSTRING(path FROM char_length($2) + 1)
+              ELSE path
+            END,
+            parent_path = CASE
+              WHEN parent_path = $2 THEN $3
+              WHEN parent_path LIKE $4 THEN $3 || SUBSTRING(parent_path FROM char_length($2) + 1)
+              ELSE parent_path
+            END,
+            s3_key = CASE
+              WHEN s3_key = trim(leading '/' FROM $2) THEN trim(leading '/' FROM $3)
+              WHEN s3_key LIKE trim(leading '/' FROM $2) || '/%' THEN trim(leading '/' FROM $3) || SUBSTRING(s3_key FROM char_length(trim(leading '/' FROM $2)) + 1)
+              ELSE s3_key
+            END,
+            name = CASE
+              WHEN path = $2 THEN $5
+              ELSE name
+            END,
+            updated_at = NOW()
+      WHERE workspace_id = $1
+        AND is_deleted = false
+        AND (
+          path = $2
+          OR path LIKE $4
+          OR parent_path = $2
+          OR parent_path LIKE $4
+        )`,
+    [workspaceId, legacyRoot, nextRoot, legacyLike, path.posix.basename(nextRoot)]
+  );
+
+  return true;
+}
+
+async function migrateLegacyAgentDriveObjects(pg, workspaceId, fromRoot, toRoot) {
+  const legacyRoot = normalizeVirtualPath(fromRoot);
+  const nextRoot = normalizeVirtualPath(toRoot);
+  if (!workspaceId || legacyRoot === nextRoot) return 0;
+  if (typeof s3Driver.list !== 'function' || typeof s3Driver.move !== 'function') return 0;
+
+  const bucket = await getWorkspaceBucket(pg, workspaceId).catch(() => null);
+  if (!bucket) return 0;
+
+  const legacyPrefix = `${legacyRoot.slice(1).replace(/\/+$/, '')}/`;
+  const nextPrefix = `${nextRoot.slice(1).replace(/\/+$/, '')}/`;
+  const prefixedLegacyPrefix = s3Driver.prefixKey(legacyPrefix);
+  const prefixedNextPrefix = s3Driver.prefixKey(nextPrefix);
+  const { files = [] } = await s3Driver.list(bucket, prefixedLegacyPrefix).catch(() => ({ files: [] }));
+
+  let movedCount = 0;
+  for (const file of files) {
+    const oldKey = String(file?.key || '');
+    if (!oldKey || !oldKey.startsWith(prefixedLegacyPrefix)) continue;
+    const suffix = oldKey.slice(prefixedLegacyPrefix.length);
+    const newKey = `${prefixedNextPrefix}${suffix}`;
+    await s3Driver.move(bucket, oldKey, newKey);
+    movedCount += 1;
+  }
+
+  return movedCount;
+}
+
 async function ensureAgentDriveProvisioned(pg, workspaceId, agent, options = {}) {
   const uploadedBy = options.uploadedBy || null;
   const workspaceRoot = normalizeVirtualPath(await resolveWorkspaceDriveRoot(workspaceId));
   const agentsRoot = normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}`);
   const agentRoot = await resolveAgentDriveRoot(workspaceId, agent);
+  const legacyAgentRoot = normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}/${buildLegacyAgentFolderName(agent)}`);
+
+  if (legacyAgentRoot !== agentRoot) {
+    const migrated = await migrateLegacyAgentDriveRoot(pg, workspaceId, legacyAgentRoot, agentRoot);
+    if (migrated) {
+      await migrateLegacyAgentDriveObjects(pg, workspaceId, legacyAgentRoot, agentRoot);
+    }
+  }
+
   const folders = [
     agentsRoot,
     agentRoot,
@@ -182,23 +311,22 @@ async function findAssignedAgentForPath(pg, workspaceId, filePath) {
   }
 
   const relative = normalized.slice(prefix.length).replace(/^\/+/, '');
-  const agentId = relative.split('/')[0];
-  if (!agentId) return null;
+  const agentFolder = relative.split('/')[0];
+  if (!agentFolder) return null;
 
   const result = await pg.query(
     `SELECT id, name, username, workspace_id
      FROM ${SCHEMA}.agents
-     WHERE workspace_id = $1
-       AND id::text = $2
-     LIMIT 1`,
-    [workspaceId, agentId]
+     WHERE workspace_id = $1`,
+    [workspaceId]
   );
 
-  if (!result.rows[0]) return null;
+  const agent = (result.rows || []).find((row) => buildAgentFolderCandidates(row).includes(agentFolder));
+  if (!agent) return null;
 
   return {
-    agent: result.rows[0],
-    agentDriveRoot: normalizeVirtualPath(`${prefix}/${agentId}`),
+    agent,
+    agentDriveRoot: normalizeVirtualPath(`${prefix}/${buildAgentFolderName(agent)}`),
   };
 }
 
@@ -210,6 +338,8 @@ function buildAgentDrivePlacementInstruction(agentDriveRoot) {
 module.exports = {
   AGENTS_FOLDER_NAME,
   AGENT_SUBFOLDERS,
+  buildAgentFolderCandidates,
+  buildAgentFolderName,
   buildAgentDrivePlacementInstruction,
   ensureAgentDriveProvisioned,
   findAssignedAgentForPath,
