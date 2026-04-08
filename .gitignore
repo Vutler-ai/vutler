@@ -4,6 +4,10 @@ node_modules/
 !.env.example
 .next/
 dist/
+!packages/nexus/dist/
+packages/nexus/dist/*
+!packages/nexus/dist/vutler-nexus-macos.dmg
+!packages/nexus/dist/vutler-nexus-windows.exe
 *.log
 .DS_Store
 ._*
