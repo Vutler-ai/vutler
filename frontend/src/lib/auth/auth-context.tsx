@@ -41,7 +41,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchMe = useCallback(async (): Promise<void> => {
     try {
-      const profile = await apiFetch<UserProfile>('/api/v1/auth/me');
+      const response = await apiFetch<{ user?: UserProfile } | UserProfile>('/api/v1/auth/me');
+      const profile = 'user' in response && response.user ? response.user : response;
       setUser(profile);
     } catch {
       // Token invalid or expired
@@ -82,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: response.user.email,
         display_name: response.user.name,
         avatar_url: null,
-        role: 'user',
+        role: response.user.role,
       });
     } else {
       await fetchMe();
