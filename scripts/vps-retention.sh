@@ -5,6 +5,7 @@ KEEP_API_IDS=${KEEP_API_IDS:-2}
 KEEP_FRONTEND_IDS=${KEEP_FRONTEND_IDS:-2}
 KEEP_DEPLOY_DIRS=${KEEP_DEPLOY_DIRS:-2}
 KEEP_FRONTEND_BACKUPS=${KEEP_FRONTEND_BACKUPS:-1}
+DEPLOY_TMP_ROOT=${VUTLER_DEPLOY_REMOTE_TMP:-/mnt/data/vutler-deploy-tmp}
 
 declare -A KEEP_IMAGE_IDS=()
 declare -A SEEN_IDS=()
@@ -56,6 +57,13 @@ cleanup_deploy_artifacts() {
   for ((i=KEEP_DEPLOY_DIRS; i<${#deploys[@]}; i++)); do
     rm -rf "${deploys[$i]}" 2>/dev/null || true
   done
+
+  if [ -d "$DEPLOY_TMP_ROOT" ]; then
+    mapfile -t deploys < <(find "$DEPLOY_TMP_ROOT" -maxdepth 1 \( -name 'vutler-deploy-*' -o -name 'vutler-deploy-*.tar' -o -name 'vutler-api-live-audit-*' -o -name 'vutler-api-live-audit-*.tar' \) -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+    for ((i=KEEP_DEPLOY_DIRS; i<${#deploys[@]}; i++)); do
+      rm -rf "${deploys[$i]}" 2>/dev/null || true
+    done
+  fi
 
   mapfile -t backups < <(find /home/ubuntu -maxdepth 1 \( -name 'vutler-frontend.backup.*' -o -name 'vutler-frontend-backup-*' -o -name 'vutler-frontend-backups' \) -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
   for ((i=KEEP_FRONTEND_BACKUPS; i<${#backups[@]}; i++)); do

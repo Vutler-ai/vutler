@@ -6,6 +6,7 @@ TARGET_REF="origin/main"
 REMOTE_USER="${VUTLER_DEPLOY_USER:-ubuntu}"
 REMOTE_HOST="${VUTLER_DEPLOY_HOST:-83.228.222.180}"
 SSH_KEY="${VUTLER_DEPLOY_SSH_KEY:-$HOME/.ssh/vps-ssh-key.pem}"
+REMOTE_TMP_ROOT="${VUTLER_DEPLOY_REMOTE_TMP:-/mnt/data/vutler-deploy-tmp}"
 DEPLOY_FRONTEND=0
 SKIP_SMOKE=0
 AUDIT_ONLY=0
@@ -25,6 +26,7 @@ Options:
   --host <host>       Override VPS host. Default: 83.228.222.180
   --user <user>       Override SSH user. Default: ubuntu
   --key <path>        Override SSH private key path.
+  --remote-tmp <dir>  Override VPS temp root. Default: /mnt/data/vutler-deploy-tmp
   --keep-tmp          Keep local temporary files after exit.
   -h, --help          Show this help.
 EOF
@@ -89,6 +91,11 @@ while [ $# -gt 0 ]; do
       SSH_KEY="$2"
       shift 2
       ;;
+    --remote-tmp)
+      [ $# -ge 2 ] || fail "--remote-tmp requires a value"
+      REMOTE_TMP_ROOT="$2"
+      shift 2
+      ;;
     --keep-tmp)
       KEEP_TMP=1
       shift
@@ -134,11 +141,11 @@ log "Preparing clean artifact for $TARGET_COMMIT"
 git -C "$ROOT_DIR" archive "$TARGET_COMMIT" | tar -xf - -C "$MAIN_DIR"
 
 if [ "$SKIP_AUDIT" = "0" ]; then
-  REMOTE_LIVE_DIR="/tmp/vutler-api-live-audit-$SHORT_COMMIT"
-  REMOTE_LIVE_TAR="/tmp/vutler-api-live-audit-$SHORT_COMMIT.tar"
+  REMOTE_LIVE_DIR="$REMOTE_TMP_ROOT/vutler-api-live-audit-$SHORT_COMMIT"
+  REMOTE_LIVE_TAR="$REMOTE_TMP_ROOT/vutler-api-live-audit-$SHORT_COMMIT.tar"
 
   log "Auditing live container parity against $TARGET_COMMIT"
-  ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "rm -rf '$REMOTE_LIVE_DIR' '$REMOTE_LIVE_TAR' && mkdir -p '$REMOTE_LIVE_DIR' && docker cp vutler-api:/app/. '$REMOTE_LIVE_DIR' && tar -C '$REMOTE_LIVE_DIR' -cf '$REMOTE_LIVE_TAR' ."
+  ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "mkdir -p '$REMOTE_TMP_ROOT' && rm -rf '$REMOTE_LIVE_DIR' '$REMOTE_LIVE_TAR' && mkdir -p '$REMOTE_LIVE_DIR' && docker cp vutler-api:/app/. '$REMOTE_LIVE_DIR' && tar -C '$REMOTE_LIVE_DIR' -cf '$REMOTE_LIVE_TAR' ."
   scp "${SSH_OPTS[@]}" "$SSH_TARGET:$REMOTE_LIVE_TAR" "$TMP_DIR/live.tar" >/dev/null
   tar -xf "$TMP_DIR/live.tar" -C "$LIVE_DIR"
 
@@ -190,13 +197,14 @@ PY
 fi
 
 LOCAL_TAR="$TMP_DIR/vutler-deploy-$TARGET_COMMIT.tar"
-REMOTE_TAR="/tmp/vutler-deploy-$TARGET_COMMIT.tar"
-REMOTE_DIR="/tmp/vutler-deploy-$TARGET_COMMIT"
+REMOTE_TAR="$REMOTE_TMP_ROOT/vutler-deploy-$TARGET_COMMIT.tar"
+REMOTE_DIR="$REMOTE_TMP_ROOT/vutler-deploy-$TARGET_COMMIT"
 
 log "Exporting artifact tarball"
 git -C "$ROOT_DIR" archive --format=tar "$TARGET_COMMIT" -o "$LOCAL_TAR"
 
 log "Uploading artifact to $SSH_TARGET"
+ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "mkdir -p '$REMOTE_TMP_ROOT'"
 scp "${SSH_OPTS[@]}" "$LOCAL_TAR" "$SSH_TARGET:$REMOTE_TAR" >/dev/null
 
 DEPLOY_LABEL="API"

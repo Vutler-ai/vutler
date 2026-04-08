@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_USER="${VUTLER_DEPLOY_USER:-ubuntu}"
 REMOTE_HOST="${VUTLER_DEPLOY_HOST:-83.228.222.180}"
 SSH_KEY="${VUTLER_DEPLOY_SSH_KEY:-$HOME/.ssh/vps-ssh-key.pem}"
+REMOTE_TMP_ROOT="${VUTLER_DEPLOY_REMOTE_TMP:-/mnt/data/vutler-deploy-tmp}"
 ROLLBACK_NOTE=""
 API_ONLY=0
 SKIP_SMOKE=0
@@ -20,6 +21,7 @@ Options:
   --host <host>           Override VPS host. Default: 83.228.222.180
   --user <user>           Override SSH user. Default: ubuntu
   --key <path>            Override SSH private key path.
+  --remote-tmp <dir>      Override VPS temp root. Default: /mnt/data/vutler-deploy-tmp
   -h, --help              Show this help.
 EOF
 }
@@ -67,6 +69,11 @@ while [ $# -gt 0 ]; do
       SSH_KEY="$2"
       shift 2
       ;;
+    --remote-tmp)
+      [ $# -ge 2 ] || fail "--remote-tmp requires a value"
+      REMOTE_TMP_ROOT="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -85,7 +92,7 @@ SSH_TARGET="${REMOTE_USER}@${REMOTE_HOST}"
 
 if [ -z "$ROLLBACK_NOTE" ]; then
   log "Resolving latest rollback note on $SSH_TARGET"
-  ROLLBACK_NOTE="$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "ls -1dt /tmp/vutler-deploy-*/rollback.env 2>/dev/null | head -1")"
+  ROLLBACK_NOTE="$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "ls -1dt '$REMOTE_TMP_ROOT'/vutler-deploy-*/rollback.env 2>/dev/null | head -1")"
 fi
 
 [ -n "$ROLLBACK_NOTE" ] || fail "No rollback note found on $SSH_TARGET"
