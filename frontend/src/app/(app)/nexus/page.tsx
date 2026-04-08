@@ -790,7 +790,7 @@ function DeployModal({
   const enterpriseDockerInstructions = `git clone https://github.com/Vutler-ai/vutler.git\ncd vutler/packages/nexus\ncat > .env <<'EOF'\nNEXUS_TOKEN=${token || '<token>'}\nNEXUS_SERVER=https://app.vutler.ai\nNODE_NAME=${nodeName.trim() || '<enterprise-node-name>'}\nEOF\ndocker compose up -d --build`;
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent);
-  const installerBaseUrl = 'https://github.com/Vutler-ai/vutler/releases/latest/download';
+  const installerBaseUrl = '/downloads';
 
   const isTokenStep = step === 'local-token' || step === 'ent-token';
   const modeQuota = mode === 'enterprise'
