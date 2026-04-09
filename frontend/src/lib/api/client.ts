@@ -14,6 +14,50 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || '';
 const SESSION_SYNC_PATH = '/internal/session';
 const SESSION_FEATURES_SYNC_PATH = '/internal/session/features';
 const ADMIN_SESSION_SYNC_PATH = '/internal/admin-session';
+const JWT_EXPIRY_SKEW_MS = 5_000;
+
+function decodeBase64Url(value: string): string | null {
+  try {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    return atob(padded);
+  } catch {
+    return null;
+  }
+}
+
+function isStoredJwtUsable(token: string | null): token is string {
+  if (!token) return false;
+
+  const [, payload] = token.split('.');
+  if (!payload) return false;
+
+  const decoded = decodeBase64Url(payload);
+  if (!decoded) return false;
+
+  try {
+    const parsed = JSON.parse(decoded) as { exp?: number };
+    if (typeof parsed.exp !== 'number') return false;
+    return parsed.exp * 1000 > Date.now() + JWT_EXPIRY_SKEW_MS;
+  } catch {
+    return false;
+  }
+}
+
+function getStoredJwtToken(storageKey: string): string | null {
+  if (typeof window === 'undefined') return null;
+
+  const token = localStorage.getItem(storageKey);
+  if (isStoredJwtUsable(token)) {
+    return token;
+  }
+
+  if (token) {
+    localStorage.removeItem(storageKey);
+  }
+
+  return null;
+}
 
 // ─── Auth utilities ───────────────────────────────────────────────────────────
 
@@ -41,8 +85,7 @@ function clearServerSessionCookies(): void {
 }
 
 export function getAuthToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  return getStoredJwtToken(AUTH_TOKEN_KEY);
 }
 
 export function setAuthToken(token: string): void {
@@ -136,8 +179,7 @@ export async function apiFetch<T>(
 // ─── Admin API helpers ───────────────────────────────────────────────────────
 
 export function getAdminToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(ADMIN_TOKEN_KEY);
+  return getStoredJwtToken(ADMIN_TOKEN_KEY);
 }
 
 export function setAdminToken(token: string): void {
