@@ -69,6 +69,10 @@ function isPublicPath(fullPath) {
   return PUBLIC_FULL_PATHS.some(p => fullPath === p || fullPath.startsWith(p + '/'));
 }
 
+function isAdminApiPath(fullPath) {
+  return fullPath === '/api/v1/admin' || fullPath.startsWith('/api/v1/admin/');
+}
+
 /**
  * Try to silently decode a JWT (for optional user context on public paths)
  */
@@ -266,6 +270,12 @@ async function authMiddleware(req, res, next) {
   if (isPublicPath(fullPath)) {
     // SECURITY: do NOT assign default workspace to unauthenticated requests (audit 2026-03-28)
     tryDecodeJWT(req);
+    return next();
+  }
+
+  // Admin API routes run their own auth layer (`api/admin.js`).
+  // Let them receive X-Admin-Token / Bearer admin sessions directly.
+  if (isAdminApiPath(fullPath)) {
     return next();
   }
 

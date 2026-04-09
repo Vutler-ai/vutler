@@ -76,7 +76,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Webhook-Secret', 'X-Vutler-Webhook-Secret', 'X-Postal-Signature', 'X-API-Key', 'X-Workspace-Id'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Webhook-Secret', 'X-Vutler-Webhook-Secret', 'X-Postal-Signature', 'X-API-Key', 'X-Admin-Token', 'X-Workspace-Id'],
 }));
 
 // ---------------------------------------------------------------------------
