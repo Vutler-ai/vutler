@@ -65,6 +65,122 @@ function buildStoredEventSelect(columns) {
   ].join(', ');
 }
 
+function parseCron(expr) {
+  if (!expr || typeof expr !== 'string') return null;
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  return {
+    minute: parts[0],
+    hour: parts[1],
+    dayOfMonth: parts[2],
+    month: parts[3],
+    dayOfWeek: parts[4],
+  };
+}
+
+function fieldMatches(fieldStr, value) {
+  if (fieldStr === '*') return true;
+
+  for (const part of fieldStr.split(',')) {
+    if (part.includes('/')) {
+      const [range, step] = part.split('/');
+      const stepNum = parseInt(step, 10);
+      if (Number.isNaN(stepNum)) continue;
+      if (range === '*') {
+        if (value % stepNum === 0) return true;
+      } else if (range.includes('-')) {
+        const [start, end] = range.split('-').map(Number);
+        if (value >= start && value <= end && (value - start) % stepNum === 0) return true;
+      }
+      continue;
+    }
+
+    if (part.includes('-')) {
+      const [start, end] = part.split('-').map(Number);
+      if (value >= start && value <= end) return true;
+      continue;
+    }
+
+    if (parseInt(part, 10) === value) return true;
+  }
+
+  return false;
+}
+
+function cronMatchesDate(cronExpr, date) {
+  const parsed = parseCron(cronExpr);
+  if (!parsed) return false;
+  return (
+    fieldMatches(parsed.minute, date.getMinutes())
+    && fieldMatches(parsed.hour, date.getHours())
+    && fieldMatches(parsed.dayOfMonth, date.getDate())
+    && fieldMatches(parsed.month, date.getMonth() + 1)
+    && fieldMatches(parsed.dayOfWeek, date.getDay())
+  );
+}
+
+function getNextRun(cronExpr, fromDate = new Date()) {
+  if (!parseCron(cronExpr)) return null;
+
+  const cursor = new Date(fromDate.getTime());
+  cursor.setSeconds(0, 0);
+  cursor.setMinutes(cursor.getMinutes() + 1);
+
+  const limit = new Date(cursor.getTime() + 366 * 24 * 60 * 60 * 1000);
+  while (cursor <= limit) {
+    if (cronMatchesDate(cronExpr, cursor)) return new Date(cursor);
+    cursor.setMinutes(cursor.getMinutes() + 1);
+  }
+
+  return null;
+}
+
+function parseTaskTemplate(rawTemplate) {
+  if (!rawTemplate) return {};
+  if (typeof rawTemplate === 'string') {
+    try {
+      return JSON.parse(rawTemplate) || {};
+    } catch (_) {
+      return {};
+    }
+  }
+  return typeof rawTemplate === 'object' ? rawTemplate : {};
+}
+
+function addMinutes(value, minutes = 30) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Date(date.getTime() + minutes * 60 * 1000).toISOString();
+}
+
+function buildOccurrenceKey(event) {
+  return [
+    event.source || 'manual',
+    event.sourceId || '',
+    event.start || '',
+    event.title || '',
+  ].join('|');
+}
+
+function dedupeEvents(events = []) {
+  const byKey = new Map();
+  for (const event of events) {
+    const key = buildOccurrenceKey(event);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, event);
+      continue;
+    }
+
+    const currentScore = (event.readOnly ? 1 : 0) + (event.id?.startsWith('scheduled-') ? 2 : 0);
+    const existingScore = (existing.readOnly ? 1 : 0) + (existing.id?.startsWith('scheduled-') ? 2 : 0);
+    if (currentScore >= existingScore) {
+      byKey.set(key, event);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
 /* ── Virtual-event builders ─────────────────────────────────────────────────── */
 
 async function fetchGoalEvents(start, end) {
@@ -119,6 +235,76 @@ async function fetchBillingEvents(start, end) {
   } catch (_) { return []; }
 }
 
+async function fetchScheduledTaskEvents(workspaceId, start, end) {
+  try {
+    const startBound = start ? new Date(start) : new Date();
+    const endBound = end
+      ? new Date(end)
+      : new Date(startBound.getTime() + 31 * 24 * 60 * 60 * 1000);
+    if (Number.isNaN(startBound.getTime()) || Number.isNaN(endBound.getTime()) || endBound < startBound) {
+      return [];
+    }
+
+    const result = await pool.query(
+      `SELECT id, workspace_id, agent_id, cron_expression, description, task_template, is_active, next_run_at
+         FROM ${SCHEMA}.scheduled_tasks
+        WHERE workspace_id = $1
+          AND is_active = TRUE
+          AND next_run_at IS NOT NULL
+        ORDER BY next_run_at ASC
+        LIMIT 100`,
+      [workspaceId]
+    );
+
+    const events = [];
+    for (const schedule of result.rows) {
+      const cron = String(schedule.cron_expression || '').trim();
+      if (!parseCron(cron)) continue;
+
+      let occurrence = schedule.next_run_at ? new Date(schedule.next_run_at) : null;
+      if (!occurrence || Number.isNaN(occurrence.getTime())) continue;
+
+      while (occurrence && occurrence < startBound) {
+        occurrence = getNextRun(cron, occurrence);
+      }
+
+      const template = parseTaskTemplate(schedule.task_template);
+      let count = 0;
+      while (occurrence && occurrence <= endBound && count < 90) {
+        const startIso = occurrence.toISOString();
+        events.push({
+          id: `scheduled-${schedule.id}-${startIso}`,
+          title: template.title || schedule.description || 'Scheduled run',
+          description: [
+            schedule.description || 'Recurring scheduled task.',
+            `Cron: ${cron}`,
+            template.description || null,
+          ].filter(Boolean).join('\n'),
+          start: startIso,
+          end: addMinutes(startIso),
+          allDay: false,
+          color: '#f97316',
+          source: 'scheduled_task',
+          sourceId: String(schedule.id),
+          readOnly: true,
+          metadata: {
+            entityType: 'scheduled_task_occurrence',
+            scheduleId: schedule.id,
+            agentId: schedule.agent_id || null,
+            cronExpression: cron,
+          },
+        });
+        occurrence = getNextRun(cron, occurrence);
+        count += 1;
+      }
+    }
+
+    return events;
+  } catch (_) {
+    return [];
+  }
+}
+
 /* ── Routes ─────────────────────────────────────────────────────────────────── */
 
 // GET /api/v1/calendar — merged stored + virtual events
@@ -129,10 +315,11 @@ router.get('/', async (req, res) => {
     const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
 
     // Decide which sources to include
-    const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || (source && source.startsWith('agent'));
+    const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || source === 'scheduled_task' || (source && source.startsWith('agent'));
     const wantGoals  = !source || source === 'all' || source === 'goal';
     const wantBilling = !source || source === 'all' || source === 'billing';
     const wantGoogle = !source || source === 'all' || source === 'google';
+    const wantScheduledTasks = !source || source === 'all' || source === 'scheduled_task';
 
     const promises = [];
 
@@ -211,8 +398,14 @@ router.get('/', async (req, res) => {
       promises.push(googlePromise);
     }
 
+    if (wantScheduledTasks) {
+      promises.push(fetchScheduledTaskEvents(workspaceId, start, end));
+    }
+
     const results = await Promise.all(promises);
-    const events = results.flat().sort((a, b) => new Date(a.start) - new Date(b.start)).slice(0, 200);
+    const events = dedupeEvents(results.flat())
+      .sort((a, b) => new Date(a.start) - new Date(b.start))
+      .slice(0, 200);
 
     res.json({ success: true, events });
   } catch (err) {

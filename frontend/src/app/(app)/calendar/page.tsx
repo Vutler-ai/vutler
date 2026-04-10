@@ -41,6 +41,7 @@ const SOURCE_CONFIG: Record<string, { label: string; className: string; Icon: Re
   goal:    { label: "Goal",    className: "bg-amber-500/20 text-amber-400 border-amber-500/30",  Icon: Target },
   billing: { label: "Billing", className: "bg-purple-500/20 text-purple-400 border-purple-500/30", Icon: CreditCard },
   agent:   { label: "Agent",   className: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",     Icon: Bot },
+  scheduled_task: { label: "Schedule", className: "bg-orange-500/20 text-orange-400 border-orange-500/30", Icon: Clock },
 };
 
 function getSourceConfig(source?: string) {
