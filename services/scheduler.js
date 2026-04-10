@@ -44,11 +44,14 @@ const SCHEDULED_TASK_RUN_COLUMNS = [
   'completed_at',
 ];
 const MAX_SCHEDULE_JITTER_MS = Number(process.env.SCHEDULER_MAX_JITTER_MS) || 5_000;
+const SCHEDULE_RECONCILE_INTERVAL_MS = Number(process.env.SCHEDULER_RECONCILE_INTERVAL_MS) || 60_000;
 
 // ── In-memory cron registry ──────────────────────────────────────────────────
 // Map<scheduleId, { timer: NodeJS.Timeout, schedule: Object }>
 const _activeTimers = new Map();
+const _executingSchedules = new Set();
 let schedulerSchemaPromise = null;
+let reconcileTimer = null;
 
 function resolveRequiredWorkspaceId(workspaceId) {
   const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
@@ -353,6 +356,18 @@ async function createSchedule({ workspaceId, agentId, cron, taskTemplate, descri
   return schedule;
 }
 
+async function executeSchedule(schedule) {
+  if (!schedule?.id) return null;
+  if (_executingSchedules.has(schedule.id)) return null;
+
+  _executingSchedules.add(schedule.id);
+  try {
+    return await _executeScheduledTask(schedule);
+  } finally {
+    _executingSchedules.delete(schedule.id);
+  }
+}
+
 /**
  * activateSchedule — start (or restart) the setInterval-based cron timer
  * for a given schedule row.
@@ -389,7 +404,7 @@ function activateSchedule(schedule) {
         );
         if (!fresh.rows.length || !fresh.rows[0].is_active) return;
 
-        await _executeScheduledTask(fresh.rows[0]);
+        await executeSchedule(fresh.rows[0]);
       } catch (err) {
         console.error(`[Scheduler] Error executing schedule ${id}:`, err.message);
       } finally {
@@ -552,6 +567,28 @@ async function updateSchedule(workspaceId, scheduleId, updates = {}) {
   });
 
   return updated;
+}
+
+async function reconcileDueSchedules(limit = 20) {
+  const result = await pool.query(
+    `SELECT *
+       FROM ${SCHEMA}.scheduled_tasks
+      WHERE is_active = TRUE
+        AND next_run_at IS NOT NULL
+        AND next_run_at <= NOW()
+      ORDER BY next_run_at ASC
+      LIMIT $1`,
+    [limit]
+  );
+
+  let executed = 0;
+  for (const schedule of result.rows) {
+    if (_executingSchedules.has(schedule.id)) continue;
+    await executeSchedule(schedule);
+    executed += 1;
+  }
+
+  return executed;
 }
 
 /**
@@ -759,6 +796,17 @@ async function initScheduler() {
     console.log('[Scheduler] Initializing...');
     await ensureSchedulerTables();
     await loadActiveSchedules();
+    await reconcileDueSchedules().catch((err) => {
+      console.warn('[Scheduler] Initial reconciliation failed:', err.message);
+    });
+    if (!reconcileTimer) {
+      reconcileTimer = setInterval(() => {
+        reconcileDueSchedules().catch((err) => {
+          console.warn('[Scheduler] Reconciliation failed:', err.message);
+        });
+      }, SCHEDULE_RECONCILE_INTERVAL_MS);
+      if (typeof reconcileTimer.unref === 'function') reconcileTimer.unref();
+    }
     console.log('[Scheduler] Ready.');
   } catch (err) {
     console.error('[Scheduler] Init failed:', err.message);
@@ -856,6 +904,7 @@ module.exports = {
   activateSchedule,
   deactivateSchedule,
   loadActiveSchedules,
+  reconcileDueSchedules,
 
   // Execution
   _executeScheduledTask,

@@ -6,18 +6,25 @@ describe('scheduler calendar sync', () => {
   let deleteCalendarEvent;
   let setTimeoutSpy;
   let clearTimeoutSpy;
+  let createTaskMock;
 
   beforeEach(() => {
     jest.resetModules();
     query = jest.fn();
     syncScheduleCalendarEvent = jest.fn().mockResolvedValue(null);
     deleteCalendarEvent = jest.fn().mockResolvedValue(false);
+    createTaskMock = jest.fn().mockResolvedValue({
+      id: 'task-from-schedule-1',
+      assigned_agent: 'max',
+    });
     setTimeoutSpy = jest.spyOn(global, 'setTimeout').mockReturnValue('timer-1');
     clearTimeoutSpy = jest.spyOn(global, 'clearTimeout').mockImplementation(() => {});
 
     jest.doMock('../lib/vaultbrix', () => ({ query }));
     jest.doMock('../services/llmRouter', () => ({ chat: jest.fn() }));
-    jest.doMock('../services/swarmCoordinator', () => ({ getSwarmCoordinator: jest.fn() }));
+    jest.doMock('../services/swarmCoordinator', () => ({
+      getSwarmCoordinator: jest.fn(() => ({ createTask: createTaskMock })),
+    }));
     jest.doMock('../services/orchestration/runEngine', () => ({ getRunEngine: jest.fn() }));
     jest.doMock('../services/orchestration/runStore', () => ({ ensureRunForTask: jest.fn() }));
     jest.doMock('../lib/schemaReadiness', () => ({
@@ -85,5 +92,45 @@ describe('scheduler calendar sync', () => {
       source: 'scheduled_task',
       sourceId: 'schedule-9',
     });
+  });
+
+  test('reconciles overdue schedules that were not executed on time', async () => {
+    query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'schedule-overdue-1',
+          workspace_id: 'ws-1',
+          agent_id: 'max',
+          cron_expression: '0 9 * * *',
+          description: 'Overdue social cadence',
+          task_template: {
+            title: 'Publish next overdue post',
+            description: 'Catch up the missed daily post.',
+            priority: 'high',
+          },
+          is_active: true,
+          next_run_at: '2026-04-10T09:00:00.000Z',
+          run_count: 0,
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: 'run-1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const scheduler = require('../services/scheduler');
+    const executed = await scheduler.reconcileDueSchedules();
+
+    expect(executed).toBe(1);
+    expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Publish next overdue post',
+      description: 'Catch up the missed daily post.',
+      for_agent_id: 'max',
+      workspace_id: 'ws-1',
+      metadata: expect.objectContaining({
+        scheduled: true,
+        schedule_id: 'schedule-overdue-1',
+      }),
+    }));
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('UPDATE tenant_vutler.scheduled_tasks'), expect.any(Array));
   });
 });
