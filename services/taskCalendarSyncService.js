@@ -5,6 +5,7 @@ const { getExistingColumns } = require('../lib/schemaReadiness');
 
 const SCHEMA = 'tenant_vutler';
 const SOCIAL_TASK_EVENT_SOURCE = 'agent_social_schedule';
+const MATERIALIZED_TASK_EVENT_SOURCE = 'materialized_task';
 const SCHEDULE_EVENT_SOURCE = 'scheduled_task';
 const DEFAULT_EVENT_DURATION_MINUTES = 30;
 
@@ -234,7 +235,7 @@ async function deleteCalendarEvent({ workspaceId, source, sourceId, title, start
       RETURNING id`,
     values
   );
-  return result.rows.length > 0;
+  return Array.isArray(result?.rows) ? result.rows.length > 0 : false;
 }
 
 function buildSocialTaskEvent(task = {}) {
@@ -338,15 +339,66 @@ function buildScheduleEvent(schedule = {}) {
   };
 }
 
+function buildMaterializedTaskEvent(task = {}) {
+  const metadata = parseJsonObject(task.metadata);
+  const dueAt = normalizeTimestamp(task.due_date || task.dueDate || metadata.due_date);
+  if (!dueAt || !metadata.materialized_schedule_id) {
+    return null;
+  }
+
+  const status = String(task.status || '').trim().toLowerCase();
+  if (status === 'cancelled' || status === 'canceled') {
+    return null;
+  }
+
+  const occurrenceIndex = Number(metadata.materialized_occurrence_index || 0);
+  const occurrenceTotal = Number(metadata.materialized_occurrence_total || 0);
+  const title = `Scheduled task: ${truncateText(task.title || 'Planned task', 72)}`;
+  const description = [
+    'Materialized finite schedule task.',
+    `Task status: ${task.status || 'pending'}`,
+    occurrenceIndex > 0 && occurrenceTotal > 0 ? `Occurrence: ${occurrenceIndex}/${occurrenceTotal}` : null,
+    '',
+    task.description || '',
+  ].filter(Boolean).join('\n');
+
+  return {
+    workspaceId: task.workspace_id || metadata.workspace_id || null,
+    source: MATERIALIZED_TASK_EVENT_SOURCE,
+    sourceId: task.id || null,
+    title,
+    description,
+    start: dueAt,
+    end: addMinutes(dueAt),
+    color: '#14b8a6',
+    metadata: {
+      entityType: 'materialized_task',
+      task_id: task.id || null,
+      task_status: task.status || 'pending',
+      assigned_agent: task.assigned_agent || task.assignee || null,
+      materialized_schedule_id: metadata.materialized_schedule_id || null,
+      materialized_occurrence_index: occurrenceIndex || null,
+      materialized_occurrence_total: occurrenceTotal || null,
+    },
+  };
+}
+
 async function syncTaskCalendarEvent(task = {}) {
   const workspaceId = task.workspace_id || parseJsonObject(task.metadata).workspace_id || null;
   if (!workspaceId || !task.id) return null;
 
-  const event = buildSocialTaskEvent(task);
+  const event = buildSocialTaskEvent(task) || buildMaterializedTaskEvent(task);
   if (!event) {
     await deleteCalendarEvent({
       workspaceId,
       source: SOCIAL_TASK_EVENT_SOURCE,
+      sourceId: task.id,
+      title: task.title || null,
+      start: normalizeTimestamp(task.due_date || task.dueDate),
+    });
+    await deleteCalendarEvent({
+      workspaceId,
+      source: MATERIALIZED_TASK_EVENT_SOURCE,
       sourceId: task.id,
       title: task.title || null,
       start: normalizeTimestamp(task.due_date || task.dueDate),
@@ -377,8 +429,10 @@ async function syncScheduleCalendarEvent(schedule = {}) {
 }
 
 module.exports = {
+  MATERIALIZED_TASK_EVENT_SOURCE,
   SOCIAL_TASK_EVENT_SOURCE,
   SCHEDULE_EVENT_SOURCE,
+  buildMaterializedTaskEvent,
   buildScheduleEvent,
   buildSocialTaskEvent,
   deleteCalendarEvent,

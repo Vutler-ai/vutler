@@ -8,6 +8,7 @@
  * at boot so nothing is lost on server restart.
  */
 
+const { randomUUID } = require('crypto');
 const pool = require('../lib/vaultbrix');
 const { chat: llmChat } = require('./llmRouter');
 const { getSwarmCoordinator } = require('./swarmCoordinator');
@@ -167,6 +168,51 @@ function parseTaskTemplate(template) {
     }
   }
   return template && typeof template === 'object' ? template : {};
+}
+
+function normalizePositiveInteger(value, fallback = null) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const normalized = Math.floor(parsed);
+  return normalized > 0 ? normalized : fallback;
+}
+
+function normalizeIsoDateTime(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
+
+function addReminderOffset(value, offsetMinutes = 30) {
+  const start = normalizeIsoDateTime(value);
+  if (!start || !Number.isFinite(offsetMinutes) || offsetMinutes <= 0) return null;
+  return new Date(new Date(start).getTime() - offsetMinutes * 60 * 1000).toISOString();
+}
+
+function computeRunSeries(cronExpr, count, startAt = null) {
+  const occurrences = [];
+  const targetCount = normalizePositiveInteger(count, 0);
+  if (!targetCount) return occurrences;
+
+  let cursor = startAt ? new Date(startAt) : new Date();
+  if (Number.isNaN(cursor.getTime())) cursor = new Date();
+
+  const anchor = new Date(cursor.getTime());
+  anchor.setSeconds(0, 0);
+  if (startAt && anchor.getTime() === cursor.getTime() && cronMatchesDate(cronExpr, anchor)) {
+    occurrences.push(anchor.toISOString());
+    cursor = anchor;
+  }
+
+  for (let index = occurrences.length; index < targetCount; index += 1) {
+    const nextRun = getNextRun(cronExpr, cursor);
+    if (!nextRun) break;
+    occurrences.push(nextRun.toISOString());
+    cursor = nextRun;
+  }
+
+  return occurrences;
 }
 
 function computeScheduleJitterMs(scheduleId, maxMs = MAX_SCHEDULE_JITTER_MS) {
@@ -591,6 +637,72 @@ async function reconcileDueSchedules(limit = 20) {
   return executed;
 }
 
+async function materializeFiniteSchedule({
+  workspaceId,
+  agentId,
+  cron,
+  description,
+  taskTemplate,
+  createdBy,
+  occurrences,
+  startAt = null,
+}) {
+  const totalOccurrences = normalizePositiveInteger(occurrences, null);
+  if (!totalOccurrences) {
+    throw new Error('occurrences is required to materialize a finite schedule');
+  }
+
+  const runSeries = computeRunSeries(cron, totalOccurrences, startAt);
+  if (runSeries.length === 0) {
+    throw new Error('Could not compute any upcoming runs for the requested schedule');
+  }
+
+  const coordinator = getSwarmCoordinator();
+  const materializedScheduleId = randomUUID();
+  const createdTasks = [];
+
+  for (let index = 0; index < runSeries.length; index += 1) {
+    const dueAt = runSeries[index];
+    const occurrenceNumber = index + 1;
+    const task = await coordinator.createTask({
+      title: totalOccurrences > 1
+        ? `${taskTemplate.title} (${occurrenceNumber}/${totalOccurrences})`
+        : taskTemplate.title,
+      description: taskTemplate.description,
+      priority: taskTemplate.priority || 'P2',
+      for_agent_id: agentId || undefined,
+      workspace_id: workspaceId,
+      due_date: dueAt,
+      reminder_at: addReminderOffset(dueAt),
+      metadata: {
+        ...(taskTemplate.metadata || {}),
+        origin: taskTemplate.metadata?.origin || 'materialized_schedule',
+        materialized_schedule_id: materializedScheduleId,
+        materialized_schedule_description: description,
+        materialized_occurrence_index: occurrenceNumber,
+        materialized_occurrence_total: totalOccurrences,
+        materialized_occurrence_at: dueAt,
+        materialized_cron_expression: cron,
+        created_by: createdBy || null,
+      },
+    }, workspaceId);
+    createdTasks.push(task);
+  }
+
+  return {
+    success: true,
+    materialized: true,
+    materialized_schedule_id: materializedScheduleId,
+    occurrence_count: createdTasks.length,
+    task_ids: createdTasks.map((task) => task.id).filter(Boolean),
+    first_run_at: runSeries[0] || null,
+    last_run_at: runSeries[runSeries.length - 1] || null,
+    description,
+    cron,
+    message: `Materialized ${createdTasks.length} dated task(s) for "${description}".`,
+  };
+}
+
 /**
  * loadActiveSchedules — called at boot to re-arm all active schedules.
  * Pass a workspaceId to restrict (useful for tests), or omit for all.
@@ -841,6 +953,14 @@ const SCHEDULE_TOOL = {
           type: 'string',
           description: 'Detailed description of what the task should do',
         },
+        occurrences: {
+          type: 'integer',
+          description: 'Optional finite number of dated tasks to materialize immediately. Use for requests like "for the next 30 days".',
+        },
+        start_at: {
+          type: 'string',
+          description: 'Optional ISO 8601 anchor datetime for the first occurrence calculation.',
+        },
         priority: {
           type: 'string',
           enum: ['P0', 'P1', 'P2', 'P3'],
@@ -857,8 +977,35 @@ const SCHEDULE_TOOL = {
  * Pass workspaceId and optional agentId from the chat context.
  */
 async function handleScheduleTool(toolInput, { workspaceId, agentId, createdBy } = {}) {
-  const { cron, description, task_title, task_description, priority } = toolInput;
+  const {
+    cron,
+    description,
+    task_title,
+    task_description,
+    priority,
+    occurrences,
+    start_at,
+  } = toolInput;
   const resolvedWorkspaceId = resolveRequiredWorkspaceId(workspaceId);
+  const normalizedOccurrences = normalizePositiveInteger(occurrences, null);
+  const normalizedStartAt = normalizeIsoDateTime(start_at);
+
+  if (normalizedOccurrences) {
+    return materializeFiniteSchedule({
+      workspaceId: resolvedWorkspaceId,
+      agentId: agentId || null,
+      cron,
+      description,
+      createdBy: createdBy || null,
+      occurrences: normalizedOccurrences,
+      startAt: normalizedStartAt,
+      taskTemplate: {
+        title: task_title,
+        description: task_description,
+        priority: priority || 'P2',
+      },
+    });
+  }
 
   const schedule = await createSchedule({
     workspaceId: resolvedWorkspaceId,
@@ -905,6 +1052,7 @@ module.exports = {
   deactivateSchedule,
   loadActiveSchedules,
   reconcileDueSchedules,
+  materializeFiniteSchedule,
 
   // Execution
   _executeScheduledTask,
@@ -917,5 +1065,6 @@ module.exports = {
   resolveRequiredWorkspaceId,
   parseCron,
   getNextRun,
+  computeRunSeries,
   cronMatchesDate,
 };

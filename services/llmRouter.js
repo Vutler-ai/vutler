@@ -1948,7 +1948,7 @@ async function chat(agent, messages, db, opts = {}) {
     effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}${accountHint}`;
   }
   if (scheduleTools.length > 0) {
-    effectiveSystemPrompt += '\n\nYou can create recurring follow-up execution with vutler_create_schedule(). Use it when the user asks for work to happen on future days or on a recurring cadence. Do not merely promise future execution for multi-day sequences; create a schedule or dated task.';
+    effectiveSystemPrompt += '\n\nYou can create follow-up execution with vutler_create_schedule(). Use it when the user asks for work to happen on future days or on a recurring cadence. For finite requests like "for the next 30 days", use occurrences to materialize dated tasks immediately instead of creating only an abstract recurring schedule. Do not merely promise future execution for multi-day sequences; create a schedule or dated tasks.';
   }
   if (hasCodeExecution) {
     effectiveSystemPrompt += '\n\nYou can execute short JavaScript or Python snippets with run_code_in_sandbox(). Use it when a result depends on actual code execution, computation, parsing, or validation. Prefer concise snippets, avoid unnecessary execution, and never assume shell or host access.';

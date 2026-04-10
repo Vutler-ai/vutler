@@ -315,7 +315,7 @@ router.get('/', async (req, res) => {
     const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
 
     // Decide which sources to include
-    const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || source === 'scheduled_task' || (source && source.startsWith('agent'));
+    const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || source === 'scheduled_task' || source === 'materialized_task' || (source && source.startsWith('agent'));
     const wantGoals  = !source || source === 'all' || source === 'goal';
     const wantBilling = !source || source === 'all' || source === 'billing';
     const wantGoogle = !source || source === 'all' || source === 'google';

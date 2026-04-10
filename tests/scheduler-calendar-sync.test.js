@@ -133,4 +133,58 @@ describe('scheduler calendar sync', () => {
     }));
     expect(query).toHaveBeenCalledWith(expect.stringContaining('UPDATE tenant_vutler.scheduled_tasks'), expect.any(Array));
   });
+
+  test('materializes finite multi-day sequences into dated tasks immediately', async () => {
+    const scheduler = require('../services/scheduler');
+    const expectedSeries = scheduler.computeRunSeries('0 9 * * *', 3, '2026-04-10T08:00:00.000Z');
+    const result = await scheduler.handleScheduleTool({
+      cron: '0 9 * * *',
+      description: 'Daily social sequence for the next 3 days',
+      task_title: 'Publish next Vutler post',
+      task_description: 'Publish the next approved Vutler post.',
+      priority: 'P1',
+      occurrences: 3,
+      start_at: '2026-04-10T08:00:00.000Z',
+    }, {
+      workspaceId: 'ws-1',
+      agentId: 'max',
+      createdBy: 'max',
+    });
+
+    expect(createTaskMock).toHaveBeenCalledTimes(3);
+    expect(createTaskMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        title: 'Publish next Vutler post (1/3)',
+        due_date: expectedSeries[0],
+        workspace_id: 'ws-1',
+        metadata: expect.objectContaining({
+          origin: 'materialized_schedule',
+          materialized_occurrence_index: 1,
+          materialized_occurrence_total: 3,
+        }),
+      }),
+      'ws-1'
+    );
+    expect(result).toMatchObject({
+      success: true,
+      materialized: true,
+      occurrence_count: 3,
+      first_run_at: expectedSeries[0],
+      last_run_at: expectedSeries[2],
+    });
+  });
+
+  test('includes start_at when it already matches the requested occurrence boundary', () => {
+    const scheduler = require('../services/scheduler');
+    const startAt = '2026-04-10T09:00:00.000';
+    const expectedFirst = new Date(startAt).toISOString();
+    const expectedSecond = scheduler.getNextRun('0 9 * * *', new Date(startAt)).toISOString();
+    const series = scheduler.computeRunSeries('0 9 * * *', 2, startAt);
+
+    expect(series).toEqual([
+      expectedFirst,
+      expectedSecond,
+    ]);
+  });
 });

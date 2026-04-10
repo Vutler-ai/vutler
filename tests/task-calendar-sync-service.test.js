@@ -161,4 +161,58 @@ describe('taskCalendarSyncService', () => {
       source_id: 'schedule-1',
     });
   });
+
+  test('creates a Vutler calendar event for a materialized finite-schedule task', async () => {
+    query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'event-task-1',
+          title: 'Scheduled task: Publish next Vutler post (2/27)',
+          source: 'materialized_task',
+          source_id: 'task-27',
+        }],
+      });
+
+    const { syncTaskCalendarEvent } = require('../services/taskCalendarSyncService');
+    const event = await syncTaskCalendarEvent({
+      id: 'task-27',
+      workspace_id: 'ws-1',
+      title: 'Publish next Vutler post (2/27)',
+      description: 'Publish the next approved post in sequence.',
+      status: 'pending',
+      assigned_agent: 'max',
+      due_date: '2026-04-12T09:00:00.000Z',
+      metadata: {
+        origin: 'materialized_schedule',
+        materialized_schedule_id: 'mat-1',
+        materialized_occurrence_index: 2,
+        materialized_occurrence_total: 27,
+      },
+    });
+
+    expect(query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('SELECT id'),
+      ['ws-1', 'materialized_task', 'task-27']
+    );
+    expect(query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('INSERT INTO tenant_vutler.calendar_events'),
+      expect.arrayContaining([
+        'ws-1',
+        'Scheduled task: Publish next Vutler post (2/27)',
+        '2026-04-12T09:00:00.000Z',
+        '2026-04-12T09:30:00.000Z',
+        '#14b8a6',
+        'materialized_task',
+        'task-27',
+      ])
+    );
+    expect(event).toMatchObject({
+      id: 'event-task-1',
+      source: 'materialized_task',
+      source_id: 'task-27',
+    });
+  });
 });
