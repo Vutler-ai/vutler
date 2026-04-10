@@ -6,6 +6,12 @@ const pool = require('../../../lib/vaultbrix');
 const s3Driver = require('../../../app/custom/services/s3Driver');
 const { resolveWorkspaceDriveRoot, resolveWorkspaceDriveWritePath } = require('../../drivePlacementPolicy');
 const { ensureAgentDriveProvisioned, resolveAgentDriveRoot } = require('../../agentDriveService');
+const {
+  isOfficeDocumentPath,
+  extractOfficeTextFromBuffer,
+  getOfficeDocumentInfo,
+  buildEditableSourceSuggestion,
+} = require('../../officeDocumentService');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -68,6 +74,11 @@ async function readStream(resp) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+function buildOfficeReadError(fileName, err) {
+  const detail = err?.message ? ` ${err.message}` : '';
+  return `The office document "${fileName}" could not be prepared for agent reading.${detail} Upload a PDF/TXT export, or install LibreOffice on the server to enable automatic office conversion.`;
 }
 
 async function getWorkspaceBucket(workspaceId) {
@@ -224,6 +235,41 @@ class WorkspaceDriveAdapter {
     const resp = await s3Driver.download(bucket, s3Driver.prefixKey(record.s3_key));
     const buffer = await readStream(resp);
 
+    if (isOfficeDocumentPath(record.name)) {
+      try {
+        const extracted = await extractOfficeTextFromBuffer({
+          fileName: record.name,
+          buffer,
+        });
+
+        return {
+          success: true,
+          data: {
+            id: record.id,
+            path: record.path,
+            name: record.name,
+            mimeType: 'text/plain; charset=utf-8',
+            sourceMimeType: record.mime_type || 'application/octet-stream',
+            content: extracted.text.slice(0, 250000),
+            derived: true,
+            derivation: extracted.metadata || {},
+          },
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: buildOfficeReadError(record.name, err),
+          data: {
+            id: record.id,
+            path: record.path,
+            name: record.name,
+            mimeType: record.mime_type || 'application/octet-stream',
+            office: true,
+          },
+        };
+      }
+    }
+
     return {
       success: true,
       data: {
@@ -294,6 +340,20 @@ class WorkspaceDriveAdapter {
     const workspaceRoot = await resolveWorkspaceDriveRoot(workspaceId);
     const filePath = normalizeVirtualPath(resolved.path || '');
     if (!filePath || filePath === '/') return { success: false, error: 'path is required' };
+    const officeInfo = getOfficeDocumentInfo(filePath);
+    if (officeInfo) {
+      return {
+        success: false,
+        error: `Native ${officeInfo.format.toUpperCase()} generation is not enabled in workspace_drive_write yet. Create an editable source draft first, then export it through an Office renderer.`,
+        data: {
+          path: filePath,
+          office: true,
+          family: officeInfo.family,
+          sourceFormat: officeInfo.format,
+          suggestedSourcePath: buildEditableSourceSuggestion(filePath, officeInfo),
+        },
+      };
+    }
 
     const existing = await findByPath(workspaceId, filePath);
     const fileId = existing?.id || crypto.randomUUID();
