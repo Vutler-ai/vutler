@@ -129,19 +129,31 @@ function mapEmailRow(row) {
 }
 
 function extractPostalDeliveryEvent(payload = {}, headers = {}) {
+  const body = payload && typeof payload.payload === 'object' && payload.payload
+    ? payload.payload
+    : payload;
+
   const providerMessageId = firstString(
     payload.message_id,
     payload.messageId,
     payload.original_message_id,
     payload.originalMessageId,
+    body.message_id,
+    body.messageId,
+    body.original_message_id,
+    body.originalMessageId,
     payload.data?.message_id,
     payload.data?.messageId,
     payload.data?.original_message_id,
     payload.data?.originalMessageId,
     payload.data?.message?.message_id,
     payload.data?.message?.id,
+    body.message?.message_id,
+    body.message?.id,
     payload.message?.message_id,
     payload.message?.id,
+    body.original_message?.message_id,
+    body.original_message?.id,
     payload.original_message?.message_id,
     payload.original_message?.id
   );
@@ -159,6 +171,12 @@ function extractPostalDeliveryEvent(payload = {}, headers = {}) {
     payload.data?.status,
     payload.data?.status_name,
     payload.data?.type,
+    body.event,
+    body.event_name,
+    body.eventName,
+    body.status,
+    body.status_name,
+    body.type,
     headers['x-postal-event']
   );
 
@@ -172,7 +190,12 @@ function extractPostalDeliveryEvent(payload = {}, headers = {}) {
     payload.data?.detail,
     payload.data?.description,
     payload.data?.message,
-    payload.data?.output
+    payload.data?.output,
+    body.details,
+    body.detail,
+    body.description,
+    body.message,
+    body.output
   );
 
   const recipient = firstString(
@@ -181,7 +204,12 @@ function extractPostalDeliveryEvent(payload = {}, headers = {}) {
     payload.address,
     payload.data?.recipient,
     payload.data?.to,
-    payload.data?.address
+    payload.data?.address,
+    body.recipient,
+    body.to,
+    body.address,
+    body.message?.to,
+    body.original_message?.to
   );
 
   const occurredAt = firstString(
@@ -193,11 +221,17 @@ function extractPostalDeliveryEvent(payload = {}, headers = {}) {
     payload.time,
     payload.data?.timestamp,
     payload.data?.occurred_at,
-    payload.data?.created_at
+    payload.data?.created_at,
+    body.timestamp,
+    body.occurred_at,
+    body.occurredAt,
+    body.created_at
   ) || new Date().toISOString();
 
   const deliveryStatus = normalizeEmailDeliveryStatus(rawEvent)
     || normalizeEmailDeliveryStatus(details)
+    || normalizeEmailDeliveryStatus(body.delivery_status)
+    || normalizeEmailDeliveryStatus(body.status)
     || normalizeEmailDeliveryStatus(payload.delivery_status)
     || 'accepted';
 
