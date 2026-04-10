@@ -87,6 +87,19 @@ function buildOfficeExportError(fileName, err) {
   return `The office document "${fileName}" could not be exported.${detail}`;
 }
 
+function getOfficeMimeType(officeInfo = {}) {
+  if (officeInfo.family === 'presentation') {
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  }
+  if (officeInfo.family === 'word') {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (officeInfo.ext === '.xls') {
+    return 'application/vnd.ms-excel';
+  }
+  return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+}
+
 async function getWorkspaceBucket(workspaceId) {
   const result = await pool.query(
     `SELECT slug, storage_bucket
@@ -350,63 +363,70 @@ class WorkspaceDriveAdapter {
     if (!filePath || filePath === '/') return { success: false, error: 'path is required' };
     const officeInfo = getOfficeDocumentInfo(filePath);
     if (officeInfo) {
+      const sourcePath = buildEditableSourceSuggestion(filePath, officeInfo);
+      const sourceMimeType = officeInfo.family === 'spreadsheet'
+        ? 'application/json; charset=utf-8'
+        : 'text/markdown; charset=utf-8';
+      const sourceResult = await this._saveFile(workspaceId, {
+        targetPath: sourcePath,
+        content: params.content || params.body || '',
+        mimeType: params.sourceMimeType || sourceMimeType,
+      });
+
+      const shouldExport = params.saveSourceOnly !== true && String(params.saveSourceOnly || '').toLowerCase() !== 'true';
+      if (!shouldExport) {
+        return {
+          success: true,
+          data: {
+            ...sourceResult,
+            office: true,
+            family: officeInfo.family,
+            sourcePath,
+            targetPath: filePath,
+            exported: false,
+          },
+        };
+      }
+
+      const exportResult = await this._exportOffice(workspaceId, {
+        ...params,
+        path: filePath,
+        sourcePath,
+        sourceContent: params.content || params.body || '',
+      }, skillKey, agentDriveRoot);
+
+      if (exportResult.success === false) {
+        return {
+          success: false,
+          error: exportResult.error,
+          data: {
+            ...(exportResult.data || {}),
+            sourcePath,
+            sourceFile: sourceResult,
+          },
+        };
+      }
+
       return {
-        success: false,
-        error: `Native ${officeInfo.format.toUpperCase()} generation is not enabled in workspace_drive_write yet. Create an editable source draft first, then export it through an Office renderer.`,
+        success: true,
         data: {
-          path: filePath,
-          office: true,
-          family: officeInfo.family,
-          sourceFormat: officeInfo.format,
-          suggestedSourcePath: buildEditableSourceSuggestion(filePath, officeInfo),
+          ...(exportResult.data || {}),
+          sourcePath,
+          sourceFile: sourceResult,
+          exported: true,
         },
       };
     }
-
-    const existing = await findByPath(workspaceId, filePath);
-    const fileId = existing?.id || crypto.randomUUID();
-    const cleanName = safeFileName(path.posix.basename(filePath));
-    const parentPath = parentPathFor(filePath);
-    const s3Key = existing?.s3_key || generateS3Key(parentPath, `${fileId}-${cleanName}`);
-    const content = params.content || params.body || '';
-    const contentType = params.mimeType || 'text/plain; charset=utf-8';
-    const bucket = await getWorkspaceBucket(workspaceId);
-
-    await s3Driver.upload(bucket, s3Driver.prefixKey(s3Key), Buffer.from(String(content), 'utf8'), contentType);
-    await pool.query(
-      `INSERT INTO ${SCHEMA}.drive_files
-       (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted, type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, 'file')
-       ON CONFLICT (workspace_id, path)
-       DO UPDATE SET
-         name = EXCLUDED.name,
-         mime_type = EXCLUDED.mime_type,
-         size_bytes = EXCLUDED.size_bytes,
-         uploaded_by = EXCLUDED.uploaded_by,
-         s3_key = EXCLUDED.s3_key,
-         is_deleted = false,
-         updated_at = NOW()`,
-      [
-        fileId,
-        workspaceId,
-        cleanName,
-        filePath,
-        parentPath,
-        contentType,
-        Buffer.byteLength(String(content), 'utf8'),
-        null,
-        s3Key,
-      ]
-    );
+    const persisted = await this._saveFile(workspaceId, {
+      targetPath: filePath,
+      content: params.content || params.body || '',
+      mimeType: params.mimeType || 'text/plain; charset=utf-8',
+    });
 
     return {
       success: true,
       data: {
-        id: fileId,
-        path: filePath,
-        name: cleanName,
-        size: Buffer.byteLength(String(content), 'utf8'),
-        mimeType: contentType,
+        ...persisted,
         placement: {
           root: agentDriveRoot || workspaceRoot,
           folder: resolved.folder ? normalizeVirtualPath(resolved.folder) : null,
@@ -435,18 +455,20 @@ class WorkspaceDriveAdapter {
 
     let sourceContent = params.sourceContent || params.content || params.body || '';
     let sourcePath = null;
+    const defaultSourcePath = buildEditableSourceSuggestion(targetPath, officeInfo);
 
     if (!sourceContent && (params.sourcePath || params.templatePath)) {
       sourcePath = resolveScopedPath(params.sourcePath || params.templatePath, agentDriveRoot, agentDriveRoot || '/');
-      const sourceRecord = await findByPath(workspaceId, sourcePath);
-      if (!sourceRecord || sourceRecord.type === 'folder') {
-        return { success: false, error: `Source file not found: ${sourcePath}` };
-      }
+      sourceContent = await this._readSourceFileContent(workspaceId, sourcePath);
+      if (sourceContent == null) return { success: false, error: `Source file not found: ${sourcePath}` };
+    }
 
-      const bucket = await getWorkspaceBucket(workspaceId);
-      const resp = await s3Driver.download(bucket, s3Driver.prefixKey(sourceRecord.s3_key));
-      const buffer = await readStream(resp);
-      sourceContent = buffer.toString('utf8');
+    if (!sourceContent && defaultSourcePath) {
+      sourcePath = defaultSourcePath;
+      sourceContent = await this._readSourceFileContent(workspaceId, sourcePath);
+      if (sourceContent == null) {
+        sourcePath = null;
+      }
     }
 
     if (!sourceContent) {
@@ -458,7 +480,7 @@ class WorkspaceDriveAdapter {
           office: true,
           family: officeInfo.family,
           sourceFormat: officeInfo.format,
-          suggestedSourcePath: buildEditableSourceSuggestion(targetPath, officeInfo),
+          suggestedSourcePath: defaultSourcePath,
         },
       };
     }
@@ -479,7 +501,7 @@ class WorkspaceDriveAdapter {
           office: true,
           family: officeInfo.family,
           sourceFormat: officeInfo.format,
-          suggestedSourcePath: buildEditableSourceSuggestion(targetPath, officeInfo),
+          suggestedSourcePath: defaultSourcePath,
           suggestedTargetPath: err?.meta?.suggestedTargetPath || null,
         },
       };
@@ -490,16 +512,62 @@ class WorkspaceDriveAdapter {
     const cleanName = safeFileName(path.posix.basename(targetPath));
     const parentPath = parentPathFor(targetPath);
     const s3Key = existing?.s3_key || generateS3Key(parentPath, `${fileId}-${cleanName}`);
-    const mimeType = officeInfo.family === 'presentation'
-      ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-      : officeInfo.family === 'word'
-        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        : officeInfo.ext === '.xls'
-          ? 'application/vnd.ms-excel'
-          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const mimeType = getOfficeMimeType(officeInfo);
+    const persisted = await this._saveBufferFile(workspaceId, {
+      targetPath,
+      buffer: exportResult.buffer,
+      mimeType,
+      existing,
+      fileId,
+      cleanName,
+      parentPath,
+      s3Key,
+    });
+
+    return {
+      success: true,
+      data: {
+        ...persisted,
+        office: true,
+        family: officeInfo.family,
+        sourcePath: sourcePath || defaultSourcePath,
+        placement: {
+          root: agentDriveRoot || workspaceRoot,
+          folder: resolved.folder ? normalizeVirtualPath(resolved.folder) : null,
+          defaulted: resolved.defaulted,
+          reason: resolved.reason,
+        },
+        derivation: exportResult.metadata || {},
+      },
+    };
+  }
+
+  async _readSourceFileContent(workspaceId, sourcePath) {
+    const sourceRecord = await findByPath(workspaceId, sourcePath);
+    if (!sourceRecord || sourceRecord.type === 'folder') return null;
+    const bucket = await getWorkspaceBucket(workspaceId);
+    const resp = await s3Driver.download(bucket, s3Driver.prefixKey(sourceRecord.s3_key));
+    const buffer = await readStream(resp);
+    return buffer.toString('utf8');
+  }
+
+  async _saveFile(workspaceId, { targetPath, content, mimeType }) {
+    return this._saveBufferFile(workspaceId, {
+      targetPath,
+      buffer: Buffer.from(String(content), 'utf8'),
+      mimeType,
+    });
+  }
+
+  async _saveBufferFile(workspaceId, { targetPath, buffer, mimeType, existing = null, fileId = null, cleanName = null, parentPath = null, s3Key = null }) {
+    const record = existing || await findByPath(workspaceId, targetPath);
+    const resolvedFileId = fileId || record?.id || crypto.randomUUID();
+    const resolvedName = cleanName || safeFileName(path.posix.basename(targetPath));
+    const resolvedParentPath = parentPath || parentPathFor(targetPath);
+    const resolvedS3Key = s3Key || record?.s3_key || generateS3Key(resolvedParentPath, `${resolvedFileId}-${resolvedName}`);
     const bucket = await getWorkspaceBucket(workspaceId);
 
-    await s3Driver.upload(bucket, s3Driver.prefixKey(s3Key), exportResult.buffer, mimeType);
+    await s3Driver.upload(bucket, s3Driver.prefixKey(resolvedS3Key), buffer, mimeType);
     await pool.query(
       `INSERT INTO ${SCHEMA}.drive_files
        (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted, type)
@@ -514,37 +582,24 @@ class WorkspaceDriveAdapter {
          is_deleted = false,
          updated_at = NOW()`,
       [
-        fileId,
+        resolvedFileId,
         workspaceId,
-        cleanName,
+        resolvedName,
         targetPath,
-        parentPath,
+        resolvedParentPath,
         mimeType,
-        exportResult.buffer.length,
+        buffer.length,
         null,
-        s3Key,
+        resolvedS3Key,
       ]
     );
 
     return {
-      success: true,
-      data: {
-        id: fileId,
-        path: targetPath,
-        name: cleanName,
-        size: exportResult.buffer.length,
-        mimeType,
-        office: true,
-        family: officeInfo.family,
-        sourcePath: sourcePath || buildEditableSourceSuggestion(targetPath, officeInfo),
-        placement: {
-          root: agentDriveRoot || workspaceRoot,
-          folder: resolved.folder ? normalizeVirtualPath(resolved.folder) : null,
-          defaulted: resolved.defaulted,
-          reason: resolved.reason,
-        },
-        derivation: exportResult.metadata || {},
-      },
+      id: resolvedFileId,
+      path: targetPath,
+      name: resolvedName,
+      size: buffer.length,
+      mimeType,
     };
   }
 
