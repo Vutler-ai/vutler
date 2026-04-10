@@ -612,6 +612,7 @@ export interface SendMessagePayload {
 // ─── Email ────────────────────────────────────────────────────────────────────
 
 export type EmailFolder = 'inbox' | 'sent' | 'archive' | 'drafts' | 'trash';
+export type EmailDeliveryStatus = 'accepted' | 'delivered' | 'deferred' | 'bounced' | 'failed';
 
 export interface Email {
   uid: string;
@@ -623,6 +624,8 @@ export interface Email {
   body?: string;
   html?: string;
   folder?: string;
+  deliveryStatus?: EmailDeliveryStatus | null;
+  providerMessageId?: string | null;
 }
 
 export interface SendEmailPayload {
