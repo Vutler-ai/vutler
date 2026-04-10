@@ -21,6 +21,7 @@ const {
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
 const { publishTaskEvent } = require('../../../services/workspaceRealtime');
 const { refreshTaskHierarchyRollups } = require('../../../services/taskHierarchyRollupService');
+const { syncTaskCalendarEvent } = require('../../../services/taskCalendarSyncService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -578,6 +579,9 @@ class SwarmCoordinator {
       );
       let taskRow = updated.rows[0];
       taskRow = await refreshHierarchyProjection(taskRow, 'swarm_upsert_rollup');
+      await syncTaskCalendarEvent(taskRow).catch((err) => {
+        console.warn('[SwarmCoordinator] Task calendar sync failed (non-blocking):', err.message);
+      });
       await signalRunFromTask(taskRow, {
         reason: source || 'swarm_upsert',
         eventType: source && source.startsWith('snipara-webhook:')
@@ -601,6 +605,9 @@ class SwarmCoordinator {
     );
     let taskRow = inserted.rows[0];
     taskRow = await refreshHierarchyProjection(taskRow, 'swarm_insert_rollup');
+    await syncTaskCalendarEvent(taskRow).catch((err) => {
+      console.warn('[SwarmCoordinator] Task calendar sync failed (non-blocking):', err.message);
+    });
     await signalRunFromTask(taskRow, {
       reason: source || 'swarm_insert',
       eventType: source && source.startsWith('snipara-webhook:')

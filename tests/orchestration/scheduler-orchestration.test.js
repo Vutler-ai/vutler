@@ -30,6 +30,11 @@ describe('scheduler orchestration targets', () => {
       assertTableExists: jest.fn(),
       runtimeSchemaMutationsAllowed: jest.fn().mockReturnValue(false),
     }));
+    jest.doMock('../../services/taskCalendarSyncService', () => ({
+      deleteCalendarEvent: jest.fn().mockResolvedValue(false),
+      syncScheduleCalendarEvent: jest.fn().mockResolvedValue(null),
+      SCHEDULE_EVENT_SOURCE: 'scheduled_task',
+    }));
 
     const scheduler = require('../../services/scheduler');
     const result = await scheduler._executeScheduledTask({
@@ -94,6 +99,11 @@ describe('scheduler orchestration targets', () => {
       assertColumnsExist: jest.fn(),
       assertTableExists: jest.fn(),
       runtimeSchemaMutationsAllowed: jest.fn().mockReturnValue(false),
+    }));
+    jest.doMock('../../services/taskCalendarSyncService', () => ({
+      deleteCalendarEvent: jest.fn().mockResolvedValue(false),
+      syncScheduleCalendarEvent: jest.fn().mockResolvedValue(null),
+      SCHEDULE_EVENT_SOURCE: 'scheduled_task',
     }));
 
     const scheduler = require('../../services/scheduler');

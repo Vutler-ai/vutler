@@ -18,6 +18,11 @@ describe('scheduler workspace context', () => {
       assertTableExists: jest.fn(),
       runtimeSchemaMutationsAllowed: jest.fn(() => false),
     }));
+    jest.doMock('../services/taskCalendarSyncService', () => ({
+      deleteCalendarEvent: jest.fn().mockResolvedValue(false),
+      syncScheduleCalendarEvent: jest.fn().mockResolvedValue(null),
+      SCHEDULE_EVENT_SOURCE: 'scheduled_task',
+    }));
 
     const { handleScheduleTool } = require('../services/scheduler');
 

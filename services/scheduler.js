@@ -14,6 +14,7 @@ const { getSwarmCoordinator } = require('./swarmCoordinator');
 const { getRunEngine } = require('./orchestration/runEngine');
 const { ensureRunForTask } = require('./orchestration/runStore');
 const { assertColumnsExist, assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
+const { deleteCalendarEvent, syncScheduleCalendarEvent, SCHEDULE_EVENT_SOURCE } = require('./taskCalendarSyncService');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
@@ -346,6 +347,9 @@ async function createSchedule({ workspaceId, agentId, cron, taskTemplate, descri
 
   const schedule = result.rows[0];
   activateSchedule(schedule);
+  await syncScheduleCalendarEvent(schedule).catch((err) => {
+    console.warn(`[Scheduler] Calendar sync failed for schedule ${schedule.id}:`, err.message);
+  });
   return schedule;
 }
 
@@ -411,10 +415,18 @@ async function deactivateSchedule(scheduleId) {
     _activeTimers.delete(scheduleId);
   }
 
-  await pool.query(
-    `UPDATE ${SCHEMA}.scheduled_tasks SET is_active = FALSE, updated_at = NOW() WHERE id = $1`,
+  const result = await pool.query(
+    `UPDATE ${SCHEMA}.scheduled_tasks
+     SET is_active = FALSE, updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
     [scheduleId]
   );
+  if (result.rows[0]) {
+    await syncScheduleCalendarEvent(result.rows[0]).catch((err) => {
+      console.warn(`[Scheduler] Calendar sync failed for schedule ${scheduleId}:`, err.message);
+    });
+  }
   console.log(`[Scheduler] Deactivated schedule ${scheduleId}`);
 }
 
@@ -431,6 +443,13 @@ async function deleteSchedule(workspaceId, scheduleId) {
     `DELETE FROM ${SCHEMA}.scheduled_tasks WHERE id = $1 AND workspace_id = $2`,
     [scheduleId, workspaceId]
   );
+  await deleteCalendarEvent({
+    workspaceId,
+    source: SCHEDULE_EVENT_SOURCE,
+    sourceId: scheduleId,
+  }).catch((err) => {
+    console.warn(`[Scheduler] Calendar cleanup failed for schedule ${scheduleId}:`, err.message);
+  });
   console.log(`[Scheduler] Deleted schedule ${scheduleId}`);
 }
 
@@ -527,6 +546,10 @@ async function updateSchedule(workspaceId, scheduleId, updates = {}) {
       _activeTimers.delete(scheduleId);
     }
   }
+
+  await syncScheduleCalendarEvent(updated).catch((err) => {
+    console.warn(`[Scheduler] Calendar sync failed for schedule ${scheduleId}:`, err.message);
+  });
 
   return updated;
 }
@@ -712,6 +735,15 @@ async function _executeScheduledTask(schedule) {
      WHERE id = $2`,
     [nextRun, schedule.id]
   );
+
+  await syncScheduleCalendarEvent({
+    ...schedule,
+    last_run_at: new Date().toISOString(),
+    next_run_at: nextRun,
+    run_count: Number(schedule.run_count || 0) + 1,
+  }).catch((err) => {
+    console.warn(`[Scheduler] Calendar sync failed for schedule ${schedule.id}:`, err.message);
+  });
 
   return { runId, taskId, status };
 }

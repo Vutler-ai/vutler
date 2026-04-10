@@ -38,6 +38,7 @@ function buildQueuedSocialTaskPayload({ caption, params = {}, workspaceId, agent
     ].filter(Boolean).join('\n'),
     priority: schedule ? 'high' : 'medium',
     for_agent_id: agentId,
+    due_date: schedule,
     metadata: {
       origin: 'social_executor',
       execution_mode: 'simple_task',

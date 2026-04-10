@@ -62,6 +62,7 @@ describe('socialExecutor', () => {
     expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
       title: expect.stringContaining('Social publish:'),
       for_agent_id: 'agent-1',
+      due_date: null,
       metadata: expect.objectContaining({
         social_publication_request: expect.objectContaining({
           caption: 'Queue this post first',
@@ -75,6 +76,27 @@ describe('socialExecutor', () => {
       task_id: 'task-queued-1',
       task_status: 'pending',
     });
+  });
+
+  test('propagates scheduled_at into due_date for queued social tasks', async () => {
+    await executeSocialPlan({
+      workspace_id: 'ws-1',
+      selectedAgentId: 'agent-1',
+      params: {
+        caption: 'Queue this post for tomorrow',
+        platforms: ['linkedin'],
+        scheduled_at: '2026-04-11T08:30:00.000Z',
+      },
+    }, { db: { query: jest.fn() } });
+
+    expect(createTaskMock).toHaveBeenCalledWith(expect.objectContaining({
+      due_date: '2026-04-11T08:30:00.000Z',
+      metadata: expect.objectContaining({
+        social_publication_request: expect.objectContaining({
+          scheduled_at: '2026-04-11T08:30:00.000Z',
+        }),
+      }),
+    }), 'ws-1');
   });
 
   test('filters posting to explicitly allowed local social accounts', async () => {

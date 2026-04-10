@@ -83,6 +83,9 @@ describe('SwarmCoordinator scheduling persistence', () => {
     jest.doMock('../services/taskHierarchyRollupService', () => ({
       refreshTaskHierarchyRollups: jest.fn().mockResolvedValue([]),
     }));
+    jest.doMock('../services/taskCalendarSyncService', () => ({
+      syncTaskCalendarEvent: jest.fn().mockResolvedValue(null),
+    }));
     jest.doMock('../services/smartDispatcher', () => ({
       getSmartDispatcher: jest.fn(() => ({
         dispatch: jest.fn().mockResolvedValue({ agentId: 'max' }),

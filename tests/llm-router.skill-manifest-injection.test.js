@@ -42,6 +42,7 @@ describe('llmRouter manifest-backed skill tool injection', () => {
       isProviderAvailable: jest.fn(() => true),
       inferProviderForSkill: jest.fn((skillKey) => {
         if (String(skillKey).startsWith('workspace_drive')) return 'workspace_drive';
+        if (String(skillKey).startsWith('vutler_calendar')) return 'vutler_calendar';
         if (String(skillKey).startsWith('email_')) return 'email';
         if (String(skillKey).startsWith('google_')) return 'google';
         if (String(skillKey).startsWith('task_')) return 'project_management';
@@ -150,6 +151,34 @@ describe('llmRouter manifest-backed skill tool injection', () => {
             parameters: expect.objectContaining({
               required: ['event'],
             }),
+          }),
+        }),
+      ])
+    );
+  });
+
+  test('injects the internal Vutler calendar tool when the capability is effective', async () => {
+    const result = await chat(
+      {
+        id: 'agent-calendar-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        skills: ['vutler_calendar_create'],
+        system_prompt: 'You are an operations agent.',
+      },
+      [{ role: 'user', content: 'Schedule the publishing slot in the Vutler agenda.' }],
+      { query: jest.fn().mockResolvedValue({ rows: [] }) }
+    );
+
+    expect(result.content).toBe('Ready.');
+    expect(recordedBodies).toHaveLength(1);
+    expect(recordedBodies[0].tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'function',
+          function: expect.objectContaining({
+            name: 'skill_vutler_calendar_create',
           }),
         }),
       ])
