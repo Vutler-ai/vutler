@@ -26,6 +26,13 @@ const OFFICE_FORMATS = {
   '.ods': { family: 'spreadsheet', format: 'ods' },
 };
 
+const OFFICE_EXPORT_CAPABILITIES = {
+  '.docx': true,
+  '.xlsx': true,
+  '.xls': true,
+  '.pptx': true,
+};
+
 function getOfficeDocumentInfo(fileName = '') {
   const ext = path.extname(String(fileName || '')).toLowerCase();
   const match = OFFICE_FORMATS[ext];
@@ -49,6 +56,11 @@ function buildEditableSourceSuggestion(targetPath = '', info = null) {
   return dir === '.' || dir === '/' ? `/${suggestion}` : `${dir}/${suggestion}`;
 }
 
+function isNativeOfficeExportSupported(targetPath = '') {
+  const ext = path.extname(String(targetPath || '')).toLowerCase();
+  return Boolean(OFFICE_EXPORT_CAPABILITIES[ext]);
+}
+
 function createOfficeError(code, message, meta = {}) {
   const err = new Error(message);
   err.code = code;
@@ -64,6 +76,16 @@ function decodeHtmlEntities(value = '') {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'");
+}
+
+function stripMarkdownInline(value = '') {
+  return String(value || '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1');
 }
 
 function htmlToText(html = '') {
@@ -121,6 +143,365 @@ function stringifySheetTable(name, rows) {
   }
 
   return lines.join('\n').trim();
+}
+
+function normalizeMarkdownSource(source = '') {
+  return String(source || '')
+    .replace(/\r/g, '')
+    .trim();
+}
+
+function parseMarkdownSections(source = '') {
+  const normalized = normalizeMarkdownSource(source);
+  if (!normalized) return [];
+
+  const lines = normalized.split('\n');
+  const sections = [];
+  let current = null;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    const headingMatch = /^\s*#\s+(.+?)\s*$/.exec(line);
+    if (headingMatch) {
+      if (current) sections.push(current);
+      current = { title: stripMarkdownInline(headingMatch[1]).trim(), lines: [] };
+      continue;
+    }
+
+    if (!current) {
+      current = { title: 'Untitled', lines: [] };
+    }
+
+    current.lines.push(rawLine);
+  }
+
+  if (current) sections.push(current);
+  return sections;
+}
+
+function parseMarkdownSlides(source = '', fallbackTitle = 'Presentation') {
+  const sections = parseMarkdownSections(source);
+  if (sections.length === 0) {
+    return [{
+      title: fallbackTitle,
+      bullets: [],
+      paragraphs: [normalizeMarkdownSource(source)].filter(Boolean),
+    }];
+  }
+
+  return sections.map((section) => {
+    const bullets = [];
+    const paragraphs = [];
+    let paragraphBuffer = [];
+
+    const flushParagraph = () => {
+      const value = stripMarkdownInline(paragraphBuffer.join(' ').trim());
+      if (value) paragraphs.push(value);
+      paragraphBuffer = [];
+    };
+
+    for (const rawLine of section.lines) {
+      const line = String(rawLine || '').trim();
+      if (!line) {
+        flushParagraph();
+        continue;
+      }
+
+      const bulletMatch = /^\s*(?:[-*+]|(?:\d+)\.)\s+(.+?)\s*$/.exec(line);
+      if (bulletMatch) {
+        flushParagraph();
+        bullets.push(stripMarkdownInline(bulletMatch[1]).trim());
+        continue;
+      }
+
+      if (/^\s*##+\s+/.test(line)) {
+        flushParagraph();
+        paragraphs.push(stripMarkdownInline(line.replace(/^\s*##+\s+/, '')).trim());
+        continue;
+      }
+
+      paragraphBuffer.push(line);
+    }
+
+    flushParagraph();
+
+    return {
+      title: section.title || fallbackTitle,
+      bullets,
+      paragraphs,
+    };
+  });
+}
+
+function parseMarkdownParagraphs(source = '') {
+  const lines = normalizeMarkdownSource(source).split('\n');
+  const paragraphs = [];
+  let bulletMode = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      bulletMode = false;
+      continue;
+    }
+
+    const headingMatch = /^\s*(#{1,6})\s+(.+?)\s*$/.exec(line);
+    if (headingMatch) {
+      paragraphs.push({
+        type: 'heading',
+        level: headingMatch[1].length,
+        text: stripMarkdownInline(headingMatch[2]).trim(),
+      });
+      bulletMode = false;
+      continue;
+    }
+
+    const bulletMatch = /^\s*(?:[-*+]|(?:\d+)\.)\s+(.+?)\s*$/.exec(line);
+    if (bulletMatch) {
+      paragraphs.push({
+        type: 'bullet',
+        text: stripMarkdownInline(bulletMatch[1]).trim(),
+      });
+      bulletMode = true;
+      continue;
+    }
+
+    paragraphs.push({
+      type: bulletMode ? 'paragraph' : 'paragraph',
+      text: stripMarkdownInline(line).trim(),
+    });
+    bulletMode = false;
+  }
+
+  return paragraphs.filter((item) => item.text);
+}
+
+function parseSpreadsheetSource(source = '') {
+  const normalized = String(source || '').trim();
+  if (!normalized) {
+    return [{ name: 'Sheet1', rows: [] }];
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(normalized);
+  } catch (err) {
+    throw createOfficeError(
+      'OFFICE_SOURCE_INVALID',
+      'Spreadsheet source must be valid JSON.'
+    );
+  }
+
+  if (Array.isArray(parsed)) {
+    return [{ name: 'Sheet1', rows: parsed }];
+  }
+
+  if (Array.isArray(parsed?.sheets)) {
+    return parsed.sheets.map((sheet, index) => ({
+      name: String(sheet?.name || `Sheet${index + 1}`),
+      rows: Array.isArray(sheet?.rows) ? sheet.rows : [],
+    }));
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    return Object.entries(parsed).map(([name, rows], index) => ({
+      name: String(name || `Sheet${index + 1}`),
+      rows: Array.isArray(rows) ? rows : [],
+    }));
+  }
+
+  throw createOfficeError(
+    'OFFICE_SOURCE_INVALID',
+    'Spreadsheet source must be a JSON array or an object of sheets.'
+  );
+}
+
+function requireOptionalModule(name, installHint) {
+  try {
+    return require(name);
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND') {
+      throw createOfficeError(
+        'OFFICE_EXPORTER_UNAVAILABLE',
+        `${name} is not installed. ${installHint}`
+      );
+    }
+    throw err;
+  }
+}
+
+async function exportPresentationBufferFromMarkdown(source = '', options = {}) {
+  const PptxGenJS = requireOptionalModule(
+    'pptxgenjs',
+    'Install the pptxgenjs package to enable PPTX export.'
+  );
+
+  const deck = new PptxGenJS();
+  deck.layout = 'LAYOUT_WIDE';
+  deck.author = 'Vutler';
+  deck.company = 'Vutler';
+  deck.subject = options.title || 'Presentation';
+  deck.title = options.title || 'Presentation';
+  deck.lang = 'en-US';
+
+  const slides = parseMarkdownSlides(source, options.title || 'Presentation');
+  for (const slideSpec of slides) {
+    const slide = deck.addSlide();
+    slide.background = { color: 'F8F6F1' };
+    slide.addText(slideSpec.title || 'Slide', {
+      x: 0.6,
+      y: 0.4,
+      w: 12,
+      h: 0.6,
+      fontSize: 24,
+      bold: true,
+      color: '111827',
+      fontFace: 'Aptos',
+    });
+
+    const bodyLines = [
+      ...slideSpec.paragraphs,
+      ...slideSpec.bullets.map((item) => `• ${item}`),
+    ].filter(Boolean);
+
+    slide.addText(bodyLines.join('\n'), {
+      x: 0.9,
+      y: 1.3,
+      w: 11.2,
+      h: 5.4,
+      fontSize: 16,
+      color: '1F2937',
+      valign: 'top',
+      margin: 0.05,
+      breakLine: false,
+      fontFace: 'Aptos',
+    });
+  }
+
+  return deck.write({ outputType: 'nodebuffer' });
+}
+
+async function exportDocxBufferFromMarkdown(source = '', options = {}) {
+  const docx = requireOptionalModule(
+    'docx',
+    'Install the docx package to enable DOCX export.'
+  );
+
+  const {
+    Document,
+    Packer,
+    Paragraph,
+    HeadingLevel,
+    TextRun,
+  } = docx;
+
+  const nodes = [];
+  const blocks = parseMarkdownParagraphs(source);
+  if (options.title) {
+    nodes.push(new Paragraph({
+      heading: HeadingLevel.TITLE,
+      children: [new TextRun({ text: options.title, bold: true })],
+    }));
+  }
+
+  for (const block of blocks) {
+    if (block.type === 'heading') {
+      const level = Math.min(Math.max(block.level, 1), 6);
+      const headingMap = {
+        1: HeadingLevel.HEADING_1,
+        2: HeadingLevel.HEADING_2,
+        3: HeadingLevel.HEADING_3,
+        4: HeadingLevel.HEADING_4,
+        5: HeadingLevel.HEADING_5,
+        6: HeadingLevel.HEADING_6,
+      };
+      nodes.push(new Paragraph({
+        heading: headingMap[level],
+        children: [new TextRun(block.text)],
+      }));
+      continue;
+    }
+
+    if (block.type === 'bullet') {
+      nodes.push(new Paragraph({
+        text: block.text,
+        bullet: { level: 0 },
+      }));
+      continue;
+    }
+
+    nodes.push(new Paragraph({
+      children: [new TextRun(block.text)],
+    }));
+  }
+
+  const doc = new Document({
+    sections: [{
+      children: nodes.length > 0 ? nodes : [new Paragraph('')],
+    }],
+  });
+
+  return Packer.toBuffer(doc);
+}
+
+async function exportSpreadsheetBufferFromSource(source = '', options = {}) {
+  const XLSX = requireOptionalModule(
+    'xlsx',
+    'Install the xlsx package to enable spreadsheet export.'
+  );
+
+  const sheets = parseSpreadsheetSource(source);
+  const workbook = XLSX.utils.book_new();
+
+  for (const sheet of sheets) {
+    const rows = Array.isArray(sheet.rows) ? sheet.rows : [];
+    const worksheet = XLSX.utils.json_to_sheet(rows, { skipHeader: false });
+    XLSX.utils.book_append_sheet(workbook, worksheet, String(sheet.name || 'Sheet1').slice(0, 31));
+  }
+
+  const ext = path.extname(String(options.targetPath || '')).toLowerCase();
+  const bookType = ext === '.xls' ? 'biff8' : 'xlsx';
+  return XLSX.write(workbook, { type: 'buffer', bookType });
+}
+
+async function exportOfficeDocumentFromSource({ targetPath, sourceContent, title }) {
+  const info = getOfficeDocumentInfo(targetPath);
+  if (!info) {
+    throw createOfficeError('UNSUPPORTED_OFFICE_FORMAT', `Unsupported office target: ${targetPath}`);
+  }
+
+  if (!isNativeOfficeExportSupported(targetPath)) {
+    const modernTarget = info.family === 'presentation'
+      ? targetPath.replace(/\.[^.]+$/, '.pptx')
+      : info.family === 'word'
+        ? targetPath.replace(/\.[^.]+$/, '.docx')
+        : targetPath.replace(/\.[^.]+$/, '.xlsx');
+    throw createOfficeError(
+      'OFFICE_EXPORT_UNSUPPORTED',
+      `Native export is not supported for ${info.ext}. Export to ${path.extname(modernTarget)} instead.`,
+      { suggestedTargetPath: modernTarget }
+    );
+  }
+
+  let buffer = null;
+  if (info.family === 'presentation') {
+    buffer = await exportPresentationBufferFromMarkdown(sourceContent, { title });
+  } else if (info.family === 'word') {
+    buffer = await exportDocxBufferFromMarkdown(sourceContent, { title });
+  } else if (info.family === 'spreadsheet') {
+    buffer = await exportSpreadsheetBufferFromSource(sourceContent, { targetPath });
+  } else {
+    throw createOfficeError('OFFICE_EXPORT_UNSUPPORTED', `Unsupported office family: ${info.family}`);
+  }
+
+  return {
+    buffer,
+    metadata: {
+      family: info.family,
+      source_format: info.format,
+      source_path_suggestion: buildEditableSourceSuggestion(targetPath, info),
+    },
+  };
 }
 
 async function tryExtractSpreadsheetWithXlsx(filePath) {
@@ -264,7 +645,9 @@ async function extractOfficeTextFromBuffer({ fileName, buffer }) {
 module.exports = {
   getOfficeDocumentInfo,
   isOfficeDocumentPath,
+  isNativeOfficeExportSupported,
   extractOfficeTextFromBuffer,
+  exportOfficeDocumentFromSource,
   createOfficeError,
   buildEditableSourceSuggestion,
 };

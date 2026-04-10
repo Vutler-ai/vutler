@@ -47,7 +47,13 @@ describe('WorkspaceDriveAdapter', () => {
       remove: jest.fn(),
       move: jest.fn(),
     }));
-
+    jest.doMock('../../services/officeDocumentService', () => ({
+      isOfficeDocumentPath: jest.fn(() => false),
+      getOfficeDocumentInfo: jest.fn(() => null),
+      buildEditableSourceSuggestion: jest.fn(() => null),
+      extractOfficeTextFromBuffer: jest.fn(),
+      exportOfficeDocumentFromSource: jest.fn(),
+    }));
     const { WorkspaceDriveAdapter } = require('../../services/skills/adapters/WorkspaceDriveAdapter');
     const adapter = new WorkspaceDriveAdapter();
 
@@ -115,6 +121,13 @@ describe('WorkspaceDriveAdapter', () => {
       download: jest.fn(),
       remove: jest.fn(),
       move: jest.fn(),
+    }));
+    jest.doMock('../../services/officeDocumentService', () => ({
+      isOfficeDocumentPath: jest.fn(() => false),
+      getOfficeDocumentInfo: jest.fn(() => null),
+      buildEditableSourceSuggestion: jest.fn(() => null),
+      extractOfficeTextFromBuffer: jest.fn(),
+      exportOfficeDocumentFromSource: jest.fn(),
     }));
 
     const { WorkspaceDriveAdapter } = require('../../services/skills/adapters/WorkspaceDriveAdapter');
@@ -310,6 +323,10 @@ describe('WorkspaceDriveAdapter', () => {
         return { rows: [{ slug: 'starbox', storage_bucket: 'vaultbrix-storage' }] };
       }
 
+       if (sql.includes('FROM tenant_vutler.drive_files') && sql.includes('AND path = $2')) {
+        return { rows: [] };
+      }
+
       throw new Error(`Unexpected SQL in test: ${sql}`);
     });
 
@@ -324,6 +341,13 @@ describe('WorkspaceDriveAdapter', () => {
       download: jest.fn(),
       remove: jest.fn(),
       move: jest.fn(),
+    }));
+    jest.doMock('../../services/officeDocumentService', () => ({
+      isOfficeDocumentPath: jest.fn(() => false),
+      getOfficeDocumentInfo: jest.fn(() => ({ family: 'presentation', format: 'pptx', ext: '.pptx' })),
+      buildEditableSourceSuggestion: jest.fn(() => '/projects/Vutler/Generated/Sales/deck.source.md'),
+      extractOfficeTextFromBuffer: jest.fn(),
+      exportOfficeDocumentFromSource: jest.fn(),
     }));
 
     const { WorkspaceDriveAdapter } = require('../../services/skills/adapters/WorkspaceDriveAdapter');
@@ -350,5 +374,85 @@ describe('WorkspaceDriveAdapter', () => {
     });
     expect(upload).not.toHaveBeenCalled();
     expect(ensureBucket).not.toHaveBeenCalled();
+  });
+
+  test('exports a native office document from editable source content', async () => {
+    const upload = jest.fn().mockResolvedValue(undefined);
+    const ensureBucket = jest.fn().mockResolvedValue(undefined);
+    const poolQuery = jest.fn(async (sql, params) => {
+      if (sql.includes('FROM tenant_vutler.workspace_settings')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM tenant_vutler.workspaces')) {
+        return { rows: [{ slug: 'starbox', storage_bucket: 'vaultbrix-storage' }] };
+      }
+
+      if (sql.includes('FROM tenant_vutler.drive_files') && sql.includes('AND path = $2')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('INSERT INTO tenant_vutler.drive_files')) {
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected SQL in test: ${sql}`);
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({
+      query: poolQuery,
+    }));
+    jest.doMock('../../app/custom/services/s3Driver', () => ({
+      ensureBucket,
+      getBucketName: jest.fn().mockReturnValue('vaultbrix-storage'),
+      prefixKey: jest.fn((key) => key),
+      upload,
+      download: jest.fn(),
+      remove: jest.fn(),
+      move: jest.fn(),
+    }));
+    jest.doMock('../../services/officeDocumentService', () => ({
+      isOfficeDocumentPath: jest.fn(() => false),
+      getOfficeDocumentInfo: jest.fn(() => ({ family: 'presentation', format: 'pptx', ext: '.pptx' })),
+      buildEditableSourceSuggestion: jest.fn(() => '/projects/Vutler/Generated/Sales/deck.source.md'),
+      extractOfficeTextFromBuffer: jest.fn(),
+      exportOfficeDocumentFromSource: jest.fn().mockResolvedValue({
+        buffer: Buffer.from('pptx-binary'),
+        metadata: {
+          family: 'presentation',
+          source_format: 'pptx',
+          source_path_suggestion: '/projects/Vutler/Generated/Sales/deck.source.md',
+        },
+      }),
+    }));
+
+    const { WorkspaceDriveAdapter } = require('../../services/skills/adapters/WorkspaceDriveAdapter');
+    const adapter = new WorkspaceDriveAdapter();
+
+    const result = await adapter.execute({
+      workspaceId: 'ws-1',
+      skillKey: 'workspace_drive_write',
+      params: {
+        action: 'export_office',
+        path: '/projects/Vutler/Generated/Sales/deck.pptx',
+        sourceContent: '# Intro\n- Point 1',
+        title: 'Deck',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(upload).toHaveBeenCalledWith(
+      'vaultbrix-storage',
+      'projects/Vutler/Generated/Sales/file-1-deck.pptx',
+      expect.any(Buffer),
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    );
+    expect(result.data).toMatchObject({
+      id: 'file-1',
+      path: '/projects/Vutler/Generated/Sales/deck.pptx',
+      office: true,
+      family: 'presentation',
+      sourcePath: '/projects/Vutler/Generated/Sales/deck.source.md',
+    });
   });
 });

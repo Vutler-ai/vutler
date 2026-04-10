@@ -11,6 +11,7 @@ const {
   extractOfficeTextFromBuffer,
   getOfficeDocumentInfo,
   buildEditableSourceSuggestion,
+  exportOfficeDocumentFromSource,
 } = require('../../officeDocumentService');
 
 const SCHEMA = 'tenant_vutler';
@@ -79,6 +80,11 @@ async function readStream(resp) {
 function buildOfficeReadError(fileName, err) {
   const detail = err?.message ? ` ${err.message}` : '';
   return `The office document "${fileName}" could not be prepared for agent reading.${detail} Upload a PDF/TXT export, or install LibreOffice on the server to enable automatic office conversion.`;
+}
+
+function buildOfficeExportError(fileName, err) {
+  const detail = err?.message ? ` ${err.message}` : '';
+  return `The office document "${fileName}" could not be exported.${detail}`;
 }
 
 async function getWorkspaceBucket(workspaceId) {
@@ -166,6 +172,8 @@ class WorkspaceDriveAdapter {
       case 'create':
       case 'update':
         return this._writeText(workspaceId, params, context.skillKey, agentDriveRoot);
+      case 'export_office':
+        return this._exportOffice(workspaceId, params, context.skillKey, agentDriveRoot);
       case 'move':
         return this._move(workspaceId, params, agentDriveRoot);
       case 'delete':
@@ -405,6 +413,137 @@ class WorkspaceDriveAdapter {
           defaulted: resolved.defaulted,
           reason: resolved.reason,
         },
+      },
+    };
+  }
+
+  async _exportOffice(workspaceId, params, skillKey = 'workspace_drive_write', agentDriveRoot = null) {
+    const resolved = await resolveWorkspaceDriveWritePath({
+      skillKey,
+      workspaceId,
+      rootOverride: agentDriveRoot || undefined,
+      params,
+    });
+    const workspaceRoot = await resolveWorkspaceDriveRoot(workspaceId);
+    const targetPath = normalizeVirtualPath(resolved.path || '');
+    if (!targetPath || targetPath === '/') return { success: false, error: 'path is required' };
+
+    const officeInfo = getOfficeDocumentInfo(targetPath);
+    if (!officeInfo) {
+      return { success: false, error: 'export_office requires a supported office target path such as .docx, .pptx, .xlsx or .xls' };
+    }
+
+    let sourceContent = params.sourceContent || params.content || params.body || '';
+    let sourcePath = null;
+
+    if (!sourceContent && (params.sourcePath || params.templatePath)) {
+      sourcePath = resolveScopedPath(params.sourcePath || params.templatePath, agentDriveRoot, agentDriveRoot || '/');
+      const sourceRecord = await findByPath(workspaceId, sourcePath);
+      if (!sourceRecord || sourceRecord.type === 'folder') {
+        return { success: false, error: `Source file not found: ${sourcePath}` };
+      }
+
+      const bucket = await getWorkspaceBucket(workspaceId);
+      const resp = await s3Driver.download(bucket, s3Driver.prefixKey(sourceRecord.s3_key));
+      const buffer = await readStream(resp);
+      sourceContent = buffer.toString('utf8');
+    }
+
+    if (!sourceContent) {
+      return {
+        success: false,
+        error: 'export_office requires sourceContent/content or a sourcePath/templatePath',
+        data: {
+          path: targetPath,
+          office: true,
+          family: officeInfo.family,
+          sourceFormat: officeInfo.format,
+          suggestedSourcePath: buildEditableSourceSuggestion(targetPath, officeInfo),
+        },
+      };
+    }
+
+    let exportResult = null;
+    try {
+      exportResult = await exportOfficeDocumentFromSource({
+        targetPath,
+        sourceContent,
+        title: params.title || params.name || path.posix.basename(targetPath, path.posix.extname(targetPath)),
+      });
+    } catch (err) {
+      return {
+        success: false,
+        error: buildOfficeExportError(path.posix.basename(targetPath), err),
+        data: {
+          path: targetPath,
+          office: true,
+          family: officeInfo.family,
+          sourceFormat: officeInfo.format,
+          suggestedSourcePath: buildEditableSourceSuggestion(targetPath, officeInfo),
+          suggestedTargetPath: err?.meta?.suggestedTargetPath || null,
+        },
+      };
+    }
+
+    const existing = await findByPath(workspaceId, targetPath);
+    const fileId = existing?.id || crypto.randomUUID();
+    const cleanName = safeFileName(path.posix.basename(targetPath));
+    const parentPath = parentPathFor(targetPath);
+    const s3Key = existing?.s3_key || generateS3Key(parentPath, `${fileId}-${cleanName}`);
+    const mimeType = officeInfo.family === 'presentation'
+      ? 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      : officeInfo.family === 'word'
+        ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        : officeInfo.ext === '.xls'
+          ? 'application/vnd.ms-excel'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const bucket = await getWorkspaceBucket(workspaceId);
+
+    await s3Driver.upload(bucket, s3Driver.prefixKey(s3Key), exportResult.buffer, mimeType);
+    await pool.query(
+      `INSERT INTO ${SCHEMA}.drive_files
+       (id, workspace_id, name, path, parent_path, mime_type, size_bytes, uploaded_by, s3_key, is_deleted, type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, false, 'file')
+       ON CONFLICT (workspace_id, path)
+       DO UPDATE SET
+         name = EXCLUDED.name,
+         mime_type = EXCLUDED.mime_type,
+         size_bytes = EXCLUDED.size_bytes,
+         uploaded_by = EXCLUDED.uploaded_by,
+         s3_key = EXCLUDED.s3_key,
+         is_deleted = false,
+         updated_at = NOW()`,
+      [
+        fileId,
+        workspaceId,
+        cleanName,
+        targetPath,
+        parentPath,
+        mimeType,
+        exportResult.buffer.length,
+        null,
+        s3Key,
+      ]
+    );
+
+    return {
+      success: true,
+      data: {
+        id: fileId,
+        path: targetPath,
+        name: cleanName,
+        size: exportResult.buffer.length,
+        mimeType,
+        office: true,
+        family: officeInfo.family,
+        sourcePath: sourcePath || buildEditableSourceSuggestion(targetPath, officeInfo),
+        placement: {
+          root: agentDriveRoot || workspaceRoot,
+          folder: resolved.folder ? normalizeVirtualPath(resolved.folder) : null,
+          defaulted: resolved.defaulted,
+          reason: resolved.reason,
+        },
+        derivation: exportResult.metadata || {},
       },
     };
   }

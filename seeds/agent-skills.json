@@ -721,7 +721,7 @@
   },
   "workspace_drive_write": {
     "name": "Workspace Drive Write",
-    "description": "Create or update a text file inside the internal workspace drive for workspace-scoped collaboration",
+    "description": "Create or update text files in the internal workspace drive, or export a native office document from an editable source draft",
     "category": "operations",
     "icon": "edit-3"
   },
