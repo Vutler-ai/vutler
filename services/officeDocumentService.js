@@ -378,7 +378,7 @@ async function exportPresentationBufferFromMarkdown(source = '', options = {}) {
     });
   }
 
-  return deck.write({ outputType: 'nodebuffer' });
+  return deck.stream();
 }
 
 async function exportDocxBufferFromMarkdown(source = '', options = {}) {
