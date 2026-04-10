@@ -48,7 +48,7 @@ describe('agentDriveService', () => {
     const insertedPaths = [];
     const migrated = [];
     const legacyRoot = '/projects/Vutler/Agents/agent-uuid-123';
-    const friendlyRoot = '/projects/Vutler/Agents/max';
+    const friendlyRoot = '/projects/Vutler/Agents/Marketing/max';
 
     const pg = {
       query: jest.fn(async (sql, params) => {
@@ -83,6 +83,7 @@ describe('agentDriveService', () => {
       id: 'agent-uuid-123',
       username: 'max',
       name: 'Max',
+      type: ['marketing'],
     });
 
     expect(migrated).toHaveLength(1);
@@ -90,18 +91,19 @@ describe('agentDriveService', () => {
     expect(migrated[0][2]).toBe(friendlyRoot);
     expect(result.agentRoot).toBe(friendlyRoot);
     expect(insertedPaths).toContain('/projects/Vutler/Agents');
-    expect(insertedPaths).toContain('/projects/Vutler/Agents/max');
-    expect(insertedPaths).toContain('/projects/Vutler/Agents/max/Generated');
+    expect(insertedPaths).toContain('/projects/Vutler/Agents/Marketing');
+    expect(insertedPaths).toContain('/projects/Vutler/Agents/Marketing/max');
+    expect(insertedPaths).toContain('/projects/Vutler/Agents/Marketing/max/Generated');
     expect(insertedPaths).not.toContain('/projects/Vutler/Agents/agent-uuid-123');
     expect(move).toHaveBeenCalledWith(
       'vaultbrix-storage',
       'projects/Vutler/Agents/agent-uuid-123/Generated/post-1.md',
-      'projects/Vutler/Agents/max/Generated/post-1.md'
+      'projects/Vutler/Agents/Marketing/max/Generated/post-1.md'
     );
     expect(move).toHaveBeenCalledWith(
       'vaultbrix-storage',
       'projects/Vutler/Agents/agent-uuid-123/Chat/thread.txt',
-      'projects/Vutler/Agents/max/Chat/thread.txt'
+      'projects/Vutler/Agents/Marketing/max/Chat/thread.txt'
     );
   });
 
@@ -118,17 +120,18 @@ describe('agentDriveService', () => {
           id: 'agent-uuid-123',
           username: 'max',
           name: 'Max',
+          type: ['marketing'],
           workspace_id: 'ws-1',
         }],
       })),
     };
 
-    const friendly = await findAssignedAgentForPath(pg, 'ws-1', '/projects/Vutler/Agents/max/Generated/post.md');
+    const friendly = await findAssignedAgentForPath(pg, 'ws-1', '/projects/Vutler/Agents/Marketing/max/Generated/post.md');
     const legacy = await findAssignedAgentForPath(pg, 'ws-1', '/projects/Vutler/Agents/agent-uuid-123/Generated/post.md');
 
     expect(friendly?.agent?.username).toBe('max');
-    expect(friendly?.agentDriveRoot).toBe('/projects/Vutler/Agents/max');
+    expect(friendly?.agentDriveRoot).toBe('/projects/Vutler/Agents/Marketing/max');
     expect(legacy?.agent?.username).toBe('max');
-    expect(legacy?.agentDriveRoot).toBe('/projects/Vutler/Agents/max');
+    expect(legacy?.agentDriveRoot).toBe('/projects/Vutler/Agents/Marketing/max');
   });
 });

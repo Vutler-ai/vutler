@@ -177,6 +177,29 @@ function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
 
+function resolveDriveLane(agentTypes: string[]): string {
+  const types = new Set(agentTypes);
+  if (types.has('marketing') || types.has('content')) return 'Marketing';
+  if (types.has('sales')) return 'Sales';
+  if (types.has('operations')) return 'Operations';
+  if (types.has('support')) return 'Support';
+  if (types.has('technical') || types.has('security') || types.has('qa') || types.has('devops') || types.has('engineering') || types.has('data') || types.has('integration') || types.has('networking') || types.has('iot')) {
+    return 'Technical';
+  }
+  if (types.has('finance')) return 'Finance';
+  if (types.has('legal') || types.has('analytics') || types.has('design')) return 'Documentation';
+  if (types.has('healthcare')) return 'Healthcare';
+  if (types.has('real-estate')) return 'Real-Estate';
+  return 'General';
+}
+
+function buildSuggestedDriveRoot(agentTypes: string[], username: string, name: string): string {
+  const lane = resolveDriveLane(agentTypes);
+  const folder = slugify(username) || slugify(name);
+  if (!folder) return `/projects/Vutler/Agents/${lane}`;
+  return `/projects/Vutler/Agents/${lane}/${folder}`;
+}
+
 function buildDefaultAccess(agentTypes: string[]): WizardAccessState {
   const types = new Set(agentTypes);
   const hasSelection = agentTypes.length > 0;
@@ -481,6 +504,10 @@ export default function NewAgentPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [form, setForm] = useState<WizardFormState>(() => buildInitialForm());
+  const suggestedDriveRoot = useMemo(
+    () => buildSuggestedDriveRoot(form.agentTypes, form.username, form.name),
+    [form.agentTypes, form.username, form.name]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1494,12 +1521,12 @@ export default function NewAgentPage() {
               <div className="rounded-2xl border border-white/10 bg-[#0d1017] p-5">
                 <div className="mb-4">
                   <div className="text-sm font-medium text-white">Drive root</div>
-                  <div className="text-sm text-[#8c94a8]">Optional. Define a preferred root if this agent should write into a constrained area.</div>
+                  <div className="text-sm text-[#8c94a8]">Optional. Define a preferred root if this agent should write into a constrained area. Suggested lane path: <span className="font-mono text-[#cbd3e4]">{suggestedDriveRoot}</span>.</div>
                 </div>
                 <Input
                   value={form.driveRoot}
                   onChange={(event) => updateForm((current) => ({ ...current, driveRoot: event.target.value }))}
-                  placeholder="/projects/Vutler/marketing"
+                  placeholder={suggestedDriveRoot}
                   className="border-white/10 bg-[#090b12] text-white"
                 />
               </div>

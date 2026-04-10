@@ -178,6 +178,7 @@ async function claimPendingTasks(limit = BATCH_SIZE) {
        SELECT id
        FROM ${SCHEMA}.tasks
        WHERE status = 'pending'
+         AND (due_date IS NULL OR due_date <= NOW())
          AND created_at > NOW() - INTERVAL '${STALE_THRESHOLD_MIN} minutes'
        ORDER BY
          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,

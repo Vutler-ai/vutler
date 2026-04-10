@@ -155,6 +155,38 @@ function normalizeAgentTypes(type: Agent['type'] | undefined): string[] {
   return type ? [type] : [];
 }
 
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function resolveDriveLane(agentTypes: string[]): string {
+  const types = new Set(agentTypes);
+  if (types.has('marketing') || types.has('content')) return 'Marketing';
+  if (types.has('sales')) return 'Sales';
+  if (types.has('operations')) return 'Operations';
+  if (types.has('support')) return 'Support';
+  if (types.has('technical') || types.has('security') || types.has('qa') || types.has('devops') || types.has('engineering') || types.has('data') || types.has('integration') || types.has('networking') || types.has('iot')) {
+    return 'Technical';
+  }
+  if (types.has('finance')) return 'Finance';
+  if (types.has('legal') || types.has('analytics') || types.has('design')) return 'Documentation';
+  if (types.has('healthcare')) return 'Healthcare';
+  if (types.has('real-estate')) return 'Real-Estate';
+  return 'General';
+}
+
+function buildSuggestedDriveRoot(agent: Partial<Agent>, agentTypes: string[]): string {
+  const lane = resolveDriveLane(agentTypes);
+  const folder = slugify(agent.username || '') || slugify(agent.name || '');
+  if (!folder) return `/projects/Vutler/Agents/${lane}`;
+  return `/projects/Vutler/Agents/${lane}/${folder}`;
+}
+
 function getAgentTypeLabels(typeKeys: string[]): string[] {
   return typeKeys
     .map((key) => AGENT_TYPES.find((entry) => entry.key === key)?.label || key)
@@ -826,6 +858,10 @@ export default function AgentConfigPage() {
     [matrix, visibleCapabilityKeys]
   );
   const typeLabels = useMemo(() => getAgentTypeLabels(agentTypes), [agentTypes]);
+  const suggestedDriveRoot = useMemo(
+    () => buildSuggestedDriveRoot(agent || {}, agentTypes),
+    [agent, agentTypes]
+  );
   const groupedModels = useMemo(() => {
     return models.reduce<Record<string, LLMModel[]>>((accumulator, model) => {
       const provider = model.provider || 'other';
@@ -1684,7 +1720,7 @@ export default function AgentConfigPage() {
                   <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
                     <div>
                       <div className="text-sm font-medium text-white">Drive root</div>
-                      <FieldHint>Optional root path to keep this agent inside a dedicated zone of the shared drive.</FieldHint>
+                      <FieldHint>Optional root path to keep this agent inside a dedicated zone of the shared drive. Suggested lane path: <span className="font-mono text-[#cbd3e4]">{suggestedDriveRoot}</span>.</FieldHint>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="drive-root">Root path</Label>
@@ -1701,7 +1737,7 @@ export default function AgentConfigPage() {
                           }))
                         }
                         className="border-white/10 bg-[#0e0f1a] text-white"
-                        placeholder="/marketing/campaigns"
+                        placeholder={suggestedDriveRoot}
                       />
                     </div>
 

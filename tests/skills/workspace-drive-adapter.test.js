@@ -134,16 +134,16 @@ describe('WorkspaceDriveAdapter', () => {
     expect(result.success).toBe(true);
     expect(upload).toHaveBeenCalledWith(
       'vaultbrix-storage',
-      'projects/Vutler/Agents/agent-42/Generated/Marketing/file-1-social-plan.txt',
+      'projects/Vutler/Agents/General/agent-42/Generated/Marketing/file-1-social-plan.txt',
       expect.any(Buffer),
       'text/plain; charset=utf-8'
     );
     expect(result.data).toMatchObject({
       id: 'file-1',
-      path: '/projects/Vutler/Agents/agent-42/Generated/Marketing/social-plan.txt',
+      path: '/projects/Vutler/Agents/General/agent-42/Generated/Marketing/social-plan.txt',
       placement: {
-        root: '/projects/Vutler/Agents/agent-42',
-        folder: '/projects/Vutler/Agents/agent-42/Generated/Marketing',
+        root: '/projects/Vutler/Agents/General/agent-42',
+        folder: '/projects/Vutler/Agents/General/agent-42/Generated/Marketing',
         defaulted: true,
         reason: 'classified:Generated/Marketing',
       },

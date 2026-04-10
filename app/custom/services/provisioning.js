@@ -7,6 +7,7 @@
 const path = require('path');
 const { pool } = require('../lib/postgres');
 const s3Driver = require('./s3Driver');
+const { listAgentDriveLaneFolders } = require('../../../services/driveOrganizationPolicy');
 
 const SCHEMA = 'tenant_vutler';
 const DEFAULT_DRIVE_ROOT = '/projects/Vutler';
@@ -14,6 +15,8 @@ const DRIVE_ROOT_SETTING_KEY = 'drive_root';
 const DRIVE_FOLDER_SCAFFOLD = [
   '/projects',
   '/projects/Vutler',
+  '/projects/Vutler/Agents',
+  ...listAgentDriveLaneFolders().map((folder) => `/projects/Vutler/Agents/${folder}`),
   '/projects/Vutler/Generated',
   '/projects/Vutler/Generated/Docs',
   '/projects/Vutler/Generated/Marketing',

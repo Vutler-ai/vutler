@@ -99,7 +99,7 @@ function matchSkillToTask(taskTitle, taskDescription, agentSkills) {
   return bestSkill;
 }
 
-async function createTask({ title, description, source, source_ref, priority, due_date, created_by, workspace_id, assigned_agent, metadata }) {
+async function createTask({ title, description, source, source_ref, priority, due_date, reminder_at, created_by, workspace_id, assigned_agent, metadata }) {
   try {
     if (!assigned_agent) {
       const classification = classifyAndAssign({ title, description, priority });
@@ -136,11 +136,14 @@ async function createTask({ title, description, source, source_ref, priority, du
       description: description || null,
       priority: priority || 'P2',
       for_agent_id: assigned_agent,
+      due_date: due_date || null,
+      reminder_at: reminder_at || null,
       metadata: {
         ...(enrichedMetadata || {}),
         source: source || null,
         source_ref: source_ref || null,
         due_date: due_date || null,
+        reminder_at: reminder_at || null,
         created_by: created_by || null,
       },
     }, workspace_id || '00000000-0000-0000-0000-000000000001');

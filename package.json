@@ -10,6 +10,7 @@
     "migrate:status": "node scripts/run-migrations.js --status",
     "migrate:dry-run": "node scripts/run-migrations.js --dry-run",
     "db:backup": "bash scripts/backup-db.sh",
+    "drive:reclassify-agents": "node scripts/reclassify-agent-drive-folders.js",
     "db:owners:audit": "node scripts/audit-schema-owners.js",
     "db:owners:audit:json": "node scripts/audit-schema-owners.js --json",
     "db:owners:sql": "node scripts/generate-owner-normalization-sql.js",

@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const path = require('path');
 const s3Driver = require('../app/custom/services/s3Driver');
 const { resolveWorkspaceDriveRoot } = require('./drivePlacementPolicy');
+const { listAgentDriveLaneFolders, resolveAgentDriveLane } = require('./driveOrganizationPolicy');
 
 const SCHEMA = 'tenant_vutler';
 const AGENTS_FOLDER_NAME = 'Agents';
@@ -108,7 +109,8 @@ async function getWorkspaceBucket(pg, workspaceId) {
 
 async function resolveAgentDriveRoot(workspaceId, agent) {
   const workspaceRoot = normalizeVirtualPath(await resolveWorkspaceDriveRoot(workspaceId));
-  return normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}/${buildAgentFolderName(agent)}`);
+  const lane = resolveAgentDriveLane(agent);
+  return normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}/${lane}/${buildAgentFolderName(agent)}`);
 }
 
 async function resolveAgentDriveSubfolder(workspaceId, agent, folderName = 'Chat') {
@@ -229,17 +231,23 @@ async function ensureAgentDriveProvisioned(pg, workspaceId, agent, options = {})
   const workspaceRoot = normalizeVirtualPath(await resolveWorkspaceDriveRoot(workspaceId));
   const agentsRoot = normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}`);
   const agentRoot = await resolveAgentDriveRoot(workspaceId, agent);
-  const legacyAgentRoot = normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}/${buildLegacyAgentFolderName(agent)}`);
+  const laneRoot = normalizeVirtualPath(path.posix.dirname(agentRoot));
+  const legacyAgentRoots = Array.from(new Set([
+    normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}/${buildLegacyAgentFolderName(agent)}`),
+    normalizeVirtualPath(`${workspaceRoot}/${AGENTS_FOLDER_NAME}/${buildAgentFolderName(agent)}`),
+  ])).filter((candidate) => candidate !== agentRoot);
 
-  if (legacyAgentRoot !== agentRoot) {
+  for (const legacyAgentRoot of legacyAgentRoots) {
     const migrated = await migrateLegacyAgentDriveRoot(pg, workspaceId, legacyAgentRoot, agentRoot);
     if (migrated) {
       await migrateLegacyAgentDriveObjects(pg, workspaceId, legacyAgentRoot, agentRoot);
+      break;
     }
   }
 
   const folders = [
     agentsRoot,
+    laneRoot,
     agentRoot,
     ...AGENT_SUBFOLDERS.map((folderName) => normalizeVirtualPath(`${agentRoot}/${folderName}`)),
   ];
@@ -311,7 +319,9 @@ async function findAssignedAgentForPath(pg, workspaceId, filePath) {
   }
 
   const relative = normalized.slice(prefix.length).replace(/^\/+/, '');
-  const agentFolder = relative.split('/')[0];
+  const segments = relative.split('/').filter(Boolean);
+  const knownLanes = new Set(listAgentDriveLaneFolders());
+  const agentFolder = knownLanes.has(segments[0]) ? segments[1] : segments[0];
   if (!agentFolder) return null;
 
   const result = await pg.query(
@@ -326,7 +336,7 @@ async function findAssignedAgentForPath(pg, workspaceId, filePath) {
 
   return {
     agent,
-    agentDriveRoot: normalizeVirtualPath(`${prefix}/${buildAgentFolderName(agent)}`),
+    agentDriveRoot: await resolveAgentDriveRoot(workspaceId, agent),
   };
 }
 

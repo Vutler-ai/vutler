@@ -272,15 +272,13 @@ async function clearAgentEmailRoutes(db, workspaceId, agentId) {
 router.get("/", async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
-    const driveRootBase = await resolveAgentDriveRoot(workspaceId, { id: 'agent-root-placeholder' })
-      .then((value) => value.replace(/\/agent-root-placeholder$/, ''))
-      .catch(() => null);
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.agents WHERE workspace_id = $1 ORDER BY name`,
       [workspaceId]
     );
-    const agents = result.rows.map(a => {
+    const agents = await Promise.all(result.rows.map(async (a) => {
       const capabilities = normalizeCapabilities(a.capabilities || []);
+      const drivePath = await resolveAgentDriveRoot(workspaceId, a).catch(() => null);
       return ({
       id: a.id,
       name: a.name,
@@ -301,11 +299,11 @@ router.get("/", async (req, res) => {
       capabilities,
       badge: ((a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator') ? 'system-coordinator' : null),
       systemAgent: (a.type === 'coordinator' || String(a.role||'').toLowerCase()==='coordinator'),
-      drive_path: driveRootBase ? `${driveRootBase}/${a.id}` : null,
+      drive_path: drivePath,
       createdAt: a.created_at,
       updatedAt: a.updated_at
     });
-    });
+    }));
     res.json({ success: true, agents, count: agents.length, skip: 0, limit: 100 });
   } catch (err) {
     console.error("[AGENTS] List error:", err.message);

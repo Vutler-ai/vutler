@@ -663,6 +663,20 @@ function buildMemoryToolResult(toolName, actionResult, orchestrationPayload) {
   );
 }
 
+function buildScheduleToolResult(data = {}) {
+  const message = typeof data?.message === 'string' && data.message.trim()
+    ? data.message.trim()
+    : 'Schedule created successfully.';
+  return {
+    success: true,
+    data: message,
+    persisted_output: {
+      ...data,
+      message,
+    },
+  };
+}
+
 async function executeToolThroughOrchestration({
   toolName,
   args,
@@ -1841,6 +1855,15 @@ async function chat(agent, messages, db, opts = {}) {
   const hasSocialMediaAccess = isProviderAvailable(runtimeCapabilityAvailability, 'social_media')
     && (Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess || hasOverlaySocialAccess);
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
+  const scheduleTools = [];
+  if (workspaceId) {
+    try {
+      const { SCHEDULE_TOOL } = require('./scheduler');
+      if (SCHEDULE_TOOL) scheduleTools.push(SCHEDULE_TOOL);
+    } catch (err) {
+      console.warn('[LLM Router] scheduler tool unavailable:', err.message);
+    }
+  }
   let nexusTools = [];
   let nexusNodeId = null;
   let mailboxSourceOptions = [];
@@ -1923,6 +1946,9 @@ async function chat(agent, messages, db, opts = {}) {
       ? ' Posts are automatically restricted to the social accounts assigned to this agent.'
       : '';
     effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}${accountHint}`;
+  }
+  if (scheduleTools.length > 0) {
+    effectiveSystemPrompt += '\n\nYou can create recurring follow-up execution with vutler_create_schedule(). Use it when the user asks for work to happen on future days or on a recurring cadence. Do not merely promise future execution for multi-day sequences; create a schedule or dated task.';
   }
   if (hasCodeExecution) {
     effectiveSystemPrompt += '\n\nYou can execute short JavaScript or Python snippets with run_code_in_sandbox(). Use it when a result depends on actual code execution, computation, parsing, or validation. Prefer concise snippets, avoid unnecessary execution, and never assume shell or host access.';
@@ -2080,7 +2106,7 @@ async function chat(agent, messages, db, opts = {}) {
         }
         const sandboxTools = hasCodeExecution ? [SANDBOX_CODE_EXECUTION_TOOL] : [];
         const allTools = applyContextualToolFiltering(
-          [...memoryTools, ...socialMediaTools, ...sandboxTools, ...nexusTools, ...skillTools],
+          [...memoryTools, ...socialMediaTools, ...scheduleTools, ...sandboxTools, ...nexusTools, ...skillTools],
           latestUserMessage
         );
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
@@ -2228,6 +2254,33 @@ async function chat(agent, messages, db, opts = {}) {
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
                 { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Error: ${socialErr.message}` },
+              ];
+            }
+            continueLoop = true;
+
+          } else if (toolCall.name === 'vutler_create_schedule' && workspaceId) {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_create_schedule', 'scheduler', args);
+            try {
+              const { handleScheduleTool } = require('./scheduler');
+              const schedulePayload = await handleScheduleTool(args, {
+                workspaceId,
+                agentId: agent?.username || agent?.id || null,
+                createdBy: chatActionContext?.requestedAgentId || agent?.id || agent?.username || null,
+              });
+              const scheduleResult = buildScheduleToolResult(schedulePayload);
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, scheduleResult, null);
+              await storeToolObservation(db, workspaceId, agent, 'vutler_create_schedule', args, scheduleResult);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_create_schedule', content: formatToolResultContent(scheduleResult) },
+              ];
+            } catch (scheduleErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, scheduleErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_create_schedule', content: `Error: ${scheduleErr.message}` },
               ];
             }
             continueLoop = true;

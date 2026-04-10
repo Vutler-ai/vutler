@@ -59,5 +59,12 @@ describe('workspace drive provisioning', () => {
     );
     const folderInserts = query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO tenant_vutler.drive_files'));
     expect(folderInserts).toHaveLength(DRIVE_FOLDER_SCAFFOLD.length);
+    expect(DRIVE_FOLDER_SCAFFOLD).toEqual(expect.arrayContaining([
+      '/projects/Vutler/Agents',
+      '/projects/Vutler/Agents/Marketing',
+      '/projects/Vutler/Agents/Sales',
+      '/projects/Vutler/Agents/Technical',
+      '/projects/Vutler/Generated/Marketing',
+    ]));
   });
 });

@@ -527,6 +527,8 @@ class SwarmCoordinator {
     taskKind = 'task',
     sniparaSwarmId = null,
     executionMode = null,
+    dueDate = null,
+    reminderAt = null,
   }) {
     await this.ensureSniparaTaskColumn();
     const ws = normalizeWorkspaceId(workspaceId);
@@ -565,12 +567,14 @@ class SwarmCoordinator {
              source = COALESCE($7, source),
              parent_id = COALESCE($8, parent_id),
              metadata = CASE WHEN $9::jsonb IS NULL THEN metadata ELSE COALESCE(metadata, '{}'::jsonb) || $9::jsonb END,
+             due_date = COALESCE($10, due_date),
+             reminder_at = COALESCE($11, reminder_at),
              updated_at = NOW(),
              snipara_task_id = COALESCE($1, snipara_task_id),
              swarm_task_id = COALESCE($1, swarm_task_id)
-         WHERE id = $10
+         WHERE id = $12
          RETURNING *`,
-        [swarmTaskId, title, description, priority, status, assignedTo, source, parentId, metaJson, existing.rows[0].id]
+        [swarmTaskId, title, description, priority, status, assignedTo, source, parentId, metaJson, dueDate, reminderAt, existing.rows[0].id]
       );
       let taskRow = updated.rows[0];
       taskRow = await refreshHierarchyProjection(taskRow, 'swarm_upsert_rollup');
@@ -590,10 +594,10 @@ class SwarmCoordinator {
 
     const inserted = await pool.query(
       `INSERT INTO ${SCHEMA}.tasks
-       (id, title, description, status, priority, assignee, assigned_agent, created_at, updated_at, workspace_id, source, parent_id, metadata, snipara_task_id, swarm_task_id)
-       VALUES (gen_random_uuid(), $1, $2, COALESCE($3, 'pending'), COALESCE($4, 'medium'), $5, $5, NOW(), NOW(), $6, $7, $8, COALESCE($9::jsonb, '{}'::jsonb), $10, $10)
+       (id, title, description, status, priority, assignee, assigned_agent, created_at, updated_at, workspace_id, source, parent_id, metadata, due_date, reminder_at, snipara_task_id, swarm_task_id)
+       VALUES (gen_random_uuid(), $1, $2, COALESCE($3, 'pending'), COALESCE($4, 'medium'), $5, $5, NOW(), NOW(), $6, $7, $8, COALESCE($9::jsonb, '{}'::jsonb), $10, $11, $12, $12)
        RETURNING *`,
-      [title || 'Nouvelle tache', description || '', status, priority, assignedTo, ws, source, parentId, metaJson, swarmTaskId]
+      [title || 'Nouvelle tache', description || '', status, priority, assignedTo, ws, source, parentId, metaJson, dueDate, reminderAt, swarmTaskId]
     );
     let taskRow = inserted.rows[0];
     taskRow = await refreshHierarchyProjection(taskRow, 'swarm_insert_rollup');
@@ -667,7 +671,7 @@ class SwarmCoordinator {
   }
 
   async createTask(task = {}, workspaceId) {
-    const ws = normalizeWorkspaceId(workspaceId);
+    const ws = normalizeWorkspaceId(workspaceId || task.workspace_id);
     const sniparaReady = await this.hasSniparaConfig(ws);
     const { config, swarmId } = await this.getSniparaRuntimeConfig(ws);
     let agentId = task.for_agent_id || task.assigned_agent || task.assignee;
@@ -696,6 +700,8 @@ class SwarmCoordinator {
     const metadata = {
       ...workflowMeta,
       ...(task.metadata || {}),
+      due_date: task.due_date || task.dueDate || null,
+      reminder_at: task.reminder_at || task.reminderAt || null,
       workspace_id: ws
     };
 
@@ -743,6 +749,8 @@ class SwarmCoordinator {
       source: 'vutler-api',
       workspaceId: ws,
       parentId: task.parent_id || null,
+      dueDate: task.due_date || task.dueDate || null,
+      reminderAt: task.reminder_at || task.reminderAt || null,
       metadata: {
         ...(config?.projectId ? { snipara_project_id: config.projectId } : {}),
         ...metadata,
