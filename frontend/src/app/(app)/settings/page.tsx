@@ -6,7 +6,29 @@ import { useApi } from "@/hooks/use-api";
 import { apiFetch } from "@/lib/api/client";
 import { getMe, updateMe, getSettings, updateSettings, updatePassword, getProviders, getApiKeys, createApiKey, revokeApiKey } from "@/lib/api/endpoints/settings";
 import { getIntegrations, getAvailableProviders, connect, disconnect } from "@/lib/api/endpoints/integrations";
-import type { UserProfile, WorkspaceSettings, Integration, AvailableProvider, Provider, ApiKey, ApiKeyRole } from "@/lib/api/types";
+import {
+  getSniparaAdminStatus,
+  getSniparaTransportHealth,
+  getSniparaIndexHealth,
+  getSniparaSearchAnalytics,
+  getSniparaHtaskPolicy,
+  getSniparaHtaskMetrics,
+} from "@/lib/api/endpoints/memory";
+import type {
+  UserProfile,
+  WorkspaceSettings,
+  Integration,
+  AvailableProvider,
+  Provider,
+  ApiKey,
+  ApiKeyRole,
+  SniparaStatusResponse,
+  SniparaHealthResponse,
+  SniparaIndexHealth,
+  SniparaSearchAnalytics,
+  SniparaHtaskPolicy,
+  SniparaHtaskMetrics,
+} from "@/lib/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -111,6 +133,12 @@ function buildSniparaHttpConfigSnippet({
     null,
     2
   );
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "n/a";
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.round(normalized)}%`;
 }
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
@@ -370,6 +398,42 @@ function WorkspaceTab({
     }
   }, [settings, providers]);
 
+  const { data: sniparaStatus, isLoading: loadingSniparaStatus } = useApi<SniparaStatusResponse>(
+    "/api/v1/snipara/admin/status",
+    getSniparaAdminStatus
+  );
+  const { data: sniparaHealth, isLoading: loadingSniparaHealth } = useApi<SniparaHealthResponse>(
+    "/api/v1/snipara/admin/health",
+    getSniparaTransportHealth
+  );
+  const { data: sniparaIndexHealth, isLoading: loadingSniparaIndex } = useApi<SniparaIndexHealth>(
+    "/api/v1/snipara/admin/index-health",
+    getSniparaIndexHealth
+  );
+  const { data: sniparaSearchAnalytics, isLoading: loadingSniparaAnalytics } = useApi<SniparaSearchAnalytics>(
+    "/api/v1/snipara/admin/search-analytics?days=30",
+    () => getSniparaSearchAnalytics(30)
+  );
+  const { data: sniparaHtaskPolicy } = useApi<SniparaHtaskPolicy>(
+    "/api/v1/snipara/admin/htask-policy",
+    getSniparaHtaskPolicy
+  );
+  const { data: sniparaHtaskMetrics } = useApi<SniparaHtaskMetrics>(
+    "/api/v1/snipara/admin/htask-metrics",
+    getSniparaHtaskMetrics
+  );
+
+  const transportOk = sniparaHealth?.ok === true;
+  const sniparaConfigured = sniparaStatus?.configured ?? Boolean(sniparaProjectSlug || sniparaKey);
+  const showSniparaAdminMetrics = loadingSniparaStatus
+    || loadingSniparaHealth
+    || loadingSniparaIndex
+    || loadingSniparaAnalytics
+    || Boolean(sniparaStatus)
+    || Boolean(sniparaHealth)
+    || Boolean(sniparaIndexHealth)
+    || Boolean(sniparaSearchAnalytics);
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -550,6 +614,104 @@ function WorkspaceTab({
               <p className="text-[#4b5563] text-[11px]">
                 If your Snipara project key is masked here, keep the URL as-is and replace only <code className="text-purple-400">rlm_xxx</code> with your real project key.
               </p>
+            </div>
+          )}
+
+          {showSniparaAdminMetrics && (
+            <div className="mt-5 rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0a0b14] p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-white text-sm font-medium">Snipara Runtime Health</p>
+                  <p className="text-[11px] text-[#6b7280] mt-1">
+                    Operator signals for context freshness, search quality, and htask governance.
+                  </p>
+                </div>
+                <Badge
+                  className={
+                    sniparaIndexHealth?.degraded
+                      ? "bg-amber-500/15 text-amber-300 border-amber-500/20"
+                      : "bg-emerald-500/15 text-emerald-300 border-emerald-500/20"
+                  }
+                >
+                  {sniparaIndexHealth?.degraded ? "Degraded" : "Healthy"}
+                </Badge>
+              </div>
+
+              {(loadingSniparaStatus || loadingSniparaHealth || loadingSniparaIndex || loadingSniparaAnalytics) ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <Skeleton key={index} className="h-20 rounded-xl bg-[#14151f]" />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Configured</p>
+                      <p className="text-lg font-semibold text-white mt-2">{sniparaConfigured ? "Yes" : "No"}</p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaStatus?.resolved?.source ? `Source: ${sniparaStatus.resolved.source}` : "Workspace-managed resolution"}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Transport</p>
+                      <p className="text-lg font-semibold text-white mt-2">{transportOk ? "Reachable" : "Check needed"}</p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {transportOk ? "Snipara MCP responds for this workspace." : String(sniparaHealth?.error || "Transport health unavailable")}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Index Health</p>
+                      <p className="text-lg font-semibold text-white mt-2">
+                        {sniparaIndexHealth?.score != null ? formatPercent(sniparaIndexHealth.score) : "n/a"}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaIndexHealth?.stale_documents ?? 0} stale docs
+                        {sniparaIndexHealth?.documents_indexed != null ? ` · ${sniparaIndexHealth.documents_indexed} indexed` : ""}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Search Quality (30d)</p>
+                      <p className="text-lg font-semibold text-white mt-2">
+                        {formatPercent(sniparaSearchAnalytics?.success_rate ?? null)}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaSearchAnalytics?.total_queries ?? 0} queries
+                        {sniparaSearchAnalytics?.avg_latency_ms != null ? ` · ${Math.round(sniparaSearchAnalytics.avg_latency_ms)} ms avg` : ""}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Context Risk</p>
+                      <p className="text-sm text-white mt-2">
+                        {sniparaIndexHealth?.degraded
+                          ? "Autonomy can degrade because the documentation index is stale or error-prone."
+                          : "No context-quality degradation signal from Snipara right now."}
+                      </p>
+                      {sniparaIndexHealth?.last_indexed_at && (
+                        <p className="text-[11px] text-[#4b5563] mt-1">
+                          Last indexed: {new Date(sniparaIndexHealth.last_indexed_at).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Htask Policy</p>
+                      <p className="text-sm text-white mt-2">
+                        {sniparaHtaskPolicy?.supported === false
+                          ? "Not exposed by this workspace plan."
+                          : `Verify closure: ${sniparaHtaskPolicy?.closure_verification_required ? "on" : "off"} · Clean checks: ${sniparaHtaskPolicy?.block_on_failed_checks ? "required" : "not enforced"}`}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaHtaskMetrics?.supported === false
+                          ? "Metrics unavailable."
+                          : `${sniparaHtaskMetrics?.blocked_count ?? 0} blocked · ${sniparaHtaskMetrics?.stale_count ?? 0} stale · ${sniparaHtaskMetrics?.open_count ?? 0} open`}
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

@@ -20,6 +20,7 @@ import {
   getOrchestrationRun,
   resumeOrchestrationRun,
 } from "@/lib/api/endpoints/orchestration";
+import { getSniparaIndexHealth } from "@/lib/api/endpoints/memory";
 import { getAuthToken } from "@/lib/api/client";
 import type {
   Task,
@@ -28,6 +29,7 @@ import type {
   OrchestrationRunDetail,
   OrchestrationRunEvent,
   OrchestrationRunStep,
+  SniparaIndexHealth,
 } from "@/lib/api/types";
 import type { Agent } from "@/lib/api/types";
 import { ChatWebSocket } from "@/lib/websocket";
@@ -97,6 +99,12 @@ function normalizeStatus(status: Task["status"] | string | null | undefined): No
   if (status === "completed" || status === "done") return "done";
   if (status === "pending" || status === "todo") return "todo";
   return "in_progress";
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (typeof value !== "number" || Number.isNaN(value)) return "n/a";
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.round(normalized)}%`;
 }
 
 type TaskMetadata = Record<string, unknown>;
@@ -790,6 +798,11 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
   const autonomyRecurringBlocker = getMetadataString(taskMetadata, "orchestration_autonomy_recurring_blocker");
   const autonomyEscalationRecommended = getMetadataBoolean(taskMetadata, "orchestration_autonomy_escalation_recommended") === true;
   const autonomyLimited = getMetadataBoolean(taskMetadata, "orchestration_autonomy_limited") === true;
+  const { data: sniparaIndexHealth } = useApi<SniparaIndexHealth>(
+    open ? "/api/v1/snipara/admin/index-health" : null,
+    getSniparaIndexHealth
+  );
+  const contextQualityDegraded = sniparaIndexHealth?.degraded === true;
   const hasAutonomyTelemetry = overlaySkills.length > 0
     || overlayProviders.length > 0
     || overlayToolCapabilities.length > 0
@@ -798,7 +811,8 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
     || blockedOverlayToolCapabilities.length > 0
     || autonomySuggestions.length > 0
     || autonomyInsights.length > 0
-    || Boolean(autonomyRecommendationSummary);
+    || Boolean(autonomyRecommendationSummary)
+    || contextQualityDegraded;
   const activeRunStatus = String(runDetail?.run.status || orchestrationStatus || "").toLowerCase();
   const isLiveOrchestration = isOrchestratedTask(currentTask);
   const isLiveRunActive = ACTIVE_ORCHESTRATION_RUN_STATUSES.has(activeRunStatus);
@@ -1243,6 +1257,20 @@ function TaskDetailSheet({ task, open, onClose, onTaskUpdated, assignees, realti
                       <p className="mt-1 text-sm text-[#f8fafc]">{autonomyRecommendationSummary}</p>
                       {autonomyRecurringBlocker && (
                         <p className="mt-1 text-xs text-[#cbd5e1]">Primary blocker: {autonomyRecurringBlocker}</p>
+                      )}
+                    </div>
+                  )}
+                  {contextQualityDegraded && (
+                    <div className="mb-3 rounded-lg border border-amber-400/20 bg-amber-500/8 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wider text-amber-200">Context quality</p>
+                      <p className="mt-1 text-sm text-[#f8fafc]">
+                        Snipara reports degraded index quality for this workspace. Autonomy can be limited by stale or weak documentation context, not only by missing capabilities.
+                      </p>
+                      {(sniparaIndexHealth?.stale_documents != null || sniparaIndexHealth?.score != null) && (
+                        <p className="mt-1 text-xs text-[#cbd5e1]">
+                          Score: {typeof sniparaIndexHealth?.score === "number" ? formatPercent(sniparaIndexHealth.score) : "n/a"}
+                          {typeof sniparaIndexHealth?.stale_documents === "number" ? ` · ${sniparaIndexHealth.stale_documents} stale docs` : ""}
+                        </p>
                       )}
                     </div>
                   )}

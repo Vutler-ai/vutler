@@ -10,6 +10,10 @@ import {
   deleteMemory,
   getAgentContext,
   promoteMemory,
+  attachMemorySource,
+  verifyMemory,
+  invalidateMemory,
+  supersedeMemory,
 } from '@/lib/api/endpoints/memory';
 import type { Memory, AgentContext } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
@@ -18,10 +22,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const MEMORY_TYPES = ['fact', 'learning', 'decision', 'preference'] as const;
 type MemoryType = (typeof MEMORY_TYPES)[number];
+type LifecycleAction = 'attach_source' | 'verify' | 'invalidate' | 'supersede';
 
 const TYPE_COLORS: Record<MemoryType, string> = {
   fact: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
@@ -30,13 +33,36 @@ const TYPE_COLORS: Record<MemoryType, string> = {
   preference: 'bg-purple-500/15 text-purple-400 border-purple-500/20',
 };
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+const STATUS_STYLES: Record<string, string> = {
+  active: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20',
+  needs_verification: 'bg-amber-500/15 text-amber-300 border-amber-500/20',
+  invalidated: 'bg-red-500/15 text-red-300 border-red-500/20',
+  superseded: 'bg-slate-500/15 text-slate-200 border-slate-500/20',
+  expired: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/20',
+};
+
+function formatDate(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 function TypeBadge({ type }: { type: string }) {
   const cls = TYPE_COLORS[type as MemoryType] ?? 'bg-[rgba(255,255,255,0.06)] text-[#9ca3af]';
   return (
     <span className={`inline-flex items-center text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>
       {type}
+    </span>
+  );
+}
+
+function StatusBadge({ status }: { status?: string }) {
+  if (!status) return null;
+  const cls = STATUS_STYLES[status] ?? 'bg-[rgba(255,255,255,0.06)] text-[#9ca3af] border-[rgba(255,255,255,0.08)]';
+  return (
+    <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border font-medium ${cls}`}>
+      {status.replace(/_/g, ' ')}
     </span>
   );
 }
@@ -68,8 +94,6 @@ function MemoryCardSkeleton() {
   );
 }
 
-// ─── Add Memory Dialog ────────────────────────────────────────────────────────
-
 interface AddMemoryDialogProps {
   onClose: () => void;
   onSave: (text: string, type: MemoryType, importance: number) => Promise<void>;
@@ -83,7 +107,11 @@ function AddMemoryDialog({ onClose, onSave }: AddMemoryDialogProps) {
   const [error, setError] = useState('');
 
   async function handleSave() {
-    if (!text.trim()) { setError('Memory text is required.'); return; }
+    if (!text.trim()) {
+      setError('Memory text is required.');
+      return;
+    }
+
     setSaving(true);
     setError('');
     try {
@@ -97,13 +125,10 @@ function AddMemoryDialog({ onClose, onSave }: AddMemoryDialogProps) {
   }
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
         className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl w-full max-w-lg overflow-hidden"
-        onClick={e => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-5 border-b border-[rgba(255,255,255,0.07)]">
           <h2 className="text-base font-semibold text-white">Add Memory</h2>
@@ -115,7 +140,7 @@ function AddMemoryDialog({ onClose, onSave }: AddMemoryDialogProps) {
             <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Memory text</label>
             <Textarea
               value={text}
-              onChange={e => setText(e.target.value)}
+              onChange={(e) => setText(e.target.value)}
               placeholder="Describe what the agent should remember..."
               className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[100px] focus:border-blue-500/50"
               autoFocus
@@ -125,17 +150,17 @@ function AddMemoryDialog({ onClose, onSave }: AddMemoryDialogProps) {
           <div>
             <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Type</label>
             <div className="flex gap-2 flex-wrap">
-              {MEMORY_TYPES.map(t => (
+              {MEMORY_TYPES.map((option) => (
                 <button
-                  key={t}
-                  onClick={() => setType(t)}
+                  key={option}
+                  onClick={() => setType(option)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    type === t
-                      ? TYPE_COLORS[t]
+                    type === option
+                      ? TYPE_COLORS[option]
                       : 'bg-transparent border-[rgba(255,255,255,0.1)] text-[#6b7280] hover:text-white'
                   }`}
                 >
-                  {t}
+                  {option}
                 </button>
               ))}
             </div>
@@ -151,7 +176,7 @@ function AddMemoryDialog({ onClose, onSave }: AddMemoryDialogProps) {
               max="1"
               step="0.05"
               value={importance}
-              onChange={e => setImportance(parseFloat(e.target.value))}
+              onChange={(e) => setImportance(parseFloat(e.target.value))}
               className="w-full accent-blue-500"
             />
           </div>
@@ -172,18 +197,212 @@ function AddMemoryDialog({ onClose, onSave }: AddMemoryDialogProps) {
   );
 }
 
-// ─── Memory Card ──────────────────────────────────────────────────────────────
+interface LifecycleDialogProps {
+  action: LifecycleAction;
+  memory: Memory;
+  onClose: () => void;
+  onSubmit: (action: LifecycleAction, payload: Record<string, unknown>) => Promise<void>;
+}
+
+function LifecycleDialog({ action, memory, onClose, onSubmit }: LifecycleDialogProps) {
+  const [sourceRef, setSourceRef] = useState('');
+  const [evidenceNote, setEvidenceNote] = useState('');
+  const [reason, setReason] = useState('');
+  const [replacementHint, setReplacementHint] = useState('');
+  const [newText, setNewText] = useState(memory.text);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSubmit() {
+    const payload: Record<string, unknown> = {};
+
+    if (action === 'attach_source') {
+      if (!sourceRef.trim()) {
+        setError('Source reference is required.');
+        return;
+      }
+      payload.source_ref = sourceRef.trim();
+      if (evidenceNote.trim()) payload.evidence_note = evidenceNote.trim();
+    }
+
+    if (action === 'verify') {
+      if (evidenceNote.trim()) payload.evidence_note = evidenceNote.trim();
+    }
+
+    if (action === 'invalidate') {
+      if (!reason.trim()) {
+        setError('Reason is required.');
+        return;
+      }
+      payload.reason = reason.trim();
+      if (replacementHint.trim()) payload.replacement_hint = replacementHint.trim();
+    }
+
+    if (action === 'supersede') {
+      if (!newText.trim()) {
+        setError('Replacement text is required.');
+        return;
+      }
+      if (!reason.trim()) {
+        setError('Reason is required.');
+        return;
+      }
+      payload.new_text = newText.trim();
+      payload.reason = reason.trim();
+      payload.type = memory.type;
+      payload.importance = memory.importance;
+    }
+
+    setBusy(true);
+    setError('');
+    try {
+      await onSubmit(action, payload);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Action failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const title = {
+    attach_source: 'Attach Source',
+    verify: 'Verify Memory',
+    invalidate: 'Invalidate Memory',
+    supersede: 'Supersede Memory',
+  }[action];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div
+        className="bg-[#14151f] border border-[rgba(255,255,255,0.1)] rounded-2xl w-full max-w-xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-5 border-b border-[rgba(255,255,255,0.07)]">
+          <div>
+            <h2 className="text-base font-semibold text-white">{title}</h2>
+            <p className="text-xs text-[#6b7280] mt-1">Memory ID: {memory.id}</p>
+          </div>
+          <button onClick={onClose} className="text-[#6b7280] hover:text-white text-2xl leading-none transition-colors">&times;</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="rounded-xl bg-[#0e0f1a] border border-[rgba(255,255,255,0.06)] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#6b7280] mb-2">Current memory</p>
+            <p className="text-sm text-white leading-relaxed">{memory.text}</p>
+          </div>
+
+          {action === 'attach_source' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Source reference</label>
+                <Input
+                  value={sourceRef}
+                  onChange={(e) => setSourceRef(e.target.value)}
+                  placeholder="runbook.md#deploy or https://..."
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Evidence note</label>
+                <Textarea
+                  value={evidenceNote}
+                  onChange={(e) => setEvidenceNote(e.target.value)}
+                  placeholder="What confirms this memory?"
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white min-h-[90px]"
+                />
+              </div>
+            </>
+          )}
+
+          {action === 'verify' && (
+            <div>
+              <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Verification note</label>
+              <Textarea
+                value={evidenceNote}
+                onChange={(e) => setEvidenceNote(e.target.value)}
+                placeholder="How did you verify this memory?"
+                className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white min-h-[90px]"
+                autoFocus
+              />
+            </div>
+          )}
+
+          {action === 'invalidate' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Reason</label>
+                <Textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Why is this memory no longer valid?"
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white min-h-[90px]"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Replacement hint</label>
+                <Input
+                  value={replacementHint}
+                  onChange={(e) => setReplacementHint(e.target.value)}
+                  placeholder="Optional replacement pointer"
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white"
+                />
+              </div>
+            </>
+          )}
+
+          {action === 'supersede' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Replacement memory</label>
+                <Textarea
+                  value={newText}
+                  onChange={(e) => setNewText(e.target.value)}
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white min-h-[110px]"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[#9ca3af] mb-1.5 uppercase tracking-wider">Reason</label>
+                <Textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Why is this the new canonical memory?"
+                  className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white min-h-[90px]"
+                />
+              </div>
+            </>
+          )}
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+        </div>
+
+        <div className="flex justify-end gap-2 p-5 border-t border-[rgba(255,255,255,0.07)]">
+          <Button variant="outline" size="sm" onClick={onClose} className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]">
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSubmit} disabled={busy} className="bg-blue-600 hover:bg-blue-500 text-white">
+            {busy ? 'Saving...' : title}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface MemoryCardProps {
   memory: Memory;
   canPromote?: boolean;
-  agentRole?: string;
   onDelete?: (id: string) => Promise<void>;
   onPromote?: (id: string) => Promise<void>;
+  onLifecycle?: (memory: Memory, action: LifecycleAction, payload: Record<string, unknown>) => Promise<void>;
 }
 
-function MemoryCard({ memory, canPromote, onDelete, onPromote }: MemoryCardProps) {
+function MemoryCard({ memory, canPromote, onDelete, onPromote, onLifecycle }: MemoryCardProps) {
   const [busy, setBusy] = useState(false);
+  const [dialogAction, setDialogAction] = useState<LifecycleAction | null>(null);
 
   async function handleAction(action: 'delete' | 'promote') {
     setBusy(true);
@@ -195,23 +414,85 @@ function MemoryCard({ memory, canPromote, onDelete, onPromote }: MemoryCardProps
     }
   }
 
-  const date = new Date(memory.created_at);
-  const dateStr = isNaN(date.getTime()) ? '' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  async function handleLifecycleSubmit(action: LifecycleAction, payload: Record<string, unknown>) {
+    setBusy(true);
+    try {
+      await onLifecycle?.(memory, action, payload);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sources = Array.isArray(memory.sources) ? memory.sources.slice(0, 2) : [];
 
   return (
-    <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 space-y-2.5 hover:border-[rgba(255,255,255,0.12)] transition-colors group">
-      <div className="flex items-center justify-between gap-2">
-        <TypeBadge type={memory.type} />
-        <span className="text-xs text-[#4b5563]">{dateStr}</span>
-      </div>
+    <>
+      <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4 space-y-3 hover:border-[rgba(255,255,255,0.12)] transition-colors group">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <TypeBadge type={memory.type} />
+            <StatusBadge status={memory.status} />
+          </div>
+          <span className="text-xs text-[#4b5563]">{formatDate(memory.created_at)}</span>
+        </div>
 
-      <p className="text-sm text-white leading-relaxed">{memory.text}</p>
+        <p className="text-sm text-white leading-relaxed">{memory.text}</p>
 
-      <div className="flex items-center justify-between">
-        <ImportanceMeter value={memory.importance} />
+        <div className="space-y-1.5 text-[11px] text-[#94a3b8]">
+          {memory.verified_at && <p>Verified: {formatDate(memory.verified_at)}{memory.verification_note ? ` · ${memory.verification_note}` : ''}</p>}
+          {memory.invalidated_at && <p className="text-red-300">Invalidated: {memory.invalidation_reason || formatDate(memory.invalidated_at)}</p>}
+          {memory.superseded_at && <p className="text-slate-300">Superseded: {memory.superseded_by_text || formatDate(memory.superseded_at)}</p>}
+          {memory.replacement_hint && <p>Replacement hint: {memory.replacement_hint}</p>}
+          {sources.length > 0 && (
+            <div className="space-y-1">
+              {sources.map((source, index) => (
+                <p key={`${source.source_ref || 'source'}-${index}`}>
+                  Source: {source.source_ref || 'reference'}{source.evidence_note ? ` · ${source.evidence_note}` : ''}
+                </p>
+              ))}
+            </div>
+          )}
+          {memory.lifecycle_remote_synced === false && (
+            <p className="text-amber-300">Snipara tool unavailable: state saved locally for review.</p>
+          )}
+        </div>
 
-        {(onDelete || (canPromote && onPromote)) && (
-          <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center justify-between gap-3">
+          <ImportanceMeter value={memory.importance} />
+
+          <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex-wrap justify-end">
+            {onLifecycle && (
+              <>
+                <button
+                  disabled={busy}
+                  onClick={() => setDialogAction('verify')}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded-lg hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                >
+                  Verify
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => setDialogAction('attach_source')}
+                  className="text-xs text-sky-400 hover:text-sky-300 px-2 py-1 rounded-lg hover:bg-sky-500/10 transition-colors disabled:opacity-50"
+                >
+                  Attach Source
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => setDialogAction('invalidate')}
+                  className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded-lg hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                >
+                  Invalidate
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => setDialogAction('supersede')}
+                  className="text-xs text-slate-300 hover:text-white px-2 py-1 rounded-lg hover:bg-slate-500/10 transition-colors disabled:opacity-50"
+                >
+                  Supersede
+                </button>
+              </>
+            )}
             {canPromote && onPromote && (
               <button
                 disabled={busy}
@@ -231,13 +512,20 @@ function MemoryCard({ memory, canPromote, onDelete, onPromote }: MemoryCardProps
               </button>
             )}
           </div>
-        )}
+        </div>
       </div>
-    </div>
+
+      {dialogAction && onLifecycle && (
+        <LifecycleDialog
+          action={dialogAction}
+          memory={memory}
+          onClose={() => setDialogAction(null)}
+          onSubmit={handleLifecycleSubmit}
+        />
+      )}
+    </>
   );
 }
-
-// ─── Context Panel ────────────────────────────────────────────────────────────
 
 function ContextPanel({ context }: { context: AgentContext | undefined; isLoading: boolean }) {
   const [soulExpanded, setSoulExpanded] = useState(false);
@@ -256,7 +544,7 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
         };
       }
     } catch {
-      // fall through to raw text
+      return { title: 'Agent soul', content: trimmed };
     }
 
     return { title: 'Agent soul', content: trimmed };
@@ -265,7 +553,7 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
   if (!context) {
     return (
       <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+        {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-4 w-full" />)}
       </div>
     );
   }
@@ -326,10 +614,7 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
 
       {soulDoc.content && (
         <div className="bg-[#0e0f1a] rounded-xl p-4">
-          <button
-            onClick={() => setSoulExpanded(x => !x)}
-            className="flex items-center justify-between w-full"
-          >
+          <button onClick={() => setSoulExpanded((value) => !value)} className="flex items-center justify-between w-full">
             <div className="text-left">
               <h3 className="text-xs font-semibold text-[#9ca3af] uppercase tracking-wider">{soulDoc.title}</h3>
               <p className="text-[11px] text-[#4b5563] mt-1">Loaded from the agent&apos;s own Snipara doc, not the workspace shared instructions.</p>
@@ -347,8 +632,6 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 export default function MemoryPage() {
   const params = useParams();
   const agentId = params.id as string;
@@ -359,14 +642,12 @@ export default function MemoryPage() {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [actionError, setActionError] = useState('');
 
-  // Debounce search
   function handleSearchChange(value: string) {
     setSearchQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => setDebouncedQuery(value), 400);
   }
 
-  // SWR fetches
   const cacheKey = `/api/v1/agents/${agentId}/memories${debouncedQuery ? `?q=${debouncedQuery}` : ''}`;
   const { data: instanceMemories, isLoading: loadingInstance, mutate: mutateInstance } = useApi<Memory[]>(
     cacheKey,
@@ -384,33 +665,60 @@ export default function MemoryPage() {
   );
   const contextRole = context?.role;
 
-  // Actions
+  const refreshAll = useCallback(async () => {
+    await Promise.all([mutateInstance(), mutateContext()]);
+  }, [mutateContext, mutateInstance]);
+
   const handleAddMemory = useCallback(async (text: string, type: MemoryType, importance: number) => {
     await rememberMemory(agentId, { text, type, importance });
-    await mutateInstance();
-    await mutateContext();
-  }, [agentId, mutateInstance, mutateContext]);
+    await refreshAll();
+  }, [agentId, refreshAll]);
 
   const handleDelete = useCallback(async (memoryId: string) => {
     setActionError('');
     try {
       await deleteMemory(agentId, memoryId);
-      await mutateInstance();
-      await mutateContext();
+      await refreshAll();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Delete failed.');
     }
-  }, [agentId, mutateInstance, mutateContext]);
+  }, [agentId, refreshAll]);
 
   const handlePromote = useCallback(async (memoryId: string) => {
     setActionError('');
     try {
       await promoteMemory(agentId, memoryId, contextRole);
-      await mutateContext();
+      await refreshAll();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Promote failed.');
     }
-  }, [agentId, contextRole, mutateContext]);
+  }, [agentId, contextRole, refreshAll]);
+
+  const handleLifecycle = useCallback(async (memory: Memory, action: LifecycleAction, payload: Record<string, unknown>) => {
+    setActionError('');
+    try {
+      if (action === 'attach_source') {
+        await attachMemorySource(agentId, memory.id, payload as { source_ref: string; evidence_note?: string });
+      }
+      if (action === 'verify') {
+        await verifyMemory(agentId, memory.id, payload as { evidence_note?: string });
+      }
+      if (action === 'invalidate') {
+        await invalidateMemory(agentId, memory.id, payload as { reason: string; replacement_hint?: string });
+      }
+      if (action === 'supersede') {
+        await supersedeMemory(
+          agentId,
+          memory.id,
+          payload as { new_text: string; reason: string; type?: string; importance?: number }
+        );
+      }
+      await refreshAll();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Lifecycle action failed.');
+      throw e;
+    }
+  }, [agentId, refreshAll]);
 
   return (
     <div className="px-6 py-6">
@@ -418,14 +726,10 @@ export default function MemoryPage() {
         <div>
           <h2 className="text-xl font-semibold text-white">Memory</h2>
           <p className="text-sm text-[#6b7280] mt-0.5">
-            Agent knowledge stored in Snipara — 3-level hierarchy
+            Agent knowledge stored in Snipara with lifecycle review and evidence.
           </p>
         </div>
-        <Button
-          size="sm"
-          onClick={() => setShowAddDialog(true)}
-          className="bg-blue-600 hover:bg-blue-500 text-white"
-        >
+        <Button size="sm" onClick={() => setShowAddDialog(true)} className="bg-blue-600 hover:bg-blue-500 text-white">
           + Add Memory
         </Button>
       </div>
@@ -437,9 +741,7 @@ export default function MemoryPage() {
       )}
 
       <div className="flex gap-6 items-start">
-        {/* Left — main content */}
         <div className="flex-1 min-w-0 space-y-8">
-          {/* Personal Memories */}
           <section>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
@@ -449,7 +751,7 @@ export default function MemoryPage() {
               <div className="w-56">
                 <Input
                   value={searchQuery}
-                  onChange={e => handleSearchChange(e.target.value)}
+                  onChange={(e) => handleSearchChange(e.target.value)}
                   placeholder="Search memories..."
                   className="h-8 text-sm bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#4b5563] focus:border-blue-500/50"
                 />
@@ -458,16 +760,14 @@ export default function MemoryPage() {
 
             {loadingInstance && (
               <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, i) => <MemoryCardSkeleton key={i} />)}
+                {Array.from({ length: 3 }).map((_, index) => <MemoryCardSkeleton key={index} />)}
               </div>
             )}
 
             {!loadingInstance && (!instanceMemories || instanceMemories.length === 0) && (
               <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-10 text-center">
                 <p className="text-[#6b7280] text-sm">
-                  {debouncedQuery
-                    ? 'No memories matched your search.'
-                    : 'No personal memories yet. Add one to get started.'}
+                  {debouncedQuery ? 'No memories matched your search.' : 'No personal memories yet. Add one to get started.'}
                 </p>
                 {!debouncedQuery && (
                   <Button
@@ -484,21 +784,20 @@ export default function MemoryPage() {
 
             {!loadingInstance && instanceMemories && instanceMemories.length > 0 && (
               <div className="space-y-3">
-                {instanceMemories.map(m => (
+                {instanceMemories.map((memory) => (
                   <MemoryCard
-                    key={m.id}
-                    memory={m}
+                    key={memory.id}
+                    memory={memory}
                     canPromote
-                    agentRole={context?.role}
                     onDelete={handleDelete}
                     onPromote={handlePromote}
+                    onLifecycle={handleLifecycle}
                   />
                 ))}
               </div>
             )}
           </section>
 
-          {/* Template Memories */}
           <section>
             <div className="flex items-center gap-2 mb-3">
               <h3 className="text-sm font-semibold text-white">Template Memories</h3>
@@ -512,7 +811,7 @@ export default function MemoryPage() {
 
             {loadingTemplate && (
               <div className="space-y-3">
-                {Array.from({ length: 2 }).map((_, i) => <MemoryCardSkeleton key={i} />)}
+                {Array.from({ length: 2 }).map((_, index) => <MemoryCardSkeleton key={index} />)}
               </div>
             )}
 
@@ -527,22 +826,18 @@ export default function MemoryPage() {
 
             {!loadingTemplate && templateMemories && templateMemories.length > 0 && (
               <div className="space-y-3">
-                {templateMemories.map(m => (
-                  <MemoryCard key={m.id} memory={{ ...m, scope: 'template' }} />
+                {templateMemories.map((memory) => (
+                  <MemoryCard key={memory.id} memory={{ ...memory, scope: 'template' }} />
                 ))}
               </div>
             )}
           </section>
         </div>
 
-        {/* Right — context panel */}
-        <aside className="w-64 shrink-0 sticky top-6">
+        <aside className="w-72 shrink-0 sticky top-6">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-white">Context</h3>
-            <button
-              onClick={() => mutateContext()}
-              className="text-xs text-[#6b7280] hover:text-white transition-colors"
-            >
+            <button onClick={() => mutateContext()} className="text-xs text-[#6b7280] hover:text-white transition-colors">
               Refresh
             </button>
           </div>
@@ -551,10 +846,7 @@ export default function MemoryPage() {
       </div>
 
       {showAddDialog && (
-        <AddMemoryDialog
-          onClose={() => setShowAddDialog(false)}
-          onSave={handleAddMemory}
-        />
+        <AddMemoryDialog onClose={() => setShowAddDialog(false)} onSave={handleAddMemory} />
       )}
     </div>
   );

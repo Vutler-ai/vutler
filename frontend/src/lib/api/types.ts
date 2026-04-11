@@ -1849,8 +1849,25 @@ export interface Memory {
   retrieval_score?: number;
   agent_id?: string;
   visibility?: 'internal' | 'reviewable' | 'user_visible' | string;
-  status?: 'active' | 'expired' | string;
+  status?: 'active' | 'expired' | 'invalidated' | 'superseded' | 'needs_verification' | string;
+  sources?: MemorySource[];
+  source_count?: number;
+  verified_at?: string | null;
+  verification_note?: string | null;
+  invalidated_at?: string | null;
+  invalidation_reason?: string | null;
+  replacement_hint?: string | null;
+  superseded_at?: string | null;
+  superseded_by_text?: string | null;
+  lifecycle_remote_synced?: boolean;
+  lifecycle_remote_error?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
+}
+
+export interface MemorySource {
+  source_ref?: string | null;
+  evidence_note?: string | null;
+  attached_at?: string | null;
 }
 
 export interface AgentMemoryListResponse {
@@ -1890,6 +1907,25 @@ export interface RememberPayload {
   importance: number;
 }
 
+export interface MemoryActionResult {
+  memory_id: string;
+  action: 'attach_source' | 'verify' | 'invalidate' | 'supersede' | string;
+  status?: Memory['status'];
+  source_ref?: string | null;
+  evidence_note?: string | null;
+  attached_at?: string | null;
+  verified_at?: string | null;
+  verification_note?: string | null;
+  invalidated_at?: string | null;
+  invalidation_reason?: string | null;
+  replacement_hint?: string | null;
+  superseded_at?: string | null;
+  superseded_reason?: string | null;
+  superseded_by_text?: string | null;
+  remote_synced?: boolean;
+  remote_error?: Record<string, unknown> | null;
+}
+
 // ─── Workspace Memory ─────────────────────────────────────────────────────────
 
 export interface WorkspaceKnowledge {
@@ -1913,6 +1949,87 @@ export interface MemorySearchResult {
   importance: number;
   type: string;
   createdAt: string;
+}
+
+export interface SniparaStatusResponse {
+  workspace_id: string;
+  configured: boolean;
+  integration_key_present: boolean;
+  settings?: {
+    api_url?: string | null;
+    project_id?: string | null;
+    project_slug?: string | null;
+    swarm_id?: string | null;
+    api_key_present?: boolean;
+  };
+  resolved?: {
+    source?: string | null;
+    api_url?: string | null;
+    project_id?: string | null;
+    project_slug?: string | null;
+    swarm_id?: string | null;
+    api_key_present?: boolean;
+  };
+}
+
+export interface SniparaHealthResponse {
+  ok?: boolean;
+  configured?: boolean;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SniparaIndexHealth {
+  supported: boolean;
+  degraded: boolean;
+  status?: string | null;
+  score?: number | null;
+  stale_documents?: number | null;
+  documents_indexed?: number | null;
+  last_indexed_at?: string | null;
+  avg_latency_ms?: number | null;
+  errors_last_24h?: number | null;
+  message?: string | null;
+  error?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
+}
+
+export interface SniparaSearchAnalytics {
+  supported: boolean;
+  degraded: boolean;
+  days: number;
+  total_queries?: number;
+  avg_latency_ms?: number | null;
+  success_rate?: number | null;
+  zero_result_rate?: number | null;
+  top_queries?: unknown[];
+  message?: string | null;
+  error?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
+}
+
+export interface SniparaHtaskPolicy {
+  supported: boolean;
+  degraded: boolean;
+  closure_verification_required?: boolean;
+  block_on_failed_checks?: boolean;
+  max_depth?: number | null;
+  default_mode?: string | null;
+  message?: string | null;
+  error?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
+}
+
+export interface SniparaHtaskMetrics {
+  supported: boolean;
+  degraded: boolean;
+  open_count?: number;
+  blocked_count?: number;
+  stale_count?: number;
+  avg_closure_hours?: number | null;
+  message?: string | null;
+  error?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
 }
 
 // ─── Admin ───────────────────────────────────────────────────────────────────

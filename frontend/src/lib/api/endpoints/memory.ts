@@ -8,6 +8,13 @@ import type {
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
+  MemoryActionResult,
+  SniparaStatusResponse,
+  SniparaHealthResponse,
+  SniparaIndexHealth,
+  SniparaSearchAnalytics,
+  SniparaHtaskPolicy,
+  SniparaHtaskMetrics,
 } from '../types';
 
 export async function recallMemories(agentId: string, query?: string): Promise<Memory[]> {
@@ -43,6 +50,66 @@ export async function deleteMemory(agentId: string, memoryId: string): Promise<v
   await apiFetch<SuccessResponse>(`/api/v1/agents/${agentId}/memories/${memoryId}`, {
     method: 'DELETE',
   });
+}
+
+export async function attachMemorySource(
+  agentId: string,
+  memoryId: string,
+  payload: { source_ref: string; evidence_note?: string }
+): Promise<MemoryActionResult> {
+  const response = await apiFetch<{ data?: MemoryActionResult }>(
+    `/api/v1/agents/${agentId}/memories/${memoryId}/attach-source`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data as MemoryActionResult;
+}
+
+export async function verifyMemory(
+  agentId: string,
+  memoryId: string,
+  payload: { evidence_note?: string; probe?: Record<string, unknown> } = {}
+): Promise<MemoryActionResult> {
+  const response = await apiFetch<{ data?: MemoryActionResult }>(
+    `/api/v1/agents/${agentId}/memories/${memoryId}/verify`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data as MemoryActionResult;
+}
+
+export async function invalidateMemory(
+  agentId: string,
+  memoryId: string,
+  payload: { reason: string; replacement_hint?: string }
+): Promise<MemoryActionResult> {
+  const response = await apiFetch<{ data?: MemoryActionResult }>(
+    `/api/v1/agents/${agentId}/memories/${memoryId}/invalidate`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data as MemoryActionResult;
+}
+
+export async function supersedeMemory(
+  agentId: string,
+  memoryId: string,
+  payload: { new_text: string; reason: string; type?: string; importance?: number }
+): Promise<MemoryActionResult> {
+  const response = await apiFetch<{ data?: MemoryActionResult }>(
+    `/api/v1/agents/${agentId}/memories/${memoryId}/supersede`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data as MemoryActionResult;
 }
 
 export async function getAgentContext(agentId: string, role?: string): Promise<AgentContext> {
@@ -86,4 +153,36 @@ export async function searchMemory(query: string): Promise<MemorySearchResult[]>
     `/api/v1/memory/search?${params}`
   );
   return Array.isArray(data) ? data : (data.results ?? []);
+}
+
+export async function getSniparaAdminStatus(): Promise<SniparaStatusResponse> {
+  const response = await apiFetch<{ data?: SniparaStatusResponse }>('/api/v1/snipara/admin/status');
+  return response.data as SniparaStatusResponse;
+}
+
+export async function getSniparaTransportHealth(): Promise<SniparaHealthResponse> {
+  const response = await apiFetch<{ data?: SniparaHealthResponse }>('/api/v1/snipara/admin/health');
+  return response.data as SniparaHealthResponse;
+}
+
+export async function getSniparaIndexHealth(): Promise<SniparaIndexHealth> {
+  const response = await apiFetch<{ data?: SniparaIndexHealth }>('/api/v1/snipara/admin/index-health');
+  return response.data as SniparaIndexHealth;
+}
+
+export async function getSniparaSearchAnalytics(days = 30): Promise<SniparaSearchAnalytics> {
+  const response = await apiFetch<{ data?: SniparaSearchAnalytics }>(
+    `/api/v1/snipara/admin/search-analytics?days=${days}`
+  );
+  return response.data as SniparaSearchAnalytics;
+}
+
+export async function getSniparaHtaskPolicy(): Promise<SniparaHtaskPolicy> {
+  const response = await apiFetch<{ data?: SniparaHtaskPolicy }>('/api/v1/snipara/admin/htask-policy');
+  return response.data as SniparaHtaskPolicy;
+}
+
+export async function getSniparaHtaskMetrics(): Promise<SniparaHtaskMetrics> {
+  const response = await apiFetch<{ data?: SniparaHtaskMetrics }>('/api/v1/snipara/admin/htask-metrics');
+  return response.data as SniparaHtaskMetrics;
 }
