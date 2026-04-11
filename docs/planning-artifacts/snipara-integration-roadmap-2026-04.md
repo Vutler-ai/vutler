@@ -362,6 +362,12 @@ Done when:
 - technical agents can iteratively solve code/data problems with stronger inner loops
 - no duplicate run-state authority is introduced
 
+Status update 2026-04-11:
+- partially implemented
+- Vutler now has an optional `RLM Runtime` backend inside the sandbox executor for Python technical runs
+- fallback remains the native governed sandbox, and runtime authority remains in Vutler
+- operator telemetry and production enablement still remain to be finished
+
 ### Phase 4 - Deepen Shared Context And Team Memory
 
 Target: after Phase 3
