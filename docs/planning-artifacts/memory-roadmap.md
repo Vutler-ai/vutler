@@ -1,5 +1,5 @@
 # Memory Roadmap
-_Updated: 2026-03-30_
+_Updated: 2026-04-11_
 
 ## Current State
 
@@ -9,10 +9,13 @@ Implemented:
 - workspace-aware memory service
 - scoped memories: `instance`, `template`, `global`
 - typed memories with visibility and TTL policies
+- first-class tier projection: `hot`, `warm`, `cold`, `graveyard`
 - ranked retrieval for runtime prompt injection
 - duplicate filtering and threshold-based promotion
+- lifecycle-backed graveyard handling for invalidated and superseded memories
+- contradiction / resolution / canonical-memory projection in dashboard/API surfaces
 - periodic maintenance for short-lived memory cleanup and local compaction
-- dashboard/API counts for visible, hidden, and expired memories
+- dashboard/API counts for visible, hidden, expired, and graveyard memories
 - telemetry logs for extraction, promotion, retrieval bundle, and maintenance
 - unit and targeted integration coverage
 - product-like memory scenarios on a mocked Snipara store
@@ -46,16 +49,17 @@ Done when:
 - the runtime bundle becomes smaller over time instead of noisier
 
 ### 3. Retention And Archive Strategy
-Goal: distinguish active memory, archived memory, and deleted memory.
+Goal: distinguish active memory, graveyard memory, archived memory, and deleted memory.
 
 Needed:
-- archive lane or archive marker for memories kept for audit but not retrieval
+- keep the new graveyard tier for invalidated and superseded memory as the default audit lane
+- add a separate archive lane when a memory should be retained for audit without being contradicted
 - physical purge strategy when Snipara exposes a safe delete path
 - retention windows by type and workspace policy override
 - optional dry-run mode before aggressive cleanup
 
 Done when:
-- operators can say whether a memory is active, archived, or deleted
+- operators can say whether a memory is active, graveyarded, archived, or deleted
 - cleanup no longer depends only on tombstones
 
 ### 4. Retrieval Feedback Loop
@@ -114,6 +118,8 @@ Done when:
 
 This phase delivered the memory core:
 - policy-driven governance
+- tiered projection and graveyard exclusion from runtime retrieval
+- contradiction / resolution / canonical memory state for lifecycle-driven review
 - ranked retrieval
 - promotion thresholds
 - periodic maintenance

@@ -60,7 +60,8 @@ This matches the current codebase:
 ### Partially Integrated
 
 - shared memory runtime
-  - present, but still centered on Vutler's own memory shaping rather than full Snipara Memory V2 lifecycle semantics
+  - present, with Memory V2 lifecycle plus first-class tiering/graveyard/contradiction projection in Vutler
+  - still centered on Vutler's runtime shaping rather than full session/journal semantics from Snipara docs
 - swarm PM
   - core htask flow exists, but not the full documented policy and metrics surface
 - automation / continuity
@@ -70,9 +71,7 @@ This matches the current codebase:
 
 ### Not Yet Integrated In Product Runtime
 
-- Memory V2 lifecycle controls from Snipara docs
-  - evidence attachment, verification, invalidation, superseding stale memory
-- memory tiers / session memory / journal style primitives
+- session memory / journal style primitives from Snipara docs
 - advanced shared-context and RELP helper tools
   - template and shared collection management
   - multi-query / multi-project retrieval helpers
@@ -94,17 +93,20 @@ Snipara docs emphasize more than semantic storage and recall:
 - superseding stale knowledge
 - safer memory lifecycle controls
 
-Vutler today exposes only the simpler memory path in the shared gateway:
+Vutler now exposes these controls through the shared gateway, service layer, API, and operator UI:
 - [services/snipara/gateway.js](/Users/alopez/Devs/Vutler/services/snipara/gateway.js:42)
+- [services/sniparaMemoryService.js](/Users/alopez/Devs/Vutler/services/sniparaMemoryService.js:1)
+- [api/memory.js](/Users/alopez/Devs/Vutler/api/memory.js:1)
+- [frontend/src/app/(app)/agents/[id]/memory/page.tsx](/Users/alopez/Devs/Vutler/frontend/src/app/(app)/agents/[id]/memory/page.tsx:1)
 
 What is missing:
-- gateway wrappers for documented Memory V2 controls
-- runtime policy on when an agent may verify, invalidate, or supersede a memory
-- operator UI showing memory lifecycle state and provenance
+- automatic policy deciding when an agent may verify, invalidate, or supersede without operator review
+- deeper provenance linking such as explicit replacement-memory ids returned by remote storage when available
+- workspace-level audit and reporting for lifecycle actions over time
 
 Recommendation:
-- high priority
-- add these primitives to the gateway first, then expose them to internal runtime services, not directly to every prompt by default
+- delivered in Phase 1 and governance-follow-up work on 2026-04-11
+- keep future work focused on policy automation, not on redoing the UI/API surface
 
 ### 2. Memory Tiers, Session Continuity, and Compaction
 
@@ -127,12 +129,13 @@ Relevant local references:
 
 What is missing:
 - explicit session-memory concept mapped to chat/task/runtime episodes
-- first-class tiering aligned with Snipara's documented model
+- deeper tier automation beyond the current `hot/warm/cold/graveyard` projection
 - journal/profile style primitives if they become product-relevant
 
 Recommendation:
 - medium priority
-- align Vutler memory roadmap with Snipara's tiered model instead of inventing a parallel taxonomy
+- Vutler is now aligned on first-class tier projection and graveyard handling
+- next step is session continuity and compaction semantics, not another parallel taxonomy
 
 ### 3. Group Memory and Multi-Agent Coordination
 
@@ -326,11 +329,29 @@ Done when:
 Status update 2026-04-11:
 - implemented in Vutler branch `codex/vrifier-intgration-sandbox`
 - shipped backend lifecycle/admin endpoints plus operator UI in memory, settings, and task autonomy surfaces
-- RLM Runtime remains intentionally deferred to Phase 2
+- implemented via commits `d819f13`, `4744fdb`, and `19bbb8e`
 
-### Phase 2 - Add Specialized Technical Autonomy
+### Phase 2 - Align Memory Governance With Snipara
 
 Target: after Phase 1
+
+Deliver:
+- add first-class memory tier projection in Vutler
+- add graveyard visibility for invalidated and superseded memory
+- expose contradiction / resolution / canonical memory state to operators
+- keep graveyard memory out of runtime retrieval by default
+
+Done when:
+- operators can tell which memory is active, graveyarded, contradicted, or canonical
+- runtime retrieval excludes graveyard memory without custom prompt logic
+
+Status update 2026-04-11:
+- implemented in Vutler branch `codex/vrifier-intgration-sandbox`
+- shipped via commits `cb8e6c4` and `9241869`
+
+### Phase 3 - Add Specialized Technical Autonomy
+
+Target: after Phase 2
 
 Deliver:
 - add an optional `rlm-executor` for technical agents
@@ -341,9 +362,9 @@ Done when:
 - technical agents can iteratively solve code/data problems with stronger inner loops
 - no duplicate run-state authority is introduced
 
-### Phase 3 - Deepen Shared Context And Team Memory
+### Phase 4 - Deepen Shared Context And Team Memory
 
-Target: after Phase 2
+Target: after Phase 3
 
 Deliver:
 - group memory product surface
@@ -355,7 +376,7 @@ Done when:
 - one agent's durable discovery can be reused safely by other agents
 - workspace-wide instructions and standards are inspectable, governed, and reusable
 
-### Phase 4 - Improve Distribution and External Adoption
+### Phase 5 - Improve Distribution and External Adoption
 
 Target: after runtime gaps are closed
 
@@ -380,19 +401,19 @@ Do not prioritize unless strategy changes:
 2. Memory V2 lifecycle support in gateway plus admin visibility
 3. htask policy/metrics support and watchdog alignment
 4. GitHub/doc freshness productization
-5. optional RLM Runtime executor for technical agents
-6. group memory and shared-template layer
-7. `@vutler/mcp` bootstrap ergonomics
+5. memory tiering, graveyard, and contradiction-resolution operator surface
+6. optional RLM Runtime executor for technical agents
+7. group memory and shared-template layer
+8. `@vutler/mcp` bootstrap ergonomics
 
 ## Decision Summary
 
 What Vutler should integrate next from Snipara:
-- index health and search analytics
-- Memory V2 lifecycle controls
 - deeper htask policy and metrics support
 - GitHub/doc freshness sync visibility
 - optional RLM Runtime executor for technical agents
 - group memory and shared collections/templates where product-relevant
+- session continuity and journal-style memory semantics where product-relevant
 
 What Vutler should not do next:
 - replace its durable run engine with Snipara RLM Runtime
