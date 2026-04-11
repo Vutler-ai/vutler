@@ -22,6 +22,7 @@ const DEFAULT_SYNC_WAIT_MS = 20_000;
 const DEFAULT_BATCH_SYNC_WAIT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 const MAX_OUTPUT_BYTES = 512 * 1024;
+const MAX_ANALYTICS_WINDOW_DAYS = 90;
 const DEFAULT_RUNTIME = process.env.NODE_ENV === 'production' ? 'docker' : 'process';
 const DEFAULT_MINIMAL_ENV = {
   PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
@@ -292,6 +293,74 @@ function mapSandboxJobRow(row) {
   };
 }
 
+function clampAnalyticsDays(days) {
+  const parsed = Number(days);
+  if (!Number.isFinite(parsed)) return 7;
+  return Math.min(Math.max(Math.round(parsed), 1), MAX_ANALYTICS_WINDOW_DAYS);
+}
+
+function toIsoOrNull(value) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+function buildSandboxAnalyticsSummary(summary = {}, fallbackReasons = [], days = 7) {
+  const total = Number(summary.total || 0);
+  const running = Number(summary.running_count || 0);
+  const terminal = Number(summary.terminal_total || 0);
+  const rlmAttempts = Number(summary.rlm_attempt_count || 0);
+  const rlmEffective = Number(summary.rlm_effective_count || 0);
+  const nativeEffective = Number(summary.native_effective_count || 0);
+  const fallbackCount = Number(summary.fallback_count || 0);
+  const failedCount = Number(summary.failed_count || 0);
+  const timeoutCount = Number(summary.timeout_count || 0);
+  const fallbackRate = rlmAttempts > 0 ? Number((fallbackCount / rlmAttempts).toFixed(4)) : 0;
+
+  let status = 'healthy';
+  if ((rlmAttempts >= 3 && fallbackRate >= 0.5) || timeoutCount >= 3) {
+    status = 'critical';
+  } else if (fallbackCount > 0 || failedCount > 0 || timeoutCount > 0) {
+    status = 'degraded';
+  }
+
+  const recommendation = status === 'critical'
+    ? 'RLM Runtime is falling back too often. Keep the native sandbox as default until the runtime is stabilized.'
+    : status === 'degraded'
+      ? 'Fallbacks or execution errors were detected. Review the top fallback reasons and recent sandbox runs.'
+      : 'Sandbox backend telemetry is healthy for this workspace.';
+
+  return {
+    supported: true,
+    degraded: status !== 'healthy',
+    status,
+    days,
+    totals: {
+      all: total,
+      terminal,
+      running,
+      rlm_attempts: rlmAttempts,
+      rlm_effective: rlmEffective,
+      native_effective: nativeEffective,
+      fallbacks: fallbackCount,
+      failed: failedCount,
+      timeout: timeoutCount,
+    },
+    rates: {
+      fallback_rate: fallbackRate,
+    },
+    timestamps: {
+      last_fallback_at: toIsoOrNull(summary.last_fallback_at),
+      last_rlm_at: toIsoOrNull(summary.last_rlm_at),
+      last_execution_at: toIsoOrNull(summary.last_execution_at),
+    },
+    top_fallback_reasons: fallbackReasons.map((row) => ({
+      reason: row.reason || 'unknown',
+      count: Number(row.count || 0),
+    })),
+    recommendation,
+  };
+}
+
 async function createSandboxJob({
   language,
   code,
@@ -447,6 +516,65 @@ async function listSandboxBatchJobs(batchId, workspaceId, db = pool) {
     params
   );
   return result.rows.map(mapSandboxJobRow);
+}
+
+async function querySandboxAnalytics({
+  workspaceId,
+  days = 7,
+} = {}, db = pool) {
+  await ensureSandboxSchema(db);
+  const windowDays = clampAnalyticsDays(days);
+  const summaryResult = await db.query(
+    `WITH scoped AS (
+       SELECT
+         status,
+         created_at,
+         COALESCE(NULLIF(metadata->>'backend_selected', ''), 'native_sandbox') AS backend_selected,
+         COALESCE(NULLIF(metadata->>'backend_effective', ''), 'native_sandbox') AS backend_effective,
+         COALESCE((metadata->>'used_fallback')::boolean, FALSE) AS used_fallback
+       FROM ${SCHEMA}.sandbox_jobs
+       WHERE workspace_id = $1
+         AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+     )
+     SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE status IN ('completed', 'failed', 'timeout', 'skipped'))::int AS terminal_total,
+       COUNT(*) FILTER (WHERE status IN ('pending', 'running'))::int AS running_count,
+       COUNT(*) FILTER (WHERE backend_selected = 'rlm_runtime')::int AS rlm_attempt_count,
+       COUNT(*) FILTER (WHERE backend_effective = 'rlm_runtime')::int AS rlm_effective_count,
+       COUNT(*) FILTER (WHERE backend_effective = 'native_sandbox')::int AS native_effective_count,
+       COUNT(*) FILTER (WHERE used_fallback = TRUE)::int AS fallback_count,
+       COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+       COUNT(*) FILTER (WHERE status = 'timeout')::int AS timeout_count,
+       MAX(created_at) FILTER (WHERE used_fallback = TRUE) AS last_fallback_at,
+       MAX(created_at) FILTER (WHERE backend_effective = 'rlm_runtime') AS last_rlm_at,
+       MAX(created_at) AS last_execution_at
+     FROM scoped`,
+    [workspaceId, windowDays]
+  );
+
+  const fallbackReasonResult = await db.query(
+    `WITH scoped AS (
+       SELECT
+         COALESCE(NULLIF(metadata->>'fallback_reason', ''), 'unknown') AS fallback_reason
+       FROM ${SCHEMA}.sandbox_jobs
+       WHERE workspace_id = $1
+         AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
+         AND COALESCE((metadata->>'used_fallback')::boolean, FALSE) = TRUE
+     )
+     SELECT fallback_reason AS reason, COUNT(*)::int AS count
+       FROM scoped
+      GROUP BY fallback_reason
+      ORDER BY count DESC, fallback_reason ASC
+      LIMIT 5`,
+    [workspaceId, windowDays]
+  );
+
+  return buildSandboxAnalyticsSummary(
+    summaryResult.rows[0] || {},
+    fallbackReasonResult.rows || [],
+    windowDays
+  );
 }
 
 async function awaitSandboxJob(id, {
@@ -874,6 +1002,7 @@ module.exports = {
   createSandboxBatchJobs,
   getSandboxJob,
   listSandboxJobs,
+  querySandboxAnalytics,
   listSandboxBatchJobs,
   awaitSandboxJob,
   awaitSandboxBatch,

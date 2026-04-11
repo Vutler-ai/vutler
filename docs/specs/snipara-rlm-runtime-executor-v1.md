@@ -61,6 +61,12 @@ Behavior:
   - `fallback_from`
   - `fallback_reason`
 - sandbox operator history exposes this telemetry, and orchestration/tool payloads now carry the same backend/fallback summary
+- aggregate sandbox analytics are exposed per workspace:
+  - `RLM` attempts vs effective executions
+  - native effective executions
+  - fallback count and fallback rate
+  - top fallback reasons
+  - operator status `healthy | degraded | critical`
 
 Binary resolution order:
 1. `RLM_RUNTIME_BIN`
@@ -107,5 +113,5 @@ Validated locally on 2026-04-11:
 ## Remaining Follow-Ups
 
 - decide whether JavaScript support should stay on native sandbox only
-- add aggregate backend usage analytics and alerting, not just per-execution telemetry
+- add workspace-level alert routing or notifications when sandbox health becomes `critical`
 - verify the VPS `rlm` binary and env config before enabling in production

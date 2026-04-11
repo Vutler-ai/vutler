@@ -1863,6 +1863,39 @@ export interface SandboxExecutionsResponse {
   total: number;
 }
 
+export interface SandboxFallbackReason {
+  reason: string;
+  count: number;
+}
+
+export interface SandboxAnalytics {
+  supported: boolean;
+  degraded: boolean;
+  status: 'healthy' | 'degraded' | 'critical' | string;
+  days: number;
+  totals: {
+    all: number;
+    terminal: number;
+    running: number;
+    rlm_attempts: number;
+    rlm_effective: number;
+    native_effective: number;
+    fallbacks: number;
+    failed: number;
+    timeout: number;
+  };
+  rates: {
+    fallback_rate: number;
+  };
+  timestamps: {
+    last_fallback_at?: string | null;
+    last_rlm_at?: string | null;
+    last_execution_at?: string | null;
+  };
+  top_fallback_reasons: SandboxFallbackReason[];
+  recommendation?: string | null;
+}
+
 // ─── Memory ───────────────────────────────────────────────────────────────────
 
 export interface Memory {

@@ -5,6 +5,7 @@ import type {
   SandboxBatchPayload,
   SandboxExecutionsParams,
   SandboxExecutionsResponse,
+  SandboxAnalytics,
 } from '../types';
 
 interface ApiResponse<T> {
@@ -52,6 +53,13 @@ export async function getSandboxExecutions(
 export async function getSandboxExecution(id: string): Promise<SandboxExecution> {
   const res = await apiFetch<ApiResponse<SandboxExecution>>(
     `/api/v1/sandbox/executions/${id}`
+  );
+  return res.data;
+}
+
+export async function getSandboxAnalytics(days = 7): Promise<SandboxAnalytics> {
+  const res = await apiFetch<ApiResponse<SandboxAnalytics>>(
+    `/api/v1/sandbox/analytics?days=${days}`
   );
   return res.data;
 }

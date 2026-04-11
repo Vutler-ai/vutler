@@ -407,3 +407,74 @@ describe('sandbox service hardening', () => {
     expect(batch[2].error).toBe('Skipped because an earlier batch step failed.');
   });
 });
+
+describe('sandbox analytics', () => {
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  test('aggregates backend usage and fallback rates by workspace', async () => {
+    const query = jest.fn(async (sql) => {
+      if (
+        sql.includes('COUNT(*) FILTER (WHERE backend_selected = \'rlm_runtime\')')
+        && sql.includes('COUNT(*) FILTER (WHERE used_fallback = TRUE)')
+      ) {
+        return {
+          rows: [{
+            total: 12,
+            terminal_total: 10,
+            running_count: 2,
+            rlm_attempt_count: 4,
+            rlm_effective_count: 2,
+            native_effective_count: 8,
+            fallback_count: 2,
+            failed_count: 1,
+            timeout_count: 0,
+            last_fallback_at: '2026-04-12T08:00:00.000Z',
+            last_rlm_at: '2026-04-12T09:00:00.000Z',
+            last_execution_at: '2026-04-12T10:00:00.000Z',
+          }],
+        };
+      }
+
+      if (sql.includes('SELECT fallback_reason AS reason')) {
+        return {
+          rows: [
+            { reason: 'rlm binary missing', count: 1 },
+            { reason: 'runtime timeout', count: 1 },
+          ],
+        };
+      }
+
+      return { rows: [] };
+    });
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    const sandbox = require('../services/sandbox');
+
+    const result = await sandbox.querySandboxAnalytics({
+      workspaceId: 'ws-1',
+      days: 7,
+    }, { query });
+
+    expect(result).toMatchObject({
+      supported: true,
+      status: 'critical',
+      days: 7,
+      totals: {
+        terminal: 10,
+        rlm_attempts: 4,
+        rlm_effective: 2,
+        native_effective: 8,
+        fallbacks: 2,
+      },
+      rates: {
+        fallback_rate: 0.5,
+      },
+      top_fallback_reasons: [
+        { reason: 'rlm binary missing', count: 1 },
+        { reason: 'runtime timeout', count: 1 },
+      ],
+    });
+  });
+});

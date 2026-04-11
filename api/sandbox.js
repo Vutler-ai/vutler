@@ -16,6 +16,7 @@ const {
   executeBatch,
   listSandboxJobs,
   getSandboxJob,
+  querySandboxAnalytics,
 } = require('../services/sandbox');
 const { runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 
@@ -113,6 +114,21 @@ router.get('/executions/:id', async (req, res) => {
     res.json({ success: true, data: result });
   } catch (err) {
     console.error('[Sandbox] Get execution error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/analytics', async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(90, Number(req.query.days) || 7));
+    const result = await querySandboxAnalytics({
+      workspaceId: req.workspaceId || null,
+      days,
+    });
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    console.error('[Sandbox] Analytics error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

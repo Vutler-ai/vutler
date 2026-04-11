@@ -1,15 +1,18 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useApi } from '@/hooks/use-api';
 import {
   executeSandbox,
   executeBatch,
+  getSandboxAnalytics,
   getSandboxExecutions,
   getSandboxExecution,
 } from '@/lib/api/endpoints/sandbox';
 import { getAgents } from '@/lib/api/endpoints/agents';
 import type {
   Agent,
+  SandboxAnalytics,
   SandboxExecution,
   SandboxLanguage,
   SandboxStatus,
@@ -69,6 +72,21 @@ function langBadgeColor(lang: SandboxLanguage) {
     case 'shell': return 'bg-purple-900/30 text-purple-300 border-purple-600/30';
     default: return 'bg-gray-800 text-gray-300 border-gray-600/30';
   }
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return 'n/a';
+  return `${Math.round(value * 100)}%`;
+}
+
+function analyticsStatusBadge(status: string) {
+  if (status === 'critical') {
+    return 'bg-red-500/15 text-red-300 border-red-500/20';
+  }
+  if (status === 'degraded') {
+    return 'bg-amber-500/15 text-amber-300 border-amber-500/20';
+  }
+  return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20';
 }
 
 function backendLabel(execution: SandboxExecution): string | null {
@@ -394,6 +412,15 @@ export default function SandboxPage() {
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
 
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const {
+    data: analytics,
+    isLoading: loadingAnalytics,
+    mutate: mutateAnalytics,
+  } = useApi<SandboxAnalytics>(
+    '/api/v1/sandbox/analytics?days=7',
+    () => getSandboxAnalytics(7),
+    { refreshInterval: REFRESH_INTERVAL_MS }
+  );
 
   // ── Load history ──
   const loadHistory = useCallback(async () => {
@@ -449,6 +476,7 @@ export default function SandboxPage() {
       setCurrentExecution(result);
       setActiveHistoryId(result.id);
       loadHistory();
+      mutateAnalytics();
     } catch (err) {
       setExecError(err instanceof Error ? err.message : 'Execution failed');
     } finally {
@@ -473,6 +501,7 @@ export default function SandboxPage() {
       });
       setBatchResults(results);
       loadHistory();
+      mutateAnalytics();
     } catch (err) {
       setExecError(err instanceof Error ? err.message : 'Batch failed');
     } finally {
@@ -535,6 +564,84 @@ export default function SandboxPage() {
             />
           </button>
         </label>
+      </div>
+
+      <div className="mb-5 rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0d0e1a] p-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="text-white text-sm font-medium">Sandbox Runtime Analytics</p>
+            <p className="text-[11px] text-[#6b7280] mt-1">
+              Workspace-scoped backend usage and fallback signals over the last {analytics?.days ?? 7} days.
+            </p>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-xs font-medium ${analyticsStatusBadge(analytics?.status || 'healthy')}`}>
+            {loadingAnalytics ? 'Loading' : (analytics?.status || 'healthy')}
+          </span>
+        </div>
+
+        {loadingAnalytics ? (
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} className="h-20 rounded-xl bg-[#11131d] animate-pulse" />
+            ))}
+          </div>
+        ) : analytics ? (
+          <>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Terminal Runs</p>
+                <p className="mt-2 text-lg font-semibold text-white">{analytics.totals.terminal}</p>
+                <p className="text-[11px] text-[#4b5563] mt-1">{analytics.totals.running} running or pending</p>
+              </div>
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">RLM Effective</p>
+                <p className="mt-2 text-lg font-semibold text-white">{analytics.totals.rlm_effective}</p>
+                <p className="text-[11px] text-[#4b5563] mt-1">{analytics.totals.rlm_attempts} RLM attempts</p>
+              </div>
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Native Effective</p>
+                <p className="mt-2 text-lg font-semibold text-white">{analytics.totals.native_effective}</p>
+                <p className="text-[11px] text-[#4b5563] mt-1">Includes direct native runs and fallbacks</p>
+              </div>
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Fallback Rate</p>
+                <p className="mt-2 text-lg font-semibold text-white">{formatPercent(analytics.rates.fallback_rate)}</p>
+                <p className="text-[11px] text-[#4b5563] mt-1">{analytics.totals.fallbacks} fallbacks from RLM attempts</p>
+              </div>
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Failures</p>
+                <p className="mt-2 text-lg font-semibold text-white">{analytics.totals.failed + analytics.totals.timeout}</p>
+                <p className="text-[11px] text-[#4b5563] mt-1">{analytics.totals.timeout} timeout · {analytics.totals.failed} failed</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 xl:grid-cols-[1.5fr_1fr]">
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Operator Signal</p>
+                <p className="mt-2 text-sm text-white">{analytics.recommendation || 'No recommendation available.'}</p>
+                <div className="mt-2 text-[11px] text-[#4b5563]">
+                  Last execution: {analytics.timestamps.last_execution_at ? new Date(analytics.timestamps.last_execution_at).toLocaleString() : 'n/a'}
+                  {' · '}
+                  Last fallback: {analytics.timestamps.last_fallback_at ? new Date(analytics.timestamps.last_fallback_at).toLocaleString() : 'none'}
+                </div>
+              </div>
+
+              <div className="rounded-xl bg-[#11131d] border border-[rgba(255,255,255,0.05)] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Top Fallback Reasons</p>
+                <div className="mt-2 space-y-2">
+                  {analytics.top_fallback_reasons.length > 0 ? analytics.top_fallback_reasons.map((entry) => (
+                    <div key={entry.reason} className="flex items-start justify-between gap-3 text-sm">
+                      <span className="text-[#d1d5db] break-words">{entry.reason}</span>
+                      <span className="text-[#6b7280] shrink-0">{entry.count}</span>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-[#6b7280]">No fallback recorded on this window.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="flex gap-5">
