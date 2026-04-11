@@ -72,4 +72,38 @@ describe('SniparaGateway workspace requirements', () => {
 
     expect(resolveSniparaConfig).not.toHaveBeenCalled();
   });
+
+  test('exposes memory lifecycle and analytics wrappers through the shared workspace context', async () => {
+    const { createSniparaGateway, callSniparaTool } = loadGateway();
+    const gateway = createSniparaGateway({ workspaceId: 'ws-9' });
+
+    await gateway.memory.verify({ memory_id: 'mem-1', note: 'validated from runbook' });
+    await gateway.analytics.indexHealth({});
+    await gateway.coordination.htaskMetrics({ days: 7 });
+
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        workspaceId: 'ws-9',
+        toolName: 'rlm_memory_verify',
+        args: { memory_id: 'mem-1', note: 'validated from runbook' },
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        workspaceId: 'ws-9',
+        toolName: 'rlm_index_health',
+        args: {},
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        workspaceId: 'ws-9',
+        toolName: 'rlm_htask_metrics',
+        args: { days: 7 },
+      })
+    );
+  });
 });

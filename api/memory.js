@@ -10,6 +10,10 @@ const {
   buildAgentContext,
   loadWorkspaceKnowledge,
   rememberAgentMemory,
+  attachMemorySource,
+  verifyAgentMemory,
+  invalidateAgentMemory,
+  supersedeAgentMemory,
   softDeleteAgentMemory,
   promoteAgentMemoryToTemplate,
 } = require('../services/sniparaMemoryService');
@@ -158,11 +162,127 @@ router.post('/agents/:agentId/memories', async (req, res) => {
       importance,
       visibility,
       source: 'vutler-dashboard',
+      metadata: {
+        needs_verification: true,
+        created_via: 'dashboard',
+      },
     });
 
     return res.status(201).json({ success: true });
   } catch (error) {
     console.error('[Memory API] remember failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/agents/:agentId/memories/:memoryId/attach-source', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId, memoryId } = req.params;
+    const sourceRef = String(req.body?.source_ref || req.body?.source || '').trim();
+    const evidenceNote = String(req.body?.evidence_note || req.body?.note || '').trim();
+    if (!sourceRef) {
+      return res.status(400).json({ success: false, error: 'source_ref is required' });
+    }
+
+    const agent = await resolveAgentRecord(pool, workspaceId, agentId);
+    const data = await attachMemorySource({
+      db: pool,
+      workspaceId,
+      agent,
+      memoryId,
+      sourceRef,
+      evidenceNote,
+    });
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[Memory API] attach source failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/agents/:agentId/memories/:memoryId/verify', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId, memoryId } = req.params;
+    const evidenceNote = String(req.body?.evidence_note || req.body?.note || '').trim();
+    const probe = req.body?.probe && typeof req.body.probe === 'object' ? req.body.probe : null;
+    const agent = await resolveAgentRecord(pool, workspaceId, agentId);
+
+    const data = await verifyAgentMemory({
+      db: pool,
+      workspaceId,
+      agent,
+      memoryId,
+      evidenceNote,
+      probe,
+    });
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[Memory API] verify failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/agents/:agentId/memories/:memoryId/invalidate', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId, memoryId } = req.params;
+    const reason = String(req.body?.reason || '').trim();
+    const replacementHint = String(req.body?.replacement_hint || '').trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'reason is required' });
+    }
+
+    const agent = await resolveAgentRecord(pool, workspaceId, agentId);
+    const data = await invalidateAgentMemory({
+      db: pool,
+      workspaceId,
+      agent,
+      memoryId,
+      reason,
+      replacementHint,
+    });
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[Memory API] invalidate failed:', error.message);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/agents/:agentId/memories/:memoryId/supersede', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId, memoryId } = req.params;
+    const newText = String(req.body?.new_text || req.body?.text || '').trim();
+    const reason = String(req.body?.reason || '').trim();
+    const type = String(req.body?.type || 'fact').trim() || 'fact';
+    const importance = req.body?.importance;
+    if (!newText) {
+      return res.status(400).json({ success: false, error: 'new_text is required' });
+    }
+    if (!reason) {
+      return res.status(400).json({ success: false, error: 'reason is required' });
+    }
+
+    const agent = await resolveAgentRecord(pool, workspaceId, agentId);
+    const data = await supersedeAgentMemory({
+      db: pool,
+      workspaceId,
+      agent,
+      memoryId,
+      newText,
+      reason,
+      type,
+      importance,
+    });
+
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[Memory API] supersede failed:', error.message);
     return res.status(500).json({ success: false, error: error.message });
   }
 });

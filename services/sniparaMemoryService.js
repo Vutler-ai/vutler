@@ -228,7 +228,7 @@ function normalizeListedMemory(raw, fallbackScope, index = 0) {
     },
   });
 
-  return {
+  return projectMemoryLifecycle({
     id: raw?.memory_id || raw?.id || `mem-${scopeKey}-${index}`,
     text: raw?.content || raw?.text || raw?.description || '',
     type,
@@ -246,7 +246,7 @@ function normalizeListedMemory(raw, fallbackScope, index = 0) {
     metadata: governance,
     visibility: governance.visibility,
     status: isMemoryExpired({ expires_at: raw?.expires_at || governance.expires_at, metadata: governance }) ? 'expired' : 'active',
-  };
+  });
 }
 
 function inferVisibility(memory) {
@@ -411,6 +411,81 @@ function toScopeName(scopeKey) {
   return scopeKey || 'agent';
 }
 
+function normalizeMemorySource(raw = {}) {
+  if (!raw || typeof raw !== 'object') return null;
+  const sourceRef = String(raw.source_ref || raw.ref || raw.source || '').trim();
+  const note = String(raw.evidence_note || raw.note || raw.description || '').trim();
+  const attachedAt = String(raw.attached_at || raw.created_at || '').trim() || null;
+  if (!sourceRef && !note) return null;
+  return {
+    source_ref: sourceRef || null,
+    evidence_note: note || null,
+    attached_at: attachedAt,
+  };
+}
+
+function dedupeMemorySources(sources = []) {
+  const deduped = [];
+  const seen = new Set();
+  for (const source of sources) {
+    const normalized = normalizeMemorySource(source);
+    if (!normalized) continue;
+    const key = [
+      normalized.source_ref || '',
+      normalized.evidence_note || '',
+      normalized.attached_at || '',
+    ].join('|').toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(normalized);
+  }
+  return deduped;
+}
+
+function deriveMemoryStatus(memory) {
+  const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+  if (metadata.superseded_at || metadata.superseded === true || metadata.lifecycle_status === 'superseded') {
+    return 'superseded';
+  }
+  if (metadata.invalidated_at || metadata.invalidated === true || metadata.lifecycle_status === 'invalidated') {
+    return 'invalidated';
+  }
+  if (metadata.needs_verification === true || metadata.verification_required === true || metadata.lifecycle_status === 'needs_verification') {
+    return 'needs_verification';
+  }
+  if (isMemoryExpired({ expires_at: memory?.expires_at || metadata.expires_at, metadata })) {
+    return 'expired';
+  }
+  return 'active';
+}
+
+function projectMemoryLifecycle(memory) {
+  const metadata = memory?.metadata && typeof memory.metadata === 'object'
+    ? { ...memory.metadata }
+    : {};
+  const sources = dedupeMemorySources(Array.isArray(metadata.sources) ? metadata.sources : []);
+  if (sources.length > 0) {
+    metadata.sources = sources;
+  }
+
+  return {
+    ...memory,
+    metadata,
+    sources,
+    source_count: sources.length,
+    verified_at: metadata.verified_at || null,
+    verification_note: metadata.verification_note || null,
+    invalidated_at: metadata.invalidated_at || null,
+    invalidation_reason: metadata.invalidation_reason || null,
+    replacement_hint: metadata.replacement_hint || null,
+    superseded_at: metadata.superseded_at || null,
+    superseded_by_text: metadata.superseded_by_text || null,
+    lifecycle_remote_synced: metadata.lifecycle_remote_synced !== false,
+    lifecycle_remote_error: metadata.lifecycle_remote_error || null,
+    status: deriveMemoryStatus({ ...memory, metadata }),
+  };
+}
+
 function normalizeMemory(raw, fallbackScope, index = 0) {
   const metadata = raw && typeof raw.metadata === 'object' && raw.metadata !== null ? raw.metadata : {};
   const type = normalizeType(raw?.type || metadata.type || 'fact');
@@ -425,7 +500,7 @@ function normalizeMemory(raw, fallbackScope, index = 0) {
     metadata,
   });
 
-  return {
+  return projectMemoryLifecycle({
     id: raw?.id || raw?.memory_id || `mem-${scopeKey}-${index}`,
     text: raw?.text || raw?.content || raw?.description || '',
     type,
@@ -444,7 +519,7 @@ function normalizeMemory(raw, fallbackScope, index = 0) {
     metadata: governance,
     visibility: governance.visibility,
     status: isMemoryExpired({ expires_at: governance.expires_at, metadata: governance }) ? 'expired' : 'active',
-  };
+  });
 }
 
 function normalizeMemories(raw, fallbackScope) {
@@ -457,9 +532,94 @@ function isDeletedMemory(memory) {
   return /^\[DELETED memory /i.test(String(memory.text || '').trim());
 }
 
+function isLifecycleMarkerMemory(memory) {
+  const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+  return Boolean(metadata.lifecycle_event && metadata.memory_target_id);
+}
+
+function applyLifecycleMarkers(memories = []) {
+  if (!Array.isArray(memories) || memories.length === 0) return [];
+
+  const markersByTarget = new Map();
+  const canonical = [];
+
+  for (const memory of memories) {
+    if (isLifecycleMarkerMemory(memory)) {
+      const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+      const targetId = String(metadata.memory_target_id || '').trim();
+      if (!targetId) continue;
+      const current = markersByTarget.get(targetId) || [];
+      current.push(memory);
+      markersByTarget.set(targetId, current);
+      continue;
+    }
+    canonical.push(memory);
+  }
+
+  return canonical.map((memory) => {
+    const markers = (markersByTarget.get(String(memory.id || '').trim()) || [])
+      .slice()
+      .sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime());
+    if (markers.length === 0) {
+      return projectMemoryLifecycle(memory);
+    }
+
+    const metadata = {
+      ...(memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {}),
+    };
+    const sources = Array.isArray(metadata.sources) ? metadata.sources.slice() : [];
+
+    for (const marker of markers) {
+      const markerMetadata = marker?.metadata && typeof marker.metadata === 'object' ? marker.metadata : {};
+      const event = String(markerMetadata.lifecycle_event || '').trim();
+      if (event === 'attach_source') {
+        sources.push({
+          source_ref: markerMetadata.source_ref || null,
+          evidence_note: markerMetadata.evidence_note || null,
+          attached_at: markerMetadata.attached_at || marker.created_at || null,
+        });
+      }
+      if (event === 'verify') {
+        metadata.verified_at = markerMetadata.verified_at || marker.created_at || metadata.verified_at || null;
+        metadata.verification_note = markerMetadata.verification_note || metadata.verification_note || null;
+        metadata.needs_verification = false;
+        delete metadata.invalidated_at;
+        delete metadata.invalidated;
+        delete metadata.lifecycle_status;
+      }
+      if (event === 'invalidate') {
+        metadata.invalidated = true;
+        metadata.invalidated_at = markerMetadata.invalidated_at || marker.created_at || metadata.invalidated_at || null;
+        metadata.invalidation_reason = markerMetadata.invalidation_reason || metadata.invalidation_reason || null;
+        metadata.replacement_hint = markerMetadata.replacement_hint || metadata.replacement_hint || null;
+        metadata.lifecycle_status = 'invalidated';
+      }
+      if (event === 'supersede') {
+        metadata.superseded = true;
+        metadata.superseded_at = markerMetadata.superseded_at || marker.created_at || metadata.superseded_at || null;
+        metadata.superseded_by_text = markerMetadata.superseded_by_text || metadata.superseded_by_text || null;
+        metadata.invalidation_reason = markerMetadata.superseded_reason || metadata.invalidation_reason || null;
+        metadata.lifecycle_status = 'superseded';
+      }
+
+      if (markerMetadata.lifecycle_remote_synced === false) {
+        metadata.lifecycle_remote_synced = false;
+        metadata.lifecycle_remote_error = markerMetadata.lifecycle_remote_error || metadata.lifecycle_remote_error || null;
+      }
+    }
+
+    metadata.sources = dedupeMemorySources(sources);
+    return projectMemoryLifecycle({
+      ...memory,
+      metadata,
+    });
+  });
+}
+
 function filterDashboardMemories(memories = [], includeInternal = false, options = {}) {
   const includeExpired = options.includeExpired === true;
   return memories.filter((memory) => {
+    if (isLifecycleMarkerMemory(memory)) return false;
     if (isDeletedMemory(memory)) return false;
     if (!includeExpired && isMemoryExpired(memory)) return false;
     if (!includeInternal && memory.visibility === 'internal') return false;
@@ -472,9 +632,14 @@ function summarizeMemoryCollection(memories = [], includeInternal = false, optio
   let deletedCount = 0;
   let expiredCount = 0;
   let hiddenCount = 0;
+  let trackedCount = 0;
   const visible = [];
 
   for (const memory of memories) {
+    if (isLifecycleMarkerMemory(memory)) {
+      continue;
+    }
+    trackedCount += 1;
     if (isDeletedMemory(memory)) {
       deletedCount += 1;
       continue;
@@ -492,12 +657,12 @@ function summarizeMemoryCollection(memories = [], includeInternal = false, optio
 
   return {
     visible,
-    total_count: memories.length,
+    total_count: trackedCount,
     visible_count: visible.length,
     hidden_count: hiddenCount,
     expired_count: expiredCount,
     deleted_count: deletedCount,
-    active_count: Math.max(0, memories.length - expiredCount - deletedCount),
+    active_count: Math.max(0, trackedCount - expiredCount - deletedCount),
   };
 }
 
@@ -863,6 +1028,7 @@ async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, ro
       rawMemories = [];
     }
   }
+  rawMemories = applyLifecycleMarkers(rawMemories);
   const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
   return {
     agent,
@@ -909,6 +1075,7 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
       rawMemories = [];
     }
   }
+  rawMemories = applyLifecycleMarkers(rawMemories);
   const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
   return {
     agent,
@@ -992,6 +1159,10 @@ async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, inc
       globalRaw = [];
     }
   }
+
+  instanceRaw = applyLifecycleMarkers(instanceRaw);
+  templateRaw = applyLifecycleMarkers(templateRaw);
+  globalRaw = applyLifecycleMarkers(globalRaw);
 
   const instanceSummary = summarizeMemoryCollection(instanceRaw, includeInternal);
   const templateSummary = summarizeMemoryCollection(templateRaw, includeInternal);
@@ -1091,6 +1262,79 @@ async function rememberScopedMemory({
   return target;
 }
 
+function shouldTreatLifecycleToolAsUnavailable(error) {
+  const serialized = serializeSniparaError(error);
+  const statusCode = Number(serialized?.status_code) || null;
+  const message = [
+    serialized?.message,
+    serialized?.response_preview,
+    serialized?.cause,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if ([400, 403, 404, 405, 501].includes(statusCode)) return true;
+  return message.includes('unknown tool')
+    || message.includes('not found')
+    || message.includes('unsupported')
+    || message.includes('does not exist');
+}
+
+async function callOptionalLifecycleTool({ db, workspaceId, toolName, args }) {
+  try {
+    const result = await callSniparaMemoryTool({
+      db,
+      workspaceId,
+      toolName,
+      args,
+      timeoutMs: SNIPARA_MEMORY_WRITE_TIMEOUT_MS,
+    });
+    return {
+      remote_synced: true,
+      remote_error: null,
+      result,
+    };
+  } catch (error) {
+    if (!shouldTreatLifecycleToolAsUnavailable(error)) throw error;
+    return {
+      remote_synced: false,
+      remote_error: serializeSniparaError(error),
+      result: null,
+    };
+  }
+}
+
+function buildLifecycleMarkerText(action, memoryId, note = '') {
+  const suffix = String(note || '').trim();
+  if (!suffix) return `[${action.toUpperCase()} memory ${memoryId}]`;
+  return `[${action.toUpperCase()} memory ${memoryId}] ${suffix}`;
+}
+
+async function rememberMemoryLifecycleMarker({
+  db,
+  workspaceId,
+  agent,
+  memoryId,
+  action,
+  note = '',
+  metadata = {},
+}) {
+  return rememberScopedMemory({
+    db,
+    workspaceId,
+    agent,
+    scopeKey: 'instance',
+    text: buildLifecycleMarkerText(action, memoryId, note),
+    type: 'fact',
+    importance: 0.1,
+    visibility: 'internal',
+    source: `vutler-memory-${action}`,
+    metadata: {
+      ...metadata,
+      memory_target_id: memoryId,
+      lifecycle_event: action,
+    },
+  });
+}
+
 async function rememberAgentMemory({ db, workspaceId, agent, text, type = 'fact', importance = 0.5, visibility = 'reviewable', source = 'vutler', metadata = {} }) {
   return rememberScopedMemory({
     db,
@@ -1104,6 +1348,217 @@ async function rememberAgentMemory({ db, workspaceId, agent, text, type = 'fact'
     source,
     metadata,
   });
+}
+
+async function attachMemorySource({ db, workspaceId, agent, memoryId, sourceRef, evidenceNote = '' }) {
+  const bindings = buildAgentMemoryBindings(agent, workspaceId);
+  const attachedAt = new Date().toISOString();
+  const remote = await callOptionalLifecycleTool({
+    db,
+    workspaceId,
+    toolName: 'rlm_memory_attach_source',
+    args: {
+      memory_id: memoryId,
+      source_ref: sourceRef,
+      source: sourceRef,
+      evidence_note: evidenceNote || undefined,
+      note: evidenceNote || undefined,
+      agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
+    },
+  });
+
+  await rememberMemoryLifecycleMarker({
+    db,
+    workspaceId,
+    agent,
+    memoryId,
+    action: 'attach_source',
+    note: evidenceNote || sourceRef,
+    metadata: {
+      source_ref: sourceRef,
+      evidence_note: evidenceNote || null,
+      attached_at: attachedAt,
+      sources: [{ source_ref: sourceRef, evidence_note: evidenceNote || null, attached_at: attachedAt }],
+      lifecycle_remote_synced: remote.remote_synced,
+      lifecycle_remote_error: remote.remote_error,
+    },
+  });
+
+  return {
+    memory_id: memoryId,
+    action: 'attach_source',
+    source_ref: sourceRef,
+    evidence_note: evidenceNote || null,
+    attached_at: attachedAt,
+    remote_synced: remote.remote_synced,
+    remote_error: remote.remote_error,
+    status: 'active',
+  };
+}
+
+async function verifyAgentMemory({ db, workspaceId, agent, memoryId, evidenceNote = '', probe = null }) {
+  const bindings = buildAgentMemoryBindings(agent, workspaceId);
+  const verifiedAt = new Date().toISOString();
+  const remote = await callOptionalLifecycleTool({
+    db,
+    workspaceId,
+    toolName: 'rlm_memory_verify',
+    args: {
+      memory_id: memoryId,
+      agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
+      evidence_note: evidenceNote || undefined,
+      note: evidenceNote || undefined,
+      probe,
+    },
+  });
+
+  await rememberMemoryLifecycleMarker({
+    db,
+    workspaceId,
+    agent,
+    memoryId,
+    action: 'verify',
+    note: evidenceNote,
+    metadata: {
+      verified: true,
+      verified_at: verifiedAt,
+      verification_note: evidenceNote || null,
+      needs_verification: false,
+      lifecycle_remote_synced: remote.remote_synced,
+      lifecycle_remote_error: remote.remote_error,
+    },
+  });
+
+  return {
+    memory_id: memoryId,
+    action: 'verify',
+    verified_at: verifiedAt,
+    verification_note: evidenceNote || null,
+    remote_synced: remote.remote_synced,
+    remote_error: remote.remote_error,
+    status: 'active',
+  };
+}
+
+async function invalidateAgentMemory({ db, workspaceId, agent, memoryId, reason, replacementHint = '' }) {
+  const bindings = buildAgentMemoryBindings(agent, workspaceId);
+  const invalidatedAt = new Date().toISOString();
+  const remote = await callOptionalLifecycleTool({
+    db,
+    workspaceId,
+    toolName: 'rlm_memory_invalidate',
+    args: {
+      memory_id: memoryId,
+      agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
+      reason,
+      replacement_hint: replacementHint || undefined,
+    },
+  });
+
+  await rememberMemoryLifecycleMarker({
+    db,
+    workspaceId,
+    agent,
+    memoryId,
+    action: 'invalidate',
+    note: reason,
+    metadata: {
+      invalidated: true,
+      invalidated_at: invalidatedAt,
+      invalidation_reason: reason,
+      replacement_hint: replacementHint || null,
+      lifecycle_status: 'invalidated',
+      needs_verification: false,
+      lifecycle_remote_synced: remote.remote_synced,
+      lifecycle_remote_error: remote.remote_error,
+    },
+  });
+
+  return {
+    memory_id: memoryId,
+    action: 'invalidate',
+    invalidated_at: invalidatedAt,
+    invalidation_reason: reason,
+    replacement_hint: replacementHint || null,
+    remote_synced: remote.remote_synced,
+    remote_error: remote.remote_error,
+    status: 'invalidated',
+  };
+}
+
+async function supersedeAgentMemory({
+  db,
+  workspaceId,
+  agent,
+  memoryId,
+  newText,
+  reason,
+  type = 'fact',
+  importance = 0.65,
+}) {
+  const bindings = buildAgentMemoryBindings(agent, workspaceId);
+  const supersededAt = new Date().toISOString();
+  const remote = await callOptionalLifecycleTool({
+    db,
+    workspaceId,
+    toolName: 'rlm_memory_supersede',
+    args: {
+      memory_id: memoryId,
+      agent_id: bindings.agentId || bindings.sniparaInstanceId || bindings.agentRef,
+      new_text: newText,
+      replacement_text: newText,
+      reason,
+    },
+  });
+
+  await rememberScopedMemory({
+    db,
+    workspaceId,
+    agent,
+    scopeKey: 'instance',
+    text: newText,
+    type,
+    importance,
+    visibility: 'reviewable',
+    source: 'vutler-memory-supersede',
+    metadata: {
+      needs_verification: true,
+      supersedes_memory_id: memoryId,
+      supersede_reason: reason,
+      created_from_supersede: true,
+      created_at: supersededAt,
+    },
+  });
+
+  await rememberMemoryLifecycleMarker({
+    db,
+    workspaceId,
+    agent,
+    memoryId,
+    action: 'supersede',
+    note: reason,
+    metadata: {
+      superseded: true,
+      superseded_at: supersededAt,
+      superseded_reason: reason,
+      superseded_by_text: newText,
+      lifecycle_status: 'superseded',
+      needs_verification: false,
+      lifecycle_remote_synced: remote.remote_synced,
+      lifecycle_remote_error: remote.remote_error,
+    },
+  });
+
+  return {
+    memory_id: memoryId,
+    action: 'supersede',
+    superseded_at: supersededAt,
+    superseded_reason: reason,
+    superseded_by_text: newText,
+    remote_synced: remote.remote_synced,
+    remote_error: remote.remote_error,
+    status: 'superseded',
+  };
 }
 
 async function softDeleteAgentMemory({ db, workspaceId, agent, memoryId }) {
@@ -1300,6 +1755,10 @@ module.exports = {
   buildAgentContext,
   rememberScopedMemory,
   rememberAgentMemory,
+  attachMemorySource,
+  verifyAgentMemory,
+  invalidateAgentMemory,
+  supersedeAgentMemory,
   softDeleteAgentMemory,
   promoteAgentMemoryToTemplate,
   buildRuntimeMemoryBundle,

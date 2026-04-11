@@ -66,6 +66,10 @@ class SniparaGateway {
         offset: input.offset,
       }),
       forget: (input = {}) => this.call('rlm_forget', input),
+      attachSource: (input = {}) => this.call('rlm_memory_attach_source', input),
+      verify: (input = {}) => this.call('rlm_memory_verify', input),
+      invalidate: (input = {}) => this.call('rlm_memory_invalidate', input),
+      supersede: (input = {}) => this.call('rlm_memory_supersede', input),
       rememberForAgent: (agent, input = {}) => {
         const workspaceId = resolveRequiredWorkspaceId(input.workspaceId, this.workspaceId);
         const bindings = buildAgentMemoryBindings(agent, workspaceId);
@@ -102,6 +106,11 @@ class SniparaGateway {
       ask: (input = {}) => this.call('rlm_ask', input),
     };
 
+    this.analytics = {
+      indexHealth: (input = {}) => this.call('rlm_index_health', input),
+      searchAnalytics: (input = {}) => this.call('rlm_search_analytics', input),
+    };
+
     this.workflow = {
       plan: (input = {}) => this.call('rlm_plan', input),
       decompose: (input = {}) => this.call('rlm_decompose', input),
@@ -133,6 +142,9 @@ class SniparaGateway {
       htaskComplete: (input = {}) => this.call('rlm_htask_complete', input),
       htaskVerifyClosure: (input = {}) => this.call('rlm_htask_verify_closure', input),
       htaskClose: (input = {}) => this.call('rlm_htask_close', input),
+      htaskPolicyGet: (input = {}) => this.call('rlm_htask_policy_get', input),
+      htaskMetrics: (input = {}) => this.call('rlm_htask_metrics', input),
+      htaskCreateFeature: (input = {}) => this.call('rlm_htask_create_feature', input),
     };
   }
 

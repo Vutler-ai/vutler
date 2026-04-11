@@ -159,4 +159,134 @@ describe('sniparaMemoryService diagnostics', () => {
       })
     );
   });
+
+  test('applies lifecycle markers to memories and hides governance markers from the dashboard list', async () => {
+    const callSniparaTool = jest.fn().mockResolvedValue({
+      memories: [
+        {
+          id: 'mem-1',
+          text: 'Primary deployment target is the VPS cluster in Geneva.',
+          type: 'fact',
+          scope: 'agent',
+          category: 'ws-4-agent-andrea',
+          created_at: '2026-04-10T10:00:00.000Z',
+          metadata: {
+            needs_verification: true,
+          },
+        },
+        {
+          id: 'marker-1',
+          text: '[ATTACH_SOURCE memory mem-1] deploy-checklist.md',
+          type: 'fact',
+          scope: 'agent',
+          category: 'ws-4-agent-andrea',
+          created_at: '2026-04-10T11:00:00.000Z',
+          metadata: {
+            lifecycle_event: 'attach_source',
+            memory_target_id: 'mem-1',
+            source_ref: 'deploy-checklist.md',
+            evidence_note: 'Confirmed during VPS hardening pass.',
+          },
+        },
+        {
+          id: 'marker-2',
+          text: '[VERIFY memory mem-1] validated',
+          type: 'fact',
+          scope: 'agent',
+          category: 'ws-4-agent-andrea',
+          created_at: '2026-04-10T12:00:00.000Z',
+          metadata: {
+            lifecycle_event: 'verify',
+            memory_target_id: 'mem-1',
+            verified_at: '2026-04-10T12:00:00.000Z',
+            verification_note: 'Validated against the deployment runbook.',
+            needs_verification: false,
+          },
+        },
+      ],
+    });
+
+    jest.doMock('../services/sniparaResolver', () => ({
+      callSniparaTool,
+      serializeSniparaError: jest.fn((error) => ({
+        message: error.message,
+        status_code: error.statusCode || null,
+        tool_name: error.toolName || null,
+      })),
+    }));
+
+    const { listAgentMemories } = require('../services/sniparaMemoryService');
+    const result = await listAgentMemories({
+      db: null,
+      workspaceId: 'ws-4',
+      agentIdOrUsername: 'andrea',
+      fallbackAgent: { id: 'agent-1', username: 'andrea', role: 'Engineering' },
+      limit: 5,
+    });
+
+    expect(result.memories).toHaveLength(1);
+    expect(result.memories[0]).toEqual(expect.objectContaining({
+      id: 'mem-1',
+      status: 'active',
+      verified_at: '2026-04-10T12:00:00.000Z',
+      source_count: 1,
+      sources: [
+        expect.objectContaining({
+          source_ref: 'deploy-checklist.md',
+        }),
+      ],
+    }));
+  });
+
+  test('falls back to local lifecycle markers when the remote lifecycle tool is not available', async () => {
+    const unsupportedError = Object.assign(new Error('Snipara rlm_memory_verify HTTP 404'), {
+      name: 'SniparaToolError',
+      statusCode: 404,
+      toolName: 'rlm_memory_verify',
+      workspaceId: 'ws-5',
+      apiUrl: 'https://workspace.snipara.test/mcp',
+      responsePreview: 'tool not found',
+      code: 'http_error',
+    });
+    const callSniparaTool = jest.fn()
+      .mockRejectedValueOnce(unsupportedError)
+      .mockResolvedValueOnce({ ok: true });
+
+    jest.doMock('../services/sniparaResolver', () => ({
+      callSniparaTool,
+      serializeSniparaError: jest.fn((error) => ({
+        message: error.message,
+        status_code: error.statusCode || null,
+        tool_name: error.toolName || null,
+        response_preview: error.responsePreview || null,
+      })),
+    }));
+
+    const { verifyAgentMemory } = require('../services/sniparaMemoryService');
+    const result = await verifyAgentMemory({
+      db: null,
+      workspaceId: 'ws-5',
+      agent: { id: 'agent-1', username: 'andrea', role: 'Engineering' },
+      memoryId: 'mem-55',
+      evidenceNote: 'Validated locally',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      memory_id: 'mem-55',
+      remote_synced: false,
+      status: 'active',
+    }));
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        toolName: 'rlm_memory_verify',
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        toolName: 'rlm_remember',
+      })
+    );
+  });
 });
