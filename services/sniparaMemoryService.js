@@ -12,7 +12,10 @@ const {
   getRuntimeBudget,
   getScopeWeight,
   buildGovernanceMetadata,
+  getMemoryStatus,
   isMemoryExpired,
+  isMemoryInGraveyard,
+  deriveMemoryTier,
   isInjectableMemory,
   isPromotableMemory,
 } = require('./memoryPolicy');
@@ -106,21 +109,21 @@ function buildAgentMemoryBindings(agent = {}, workspaceId, humanContext = null) 
   ].filter(Boolean))];
   const humanBindings = normalizedHuman
     ? {
-        id: normalizedHuman.id,
-        name: normalizedHuman.name,
-        ref: normalizedHuman.ref,
-        scope: 'project',
-        category: `${ws}-human-${normalizedHuman.ref}`,
-      }
+      id: normalizedHuman.id,
+      name: normalizedHuman.name,
+      ref: normalizedHuman.ref,
+      scope: 'project',
+      category: `${ws}-human-${normalizedHuman.ref}`,
+    }
     : null;
   const relationshipBindings = normalizedHuman
     ? {
-        id: normalizedHuman.id,
-        name: normalizedHuman.name,
-        ref: normalizedHuman.ref,
-        scope: 'agent',
-        category: `${ws}-agent-${agentRef}-human-${normalizedHuman.ref}`,
-      }
+      id: normalizedHuman.id,
+      name: normalizedHuman.name,
+      ref: normalizedHuman.ref,
+      scope: 'agent',
+      category: `${ws}-agent-${agentRef}-human-${normalizedHuman.ref}`,
+    }
     : null;
 
   return {
@@ -443,20 +446,36 @@ function dedupeMemorySources(sources = []) {
 }
 
 function deriveMemoryStatus(memory) {
-  const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
-  if (metadata.superseded_at || metadata.superseded === true || metadata.lifecycle_status === 'superseded') {
-    return 'superseded';
+  return getMemoryStatus(memory);
+}
+
+function deriveGraveyardReason(status, metadata = {}) {
+  if (status === 'invalidated') return metadata.invalidation_reason || 'invalidated';
+  if (status === 'superseded') return metadata.superseded_reason || metadata.invalidation_reason || 'superseded';
+  if (metadata.deleted === true) return 'deleted';
+  return null;
+}
+
+function deriveContradictionState(status, metadata = {}) {
+  if (metadata.created_from_supersede === true || metadata.canonical_memory === true || metadata.supersedes_memory_id) {
+    return 'canonical';
   }
-  if (metadata.invalidated_at || metadata.invalidated === true || metadata.lifecycle_status === 'invalidated') {
-    return 'invalidated';
+  if (status === 'superseded') return 'superseded';
+  if (status === 'invalidated') return 'contradicted';
+  if (status === 'needs_verification') return 'review_pending';
+  return 'none';
+}
+
+function deriveResolutionState(status, metadata = {}) {
+  if (metadata.created_from_supersede === true || metadata.canonical_memory === true || metadata.supersedes_memory_id) {
+    return 'resolved';
   }
-  if (metadata.needs_verification === true || metadata.verification_required === true || metadata.lifecycle_status === 'needs_verification') {
-    return 'needs_verification';
+  if (status === 'superseded') return 'resolved';
+  if (status === 'invalidated' && (metadata.replacement_hint || metadata.superseded_by_text || metadata.superseded_by_memory_id)) {
+    return 'redirected';
   }
-  if (isMemoryExpired({ expires_at: memory?.expires_at || metadata.expires_at, metadata })) {
-    return 'expired';
-  }
-  return 'active';
+  if (status === 'invalidated') return 'open';
+  return 'none';
 }
 
 function projectMemoryLifecycle(memory) {
@@ -467,6 +486,11 @@ function projectMemoryLifecycle(memory) {
   if (sources.length > 0) {
     metadata.sources = sources;
   }
+  const status = deriveMemoryStatus({ ...memory, metadata });
+  const tier = deriveMemoryTier({ ...memory, metadata, status });
+  const canonicalMemory = metadata.canonical_memory === true
+    || metadata.created_from_supersede === true
+    || Boolean(metadata.supersedes_memory_id);
 
   return {
     ...memory,
@@ -480,9 +504,16 @@ function projectMemoryLifecycle(memory) {
     replacement_hint: metadata.replacement_hint || null,
     superseded_at: metadata.superseded_at || null,
     superseded_by_text: metadata.superseded_by_text || null,
+    superseded_by_memory_id: metadata.superseded_by_memory_id || null,
+    supersedes_memory_id: metadata.supersedes_memory_id || null,
+    tier,
+    graveyard_reason: tier === 'graveyard' ? deriveGraveyardReason(status, metadata) : null,
+    canonical_memory: canonicalMemory,
+    contradiction_state: deriveContradictionState(status, metadata),
+    resolution_state: deriveResolutionState(status, metadata),
     lifecycle_remote_synced: metadata.lifecycle_remote_synced !== false,
     lifecycle_remote_error: metadata.lifecycle_remote_error || null,
-    status: deriveMemoryStatus({ ...memory, metadata }),
+    status,
   };
 }
 
@@ -541,6 +572,7 @@ function applyLifecycleMarkers(memories = []) {
   if (!Array.isArray(memories) || memories.length === 0) return [];
 
   const markersByTarget = new Map();
+  const replacementsByTarget = new Map();
   const canonical = [];
 
   for (const memory of memories) {
@@ -553,14 +585,24 @@ function applyLifecycleMarkers(memories = []) {
       markersByTarget.set(targetId, current);
       continue;
     }
+    const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+    const supersedesId = String(metadata.supersedes_memory_id || '').trim();
+    if (supersedesId) {
+      const current = replacementsByTarget.get(supersedesId) || [];
+      current.push(memory);
+      replacementsByTarget.set(supersedesId, current);
+    }
     canonical.push(memory);
   }
 
   return canonical.map((memory) => {
+    const replacement = (replacementsByTarget.get(String(memory.id || '').trim()) || [])
+      .slice()
+      .sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime())[0] || null;
     const markers = (markersByTarget.get(String(memory.id || '').trim()) || [])
       .slice()
       .sort((left, right) => new Date(left.created_at).getTime() - new Date(right.created_at).getTime());
-    if (markers.length === 0) {
+    if (markers.length === 0 && !replacement) {
       return projectMemoryLifecycle(memory);
     }
 
@@ -585,6 +627,10 @@ function applyLifecycleMarkers(memories = []) {
         metadata.needs_verification = false;
         delete metadata.invalidated_at;
         delete metadata.invalidated;
+        delete metadata.superseded_at;
+        delete metadata.superseded;
+        delete metadata.superseded_by_text;
+        delete metadata.superseded_by_memory_id;
         delete metadata.lifecycle_status;
       }
       if (event === 'invalidate') {
@@ -598,6 +644,7 @@ function applyLifecycleMarkers(memories = []) {
         metadata.superseded = true;
         metadata.superseded_at = markerMetadata.superseded_at || marker.created_at || metadata.superseded_at || null;
         metadata.superseded_by_text = markerMetadata.superseded_by_text || metadata.superseded_by_text || null;
+        metadata.superseded_by_memory_id = markerMetadata.superseded_by_memory_id || metadata.superseded_by_memory_id || null;
         metadata.invalidation_reason = markerMetadata.superseded_reason || metadata.invalidation_reason || null;
         metadata.lifecycle_status = 'superseded';
       }
@@ -608,6 +655,14 @@ function applyLifecycleMarkers(memories = []) {
       }
     }
 
+    if (replacement) {
+      metadata.superseded = true;
+      metadata.superseded_at = metadata.superseded_at || replacement.created_at || null;
+      metadata.superseded_by_text = metadata.superseded_by_text || replacement.text || null;
+      metadata.superseded_by_memory_id = metadata.superseded_by_memory_id || replacement.id || null;
+      metadata.lifecycle_status = metadata.lifecycle_status || 'superseded';
+    }
+
     metadata.sources = dedupeMemorySources(sources);
     return projectMemoryLifecycle({
       ...memory,
@@ -616,11 +671,20 @@ function applyLifecycleMarkers(memories = []) {
   });
 }
 
+function normalizeMemoryView(view = 'active') {
+  const normalized = String(view || 'active').trim().toLowerCase();
+  if (normalized === 'graveyard' || normalized === 'all') return normalized;
+  return 'active';
+}
+
 function filterDashboardMemories(memories = [], includeInternal = false, options = {}) {
   const includeExpired = options.includeExpired === true;
+  const view = normalizeMemoryView(options.view);
   return memories.filter((memory) => {
     if (isLifecycleMarkerMemory(memory)) return false;
     if (isDeletedMemory(memory)) return false;
+    if (view === 'graveyard' && !isMemoryInGraveyard(memory)) return false;
+    if (view === 'active' && isMemoryInGraveyard(memory)) return false;
     if (!includeExpired && isMemoryExpired(memory)) return false;
     if (!includeInternal && memory.visibility === 'internal') return false;
     return true;
@@ -629,8 +693,10 @@ function filterDashboardMemories(memories = [], includeInternal = false, options
 
 function summarizeMemoryCollection(memories = [], includeInternal = false, options = {}) {
   const includeExpired = options.includeExpired === true;
+  const view = normalizeMemoryView(options.view);
   let deletedCount = 0;
   let expiredCount = 0;
+  let graveyardCount = 0;
   let hiddenCount = 0;
   let trackedCount = 0;
   const visible = [];
@@ -642,6 +708,12 @@ function summarizeMemoryCollection(memories = [], includeInternal = false, optio
     trackedCount += 1;
     if (isDeletedMemory(memory)) {
       deletedCount += 1;
+      continue;
+    }
+    if (isMemoryInGraveyard(memory)) {
+      graveyardCount += 1;
+      if (view === 'active') continue;
+    } else if (view === 'graveyard') {
       continue;
     }
     if (isMemoryExpired(memory)) {
@@ -662,7 +734,9 @@ function summarizeMemoryCollection(memories = [], includeInternal = false, optio
     hidden_count: hiddenCount,
     expired_count: expiredCount,
     deleted_count: deletedCount,
-    active_count: Math.max(0, trackedCount - expiredCount - deletedCount),
+    graveyard_count: graveyardCount,
+    active_count: Math.max(0, trackedCount - expiredCount - deletedCount - graveyardCount),
+    view,
   };
 }
 
@@ -900,7 +974,9 @@ async function loadDocumentFromCandidates({ db, workspaceId, paths = [] }) {
     try {
       const text = fs.readFileSync(localPath, 'utf8').trim();
       if (text) return text;
-    } catch (_) {}
+    } catch (_) {
+      // Ignore missing local fallbacks and continue to the next candidate.
+    }
   }
 
   return '';
@@ -1000,7 +1076,18 @@ async function recallWithBindings({ db, workspaceId, bindings, query, limit = 20
   return merged.slice(0, limit);
 }
 
-async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, role, limit = 20, includeInternal = false, includeExpired = false, fallbackAgent = {} }) {
+async function listAgentMemories({
+  db,
+  workspaceId,
+  agentIdOrUsername,
+  query,
+  role,
+  limit = 20,
+  includeInternal = false,
+  includeExpired = false,
+  view = 'active',
+  fallbackAgent = {},
+}) {
   const agent = await resolveAgentRecord(db, workspaceId, agentIdOrUsername, { ...fallbackAgent, role: role || fallbackAgent.role });
   const bindings = buildAgentMemoryBindings(agent, workspaceId);
   const stored = await collectStoredScopeMemories({
@@ -1029,7 +1116,7 @@ async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, ro
     }
   }
   rawMemories = applyLifecycleMarkers(rawMemories);
-  const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
+  const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired, view });
   return {
     agent,
     bindings,
@@ -1041,13 +1128,27 @@ async function listAgentMemories({ db, workspaceId, agentIdOrUsername, query, ro
     hidden_count: summary.hidden_count,
     expired_count: summary.expired_count,
     deleted_count: summary.deleted_count,
+    graveyard_count: summary.graveyard_count,
+    active_count: summary.active_count,
+    view: summary.view,
     has_more: stored.has_more || rawMemories.length >= limit,
     count_is_estimate: stored.has_more || rawMemories.length >= limit,
     snipara_error: sniparaError,
   };
 }
 
-async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, query, limit = 20, includeInternal = false, includeExpired = false, fallbackAgent = {} }) {
+async function listTemplateMemories({
+  db,
+  workspaceId,
+  agentIdOrUsername,
+  role,
+  query,
+  limit = 20,
+  includeInternal = false,
+  includeExpired = false,
+  view = 'active',
+  fallbackAgent = {},
+}) {
   const agent = await resolveAgentRecord(db, workspaceId, agentIdOrUsername, { ...fallbackAgent, role: role || fallbackAgent.role });
   const bindings = buildAgentMemoryBindings(agent, workspaceId);
   const stored = await collectStoredScopeMemories({
@@ -1076,7 +1177,7 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
     }
   }
   rawMemories = applyLifecycleMarkers(rawMemories);
-  const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired });
+  const summary = summarizeMemoryCollection(rawMemories, includeInternal, { includeExpired, view });
   return {
     agent,
     bindings,
@@ -1088,6 +1189,9 @@ async function listTemplateMemories({ db, workspaceId, agentIdOrUsername, role, 
     hidden_count: summary.hidden_count,
     expired_count: summary.expired_count,
     deleted_count: summary.deleted_count,
+    graveyard_count: summary.graveyard_count,
+    active_count: summary.active_count,
+    view: summary.view,
     has_more: stored.has_more || rawMemories.length >= limit,
     count_is_estimate: stored.has_more || rawMemories.length >= limit,
     snipara_error: sniparaError,
@@ -1181,6 +1285,9 @@ async function buildAgentContext({ db, workspaceId, agentIdOrUsername, role, inc
     hidden_instance_count: instanceSummary.hidden_count,
     hidden_template_count: templateSummary.hidden_count,
     hidden_global_count: globalSummary.hidden_count,
+    graveyard_instance_count: instanceSummary.graveyard_count,
+    graveyard_template_count: templateSummary.graveyard_count,
+    graveyard_global_count: globalSummary.graveyard_count,
     expired_instance_count: instanceSummary.expired_count,
     expired_template_count: templateSummary.expired_count,
     expired_global_count: globalSummary.expired_count,
@@ -1209,9 +1316,9 @@ async function rememberScopedMemory({
   const effectiveHumanContext = humanContext || (
     metadata && (metadata.user_id || metadata.user_name)
       ? {
-          id: metadata.user_id || null,
-          name: metadata.user_name || null,
-        }
+        id: metadata.user_id || null,
+        name: metadata.user_name || null,
+      }
       : null
   );
   const bindings = buildAgentMemoryBindings(agent, workspaceId, effectiveHumanContext);
@@ -1525,6 +1632,7 @@ async function supersedeAgentMemory({
       needs_verification: true,
       supersedes_memory_id: memoryId,
       supersede_reason: reason,
+      canonical_memory: true,
       created_from_supersede: true,
       created_at: supersededAt,
     },
@@ -1672,23 +1780,23 @@ async function buildRuntimeMemoryBundle({ db, workspaceId, agent, humanContext =
   const [human, humanAgent, instance, template, global] = await Promise.all([
     bindings.human
       ? recallWithBindings({
-          db,
-          workspaceId,
-          bindings,
-          query: buildHumanMemoryQuery(query, humanContext),
-          limit: 12,
-          scopeKey: 'human',
-        }).catch(() => [])
+        db,
+        workspaceId,
+        bindings,
+        query: buildHumanMemoryQuery(query, humanContext),
+        limit: 12,
+        scopeKey: 'human',
+      }).catch(() => [])
       : Promise.resolve([]),
     bindings.human_agent
       ? recallWithBindings({
-          db,
-          workspaceId,
-          bindings,
-          query: buildRelationshipMemoryQuery(query, humanContext, bindings),
-          limit: 8,
-          scopeKey: 'human_agent',
-        }).catch(() => [])
+        db,
+        workspaceId,
+        bindings,
+        query: buildRelationshipMemoryQuery(query, humanContext, bindings),
+        limit: 8,
+        scopeKey: 'human_agent',
+      }).catch(() => [])
       : Promise.resolve([]),
     recallWithBindings({ db, workspaceId, bindings, query: query || `${bindings.agentRef} current user context and working memory`, limit: 18, scopeKey: 'instance' }).catch(() => []),
     recallWithBindings({ db, workspaceId, bindings, query: `${bindings.role} template best practices role instructions`, limit: 14, scopeKey: 'template' }).catch(() => []),
@@ -1745,6 +1853,7 @@ module.exports = {
   normalizeHumanContext,
   resolveAgentRecord,
   normalizeMemories,
+  applyLifecycleMarkers,
   filterDashboardMemories,
   summarizeMemoryCollection,
   scoreMemoryForRuntime,

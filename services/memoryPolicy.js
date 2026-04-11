@@ -6,6 +6,7 @@ const MEMORY_TYPE_POLICIES = {
   user_profile: {
     visibility: 'reviewable',
     scopeKey: 'human',
+    defaultTier: 'warm',
     ttlDays: 365,
     retrievalWeight: 1.35,
     promotionWeight: 0.6,
@@ -15,6 +16,7 @@ const MEMORY_TYPE_POLICIES = {
   agent_identity: {
     visibility: 'reviewable',
     scopeKey: 'instance',
+    defaultTier: 'warm',
     ttlDays: 365,
     retrievalWeight: 1.35,
     promotionWeight: 0.3,
@@ -24,6 +26,7 @@ const MEMORY_TYPE_POLICIES = {
   decision: {
     visibility: 'reviewable',
     scopeKey: 'instance',
+    defaultTier: 'hot',
     ttlDays: 365,
     retrievalWeight: 1.4,
     promotionWeight: 1.2,
@@ -33,6 +36,7 @@ const MEMORY_TYPE_POLICIES = {
   policy: {
     visibility: 'reviewable',
     scopeKey: 'template',
+    defaultTier: 'hot',
     ttlDays: 365,
     retrievalWeight: 1.45,
     promotionWeight: 1.4,
@@ -42,6 +46,7 @@ const MEMORY_TYPE_POLICIES = {
   fact: {
     visibility: 'reviewable',
     scopeKey: 'instance',
+    defaultTier: 'warm',
     ttlDays: 180,
     retrievalWeight: 1.05,
     promotionWeight: 0.7,
@@ -51,6 +56,7 @@ const MEMORY_TYPE_POLICIES = {
   task_episode: {
     visibility: 'internal',
     scopeKey: 'instance',
+    defaultTier: 'cold',
     ttlDays: 30,
     retrievalWeight: 0.82,
     promotionWeight: 0.35,
@@ -60,6 +66,7 @@ const MEMORY_TYPE_POLICIES = {
   tool_observation: {
     visibility: 'internal',
     scopeKey: 'instance',
+    defaultTier: 'cold',
     ttlDays: 14,
     retrievalWeight: 0.72,
     promotionWeight: 0.2,
@@ -69,6 +76,7 @@ const MEMORY_TYPE_POLICIES = {
   action_log: {
     visibility: 'internal',
     scopeKey: 'instance',
+    defaultTier: 'cold',
     ttlDays: 7,
     retrievalWeight: 0.2,
     promotionWeight: 0.05,
@@ -78,6 +86,7 @@ const MEMORY_TYPE_POLICIES = {
   context: {
     visibility: 'internal',
     scopeKey: 'instance',
+    defaultTier: 'cold',
     ttlDays: 7,
     retrievalWeight: 0.15,
     promotionWeight: 0.05,
@@ -89,6 +98,7 @@ const MEMORY_TYPE_POLICIES = {
 const DEFAULT_POLICY = {
   visibility: 'reviewable',
   scopeKey: 'instance',
+  defaultTier: 'warm',
   ttlDays: 90,
   retrievalWeight: 1,
   promotionWeight: 0.5,
@@ -216,10 +226,71 @@ function isMemoryExpired(memory, now = Date.now()) {
   return expiresMs <= now;
 }
 
+function getMemoryStatus(memory) {
+  const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+  if (metadata.deleted === true) return 'deleted';
+  if (metadata.superseded_at || metadata.superseded === true || metadata.lifecycle_status === 'superseded') {
+    return 'superseded';
+  }
+  if (metadata.invalidated_at || metadata.invalidated === true || metadata.lifecycle_status === 'invalidated') {
+    return 'invalidated';
+  }
+  if (metadata.needs_verification === true || metadata.verification_required === true || metadata.lifecycle_status === 'needs_verification') {
+    return 'needs_verification';
+  }
+  if (isMemoryExpired(memory)) return 'expired';
+  return String(memory?.status || 'active');
+}
+
+function isMemoryInGraveyard(memory) {
+  const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+  if (metadata.graveyard === true || metadata.memory_tier === 'graveyard') return true;
+  const status = getMemoryStatus(memory);
+  return status === 'invalidated' || status === 'superseded' || status === 'deleted';
+}
+
+function ageInDays(value, now = Date.now()) {
+  const timestamp = new Date(value || 0).getTime();
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 365;
+  return Math.max(0, (now - timestamp) / DAY_MS);
+}
+
+function deriveMemoryTier(memory, now = Date.now()) {
+  if (!memory) return 'warm';
+  if (isMemoryInGraveyard(memory)) return 'graveyard';
+  if (isMemoryExpired(memory, now)) return 'cold';
+
+  const metadata = memory?.metadata && typeof memory.metadata === 'object' ? memory.metadata : {};
+  const policy = getMemoryTypePolicy(memory.type);
+  const explicitTier = String(memory?.tier || metadata.memory_tier || '').trim().toLowerCase();
+  if (explicitTier === 'hot' || explicitTier === 'warm' || explicitTier === 'cold') {
+    return explicitTier;
+  }
+
+  if (policy.injectable === false) return 'cold';
+
+  const createdAt = memory?.last_seen_at || memory?.created_at || metadata.created_at;
+  const ageDaysValue = ageInDays(createdAt, now);
+  const usageCount = Number(memory?.usage_count ?? metadata.usage_count) || 0;
+  const promotionScore = Number(memory?.promotion_score ?? metadata.promotion_score) || 0;
+  const importance = Number(memory?.importance ?? metadata.importance) || 0;
+  const canonical = metadata.canonical_memory === true || metadata.created_from_supersede === true;
+
+  if (canonical || usageCount >= 4 || promotionScore >= 1.75 || importance >= 0.85) {
+    return 'hot';
+  }
+
+  if (ageDaysValue >= Math.max(21, (Number(policy.ttlDays) || 90) * 0.5)) {
+    return 'cold';
+  }
+
+  return policy.defaultTier || 'warm';
+}
+
 function isInjectableMemory(memory) {
   if (!memory) return false;
   const policy = getMemoryTypePolicy(memory.type);
-  return policy.injectable !== false && !isMemoryExpired(memory);
+  return policy.injectable !== false && !isMemoryExpired(memory) && !isMemoryInGraveyard(memory);
 }
 
 function isPromotableMemory(memory) {
@@ -253,6 +324,7 @@ function buildGovernanceMetadata({
     ...baseMetadata,
     visibility: visibility || baseMetadata.visibility || getDefaultVisibility(normalizedType),
     memory_scope_key: normalizedScope,
+    memory_tier: baseMetadata.memory_tier || getMemoryTypePolicy(normalizedType).defaultTier || 'warm',
     created_at: timestamp,
     last_seen_at: baseMetadata.last_seen_at || timestamp,
     last_used_at: baseMetadata.last_used_at || baseMetadata.last_seen_at || null,
@@ -273,7 +345,10 @@ module.exports = {
   getRuntimeBudget,
   getScopeWeight,
   computeExpirationDate,
+  getMemoryStatus,
   isMemoryExpired,
+  isMemoryInGraveyard,
+  deriveMemoryTier,
   isInjectableMemory,
   isPromotableMemory,
   getPromotionThreshold,

@@ -5,7 +5,9 @@ const {
   getRuntimeBudget,
   getPromotionThreshold,
   buildGovernanceMetadata,
+  deriveMemoryTier,
   isMemoryExpired,
+  isMemoryInGraveyard,
 } = require('../services/memoryPolicy');
 
 describe('memoryPolicy', () => {
@@ -35,6 +37,28 @@ describe('memoryPolicy', () => {
     expect(isMemoryExpired({
       metadata: { expires_at: '2020-01-01T00:00:00.000Z' },
     })).toBe(true);
+  });
+
+  test('moves invalidated memories into the graveyard tier', () => {
+    const memory = {
+      type: 'fact',
+      metadata: { invalidated: true, invalidated_at: '2026-04-01T00:00:00.000Z' },
+    };
+
+    expect(isMemoryInGraveyard(memory)).toBe(true);
+    expect(deriveMemoryTier(memory)).toBe('graveyard');
+  });
+
+  test('elevates canonical or frequently used memories to hot tier', () => {
+    const memory = {
+      type: 'fact',
+      importance: 0.6,
+      usage_count: 5,
+      created_at: '2026-04-10T00:00:00.000Z',
+      metadata: { canonical_memory: true },
+    };
+
+    expect(deriveMemoryTier(memory)).toBe('hot');
   });
 
   test('exposes a tighter chat budget than dashboard budget', () => {

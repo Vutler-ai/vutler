@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  applyLifecycleMarkers,
   buildAgentMemoryBindings,
   filterDashboardMemories,
   normalizeImportance,
@@ -84,6 +85,76 @@ describe('sniparaMemoryService', () => {
       visible_count: 1,
       hidden_count: 1,
       expired_count: 1,
+    });
+  });
+
+  test('separates active and graveyard memories in dashboard views', () => {
+    const memories = normalizeMemories({
+      memories: [
+        { id: 'active', text: 'Current customer timezone is Europe/Zurich.', type: 'fact', importance: 0.7 },
+        {
+          id: 'graveyard',
+          text: 'Customer timezone is PST.',
+          type: 'fact',
+          importance: 0.4,
+          metadata: {
+            invalidated: true,
+            invalidated_at: '2026-04-08T00:00:00.000Z',
+            invalidation_reason: 'Customer moved to Zurich',
+          },
+        },
+      ],
+    }, 'instance');
+
+    expect(filterDashboardMemories(memories, false, { view: 'active' }).map((memory) => memory.id)).toEqual(['active']);
+    expect(filterDashboardMemories(memories, false, { view: 'graveyard' }).map((memory) => memory.id)).toEqual(['graveyard']);
+    expect(summarizeMemoryCollection(memories, false, { view: 'all' })).toMatchObject({
+      graveyard_count: 1,
+      active_count: 1,
+      visible_count: 2,
+    });
+  });
+
+  test('marks replacement memories as canonical and prior memories as superseded', () => {
+    const projected = applyLifecycleMarkers(normalizeMemories({
+      memories: [
+        {
+          id: 'old',
+          text: 'Deploy on Friday at 18:00.',
+          type: 'decision',
+          importance: 0.7,
+        },
+        {
+          id: 'new',
+          text: 'Deploy on Saturday at 09:00.',
+          type: 'decision',
+          importance: 0.8,
+          metadata: {
+            supersedes_memory_id: 'old',
+            created_from_supersede: true,
+            canonical_memory: true,
+            created_at: '2026-04-10T00:00:00.000Z',
+          },
+        },
+      ],
+    }, 'instance'));
+
+    const oldMemory = projected.find((memory) => memory.id === 'old');
+    const newMemory = projected.find((memory) => memory.id === 'new');
+
+    expect(oldMemory).toMatchObject({
+      status: 'superseded',
+      tier: 'graveyard',
+      contradiction_state: 'superseded',
+      resolution_state: 'resolved',
+      superseded_by_memory_id: 'new',
+    });
+    expect(newMemory).toMatchObject({
+      canonical_memory: true,
+      tier: 'hot',
+      contradiction_state: 'canonical',
+      resolution_state: 'resolved',
+      supersedes_memory_id: 'old',
     });
   });
 

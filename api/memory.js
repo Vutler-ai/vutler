@@ -41,7 +41,7 @@ router.get('/agents/:agentId/memories', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const { agentId } = req.params;
-    const { q, include_internal, include_expired, countOnly } = req.query;
+    const { q, include_internal, include_expired, countOnly, view } = req.query;
     const limit = parseLimit(req.query.limit, countOnly === 'true' ? DEFAULT_COUNT_LIMIT : 50);
     const includeInternal = include_internal === 'true';
     const includeExpired = include_expired === 'true';
@@ -54,6 +54,7 @@ router.get('/agents/:agentId/memories', async (req, res) => {
       limit,
       includeInternal,
       includeExpired,
+      view,
     });
 
     return res.json({
@@ -65,10 +66,13 @@ router.get('/agents/:agentId/memories', async (req, res) => {
       hidden_count: result.hidden_count,
       expired_count: result.expired_count,
       deleted_count: result.deleted_count,
+      graveyard_count: result.graveyard_count,
+      active_count: result.active_count,
       has_more: result.has_more,
       count_is_estimate: result.count_is_estimate,
       visibility: includeInternal ? 'all' : 'reviewable',
       include_expired: includeExpired,
+      view: result.view,
       snipara_error: result.snipara_error || null,
       agent: {
         id: result.agent.id,
@@ -86,7 +90,7 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const { agentId } = req.params;
-    const { include_internal, include_expired } = req.query;
+    const { include_internal, include_expired, view } = req.query;
     const role = normalizeRole(req.query.role || 'general');
     const limit = parseLimit(req.query.limit, 50);
     const includeInternal = include_internal === 'true';
@@ -100,6 +104,7 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
       limit,
       includeInternal,
       includeExpired,
+      view,
     });
 
     return res.json({
@@ -112,10 +117,13 @@ router.get('/agents/:agentId/memories/template', async (req, res) => {
       hidden_count: result.hidden_count,
       expired_count: result.expired_count,
       deleted_count: result.deleted_count,
+      graveyard_count: result.graveyard_count,
+      active_count: result.active_count,
       has_more: result.has_more,
       count_is_estimate: result.count_is_estimate,
       visibility: includeInternal ? 'all' : 'reviewable',
       include_expired: includeExpired,
+      view: result.view,
       snipara_error: result.snipara_error || null,
     });
   } catch (error) {
@@ -354,7 +362,7 @@ router.get('/workspace-knowledge', async (req, res) => {
   }
 });
 
-router.put('/workspace-knowledge', async (_req, res) => {
+router.put('/workspace-knowledge', (_req, res) => {
   return res.status(501).json({ success: false, error: 'Workspace knowledge editing is not implemented yet' });
 });
 
