@@ -323,6 +323,11 @@ Done when:
 - operators can explain whether autonomy failures came from missing capability, stale context, or blocked task policy
 - Snipara-backed workspaces show health, freshness, and task policy state without reading logs
 
+Status update 2026-04-11:
+- implemented in Vutler branch `codex/vrifier-intgration-sandbox`
+- shipped backend lifecycle/admin endpoints plus operator UI in memory, settings, and task autonomy surfaces
+- RLM Runtime remains intentionally deferred to Phase 2
+
 ### Phase 2 - Add Specialized Technical Autonomy
 
 Target: after Phase 1

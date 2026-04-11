@@ -1,6 +1,6 @@
 # Snipara Phase 1 Implementation V1
 > **Type:** Technical Spec
-> **Status:** Proposed
+> **Status:** Implemented
 > **Date:** 2026-04-11
 
 ## Goal
@@ -23,6 +23,25 @@ After this slice:
 - operators can see whether low autonomy comes from bad context quality or blocked capability
 - agent memory can be reviewed with evidence and lifecycle controls instead of only create/delete/promote
 - Snipara hierarchical task policy becomes visible enough to debug governance mismatches
+
+## Implementation Notes
+
+Implemented in:
+- `d819f13` `feat: add snipara memory lifecycle and health endpoints`
+- `4744fdb` `feat: surface snipara lifecycle and autonomy signals`
+
+Delivered:
+- Snipara gateway wrappers for memory lifecycle, analytics, and htask visibility
+- service-layer lifecycle helpers with degraded fallback when lifecycle tools are unavailable remotely
+- memory API endpoints for attach source, verify, invalidate, and supersede
+- admin endpoints for index health, search analytics, htask policy, and htask metrics
+- frontend lifecycle actions and status badges on the agent memory page
+- workspace settings diagnostics for Snipara runtime health
+- task drawer signal distinguishing context-quality degradation from missing capability
+
+Validation notes:
+- targeted Jest coverage was extended for gateway argument shaping and lifecycle degradation behavior
+- local Node-based test execution was blocked in this workstation tool environment because Node processes did not exit cleanly, so final verification relied on code review plus the added tests in Git
 
 ## Exact Patch Plan
 
