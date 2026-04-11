@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 const MEMORY_TYPES = ['fact', 'learning', 'decision', 'preference'] as const;
 type MemoryType = (typeof MEMORY_TYPES)[number];
 type LifecycleAction = 'attach_source' | 'verify' | 'invalidate' | 'supersede';
+type MemoryView = 'active' | 'graveyard' | 'all';
 
 const TYPE_COLORS: Record<MemoryType, string> = {
   fact: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
@@ -40,6 +41,19 @@ const STATUS_STYLES: Record<string, string> = {
   superseded: 'bg-slate-500/15 text-slate-200 border-slate-500/20',
   expired: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/20',
 };
+
+const TIER_STYLES: Record<string, string> = {
+  hot: 'bg-orange-500/15 text-orange-300 border-orange-500/20',
+  warm: 'bg-blue-500/15 text-blue-300 border-blue-500/20',
+  cold: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/20',
+  graveyard: 'bg-rose-500/15 text-rose-300 border-rose-500/20',
+};
+
+const MEMORY_VIEW_OPTIONS: Array<{ value: MemoryView; label: string }> = [
+  { value: 'active', label: 'Active' },
+  { value: 'graveyard', label: 'Graveyard' },
+  { value: 'all', label: 'All' },
+];
 
 function formatDate(value?: string | null) {
   if (!value) return '';
@@ -63,6 +77,16 @@ function StatusBadge({ status }: { status?: string }) {
   return (
     <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border font-medium ${cls}`}>
       {status.replace(/_/g, ' ')}
+    </span>
+  );
+}
+
+function TierBadge({ tier }: { tier?: string }) {
+  if (!tier) return null;
+  const cls = TIER_STYLES[tier] ?? 'bg-[rgba(255,255,255,0.06)] text-[#9ca3af] border-[rgba(255,255,255,0.08)]';
+  return (
+    <span className={`inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border font-medium ${cls}`}>
+      {tier}
     </span>
   );
 }
@@ -432,6 +456,12 @@ function MemoryCard({ memory, canPromote, onDelete, onPromote, onLifecycle }: Me
           <div className="flex items-center gap-2 flex-wrap">
             <TypeBadge type={memory.type} />
             <StatusBadge status={memory.status} />
+            <TierBadge tier={memory.tier} />
+            {memory.canonical_memory && (
+              <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border font-medium bg-emerald-500/15 text-emerald-300 border-emerald-500/20">
+                canonical
+              </span>
+            )}
           </div>
           <span className="text-xs text-[#4b5563]">{formatDate(memory.created_at)}</span>
         </div>
@@ -439,9 +469,19 @@ function MemoryCard({ memory, canPromote, onDelete, onPromote, onLifecycle }: Me
         <p className="text-sm text-white leading-relaxed">{memory.text}</p>
 
         <div className="space-y-1.5 text-[11px] text-[#94a3b8]">
+          {memory.contradiction_state && memory.contradiction_state !== 'none' && (
+            <p>Contradiction: {memory.contradiction_state.replace(/_/g, ' ')}</p>
+          )}
+          {memory.resolution_state && memory.resolution_state !== 'none' && (
+            <p>Resolution: {memory.resolution_state.replace(/_/g, ' ')}</p>
+          )}
+          {memory.canonical_memory && memory.supersedes_memory_id && (
+            <p className="text-emerald-300">Canonical replacement for memory {memory.supersedes_memory_id}</p>
+          )}
           {memory.verified_at && <p>Verified: {formatDate(memory.verified_at)}{memory.verification_note ? ` · ${memory.verification_note}` : ''}</p>}
           {memory.invalidated_at && <p className="text-red-300">Invalidated: {memory.invalidation_reason || formatDate(memory.invalidated_at)}</p>}
           {memory.superseded_at && <p className="text-slate-300">Superseded: {memory.superseded_by_text || formatDate(memory.superseded_at)}</p>}
+          {memory.graveyard_reason && <p className="text-rose-300">Graveyard reason: {memory.graveyard_reason}</p>}
           {memory.replacement_hint && <p>Replacement hint: {memory.replacement_hint}</p>}
           {sources.length > 0 && (
             <div className="space-y-1">
@@ -596,6 +636,12 @@ function ContextPanel({ context }: { context: AgentContext | undefined; isLoadin
             </span>
           </div>
           <div className="flex justify-between">
+            <span className="text-[#6b7280]">Graveyard memories</span>
+            <span className="text-white font-medium">
+              {(context.graveyard_instance_count ?? 0) + (context.graveyard_template_count ?? 0) + (context.graveyard_global_count ?? 0)}
+            </span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-[#6b7280]">Role</span>
             <span className="text-white font-medium">{context.role}</span>
           </div>
@@ -638,6 +684,7 @@ export default function MemoryPage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [memoryView, setMemoryView] = useState<MemoryView>('active');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -648,10 +695,10 @@ export default function MemoryPage() {
     debounceRef.current = setTimeout(() => setDebouncedQuery(value), 400);
   }
 
-  const cacheKey = `/api/v1/agents/${agentId}/memories${debouncedQuery ? `?q=${debouncedQuery}` : ''}`;
+  const cacheKey = `/api/v1/agents/${agentId}/memories?view=${memoryView}${debouncedQuery ? `&q=${debouncedQuery}` : ''}`;
   const { data: instanceMemories, isLoading: loadingInstance, mutate: mutateInstance } = useApi<Memory[]>(
     cacheKey,
-    () => recallMemories(agentId, debouncedQuery || undefined)
+    () => recallMemories(agentId, { query: debouncedQuery || undefined, view: memoryView })
   );
 
   const { data: templateMemories, isLoading: loadingTemplate } = useApi<Memory[]>(
@@ -748,13 +795,30 @@ export default function MemoryPage() {
                 Personal Memories
                 <span className="text-xs text-[#6b7280] font-normal">scope: agent</span>
               </h3>
-              <div className="w-56">
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Search memories..."
-                  className="h-8 text-sm bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#4b5563] focus:border-blue-500/50"
-                />
+              <div className="flex items-center gap-2">
+                <div className="flex items-center rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0e0f1a] p-1">
+                  {MEMORY_VIEW_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setMemoryView(option.value)}
+                      className={`px-2.5 py-1 rounded-md text-xs transition-colors ${
+                        memoryView === option.value
+                          ? 'bg-white text-[#0f172a]'
+                          : 'text-[#6b7280] hover:text-white'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="w-56">
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    placeholder="Search memories..."
+                    className="h-8 text-sm bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[#4b5563] focus:border-blue-500/50"
+                  />
+                </div>
               </div>
             </div>
 
@@ -767,9 +831,15 @@ export default function MemoryPage() {
             {!loadingInstance && (!instanceMemories || instanceMemories.length === 0) && (
               <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-10 text-center">
                 <p className="text-[#6b7280] text-sm">
-                  {debouncedQuery ? 'No memories matched your search.' : 'No personal memories yet. Add one to get started.'}
+                  {debouncedQuery
+                    ? 'No memories matched your search.'
+                    : memoryView === 'graveyard'
+                      ? 'No graveyard memories for this agent.'
+                      : memoryView === 'all'
+                        ? 'No personal memories available yet.'
+                        : 'No personal memories yet. Add one to get started.'}
                 </p>
-                {!debouncedQuery && (
+                {!debouncedQuery && memoryView !== 'graveyard' && (
                   <Button
                     size="sm"
                     variant="outline"

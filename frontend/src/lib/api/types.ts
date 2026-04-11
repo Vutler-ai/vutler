@@ -1850,6 +1850,11 @@ export interface Memory {
   agent_id?: string;
   visibility?: 'internal' | 'reviewable' | 'user_visible' | string;
   status?: 'active' | 'expired' | 'invalidated' | 'superseded' | 'needs_verification' | string;
+  tier?: 'hot' | 'warm' | 'cold' | 'graveyard' | string;
+  graveyard_reason?: string | null;
+  canonical_memory?: boolean;
+  contradiction_state?: 'none' | 'review_pending' | 'contradicted' | 'superseded' | 'canonical' | string;
+  resolution_state?: 'none' | 'open' | 'redirected' | 'resolved' | string;
   sources?: MemorySource[];
   source_count?: number;
   verified_at?: string | null;
@@ -1859,6 +1864,8 @@ export interface Memory {
   replacement_hint?: string | null;
   superseded_at?: string | null;
   superseded_by_text?: string | null;
+  superseded_by_memory_id?: string | null;
+  supersedes_memory_id?: string | null;
   lifecycle_remote_synced?: boolean;
   lifecycle_remote_error?: Record<string, unknown> | null;
   metadata?: Record<string, unknown>;
@@ -1878,8 +1885,11 @@ export interface AgentMemoryListResponse {
   hidden_count?: number;
   expired_count?: number;
   deleted_count?: number;
+  graveyard_count?: number;
+  active_count?: number;
   has_more?: boolean;
   count_is_estimate?: boolean;
+  view?: 'active' | 'graveyard' | 'all' | string;
 }
 
 export interface AgentContext {
@@ -1893,6 +1903,9 @@ export interface AgentContext {
   hidden_instance_count?: number;
   hidden_template_count?: number;
   hidden_global_count?: number;
+  graveyard_instance_count?: number;
+  graveyard_template_count?: number;
+  graveyard_global_count?: number;
   expired_instance_count?: number;
   expired_template_count?: number;
   expired_global_count?: number;

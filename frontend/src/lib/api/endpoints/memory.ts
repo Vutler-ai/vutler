@@ -17,9 +17,15 @@ import type {
   SniparaHtaskMetrics,
 } from '../types';
 
-export async function recallMemories(agentId: string, query?: string): Promise<Memory[]> {
+export interface RecallMemoriesOptions {
+  query?: string;
+  view?: 'active' | 'graveyard' | 'all';
+}
+
+export async function recallMemories(agentId: string, options: RecallMemoriesOptions = {}): Promise<Memory[]> {
   const params = new URLSearchParams({ limit: '50' });
-  if (query) params.set('q', query);
+  if (options.query) params.set('q', options.query);
+  if (options.view) params.set('view', options.view);
   const data = await apiFetch<AgentMemoryListResponse>(`/api/v1/agents/${agentId}/memories?${params}`);
   return data.memories ?? [];
 }
