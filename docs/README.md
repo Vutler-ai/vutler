@@ -49,10 +49,13 @@ npm run db:backup
 - [Nexus Enterprise Governance + Approvals V1](specs/nexus-enterprise-governance-approvals-v1.md) documents approval requests, process-scoped grants, audit events, approval email, and the explicit `full_access` bypass mode.
 - [Nexus Enterprise Self-Provisioning Policy V1](specs/nexus-enterprise-self-provisioning-policy-v1.md) defines what agents may self-provision, what requires approval, what stays forbidden, and how governance/audit apply.
 - [Nexus Enterprise Agent Tooling Gap Matrix V1](specs/nexus-enterprise-agent-tooling-gap-matrix-v1.md) maps each specialized agent to the real runtime/tools already implemented, the missing connectors, and the MVP build order.
+- [Snipara Usage ADR V1](specs/snipara-usage-adr-v1.md) documents the architectural rule for how Vutler should use Snipara: broad for context/memory/coordination, selective at the runtime boundary.
+- [Snipara Phase 1 Implementation V1](specs/snipara-phase-1-implementation-v1.md) defines the first implementation slice: index health, Memory V2 lifecycle, and htask policy/metrics visibility.
 - `docs/nexus/` covers Nexus install, deployment, and security.
 - `docs/specs/` contains feature-specific implementation specs, including agent wizard limits and mobile dispatch plans.
 - `docs/planning-artifacts/` contains product and architecture planning inputs.
 - [Planning Roadmap](planning-artifacts/roadmap.md) keeps the active roadmap inside the docs tree.
+- [Snipara Integration Roadmap](planning-artifacts/snipara-integration-roadmap-2026-04.md) maps the current Snipara docs surface to Vutler's existing implementation, gaps, and recommended build order.
 - [Repository Audit Report](archive/AUDIT-REPORT.md) archives the broad codebase audit outside the root.
 
 ## Recent updates

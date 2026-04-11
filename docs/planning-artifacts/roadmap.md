@@ -24,6 +24,12 @@ Current focus, in active delivery flow:
 ## Planned — Next
 Queued after current sprint, unless priorities change:
 
+- Snipara integration roadmap execution
+  - Index health + search analytics surfaced in Vutler admin
+  - Memory V2 lifecycle controls and operator visibility
+  - deeper htask policy / metrics support
+  - optional RLM Runtime executor for technical agents without replacing the Vutler run engine
+  - detailed plan tracked in `docs/planning-artifacts/snipara-integration-roadmap-2026-04.md`
 - Enterprise nexus webhook dispatch + async callback
 - Observability dashboard: streaming SSE + provider health
 - Provider compatibility matrix
