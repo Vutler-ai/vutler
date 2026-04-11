@@ -1,9 +1,21 @@
 'use strict';
 
 const { executeInSandbox } = require('../sandbox');
+const {
+  canUseRlmRuntime,
+  executeRlmRuntimePlan,
+} = require('./rlmRuntimeExecutor');
 
-async function executeSandboxPlan(plan = {}) {
+async function executeSandboxPlan(plan = {}, context = {}) {
   const timeoutMs = plan.timeout_ms || plan.input?.timeoutMs;
+  if (canUseRlmRuntime(plan, context)) {
+    try {
+      return await executeRlmRuntimePlan(plan, context);
+    } catch (error) {
+      console.warn('[SandboxExecutor] RLM Runtime unavailable, falling back to native sandbox:', error.message);
+    }
+  }
+
   return executeInSandbox(
     plan.params?.language || plan.input?.language,
     plan.params?.code || plan.input?.code,
