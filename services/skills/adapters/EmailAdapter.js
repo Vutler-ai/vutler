@@ -4,6 +4,7 @@ const pool = require('../../../lib/vaultbrix');
 const { resolveAgentEmailProvisioning } = require('../../agentProvisioningService');
 const { sendPostalMail } = require('../../postalMailer');
 const { resolveSenderAddress } = require('../../workspaceEmailService');
+const { buildAcceptedEmailMetadata } = require('../../emailDeliveryService');
 
 const SCHEMA = 'tenant_vutler';
 const SUPPORTED_ON_BEHALF_SOURCES = new Set(['google', 'microsoft365']);
@@ -283,15 +284,18 @@ class EmailAdapter {
         htmlBody,
         folder: 'sent',
         agentId,
-        metadata: {
+        metadata: buildAcceptedEmailMetadata({
           via: 'postal',
           send_origin: 'agent_email',
           sender_email: provisioning.email,
           sender_source: provisioning.source,
           implicit_user_approval: true,
           latest_user_message: context.latestUserMessage || null,
-          message_id: messageId,
-        },
+        }, {
+          via: 'postal',
+          providerMessageId: messageId,
+          status: 'accepted',
+        }),
       });
 
       return {
@@ -300,16 +304,17 @@ class EmailAdapter {
           id: result.rows[0]?.id,
           uid: result.rows[0]?.id,
           folder: 'sent',
-          status: 'sent',
+          status: 'accepted',
+          deliveryStatus: 'accepted',
           messageId,
           emailUrl: `/email?folder=sent&uid=${encodeURIComponent(String(result.rows[0]?.id || ''))}`,
           placement: {
             root: '/email',
             folder: 'sent',
             defaulted: true,
-            reason: 'email_sent',
+            reason: 'email_accepted',
           },
-          message: `Email sent to "${to}".`,
+          message: `Email accepted for delivery to "${to}".`,
         },
       };
     } catch (err) {

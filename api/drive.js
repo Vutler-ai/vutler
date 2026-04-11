@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const s3 = require('../services/s3Storage');
 const driveIndex = require('../services/drive-index');
+const { isOfficeDocumentPath, extractOfficeTextFromBuffer } = require('../services/officeDocumentService');
 
 // SECURITY: workspace from JWT only (audit 2026-03-29)
 router.use((req, res, next) => {
@@ -112,6 +113,11 @@ function buildSnippet(content, query) {
   const start = Math.max(0, index - 80);
   const end = Math.min(text.length, index + needle.length + 140);
   return text.slice(start, end);
+}
+
+function buildOfficePreviewError(fileName, err) {
+  const detail = err?.message ? ` ${err.message}` : '';
+  return `Preview is unavailable for "${fileName}" because the office document could not be converted to text.${detail} Install LibreOffice on the server, or upload a PDF/TXT companion for agent-friendly reading.`;
 }
 
 function scoreSearchCandidate({ key, query, content }) {
@@ -234,6 +240,10 @@ function parseStructuredDocument(buffer, fileName) {
         totalRows: rows.length,
       },
     };
+  }
+
+  if (isOfficeDocumentPath(fileName)) {
+    throw new Error(`Structured parsing is not supported for ${ext} without office conversion`);
   }
 
   throw new Error(`Structured parsing is not supported for ${ext || 'this file type'}`);
@@ -613,8 +623,31 @@ router.get('/preview/:id', async (req, res) => {
       });
     }
 
-    // Text preview — download and return content
     const { buffer } = await s3.downloadFile(req.workspaceId, match.key);
+
+    if (isOfficeDocumentPath(fileName)) {
+      try {
+        const extracted = await extractOfficeTextFromBuffer({ fileName, buffer });
+        return res.json({
+          success: true,
+          type: 'text',
+          name: fileName,
+          path: `/${match.key}`,
+          mimeType: 'text/plain; charset=utf-8',
+          modified: match.lastModified ? new Date(match.lastModified).toISOString() : undefined,
+          content: extracted.text.slice(0, 250000),
+          derived: true,
+          derivation: extracted.metadata || {},
+        });
+      } catch (err) {
+        return res.status(415).json({
+          success: false,
+          error: buildOfficePreviewError(fileName, err),
+        });
+      }
+    }
+
+    // Text preview — download and return content
     const content = buffer.toString('utf8').slice(0, 250000);
     return res.json({
       success: true,
@@ -640,6 +673,28 @@ router.get('/parsed/:id', async (req, res) => {
     if (!match) return res.status(404).json({ success: false, error: 'File not found' });
 
     const { buffer } = await s3.downloadFile(req.workspaceId, match.key);
+    if (isOfficeDocumentPath(match.key)) {
+      try {
+        const extracted = await extractOfficeTextFromBuffer({
+          fileName: getBaseName(match.key),
+          buffer,
+        });
+
+        return res.json({
+          success: true,
+          name: getBaseName(match.key),
+          path: `/${match.key}`,
+          parsed: {
+            type: 'office_text',
+            text: extracted.text,
+            metadata: extracted.metadata || {},
+          },
+        });
+      } catch (err) {
+        return res.status(415).json({ success: false, error: buildOfficePreviewError(getBaseName(match.key), err) });
+      }
+    }
+
     const parsed = parseStructuredDocument(buffer, match.key);
 
     return res.json({

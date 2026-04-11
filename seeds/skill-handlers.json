@@ -681,7 +681,7 @@
         "max_length": { "type": "integer", "description": "Max words in summary" },
         "style": { "type": "string", "enum": ["bullet_points", "paragraph", "executive"], "default": "paragraph" }
       },
-      "required": ["content"]
+      "required": []
     }
   },
   "article_creation": {
@@ -1842,15 +1842,23 @@
     "params_schema": {
       "type": "object",
       "properties": {
+        "action": {
+          "type": "string",
+          "description": "Drive action to run. Use write_text for plain text/markdown files; when the target path is .docx/.pptx/.xlsx/.xls, write_text stores the editable source companion and exports the native office file automatically. Use export_office to export again from source content or a saved source file."
+        },
         "path": { "type": "string", "description": "Optional exact target file path inside the workspace drive. If omitted, the runtime places the file under the canonical Vutler Drive root." },
         "folder": { "type": "string", "description": "Optional relative or canonical folder. Defaults to the best matching Generated/ folder under /projects/Vutler." },
         "filename": { "type": "string", "description": "Optional filename to use when path is omitted." },
         "title": { "type": "string", "description": "Optional document title used to infer the destination folder and filename." },
         "subject": { "type": "string", "description": "Optional document subject used to infer the destination folder." },
-        "content": { "type": "string", "description": "UTF-8 text content to write" },
+        "content": { "type": "string", "description": "UTF-8 text content to write, or office source content when action=export_office" },
+        "sourceContent": { "type": "string", "description": "Explicit source content used when action=export_office" },
+        "sourcePath": { "type": "string", "description": "Optional path to a .source.md or .source.json file to render when action=export_office" },
+        "templatePath": { "type": "string", "description": "Alias for sourcePath when exporting a native office document" },
+        "saveSourceOnly": { "type": "boolean", "description": "When writing to an office target path, save only the editable source companion and skip native export." },
         "mimeType": { "type": "string", "description": "Optional MIME type for the file" }
       },
-      "required": ["content"]
+      "required": []
     }
   },
   "workspace_drive_create_folder": {

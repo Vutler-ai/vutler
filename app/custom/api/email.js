@@ -14,6 +14,13 @@ const {
   toggleEmailFlag,
   updateEmailReadState,
 } = require('../../../services/workspaceEmailService');
+const {
+  buildAcceptedEmailMetadata,
+  isMissingEmailMetadataColumnError,
+  mapEmailRow,
+  mergeEmailMetadata,
+  parseEmailMetadata,
+} = require('../../../services/emailDeliveryService');
 const { sendPostalMail } = require('../../../services/postalMailer');
 
 // Postal configuration
@@ -54,22 +61,70 @@ async function sendViaPostal({ from, to, subject, body, htmlBody }) {
   };
 }
 
-function parseEmailMetadata(value) {
-  if (!value) return {};
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value);
-    } catch (_) {
-      return {};
-    }
-  }
-  return typeof value === 'object' ? value : {};
-}
-
 function parseListLimit(value, fallback = 50, max = 200) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(Math.floor(parsed), max);
+}
+
+async function insertSentEmailRecord(pg, {
+  from,
+  to,
+  subject,
+  body,
+  htmlBody,
+  agentId,
+  workspaceId,
+  metadata,
+}) {
+  try {
+    return await pg.query(
+      `INSERT INTO ${SCHEMA}.emails
+        (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'sent', true, $6, $7, $8::jsonb, NOW())
+       RETURNING id`,
+      [from, to, subject, body || '', htmlBody || null, agentId || null, workspaceId, JSON.stringify(metadata || {})]
+    );
+  } catch (err) {
+    if (!isMissingEmailMetadataColumnError(err)) throw err;
+
+    return pg.query(
+      `INSERT INTO ${SCHEMA}.emails
+        (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, 'sent', true, $6, $7, NOW())
+       RETURNING id`,
+      [from, to, subject, body || '', htmlBody || null, agentId || null, workspaceId]
+    );
+  }
+}
+
+async function updateDraftAfterSend(pg, {
+  emailId,
+  workspaceId,
+  metadata,
+}) {
+  try {
+    await pg.query(
+      `UPDATE ${SCHEMA}.emails
+          SET folder = 'sent',
+              is_read = true,
+              metadata = $3::jsonb
+        WHERE id = $1
+          AND workspace_id = $2`,
+      [emailId, workspaceId, JSON.stringify(metadata || {})]
+    );
+  } catch (err) {
+    if (!isMissingEmailMetadataColumnError(err)) throw err;
+
+    await pg.query(
+      `UPDATE ${SCHEMA}.emails
+          SET folder = 'sent',
+              is_read = true
+        WHERE id = $1
+          AND workspace_id = $2`,
+      [emailId, workspaceId]
+    );
+  }
 }
 
 /**
@@ -96,19 +151,7 @@ router.get('/email', async (req, res) => {
     }
 
     const r = await pg.query(query, params);
-    const emails = r.rows.map(e => ({
-      id: e.id,
-      uid: e.id,
-      from: e.from_addr,
-      to: e.to_addr,
-      subject: e.subject,
-      body: e.body,
-      htmlBody: e.html_body,
-      isRead: e.is_read || false,
-      folder: e.folder || 'inbox',
-      agentId: e.agent_id,
-      date: e.created_at,
-    }));
+    const emails = r.rows.map((row) => mapEmailRow(row));
 
     res.json({ success: true, emails, count: emails.length });
   } catch (err) {
@@ -131,12 +174,7 @@ router.get('/email/inbox', async (req, res) => {
       `SELECT * FROM ${SCHEMA}.emails WHERE (folder = 'inbox' OR folder IS NULL) AND workspace_id = $2 ORDER BY created_at DESC LIMIT $1`,
       [limit, req.workspaceId]
     );
-    const emails = r.rows.map(e => ({
-      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
-      subject: e.subject, body: e.body, htmlBody: e.html_body,
-      isRead: e.is_read || false, folder: e.folder || 'inbox',
-      agentId: e.agent_id, date: e.created_at,
-    }));
+    const emails = r.rows.map((row) => mapEmailRow(row));
 
     res.json({ success: true, emails, count: emails.length });
   } catch (err) {
@@ -158,13 +196,7 @@ router.get('/email/sent', async (req, res) => {
       `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'sent' AND workspace_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [req.workspaceId, limit]
     );
-    const emails = r.rows.map(e => ({
-      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
-      subject: e.subject, body: e.body, htmlBody: e.html_body,
-      isRead: e.is_read ?? true, flagged: e.flagged || false,
-      folder: e.folder || 'sent', agentId: e.agent_id,
-      date: e.created_at,
-    }));
+    const emails = r.rows.map((row) => mapEmailRow(row));
 
     res.json({ success: true, emails, count: emails.length });
   } catch (err) {
@@ -186,12 +218,9 @@ router.get('/email/drafts', async (req, res) => {
       `SELECT * FROM ${SCHEMA}.emails WHERE folder = 'drafts' AND workspace_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [req.workspaceId, limit]
     );
-    const emails = r.rows.map(e => ({
-      id: e.id, uid: e.id, from: e.from_addr, to: e.to_addr,
-      subject: e.subject, body: e.body, htmlBody: e.html_body,
-      isRead: e.is_read || false, flagged: e.flagged || false,
-      folder: e.folder || 'drafts', status: 'pending_approval',
-      agentId: e.agent_id, date: e.created_at,
+    const emails = r.rows.map((row) => ({
+      ...mapEmailRow(row),
+      status: 'pending_approval',
     }));
 
     res.json({ success: true, emails, count: emails.length });
@@ -237,15 +266,26 @@ router.post('/email/send', async (req, res) => {
       });
     }
 
-    // Store in DB as sent
+    const messageId = postalResult.data?.message_id || postalResult.raw?.message_id || null;
+
+    // Store in DB as accepted by provider
     let emailId = null;
     if (pg) {
       try {
-        const r = await pg.query(
-          `INSERT INTO ${SCHEMA}.emails (from_addr, to_addr, subject, body, html_body, folder, is_read, agent_id, workspace_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, 'sent', true, $6, $7, NOW()) RETURNING id`,
-          [sender, to, subject, body || '', htmlBody || null, agentId || null, req.workspaceId]
-        );
+        const r = await insertSentEmailRecord(pg, {
+          from: sender,
+          to,
+          subject,
+          body,
+          htmlBody,
+          agentId,
+          workspaceId: req.workspaceId,
+          metadata: buildAcceptedEmailMetadata({}, {
+            via: 'postal',
+            providerMessageId: messageId,
+            status: 'accepted',
+          }),
+        });
         emailId = r.rows[0]?.id;
       } catch (dbErr) {
         console.warn('[EMAIL] DB store failed (email was sent):', dbErr.message);
@@ -256,7 +296,9 @@ router.post('/email/send', async (req, res) => {
       success: true,
       data: {
         id: emailId,
-        messageId: postalResult.data?.message_id,
+        status: 'accepted',
+        deliveryStatus: 'accepted',
+        messageId,
         postal: postalResult.data,
       },
     });
@@ -398,15 +440,31 @@ router.post('/email/approve/:id', async (req, res) => {
       }
     }
 
-    // Update folder to sent
-    await pg.query(
-      `UPDATE ${SCHEMA}.emails SET folder = 'sent', is_read = true WHERE id = $1 AND workspace_id = $2`,
-      [req.params.id, req.workspaceId]
+    const nextMetadata = buildAcceptedEmailMetadata(
+      mergeEmailMetadata(metadata, {
+        via: sendResult.via || metadata.via || 'postal',
+      }),
+      {
+        via: sendResult.via || metadata.via || 'postal',
+        providerMessageId: sendResult.messageId || metadata.provider_message_id || metadata.message_id || null,
+        status: 'accepted',
+      }
     );
+
+    await updateDraftAfterSend(pg, {
+      emailId: req.params.id,
+      workspaceId: req.workspaceId,
+      metadata: nextMetadata,
+    });
 
     res.json({
       success: true,
-      data: { id: req.params.id, status: 'sent', ...sendResult },
+      data: {
+        id: req.params.id,
+        status: 'accepted',
+        deliveryStatus: 'accepted',
+        ...sendResult,
+      },
     });
   } catch (err) {
     console.error('[EMAIL] Approve error:', err.message);
@@ -564,18 +622,11 @@ router.get('/email/pending', async (req, res) => {
     );
 
     const emails = r.rows.map(e => ({
-      id: e.id,
-      from: e.from_addr,
-      to: e.to_addr,
-      subject: e.subject,
-      body: e.body,
-      htmlBody: e.html_body,
+      ...mapEmailRow(e),
       status: 'pending_approval',
-      agentId: e.agent_id,
       agentName: e.agent_name,
       agentAvatar: e.agent_avatar,
       agentUsername: e.agent_username,
-      date: e.created_at,
     }));
 
     res.json({ success: true, emails, count: emails.length });

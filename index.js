@@ -93,6 +93,7 @@ app.use((req, res, next) => {
     rawBodyPath === '/api/v1/billing/webhook'
     || rawBodyPath === '/api/v1/billing/webhooks/stripe'
     || rawBodyPath === '/api/v1/email/incoming'
+    || rawBodyPath === '/api/v1/email/delivery'
   ) {
     return next();
   }

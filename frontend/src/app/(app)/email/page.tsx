@@ -162,6 +162,38 @@ function AgentMenuAvatar({ agent }: { agent: Pick<AgentEntry, "avatar" | "name">
   );
 }
 
+function getDeliveryBadge(status?: Email["deliveryStatus"] | null): { label: string; className: string } | null {
+  switch (status) {
+    case "accepted":
+      return {
+        label: "Accepted",
+        className: "bg-sky-500/15 text-sky-300 border-sky-500/20",
+      };
+    case "delivered":
+      return {
+        label: "Delivered",
+        className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/20",
+      };
+    case "deferred":
+      return {
+        label: "Deferred",
+        className: "bg-amber-500/15 text-amber-300 border-amber-500/20",
+      };
+    case "bounced":
+      return {
+        label: "Bounced",
+        className: "bg-rose-500/15 text-rose-300 border-rose-500/20",
+      };
+    case "failed":
+      return {
+        label: "Failed",
+        className: "bg-red-500/15 text-red-300 border-red-500/20",
+      };
+    default:
+      return null;
+  }
+}
+
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
 interface SidebarProps {
@@ -334,6 +366,8 @@ function EmailListItem({
   isSelected: boolean;
   onClick: () => void;
 }) {
+  const deliveryBadge = getDeliveryBadge(email.deliveryStatus);
+
   return (
     <div
       onClick={onClick}
@@ -383,6 +417,11 @@ function EmailListItem({
             {email.pendingApproval && (
               <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/20 text-[10px] px-1.5 h-4">
                 Pending
+              </Badge>
+            )}
+            {deliveryBadge && (
+              <Badge className={`${deliveryBadge.className} text-[10px] px-1.5 h-4`}>
+                {deliveryBadge.label}
               </Badge>
             )}
             {email.flagged && (
@@ -566,6 +605,7 @@ function EmailViewer({
 }: EmailViewerProps) {
   const [approvalLoading, setApprovalLoading] = useState(false);
   const [editingDraft, setEditingDraft] = useState(false);
+  const deliveryBadge = getDeliveryBadge(email?.deliveryStatus);
 
   if (!email) {
     return (
@@ -736,6 +776,13 @@ function EmailViewer({
             </span>
           </div>
         )}
+        {deliveryBadge && (
+          <div className="mt-2">
+            <Badge className={`${deliveryBadge.className} text-[10px] uppercase tracking-wide`}>
+              Delivery {deliveryBadge.label}
+            </Badge>
+          </div>
+        )}
       </div>
 
       {/* Body */}
@@ -896,7 +943,7 @@ function ComposeDialog({
             <div className="w-14 h-14 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center mx-auto mb-3">
               <Send className="w-6 h-6 text-green-400" />
             </div>
-            <p className="text-green-400 font-medium">Email sent!</p>
+            <p className="text-green-400 font-medium">Email accepted for delivery</p>
           </div>
         ) : (
           <div className="space-y-3">

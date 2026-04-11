@@ -50,14 +50,15 @@ describe('EmailAdapter', () => {
     expect(result.data).toMatchObject({
       id: 'email-1',
       uid: 'email-1',
-      status: 'sent',
+      status: 'accepted',
+      deliveryStatus: 'accepted',
       messageId: 'postal-msg-1',
       emailUrl: '/email?folder=sent&uid=email-1',
       placement: {
         root: '/email',
         folder: 'sent',
         defaulted: true,
-        reason: 'email_sent',
+        reason: 'email_accepted',
       },
     });
     expect(sendPostalMail).toHaveBeenCalledWith({
@@ -82,6 +83,8 @@ describe('EmailAdapter', () => {
       implicit_user_approval: true,
       latest_user_message: 'Oui, envoie à client@example.com',
       message_id: 'postal-msg-1',
+      provider_message_id: 'postal-msg-1',
+      delivery_status: 'accepted',
     }));
   });
 
@@ -187,7 +190,8 @@ describe('EmailAdapter', () => {
     expect(result.data).toMatchObject({
       id: 'email-legacy-1',
       uid: 'email-legacy-1',
-      status: 'sent',
+      status: 'accepted',
+      deliveryStatus: 'accepted',
       messageId: 'postal-msg-legacy-1',
     });
     expect(query).toHaveBeenCalledTimes(2);
