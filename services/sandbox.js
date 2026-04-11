@@ -33,7 +33,9 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'skipped'])
 let ensureSchemaPromise = null;
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function normalizeLanguage(language) {
@@ -587,6 +589,10 @@ async function updateSandboxJob(jobId, updates = {}, db = pool) {
   if (updates.locked_at !== undefined) assign('locked_at', updates.locked_at);
   if (updates.started_at !== undefined) assign('started_at', updates.started_at);
   if (updates.finished_at !== undefined) assign('finished_at', updates.finished_at);
+  if (updates.metadata !== undefined) {
+    params.push(JSON.stringify(updates.metadata || {}));
+    fields.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${params.length}::jsonb`);
+  }
 
   if (fields.length === 0) {
     return getSandboxJob(jobId, null, db);
@@ -677,7 +683,11 @@ async function runCommand(cmd, args, timeoutMs, spawnOptions = {}) {
       timedOut = true;
       child.kill('SIGTERM');
       setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch (_) {}
+        try {
+          child.kill('SIGKILL');
+        } catch (_) {
+          // Process may have exited cleanly before the hard kill.
+        }
       }, 2000);
     }, timeoutMs);
 
@@ -733,7 +743,7 @@ async function runSandboxDirect(language, code, timeoutMs = DEFAULT_TIMEOUT_MS) 
   return result;
 }
 
-async function executeSandboxJob(job, { workerId = null } = {}, db = pool) {
+async function executeSandboxJob(job, { workerId: _workerId = null } = {}, db = pool) {
   if (!job?.id) throw new Error('Sandbox job requires an id.');
   const rawJob = await getSandboxJob(job.id, job.workspace_id || null, db);
   const startedAt = Date.now();
@@ -868,6 +878,7 @@ module.exports = {
   awaitSandboxJob,
   awaitSandboxBatch,
   claimPendingSandboxJobs,
+  updateSandboxJob,
   executeSandboxJob,
   executeInSandbox,
   executeBatch,

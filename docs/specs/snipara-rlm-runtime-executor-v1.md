@@ -35,10 +35,12 @@ Files:
 - [services/executors/rlmRuntimeExecutor.js](/Users/alopez/Devs/Vutler/services/executors/rlmRuntimeExecutor.js:1)
 - [services/executors/rlmRuntimePolicy.js](/Users/alopez/Devs/Vutler/services/executors/rlmRuntimePolicy.js:1)
 - [services/executors/sandboxExecutor.js](/Users/alopez/Devs/Vutler/services/executors/sandboxExecutor.js:1)
+- [services/sandbox.js](/Users/alopez/Devs/Vutler/services/sandbox.js:1)
 - [services/agentAccessPolicyService.js](/Users/alopez/Devs/Vutler/services/agentAccessPolicyService.js:175)
 - [api/settings.js](/Users/alopez/Devs/Vutler/api/settings.js:1)
 - [frontend/src/app/(app)/settings/page.tsx](/Users/alopez/Devs/Vutler/frontend/src/app/(app)/settings/page.tsx:1)
 - [frontend/src/app/(app)/agents/[id]/config/page.tsx](/Users/alopez/Devs/Vutler/frontend/src/app/(app)/agents/[id]/config/page.tsx:1)
+- [frontend/src/app/(app)/sandbox/page.tsx](/Users/alopez/Devs/Vutler/frontend/src/app/(app)/sandbox/page.tsx:1)
 - [tests/sandbox-executor.test.js](/Users/alopez/Devs/Vutler/tests/sandbox-executor.test.js:1)
 - [tests/rlm-runtime-policy.test.js](/Users/alopez/Devs/Vutler/tests/rlm-runtime-policy.test.js:1)
 
@@ -52,6 +54,13 @@ Behavior:
 - executes `rlm run --env <env> <code>`
 - if the binary is missing or execution errors before completion, Vutler falls back to `executeInSandbox()`
 - subprocesses receive `VUTLER_WORKSPACE_ID` and `VUTLER_AGENT_ID` for traceability
+- orchestrated executions now persist backend telemetry in `sandbox_jobs.metadata`
+  - `backend_selected`
+  - `backend_effective`
+  - `used_fallback`
+  - `fallback_from`
+  - `fallback_reason`
+- sandbox operator history exposes this telemetry, and orchestration/tool payloads now carry the same backend/fallback summary
 
 Binary resolution order:
 1. `RLM_RUNTIME_BIN`
@@ -91,11 +100,12 @@ This keeps backend selection inside Vutler's tenant policy boundary instead of m
 
 Validated locally on 2026-04-11:
 - `npx jest tests/sandbox-executor.test.js tests/rlm-runtime-policy.test.js --runInBand`
+- `npx jest tests/sandbox-executor.test.js tests/sandbox.service.test.js --runInBand`
 - `pnpm exec tsc --noEmit`
 - `pnpm exec eslint src/app/\(app\)/settings/page.tsx src/app/\(app\)/agents/\[id\]/config/page.tsx src/lib/api/types.ts`
 
 ## Remaining Follow-Ups
 
-- surface backend selection and fallback telemetry to operators
 - decide whether JavaScript support should stay on native sandbox only
+- add aggregate backend usage analytics and alerting, not just per-execution telemetry
 - verify the VPS `rlm` binary and env config before enabling in production

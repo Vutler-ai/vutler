@@ -140,7 +140,9 @@ function createMemoryDb() {
 
         assignments.forEach((assignment, index) => {
           const column = assignment.split('=')[0].trim();
-          row[column] = params[index + 1];
+          row[column] = column === 'metadata' && typeof params[index + 1] === 'string'
+            ? JSON.parse(params[index + 1])
+            : params[index + 1];
         });
 
         return { rows: row ? [row] : [] };

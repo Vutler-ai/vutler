@@ -206,6 +206,11 @@ async function dispatchOrchestratedAction(action = {}, context = {}) {
             stderr: execution?.stderr || '',
             exit_code: execution?.exit_code ?? null,
             duration_ms: execution?.duration_ms ?? null,
+            backend_selected: execution?.metadata?.backend_selected || execution?.backend || null,
+            backend_effective: execution?.metadata?.backend_effective || execution?.backend || null,
+            used_fallback: execution?.metadata?.used_fallback === true,
+            fallback_from: execution?.metadata?.fallback_from || null,
+            fallback_reason: execution?.metadata?.fallback_reason || null,
           },
           usage: {
             duration_ms: execution?.duration_ms ?? (Date.now() - startedAt),

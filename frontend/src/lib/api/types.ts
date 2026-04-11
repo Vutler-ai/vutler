@@ -1796,6 +1796,25 @@ export interface SuccessResponse {
 export type SandboxLanguage = 'javascript' | 'python' | 'shell';
 export type SandboxStatus = 'pending' | 'running' | 'completed' | 'failed' | 'timeout' | 'skipped';
 
+export interface SandboxExecutionMetadata {
+  backend_selected?: string | null;
+  backend_effective?: string | null;
+  used_fallback?: boolean;
+  fallback_from?: string | null;
+  fallback_reason?: string | null;
+  backend_execution_id?: string | null;
+  executor?: string | null;
+  action_id?: string | null;
+  action_key?: string | null;
+  rlm_runtime?: {
+    decision_reason?: string | null;
+    agent_preference?: string | null;
+    workspace_default_backend?: string | null;
+    runtime_env?: string | null;
+  } | null;
+  [key: string]: unknown;
+}
+
 export interface SandboxExecution {
   id: string;
   execution_id?: string;
@@ -1810,6 +1829,12 @@ export interface SandboxExecution {
   batch_id?: string | null;
   batch_index?: number | null;
   created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  timeout_ms?: number | null;
+  source?: string | null;
+  error?: string | null;
+  metadata?: SandboxExecutionMetadata | null;
 }
 
 export interface SandboxExecutePayload {

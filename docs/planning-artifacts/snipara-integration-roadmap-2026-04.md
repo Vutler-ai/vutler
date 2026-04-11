@@ -371,8 +371,9 @@ Status update 2026-04-11:
 - backend selection is tenant-aware:
   - workspace settings gate whether `RLM Runtime` is allowed and whether it is the default sandbox backend
   - agent governance can inherit, force native sandbox, or force `RLM Runtime`
+- per-execution backend telemetry is now visible in sandbox audit/history and carried in orchestration sandbox payloads
 - fallback remains the native governed sandbox, and runtime authority remains in Vutler
-- operator telemetry and broader production rollout controls still remain to be finished
+- broader production rollout controls and aggregate backend analytics still remain to be finished
 
 ### Phase 4 - Deepen Shared Context And Team Memory
 

@@ -575,6 +575,11 @@ function buildSandboxToolPayload(execution) {
     duration_ms: execution?.duration_ms ?? null,
     started_at: execution?.started_at || null,
     finished_at: execution?.finished_at || null,
+    backend_selected: execution?.metadata?.backend_selected || execution?.backend || null,
+    backend_effective: execution?.metadata?.backend_effective || execution?.backend || null,
+    used_fallback: execution?.metadata?.used_fallback === true,
+    fallback_from: execution?.metadata?.fallback_from || null,
+    fallback_reason: execution?.metadata?.fallback_reason || null,
   };
 }
 
@@ -1018,7 +1023,7 @@ async function resolveWorkspaceProvider(db, workspaceId, providerName, options =
     if (!providerName) return null;
 
     r = await db.query(
-        `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
+      `SELECT id, provider, api_key, base_url, config, is_enabled, is_default
          FROM tenant_vutler.llm_providers
         WHERE workspace_id = $1 AND provider = $2 AND is_enabled = true
         ORDER BY is_default DESC, created_at DESC

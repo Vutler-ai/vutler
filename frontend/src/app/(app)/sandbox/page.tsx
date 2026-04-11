@@ -71,6 +71,21 @@ function langBadgeColor(lang: SandboxLanguage) {
   }
 }
 
+function backendLabel(execution: SandboxExecution): string | null {
+  const value = execution.metadata?.backend_effective || execution.metadata?.backend_selected;
+  if (!value) return null;
+  if (value === 'rlm_runtime') return 'RLM';
+  if (value === 'native_sandbox') return 'Native';
+  return String(value);
+}
+
+function backendBadgeColor(execution: SandboxExecution): string {
+  const value = execution.metadata?.backend_effective || execution.metadata?.backend_selected;
+  if (value === 'rlm_runtime') return 'bg-cyan-900/30 text-cyan-300 border-cyan-600/30';
+  if (value === 'native_sandbox') return 'bg-slate-800 text-slate-300 border-slate-600/30';
+  return 'bg-gray-800 text-gray-300 border-gray-600/30';
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function LangBadge({ lang }: { lang: SandboxLanguage }) {
@@ -129,6 +144,16 @@ function HistoryItem({
         <div className="flex items-center gap-1.5">
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} />
           <LangBadge lang={exec.language} />
+          {backendLabel(exec) && (
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border ${backendBadgeColor(exec)}`}>
+              {backendLabel(exec)}
+            </span>
+          )}
+          {exec.metadata?.used_fallback ? (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium border bg-amber-900/25 text-amber-300 border-amber-600/30">
+              fallback
+            </span>
+          ) : null}
         </div>
         <span className="text-[10px] text-[#4b5563] shrink-0">{timeAgo(exec.created_at)}</span>
       </div>
@@ -192,6 +217,11 @@ function OutputPanel({
           {execution.duration_ms != null && (
             <span className="text-xs text-[#4b5563]">{execution.duration_ms}ms</span>
           )}
+          {backendLabel(execution) && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${backendBadgeColor(execution)}`}>
+              {backendLabel(execution)}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <CopyButton text={displayText} />
@@ -199,6 +229,26 @@ function OutputPanel({
       </div>
 
       {/* Tabs */}
+      {(execution.metadata?.used_fallback || execution.metadata?.fallback_reason || execution.metadata?.rlm_runtime?.decision_reason) && (
+        <div className="px-4 py-2.5 border-b border-[rgba(255,255,255,0.06)] bg-[#0a0b14] space-y-1">
+          {execution.metadata?.used_fallback ? (
+            <p className="text-xs text-amber-300">
+              Fallback used: {String(execution.metadata.fallback_from || 'unknown')} {'->'} {String(execution.metadata.backend_effective || 'native_sandbox')}
+            </p>
+          ) : null}
+          {execution.metadata?.fallback_reason ? (
+            <p className="text-[11px] text-[#6b7280]">
+              Reason: {String(execution.metadata.fallback_reason)}
+            </p>
+          ) : null}
+          {execution.metadata?.rlm_runtime?.decision_reason ? (
+            <p className="text-[11px] text-[#4b5563]">
+              RLM decision: {String(execution.metadata.rlm_runtime.decision_reason)}
+            </p>
+          ) : null}
+        </div>
+      )}
+
       <div className="flex gap-0 border-b border-[rgba(255,255,255,0.06)] bg-[#080810]">
         {(['combined', 'stdout', 'stderr'] as const).map((tab) => (
           <button

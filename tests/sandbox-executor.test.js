@@ -2,6 +2,8 @@
 
 describe('sandboxExecutor', () => {
   let executeInSandboxMock;
+  let createSandboxJobMock;
+  let updateSandboxJobMock;
   let resolveRlmRuntimeDecisionMock;
   let executeRlmRuntimePlanMock;
   let executeSandboxPlan;
@@ -15,7 +17,32 @@ describe('sandboxExecutor', () => {
       stdout: 'sandbox\n',
       stderr: '',
       exit_code: 0,
+      metadata: {
+        backend_selected: 'native_sandbox',
+        backend_effective: 'native_sandbox',
+      },
     });
+    createSandboxJobMock = jest.fn().mockResolvedValue({
+      id: 'sandbox-job-rlm-1',
+      execution_id: 'sandbox-job-rlm-1',
+      language: 'python',
+      status: 'pending',
+      metadata: {},
+    });
+    updateSandboxJobMock = jest.fn()
+      .mockResolvedValueOnce({
+        id: 'sandbox-job-rlm-1',
+        execution_id: 'sandbox-job-rlm-1',
+        language: 'python',
+        status: 'completed',
+        stdout: 'rlm\n',
+        stderr: '',
+        exit_code: 0,
+        metadata: {
+          backend_selected: 'rlm_runtime',
+          backend_effective: 'rlm_runtime',
+        },
+      });
     resolveRlmRuntimeDecisionMock = jest.fn().mockResolvedValue({
       allowed: false,
       reason: 'workspace_policy_disabled',
@@ -35,6 +62,8 @@ describe('sandboxExecutor', () => {
     });
 
     jest.doMock('../services/sandbox', () => ({
+      createSandboxJob: createSandboxJobMock,
+      updateSandboxJob: updateSandboxJobMock,
       executeInSandbox: executeInSandboxMock,
     }));
     jest.doMock('../services/executors/rlmRuntimeExecutor', () => ({
@@ -68,6 +97,11 @@ describe('sandboxExecutor', () => {
       expect.objectContaining({
         workspaceId: 'ws-1',
         source: 'orchestration',
+        metadata: expect.objectContaining({
+          backend_selected: 'native_sandbox',
+          backend_effective: 'native_sandbox',
+          used_fallback: false,
+        }),
       })
     );
     expect(result.execution_id).toBe('sandbox-1');
@@ -111,8 +145,18 @@ describe('sandboxExecutor', () => {
         }),
       })
     );
+    expect(createSandboxJobMock).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: null,
+      agentId: 'agent-1',
+      source: 'orchestration',
+      metadata: expect.objectContaining({
+        backend_selected: 'rlm_runtime',
+        backend_effective: 'rlm_runtime',
+      }),
+    }));
+    expect(updateSandboxJobMock).toHaveBeenCalledTimes(1);
     expect(executeInSandboxMock).not.toHaveBeenCalled();
-    expect(result.execution_id).toBe('rlm-1');
+    expect(result.execution_id).toBe('sandbox-job-rlm-1');
   });
 
   test('falls back to the native sandbox when RLM Runtime fails', async () => {
@@ -150,6 +194,13 @@ describe('sandboxExecutor', () => {
       9000,
       expect.objectContaining({
         workspaceId: 'ws-2',
+        metadata: expect.objectContaining({
+          backend_selected: 'rlm_runtime',
+          backend_effective: 'native_sandbox',
+          used_fallback: true,
+          fallback_from: 'rlm_runtime',
+          fallback_reason: 'rlm binary missing',
+        }),
       })
     );
     expect(result.execution_id).toBe('sandbox-1');
