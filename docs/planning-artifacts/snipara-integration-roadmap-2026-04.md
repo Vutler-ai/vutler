@@ -67,7 +67,9 @@ This matches the current codebase:
 - automation / continuity
   - repo hooks exist for sync and persistence, but productized workspace-level automation coverage is still limited
 - RLM Runtime
-  - historical usage and helper scripts exist, but there is no active production integration as a runtime backend
+  - active optional runtime backend exists for technical Python sandbox runs
+  - workspace and agent policy now decide whether it is allowed, inherited, or forced
+  - operator telemetry is still thinner than the Snipara docs surface
 
 ### Not Yet Integrated In Product Runtime
 
@@ -264,8 +266,9 @@ Vutler already has:
 - task retries, approvals, verification, and wake/sleep logic
 
 What is missing:
-- optional `rlm-executor` style backend for technical agents
-- bounded technical inner loops where sandbox alone is too shallow
+- richer backend telemetry, explicit usage metrics, and fallback analytics
+- bounded technical inner loops where sandbox alone is too shallow across more technical workflows
+- optional runtime-env selection if operators need different trusted execution targets per workspace
 
 Recommendation:
 - high priority, but strictly as an optional technical executor
@@ -363,10 +366,13 @@ Done when:
 - no duplicate run-state authority is introduced
 
 Status update 2026-04-11:
-- partially implemented
+- implemented as a multitenant-compatible foundation
 - Vutler now has an optional `RLM Runtime` backend inside the sandbox executor for Python technical runs
+- backend selection is tenant-aware:
+  - workspace settings gate whether `RLM Runtime` is allowed and whether it is the default sandbox backend
+  - agent governance can inherit, force native sandbox, or force `RLM Runtime`
 - fallback remains the native governed sandbox, and runtime authority remains in Vutler
-- operator telemetry and production enablement still remain to be finished
+- operator telemetry and broader production rollout controls still remain to be finished
 
 ### Phase 4 - Deepen Shared Context And Team Memory
 

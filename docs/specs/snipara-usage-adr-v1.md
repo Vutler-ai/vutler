@@ -104,3 +104,4 @@ The correct use of Snipara in Vutler is:
 In practical terms:
 - Snipara should keep expanding inside Vutler
 - but only below the product runtime boundary, not across it
+- any `RLM Runtime` use must remain tenant-aware and policy-gated by workspace plus agent governance

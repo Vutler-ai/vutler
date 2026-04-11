@@ -177,8 +177,10 @@ function normalizeGovernance(input = {}) {
   const governance = {};
   const approvals = normalizeString(normalized.approvals);
   const maxRiskLevel = normalizeString(normalized.max_risk_level);
+  const sandboxBackend = normalizeString(normalized.sandbox_backend || normalized.sandbox_backend_preference);
   if (approvals) governance.approvals = approvals;
   if (maxRiskLevel) governance.max_risk_level = maxRiskLevel;
+  if (sandboxBackend) governance.sandbox_backend = sandboxBackend;
   return governance;
 }
 

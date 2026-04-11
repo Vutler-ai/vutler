@@ -130,6 +130,7 @@ export interface AgentMemoryPolicy {
 export interface AgentGovernance {
   approvals?: 'default' | 'strict' | string;
   max_risk_level?: 'low' | 'medium' | 'high' | string;
+  sandbox_backend?: 'inherit' | 'native' | 'rlm' | string;
 }
 
 export interface AgentCapabilityState {
@@ -1707,12 +1708,19 @@ export interface SettingValue {
   type: string;
 }
 
+export interface WorkspaceRlmRuntimePolicy {
+  enabled?: boolean;
+  default_backend?: 'native' | 'rlm' | string;
+  runtime_env?: string | null;
+}
+
 export interface WorkspaceSettings {
   workspace_name?: SettingValue | string;
   workspace_description?: SettingValue | string;
   timezone?: SettingValue | string;
   default_provider?: SettingValue | string;
   drive_root?: SettingValue | string;
+  rlm_runtime_policy?: WorkspaceRlmRuntimePolicy | SettingValue | string;
   snipara_api_key?: SettingValue | string;
   snipara_api_url?: SettingValue | string;
   snipara_project_id?: SettingValue | string;
@@ -1729,6 +1737,7 @@ export interface SettingsResponse {
 
 export interface UpdateSettingsPayload {
   settings: Record<string, SettingValue | unknown>;
+  rlm_runtime_policy?: WorkspaceRlmRuntimePolicy;
 }
 
 export interface BetaFeatures {

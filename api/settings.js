@@ -6,6 +6,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const { decryptProviderSecret, encryptProviderSecret } = require('../services/providerSecrets');
 const { clearSniparaConfigCache } = require('../services/sniparaResolver');
+const { normalizeWorkspaceRlmRuntimePolicy } = require('../services/executors/rlmRuntimePolicy');
 const {
   assertColumnsExist,
   runtimeSchemaMutationsAllowed,
@@ -13,8 +14,8 @@ const {
 const { ensureApiKeysTable } = require('../services/apiKeys');
 
 let pool;
-try { pool = require('../lib/vaultbrix'); } catch(e) {
-  try { pool = require('../lib/postgres').pool; } catch(e2) { console.error('[SETTINGS] No DB pool found'); }
+try { pool = require('../lib/vaultbrix'); } catch (e) {
+  try { pool = require('../lib/postgres').pool; } catch (e2) { console.error('[SETTINGS] No DB pool found'); }
 }
 
 const SCHEMA = 'tenant_vutler';
@@ -87,6 +88,7 @@ async function readSettingsKV(wsId) {
     snipara_project_slug: get('snipara_project_slug', null) || null,
     snipara_client_id: get('snipara_client_id', null) || null,
     snipara_swarm_id: get('snipara_swarm_id', null) || null,
+    rlm_runtime_policy: normalizeWorkspaceRlmRuntimePolicy(map['rlm_runtime_policy']),
     notification_email: get('notification_email', null) || null,
     notification_settings: normalizeNotificationSettings(map['notification_settings']),
     updated_at: get('updated_at', null) || null,
@@ -294,7 +296,9 @@ router.get('/', async (req, res) => {
       if (r.rows.length === 0) {
         try {
           await pool.query(`INSERT INTO ${SCHEMA}.workspace_settings (workspace_id) VALUES ($1)`, [wsId]);
-        } catch (_) {}
+        } catch (_) {
+          // Ignore duplicate insert races while warming the flat layout row.
+        }
         r = await pool.query(`SELECT * FROM ${SCHEMA}.workspace_settings WHERE workspace_id = $1 LIMIT 1`, [wsId]);
       }
       const r0 = r.rows[0] || {};
@@ -336,6 +340,7 @@ router.get('/', async (req, res) => {
       snipara_project_slug: row.snipara_project_slug || null,
       snipara_client_id: row.snipara_client_id || null,
       snipara_swarm_id: row.snipara_swarm_id || null,
+      rlm_runtime_policy: normalizeWorkspaceRlmRuntimePolicy(row.rlm_runtime_policy),
       updated_at: row.updated_at || null,
       workspace_name: row.name || 'My Workspace',
       workspace_description: row.description || '',
@@ -377,6 +382,7 @@ router.put('/', async (req, res) => {
     const snipara_project_slug = hasOwn(body, 'snipara_project_slug') ? body.snipara_project_slug : extract('snipara_project_slug');
     const snipara_client_id = hasOwn(body, 'snipara_client_id') ? body.snipara_client_id : extract('snipara_client_id');
     const snipara_swarm_id = hasOwn(body, 'snipara_swarm_id') ? body.snipara_swarm_id : extract('snipara_swarm_id');
+    const rlm_runtime_policy = hasOwn(body, 'rlm_runtime_policy') ? body.rlm_runtime_policy : extract('rlm_runtime_policy');
 
     const layout = await detectSettingsLayout();
     const syncedDefaultProvider = default_provider !== undefined
@@ -400,7 +406,10 @@ router.put('/', async (req, res) => {
         snipara_project_id,
         snipara_project_slug,
         snipara_client_id,
-        snipara_swarm_id
+        snipara_swarm_id,
+        rlm_runtime_policy: rlm_runtime_policy !== undefined
+          ? normalizeWorkspaceRlmRuntimePolicy(rlm_runtime_policy)
+          : undefined,
       };
       for (const [k, v] of Object.entries(updates)) {
         if (v !== undefined && v !== null) {

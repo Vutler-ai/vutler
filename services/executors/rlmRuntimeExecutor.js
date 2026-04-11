@@ -3,6 +3,10 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { isSandboxEligibleAgentType } = require('../agentTypeProfiles');
+const {
+  resolveAgentRlmRuntimePreference,
+  resolveWorkspaceRlmRuntimePolicy,
+} = require('./rlmRuntimePolicy');
 
 const DEFAULT_RLM_ENV = String(process.env.RLM_RUNTIME_ENV || 'docker').trim() || 'docker';
 const DEFAULT_TIMEOUT_BUFFER_MS = Number(process.env.RLM_RUNTIME_TIMEOUT_BUFFER_MS || 3_000);
@@ -40,21 +44,103 @@ function agentLooksTechnical(agent = {}) {
   return TECHNICAL_ROLE_PATTERN.test(String(agent?.role || '').trim());
 }
 
-function canUseRlmRuntime(plan = {}, context = {}) {
-  if (!isRlmRuntimeEnabled()) return false;
-  if (normalizeLanguage(plan?.params?.language || plan?.input?.language) !== 'python') return false;
+async function resolveRlmRuntimeDecision(plan = {}, context = {}) {
+  if (!isRlmRuntimeEnabled()) {
+    return {
+      allowed: false,
+      reason: 'rlm_runtime_disabled',
+      workspacePolicy: null,
+      agentPreference: 'inherit',
+    };
+  }
+
+  const language = normalizeLanguage(plan?.params?.language || plan?.input?.language);
+  if (language !== 'python') {
+    return {
+      allowed: false,
+      reason: 'language_not_supported',
+      workspacePolicy: null,
+      agentPreference: 'inherit',
+    };
+  }
+
+  const workspaceId = plan?.workspace_id
+    || plan?.workspaceId
+    || context?.workspaceId
+    || context?.agent?.workspace_id
+    || context?.agent?.workspaceId
+    || null;
+  const workspacePolicy = await resolveWorkspaceRlmRuntimePolicy({
+    workspaceId,
+    db: context?.db,
+  });
 
   const agent = context?.agent || null;
-  if (!agent) return String(process.env.RLM_RUNTIME_ALLOW_UNKNOWN_AGENT || '').trim().toLowerCase() === 'true';
-  return agentLooksTechnical(agent);
+  const agentPreference = resolveAgentRlmRuntimePreference(agent);
+
+  if (!workspacePolicy.enabled) {
+    return {
+      allowed: false,
+      reason: 'workspace_policy_disabled',
+      workspaceId,
+      workspacePolicy,
+      agentPreference,
+    };
+  }
+
+  if (!agent) {
+    const allowUnknownAgent = String(process.env.RLM_RUNTIME_ALLOW_UNKNOWN_AGENT || '').trim().toLowerCase() === 'true';
+    return {
+      allowed: allowUnknownAgent && workspacePolicy.default_backend === 'rlm',
+      reason: allowUnknownAgent ? 'workspace_default_backend' : 'unknown_agent_not_allowed',
+      workspaceId,
+      workspacePolicy,
+      agentPreference,
+    };
+  }
+
+  if (!agentLooksTechnical(agent)) {
+    return {
+      allowed: false,
+      reason: 'agent_not_technical',
+      workspaceId,
+      workspacePolicy,
+      agentPreference,
+    };
+  }
+
+  if (agentPreference === 'native') {
+    return {
+      allowed: false,
+      reason: 'agent_forces_native',
+      workspaceId,
+      workspacePolicy,
+      agentPreference,
+    };
+  }
+
+  return {
+    allowed: agentPreference === 'rlm' || workspacePolicy.default_backend === 'rlm',
+    reason: agentPreference === 'rlm'
+      ? 'agent_forces_rlm'
+      : 'workspace_default_backend',
+    workspaceId,
+    workspacePolicy,
+    agentPreference,
+  };
 }
 
-function runRlmCommand({ bin, args, timeoutMs }) {
+async function canUseRlmRuntime(plan = {}, context = {}) {
+  const decision = await resolveRlmRuntimeDecision(plan, context);
+  return decision.allowed;
+}
+
+function runRlmCommand({ bin, args, timeoutMs, env = process.env }) {
   return new Promise((resolve, reject) => {
     const startedAt = new Date();
     const startedMs = Date.now();
     const child = spawn(bin, args, {
-      env: process.env,
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -97,7 +183,7 @@ function runRlmCommand({ bin, args, timeoutMs }) {
   });
 }
 
-async function executeRlmRuntimePlan(plan = {}, _context = {}) {
+async function executeRlmRuntimePlan(plan = {}, context = {}) {
   const language = normalizeLanguage(plan?.params?.language || plan?.input?.language);
   if (language !== 'python') {
     throw new Error('RLM Runtime backend currently supports Python sandbox executions only.');
@@ -110,16 +196,26 @@ async function executeRlmRuntimePlan(plan = {}, _context = {}) {
 
   const timeoutMs = Math.max(1_000, Number(plan?.timeout_ms || plan?.input?.timeoutMs || 15_000) || 15_000);
   const bin = resolveRlmRuntimeBinary();
-  const runtimeEnv = String(process.env.RLM_RUNTIME_ENV || DEFAULT_RLM_ENV).trim() || DEFAULT_RLM_ENV;
+  const decision = context?.rlmRuntimeDecision || await resolveRlmRuntimeDecision(plan, context);
+  const runtimeEnv = String(decision?.workspacePolicy?.runtime_env || process.env.RLM_RUNTIME_ENV || DEFAULT_RLM_ENV).trim() || DEFAULT_RLM_ENV;
+  const workspaceId = decision?.workspaceId || plan?.workspace_id || plan?.workspaceId || context?.workspaceId || null;
+  const agentId = context?.agent?.id || plan?.agentId || plan?.selectedAgentId || null;
   const commandResult = await runRlmCommand({
     bin,
     args: ['run', '--env', runtimeEnv, code],
     timeoutMs,
+    env: {
+      ...process.env,
+      VUTLER_SANDBOX_BACKEND: 'rlm_runtime',
+      ...(workspaceId ? { VUTLER_WORKSPACE_ID: String(workspaceId) } : {}),
+      ...(agentId ? { VUTLER_AGENT_ID: String(agentId) } : {}),
+    },
   });
 
   return {
     id: `rlm-${Date.now()}`,
     execution_id: `rlm-${Date.now()}`,
+    backend: 'rlm_runtime',
     language,
     status: commandResult.timed_out
       ? 'timeout'
@@ -131,6 +227,13 @@ async function executeRlmRuntimePlan(plan = {}, _context = {}) {
     started_at: commandResult.started_at,
     finished_at: commandResult.finished_at,
     signal: commandResult.signal,
+    metadata: {
+      workspace_id: workspaceId,
+      agent_id: agentId,
+      runtime_env: runtimeEnv,
+      agent_preference: decision?.agentPreference || 'inherit',
+      workspace_default_backend: decision?.workspacePolicy?.default_backend || 'native',
+    },
   };
 }
 
@@ -139,6 +242,7 @@ module.exports = {
   isRlmRuntimeEnabled,
   resolveRlmRuntimeBinary,
   agentLooksTechnical,
+  resolveRlmRuntimeDecision,
   canUseRlmRuntime,
   executeRlmRuntimePlan,
 };

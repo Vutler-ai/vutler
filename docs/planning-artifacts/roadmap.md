@@ -1,5 +1,5 @@
 # Roadmap — Vutler Platform
-Last update: 2026-03-31
+Last update: 2026-04-11
 
 ## Recently Delivered
 Items shipped in the last ~50 commits:
@@ -8,6 +8,7 @@ Items shipped in the last ~50 commits:
 - Workspace gating & sessions: server-set auth/features cookies, route guards, upgrade flows, and plan-aware snapshotting keep features aligned with the UI
 - Billing & providers: normalized limits, new workspace `llm_providers` table, trial/credit packs, social post quotas, and recommended plan flows from upgrade/billing pages
 - Snipara & workspace context: provisioning automation, workspace drive defaults, task links, memory view clarifications, resilient knowledge fallbacks, and `soul` doc fixes
+- Snipara governance depth: memory lifecycle, tiering/graveyard/contradiction surfaces, index health signals, and tenant-aware `RLM Runtime` sandbox policy landed across API, UI, and executor layers
 - Agent runtime hygiene: capability-aware runtime payloads, internal tool quota exemptions, and avatar path normalization/migrations for templates and workspaces
 - Nexus enterprise runtime, adapters, billing observability, command health, and hardened leases/expiry tracking remain in place with Claude/Nexus integration
 - Documentation extend: chat resource links roadmap + new product briefs (see docs index)
@@ -28,7 +29,7 @@ Queued after current sprint, unless priorities change:
   - Index health + search analytics surfaced in Vutler admin
   - Memory V2 lifecycle controls and operator visibility
   - deeper htask policy / metrics support
-  - optional RLM Runtime executor for technical agents without replacing the Vutler run engine
+  - optional tenant-aware RLM Runtime executor for technical agents without replacing the Vutler run engine
   - detailed plan tracked in `docs/planning-artifacts/snipara-integration-roadmap-2026-04.md`
 - Enterprise nexus webhook dispatch + async callback
 - Observability dashboard: streaming SSE + provider health

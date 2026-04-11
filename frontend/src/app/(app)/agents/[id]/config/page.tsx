@@ -315,6 +315,7 @@ function buildGovernanceDraft(agent: Partial<Agent>): AgentGovernance {
   return {
     approvals: agent.governance?.approvals || 'default',
     max_risk_level: agent.governance?.max_risk_level || 'medium',
+    sandbox_backend: agent.governance?.sandbox_backend || 'inherit',
   };
 }
 
@@ -778,6 +779,7 @@ export default function AgentConfigPage() {
   const [governanceDraft, setGovernanceDraft] = useState<AgentGovernance>({
     approvals: 'default',
     max_risk_level: 'medium',
+    sandbox_backend: 'inherit',
   });
 
   const loadSettings = useCallback(async () => {
@@ -1076,7 +1078,7 @@ export default function AgentConfigPage() {
             }
           : previous
       );
-      setSuccessBanner('Governance updated', 'Approval and risk limits were saved.');
+      setSuccessBanner('Governance updated', 'Approval, risk, and sandbox backend rules were saved.');
     } catch (error) {
       setErrorBanner('Unable to update governance', error);
     } finally {
@@ -1797,10 +1799,10 @@ export default function AgentConfigPage() {
               <CardHeader>
                 <CardTitle>Governance</CardTitle>
                 <CardDescription className="text-[#9ca3af]">
-                  Approval posture and risk ceiling for orchestrated execution through this agent.
+                  Approval posture, risk ceiling, and sandbox backend preference for orchestrated execution through this agent.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="grid gap-4 md:grid-cols-2">
+              <CardContent className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="approvals">Approvals</Label>
                   <select
@@ -1838,8 +1840,27 @@ export default function AgentConfigPage() {
                   </select>
                 </div>
 
-                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-[#9ca3af] md:col-span-2">
-                  The orchestrator still decides execution intent. Governance defines whether higher-risk or approval-heavy actions are allowed to proceed through this facade.
+                <div className="space-y-2">
+                  <Label htmlFor="sandbox-backend">Sandbox backend</Label>
+                  <select
+                    id="sandbox-backend"
+                    value={governanceDraft.sandbox_backend || 'inherit'}
+                    onChange={(event) =>
+                      setGovernanceDraft((previous) => ({
+                        ...previous,
+                        sandbox_backend: event.target.value,
+                      }))
+                    }
+                    className="flex h-10 w-full rounded-md border border-white/10 bg-[#0e0f1a] px-3 text-sm text-white outline-none"
+                  >
+                    <option value="inherit">Inherit workspace default</option>
+                    <option value="native">Force native sandbox</option>
+                    <option value="rlm">Force RLM Runtime</option>
+                  </select>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-[#9ca3af] md:col-span-3">
+                  The orchestrator still decides execution intent. Governance defines whether higher-risk actions are allowed and, for technical Python sandbox jobs, whether this agent inherits the workspace default, stays on the native sandbox, or explicitly opts into RLM Runtime.
                 </div>
               </CardContent>
               <CardFooter className="justify-end border-t border-white/10 pt-6">

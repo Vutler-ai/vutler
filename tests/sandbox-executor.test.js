@@ -2,7 +2,7 @@
 
 describe('sandboxExecutor', () => {
   let executeInSandboxMock;
-  let canUseRlmRuntimeMock;
+  let resolveRlmRuntimeDecisionMock;
   let executeRlmRuntimePlanMock;
   let executeSandboxPlan;
 
@@ -16,7 +16,15 @@ describe('sandboxExecutor', () => {
       stderr: '',
       exit_code: 0,
     });
-    canUseRlmRuntimeMock = jest.fn().mockReturnValue(false);
+    resolveRlmRuntimeDecisionMock = jest.fn().mockResolvedValue({
+      allowed: false,
+      reason: 'workspace_policy_disabled',
+      workspacePolicy: {
+        enabled: false,
+        default_backend: 'native',
+      },
+      agentPreference: 'inherit',
+    });
     executeRlmRuntimePlanMock = jest.fn().mockResolvedValue({
       execution_id: 'rlm-1',
       language: 'python',
@@ -30,7 +38,7 @@ describe('sandboxExecutor', () => {
       executeInSandbox: executeInSandboxMock,
     }));
     jest.doMock('../services/executors/rlmRuntimeExecutor', () => ({
-      canUseRlmRuntime: canUseRlmRuntimeMock,
+      resolveRlmRuntimeDecision: resolveRlmRuntimeDecisionMock,
       executeRlmRuntimePlan: executeRlmRuntimePlanMock,
     }));
 
@@ -50,7 +58,7 @@ describe('sandboxExecutor', () => {
       workspaceId: 'ws-1',
     });
 
-    expect(canUseRlmRuntimeMock).toHaveBeenCalled();
+    expect(resolveRlmRuntimeDecisionMock).toHaveBeenCalled();
     expect(executeRlmRuntimePlanMock).not.toHaveBeenCalled();
     expect(executeInSandboxMock).toHaveBeenCalledWith(
       'python',
@@ -66,7 +74,15 @@ describe('sandboxExecutor', () => {
   });
 
   test('uses RLM Runtime for eligible technical python executions', async () => {
-    canUseRlmRuntimeMock.mockReturnValue(true);
+    resolveRlmRuntimeDecisionMock.mockResolvedValue({
+      allowed: true,
+      reason: 'workspace_default_backend',
+      workspacePolicy: {
+        enabled: true,
+        default_backend: 'rlm',
+      },
+      agentPreference: 'inherit',
+    });
 
     const result = await executeSandboxPlan({
       params: {
@@ -90,6 +106,9 @@ describe('sandboxExecutor', () => {
       }),
       expect.objectContaining({
         agent: expect.objectContaining({ id: 'agent-1' }),
+        rlmRuntimeDecision: expect.objectContaining({
+          allowed: true,
+        }),
       })
     );
     expect(executeInSandboxMock).not.toHaveBeenCalled();
@@ -97,7 +116,15 @@ describe('sandboxExecutor', () => {
   });
 
   test('falls back to the native sandbox when RLM Runtime fails', async () => {
-    canUseRlmRuntimeMock.mockReturnValue(true);
+    resolveRlmRuntimeDecisionMock.mockResolvedValue({
+      allowed: true,
+      reason: 'agent_forces_rlm',
+      workspacePolicy: {
+        enabled: true,
+        default_backend: 'native',
+      },
+      agentPreference: 'rlm',
+    });
     executeRlmRuntimePlanMock.mockRejectedValue(new Error('rlm binary missing'));
 
     const result = await executeSandboxPlan({

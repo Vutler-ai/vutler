@@ -2,15 +2,19 @@
 
 const { executeInSandbox } = require('../sandbox');
 const {
-  canUseRlmRuntime,
+  resolveRlmRuntimeDecision,
   executeRlmRuntimePlan,
 } = require('./rlmRuntimeExecutor');
 
 async function executeSandboxPlan(plan = {}, context = {}) {
   const timeoutMs = plan.timeout_ms || plan.input?.timeoutMs;
-  if (canUseRlmRuntime(plan, context)) {
+  const rlmRuntimeDecision = await resolveRlmRuntimeDecision(plan, context);
+  if (rlmRuntimeDecision.allowed) {
     try {
-      return await executeRlmRuntimePlan(plan, context);
+      return await executeRlmRuntimePlan(plan, {
+        ...context,
+        rlmRuntimeDecision,
+      });
     } catch (error) {
       console.warn('[SandboxExecutor] RLM Runtime unavailable, falling back to native sandbox:', error.message);
     }

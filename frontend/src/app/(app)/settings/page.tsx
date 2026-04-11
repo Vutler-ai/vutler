@@ -17,6 +17,7 @@ import {
 import type {
   UserProfile,
   WorkspaceSettings,
+  WorkspaceRlmRuntimePolicy,
   Integration,
   AvailableProvider,
   Provider,
@@ -107,6 +108,49 @@ function normalizeDefaultProviderValue(value: unknown, providers: Provider[]): s
   if (byId) return byId.id;
   const byType = providers.find((provider) => provider.provider === raw);
   return byType?.id || raw;
+}
+
+type WorkspaceRlmRuntimeMode = "disabled" | "allowed" | "default_rlm";
+
+function normalizeWorkspaceRlmRuntimePolicy(value: unknown): WorkspaceRlmRuntimePolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      enabled: false,
+      default_backend: "native",
+      runtime_env: null,
+    };
+  }
+
+  const policy = value as Record<string, unknown>;
+  return {
+    enabled: policy.enabled === true,
+    default_backend: policy.default_backend === "rlm" ? "rlm" : "native",
+    runtime_env: typeof policy.runtime_env === "string" && policy.runtime_env.trim()
+      ? policy.runtime_env.trim()
+      : null,
+  };
+}
+
+function getWorkspaceRlmRuntimeMode(value: unknown): WorkspaceRlmRuntimeMode {
+  const policy = normalizeWorkspaceRlmRuntimePolicy(value);
+  if (!policy.enabled) return "disabled";
+  return policy.default_backend === "rlm" ? "default_rlm" : "allowed";
+}
+
+function buildWorkspaceRlmRuntimePolicy(mode: WorkspaceRlmRuntimeMode): WorkspaceRlmRuntimePolicy {
+  if (mode === "disabled") {
+    return {
+      enabled: false,
+      default_backend: "native",
+      runtime_env: null,
+    };
+  }
+
+  return {
+    enabled: true,
+    default_backend: mode === "default_rlm" ? "rlm" : "native",
+    runtime_env: null,
+  };
 }
 
 function buildSniparaHttpConfigSnippet({
@@ -370,6 +414,9 @@ function WorkspaceTab({
     normalizeDefaultProviderValue(settings?.default_provider, providers)
   );
   const [driveRoot, setDriveRoot] = useState(getStr(settings?.drive_root) || "/projects/Vutler");
+  const [rlmRuntimeMode, setRlmRuntimeMode] = useState<WorkspaceRlmRuntimeMode>(
+    getWorkspaceRlmRuntimeMode((settings as Record<string, unknown>)?.rlm_runtime_policy)
+  );
   const [sniparaKey, setSniparaKey] = useState(getStr((settings as Record<string, unknown>)?.snipara_api_key));
   const [sniparaProjectId, setSniparaProjectId] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_id));
   const [sniparaProjectSlug, setSniparaProjectSlug] = useState(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
@@ -392,6 +439,7 @@ function WorkspaceTab({
       setTimezone(getStr(settings.timezone) || "UTC");
       setDefaultProvider(normalizeDefaultProviderValue(settings.default_provider, providers));
       setDriveRoot(getStr(settings.drive_root) || "/projects/Vutler");
+      setRlmRuntimeMode(getWorkspaceRlmRuntimeMode((settings as Record<string, unknown>)?.rlm_runtime_policy));
       setSniparaKey(getStr((settings as Record<string, unknown>)?.snipara_api_key));
       setSniparaProjectId(getStr((settings as Record<string, unknown>)?.snipara_project_id));
       setSniparaProjectSlug(getStr((settings as Record<string, unknown>)?.snipara_project_slug));
@@ -446,6 +494,7 @@ function WorkspaceTab({
           drive_root: { value: driveRoot, type: "text" },
         },
         default_provider: defaultProvider,
+        rlm_runtime_policy: buildWorkspaceRlmRuntimePolicy(rlmRuntimeMode),
       };
       if (SHOW_OPEN_SOURCE_SNIPARA_SETTINGS) {
         // Only send Snipara fields if they contain real values (not masked)
@@ -544,6 +593,21 @@ function WorkspaceTab({
               placeholder="/projects/Vutler"
               className={cx.input}
             />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label className={cx.label}>Sandbox Runtime</Label>
+            <select
+              value={rlmRuntimeMode}
+              onChange={(e) => setRlmRuntimeMode(e.target.value as WorkspaceRlmRuntimeMode)}
+              className="w-full h-9 px-3 bg-[#1f2028] border border-[rgba(255,255,255,0.07)] rounded-md text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+            >
+              <option value="disabled" className="bg-[#1f2028]">Native sandbox only</option>
+              <option value="allowed" className="bg-[#1f2028]">Allow RLM Runtime by agent policy</option>
+              <option value="default_rlm" className="bg-[#1f2028]">Prefer RLM Runtime for technical Python runs</option>
+            </select>
+            <p className="text-xs text-[#6b7280]">
+              Workspace guardrail for multitenant isolation. Agents still need sandbox access and a technical role; they can override this in their governance settings.
+            </p>
           </div>
         </div>
 

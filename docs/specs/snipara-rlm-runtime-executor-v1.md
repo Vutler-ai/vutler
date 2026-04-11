@@ -10,6 +10,8 @@ Add a bounded `RLM Runtime` integration for technical autonomy without replacing
 This slice covers:
 - an optional `RLM Runtime` backend inside the existing sandbox executor
 - Python-only execution for eligible technical agents
+- workspace-level enablement and default backend selection
+- agent-level backend preference through governance
 - automatic fallback to the native Vutler sandbox when `RLM Runtime` is disabled or unavailable
 
 It does not cover:
@@ -31,15 +33,25 @@ Vutler still owns:
 
 Files:
 - [services/executors/rlmRuntimeExecutor.js](/Users/alopez/Devs/Vutler/services/executors/rlmRuntimeExecutor.js:1)
+- [services/executors/rlmRuntimePolicy.js](/Users/alopez/Devs/Vutler/services/executors/rlmRuntimePolicy.js:1)
 - [services/executors/sandboxExecutor.js](/Users/alopez/Devs/Vutler/services/executors/sandboxExecutor.js:1)
+- [services/agentAccessPolicyService.js](/Users/alopez/Devs/Vutler/services/agentAccessPolicyService.js:175)
+- [api/settings.js](/Users/alopez/Devs/Vutler/api/settings.js:1)
+- [frontend/src/app/(app)/settings/page.tsx](/Users/alopez/Devs/Vutler/frontend/src/app/(app)/settings/page.tsx:1)
+- [frontend/src/app/(app)/agents/[id]/config/page.tsx](/Users/alopez/Devs/Vutler/frontend/src/app/(app)/agents/[id]/config/page.tsx:1)
 - [tests/sandbox-executor.test.js](/Users/alopez/Devs/Vutler/tests/sandbox-executor.test.js:1)
+- [tests/rlm-runtime-policy.test.js](/Users/alopez/Devs/Vutler/tests/rlm-runtime-policy.test.js:1)
 
 Behavior:
 - disabled unless `RLM_RUNTIME_ENABLED=true`
 - only considered for Python sandbox executions
 - only considered for technical/security/qa/devops/engineering-style agents
+- workspace must explicitly enable `rlm_runtime_policy`
+- workspace may allow RLM Runtime without making it the default backend
+- each agent may set `governance.sandbox_backend` to `inherit`, `native`, or `rlm`
 - executes `rlm run --env <env> <code>`
 - if the binary is missing or execution errors before completion, Vutler falls back to `executeInSandbox()`
+- subprocesses receive `VUTLER_WORKSPACE_ID` and `VUTLER_AGENT_ID` for traceability
 
 Binary resolution order:
 1. `RLM_RUNTIME_BIN`
@@ -53,16 +65,37 @@ Config:
 - `RLM_RUNTIME_ENV` default `docker`
 - `RLM_RUNTIME_TIMEOUT_BUFFER_MS`
 - `RLM_RUNTIME_ALLOW_UNKNOWN_AGENT` for exceptional local testing only
+- workspace setting `rlm_runtime_policy`
+  - `enabled: boolean`
+  - `default_backend: native | rlm`
+  - optional `runtime_env`
+- agent governance `sandbox_backend`
+  - `inherit`
+  - `native`
+  - `rlm`
+
+## Multitenant Rule
+
+`RLM Runtime` is no longer treated as an environment-global behavior.
+
+It is allowed only when all of the following are true:
+- runtime feature flag is enabled on the host
+- the workspace explicitly enables `rlm_runtime_policy`
+- the execution is a Python sandbox run
+- the agent is technically eligible for sandbox usage
+- the agent inherits a workspace default of `rlm` or explicitly forces `rlm`
+
+This keeps backend selection inside Vutler's tenant policy boundary instead of making one VPS-level flag affect every workspace.
 
 ## Validation
 
 Validated locally on 2026-04-11:
-- `npx jest tests/sandbox-executor.test.js tests/orchestration/action-router.test.js --runInBand`
-- `npx eslint services/executors/rlmRuntimeExecutor.js services/executors/sandboxExecutor.js tests/sandbox-executor.test.js`
+- `npx jest tests/sandbox-executor.test.js tests/rlm-runtime-policy.test.js --runInBand`
+- `pnpm exec tsc --noEmit`
+- `pnpm exec eslint src/app/\(app\)/settings/page.tsx src/app/\(app\)/agents/\[id\]/config/page.tsx src/lib/api/types.ts`
 
 ## Remaining Follow-Ups
 
 - surface backend selection and fallback telemetry to operators
 - decide whether JavaScript support should stay on native sandbox only
-- expose a workspace or agent policy flag if product wants explicit opt-in instead of env-only activation
 - verify the VPS `rlm` binary and env config before enabling in production
