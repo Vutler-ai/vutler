@@ -13,6 +13,8 @@ import {
   getSniparaSearchAnalytics,
   getSniparaHtaskPolicy,
   getSniparaHtaskMetrics,
+  getSniparaSharedTemplates,
+  getSniparaSharedCollections,
 } from "@/lib/api/endpoints/memory";
 import type {
   UserProfile,
@@ -29,6 +31,8 @@ import type {
   SniparaSearchAnalytics,
   SniparaHtaskPolicy,
   SniparaHtaskMetrics,
+  SniparaSharedTemplates,
+  SniparaSharedCollections,
 } from "@/lib/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -470,6 +474,14 @@ function WorkspaceTab({
     "/api/v1/snipara/admin/htask-metrics",
     getSniparaHtaskMetrics
   );
+  const { data: sniparaSharedTemplates, isLoading: loadingSniparaTemplates } = useApi<SniparaSharedTemplates>(
+    "/api/v1/snipara/admin/shared/templates",
+    getSniparaSharedTemplates
+  );
+  const { data: sniparaSharedCollections, isLoading: loadingSniparaCollections } = useApi<SniparaSharedCollections>(
+    "/api/v1/snipara/admin/shared/collections?include_public=true",
+    () => getSniparaSharedCollections(true)
+  );
 
   const transportOk = sniparaHealth?.ok === true;
   const sniparaConfigured = sniparaStatus?.configured ?? Boolean(sniparaProjectSlug || sniparaKey);
@@ -477,10 +489,14 @@ function WorkspaceTab({
     || loadingSniparaHealth
     || loadingSniparaIndex
     || loadingSniparaAnalytics
+    || loadingSniparaTemplates
+    || loadingSniparaCollections
     || Boolean(sniparaStatus)
     || Boolean(sniparaHealth)
     || Boolean(sniparaIndexHealth)
-    || Boolean(sniparaSearchAnalytics);
+    || Boolean(sniparaSearchAnalytics)
+    || Boolean(sniparaSharedTemplates)
+    || Boolean(sniparaSharedCollections);
 
   const handleSave = async () => {
     setSaving(true);
@@ -701,9 +717,14 @@ function WorkspaceTab({
                 </Badge>
               </div>
 
-              {(loadingSniparaStatus || loadingSniparaHealth || loadingSniparaIndex || loadingSniparaAnalytics) ? (
+              {(loadingSniparaStatus
+                || loadingSniparaHealth
+                || loadingSniparaIndex
+                || loadingSniparaAnalytics
+                || loadingSniparaTemplates
+                || loadingSniparaCollections) ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {Array.from({ length: 4 }).map((_, index) => (
+                  {Array.from({ length: 6 }).map((_, index) => (
                     <Skeleton key={index} className="h-20 rounded-xl bg-[#14151f]" />
                   ))}
                 </div>
@@ -744,6 +765,28 @@ function WorkspaceTab({
                         {sniparaSearchAnalytics?.avg_latency_ms != null ? ` · ${Math.round(sniparaSearchAnalytics.avg_latency_ms)} ms avg` : ""}
                       </p>
                     </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Shared Collections</p>
+                      <p className="text-lg font-semibold text-white mt-2">
+                        {sniparaSharedCollections?.count ?? 0}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {(sniparaSharedCollections?.collections ?? []).reduce((sum, item) => sum + (item.document_count || 0), 0)} docs
+                        {" · "}
+                        {(sniparaSharedCollections?.collections ?? []).reduce((sum, item) => sum + (item.template_count || 0), 0)} templates
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Shared Templates</p>
+                      <p className="text-lg font-semibold text-white mt-2">
+                        {sniparaSharedTemplates?.total_count ?? 0}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaSharedTemplates?.categories?.length
+                          ? sniparaSharedTemplates.categories.slice(0, 3).join(" · ")
+                          : "No categories exposed"}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -771,6 +814,28 @@ function WorkspaceTab({
                         {sniparaHtaskMetrics?.supported === false
                           ? "Metrics unavailable."
                           : `${sniparaHtaskMetrics?.blocked_count ?? 0} blocked · ${sniparaHtaskMetrics?.stale_count ?? 0} stale · ${sniparaHtaskMetrics?.open_count ?? 0} open`}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Shared Context Surface</p>
+                      <p className="text-sm text-white mt-2">
+                        {(sniparaSharedCollections?.collections ?? []).length > 0
+                          ? `${sniparaSharedCollections?.collections?.[0]?.name || "Shared collections"} available for workspace standards and reusable prompts.`
+                          : "No shared collections exposed yet for this workspace."}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {(sniparaSharedTemplates?.templates ?? []).length > 0
+                          ? `First template: ${sniparaSharedTemplates?.templates?.[0]?.name || "n/a"}`
+                          : "Prompt templates are not exposed yet for this workspace plan."}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Recursive Context</p>
+                      <p className="text-sm text-white mt-2">
+                        FULL-mode task context now uses Snipara decomposition plus multi-query retrieval before falling back to a single context query.
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        Wired tools: rlm_decompose · rlm_multi_query · rlm_multi_project_query · rlm_inject/context.
                       </p>
                     </div>
                   </div>

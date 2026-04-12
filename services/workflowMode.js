@@ -155,6 +155,39 @@ class WorkflowModeSelector {
     const workspaceId = task.workspace_id || task.workspaceId || coordinator?.workspaceId || null;
     const gateway = createSniparaGateway({ workspaceId });
     const agentMemoryRef = String(agentId || '').trim();
+    const relpContextPromise = (async () => {
+      await gateway.session.inject({
+        context: `Task focus: ${taskText}`,
+        append: false,
+      }).catch(() => null);
+
+      try {
+        const decomposition = await gateway.workflow.decompose({
+          query: taskText,
+          max_subqueries: 4,
+        });
+        const subqueries = Array.isArray(decomposition?.subqueries)
+          ? decomposition.subqueries
+            .map((entry) => String(entry || '').trim())
+            .filter(Boolean)
+            .slice(0, 4)
+          : [];
+
+        if (subqueries.length > 0) {
+          return gateway.knowledge.multiQuery({
+            queries: subqueries,
+            tokens_per_query: 2000,
+          });
+        }
+      } catch (_) {
+        // Fall back to the primary context query below.
+      }
+
+      return coordinator.sniparaCall('rlm_context_query', {
+        query: taskText,
+        max_tokens: 8000,
+      }).catch(() => null);
+    })();
 
     // Phase 1: Context Gathering (parallel)
     const [shared, memories, deepContext] = await Promise.all([
@@ -174,24 +207,23 @@ class WorkflowModeSelector {
         workspaceId,
       }).catch(() => null),
 
-      // Deep context query with higher token budget
-      coordinator.sniparaCall('rlm_context_query', {
-        query: taskText,
-        max_tokens: 8000,
-      }).catch(() => null),
+      // RELP-first deep context, then fallback to the primary context query.
+      relpContextPromise,
     ]);
 
     // Phase 2: Planning
     let plan = null;
     try {
-      plan = await coordinator.sniparaCall('rlm_plan', {
-        description: task.description || task.title,
+      plan = await gateway.workflow.plan({
+        query: taskText,
+        depth: 2,
       });
     } catch {
       // rlm_plan may not be available — fallback to rlm_decompose
       try {
-        plan = await coordinator.sniparaCall('rlm_decompose', {
-          task: task.description || task.title,
+        plan = await gateway.workflow.decompose({
+          query: taskText,
+          max_subqueries: 5,
         });
       } catch {
         // No planning available — proceed without

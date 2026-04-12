@@ -393,6 +393,22 @@ Done when:
 - one agent's durable discovery can be reused safely by other agents
 - workspace-wide instructions and standards are inspectable, governed, and reusable
 
+Status update 2026-04-12:
+- Vutler now exposes shared Snipara collections and prompt templates in workspace admin surfaces
+- the Snipara gateway now wires:
+  - `rlm_list_collections`
+  - `rlm_list_templates`
+  - `rlm_get_template`
+  - `rlm_upload_shared_document`
+  - `rlm_inject`
+  - `rlm_context`
+  - `rlm_clear_context`
+  - `rlm_multi_query`
+  - `rlm_multi_project_query`
+  - `rlm_repl_context`
+- FULL workflow mode now uses Snipara recursive decomposition plus `rlm_multi_query` before falling back to a single `rlm_context_query`
+- group-memory governance and shared-document authoring UI are still not productized
+
 ### Phase 5 - Improve Distribution and External Adoption
 
 Target: after runtime gaps are closed

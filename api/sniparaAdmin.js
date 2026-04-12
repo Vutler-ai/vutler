@@ -151,6 +151,58 @@ function normalizeHtaskMetricsPayload(payload = {}) {
   };
 }
 
+function normalizeSharedTemplatesPayload(payload = {}) {
+  const templates = Array.isArray(payload.templates) ? payload.templates : [];
+  const categories = Array.isArray(payload.categories)
+    ? payload.categories.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+
+  return {
+    supported: true,
+    degraded: false,
+    total_count: toNumber(payload.total_count, payload.count, templates.length) || 0,
+    categories,
+    templates: templates.slice(0, 20).map((template) => ({
+      id: template.id || null,
+      name: template.name || template.slug || 'Untitled template',
+      slug: template.slug || null,
+      description: template.description || null,
+      category: template.category || null,
+      collection_name: template.collection_name || template.collection || null,
+    })),
+    raw: payload,
+  };
+}
+
+function normalizeSharedCollectionsPayload(payload = {}) {
+  const collections = Array.isArray(payload.collections) ? payload.collections : [];
+
+  return {
+    supported: true,
+    degraded: false,
+    count: toNumber(payload.count, payload.total_count, collections.length) || 0,
+    collections: collections.slice(0, 20).map((collection) => ({
+      id: collection.id || null,
+      name: collection.name || collection.slug || 'Untitled collection',
+      slug: collection.slug || null,
+      description: collection.description || null,
+      scope: collection.scope || null,
+      access_type: collection.access_type || null,
+      document_count: toNumber(
+        collection?._count?.documents,
+        collection.document_count,
+        collection.documents
+      ) || 0,
+      template_count: toNumber(
+        collection?._count?.templates,
+        collection.template_count,
+        collection.templates
+      ) || 0,
+    })),
+    raw: payload,
+  };
+}
+
 async function callAdminSniparaTool(req, res, toolCall, normalizer, fallbackMessage) {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -259,6 +311,28 @@ router.get('/htask-metrics', async (req, res) => {
   );
 });
 
+router.get('/shared/templates', async (req, res) => {
+  const category = String(req.query.category || '').trim();
+  return callAdminSniparaTool(
+    req,
+    res,
+    (gateway) => gateway.shared.listTemplates(category ? { category } : {}),
+    (payload) => normalizeSharedTemplatesPayload(payload),
+    'Snipara shared templates are unavailable for this workspace or plan.'
+  );
+});
+
+router.get('/shared/collections', async (req, res) => {
+  const includePublic = String(req.query.include_public || 'true').trim().toLowerCase() !== 'false';
+  return callAdminSniparaTool(
+    req,
+    res,
+    (gateway) => gateway.shared.listCollections({ include_public: includePublic }),
+    (payload) => normalizeSharedCollectionsPayload(payload),
+    'Snipara shared collections are unavailable for this workspace or plan.'
+  );
+});
+
 router.post('/provision', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -287,3 +361,12 @@ router.post('/provision', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__private = {
+  normalizeToolError,
+  normalizeIndexHealthPayload,
+  normalizeSearchAnalyticsPayload,
+  normalizeHtaskPolicyPayload,
+  normalizeHtaskMetricsPayload,
+  normalizeSharedTemplatesPayload,
+  normalizeSharedCollectionsPayload,
+};

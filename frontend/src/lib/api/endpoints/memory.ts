@@ -15,6 +15,8 @@ import type {
   SniparaSearchAnalytics,
   SniparaHtaskPolicy,
   SniparaHtaskMetrics,
+  SniparaSharedTemplates,
+  SniparaSharedCollections,
 } from '../types';
 
 export interface RecallMemoriesOptions {
@@ -191,4 +193,20 @@ export async function getSniparaHtaskPolicy(): Promise<SniparaHtaskPolicy> {
 export async function getSniparaHtaskMetrics(): Promise<SniparaHtaskMetrics> {
   const response = await apiFetch<{ data?: SniparaHtaskMetrics }>('/api/v1/snipara/admin/htask-metrics');
   return response.data as SniparaHtaskMetrics;
+}
+
+export async function getSniparaSharedTemplates(category?: string): Promise<SniparaSharedTemplates> {
+  const params = new URLSearchParams();
+  if (category) params.set('category', category);
+  const response = await apiFetch<{ data?: SniparaSharedTemplates }>(
+    `/api/v1/snipara/admin/shared/templates${params.toString() ? `?${params}` : ''}`
+  );
+  return response.data as SniparaSharedTemplates;
+}
+
+export async function getSniparaSharedCollections(includePublic = true): Promise<SniparaSharedCollections> {
+  const response = await apiFetch<{ data?: SniparaSharedCollections }>(
+    `/api/v1/snipara/admin/shared/collections?include_public=${includePublic ? 'true' : 'false'}`
+  );
+  return response.data as SniparaSharedCollections;
 }

@@ -106,4 +106,65 @@ describe('SniparaGateway workspace requirements', () => {
       })
     );
   });
+
+  test('exposes recursive, session, and shared-context wrappers through the shared workspace context', async () => {
+    const { createSniparaGateway, callSniparaTool } = loadGateway();
+    const gateway = createSniparaGateway({ workspaceId: 'ws-42' });
+
+    await gateway.knowledge.multiQuery({ queries: ['auth flow', 'jwt refresh'], tokens_per_query: 1500 });
+    await gateway.knowledge.multiProjectQuery({ query: 'multi-tenant auth', max_tokens: 6000 });
+    await gateway.session.inject({ context: 'Task focus: auth hardening', append: false });
+    await gateway.shared.listCollections({ include_public: true });
+    await gateway.shared.listTemplates({ category: 'review' });
+    await gateway.runtime.replContext({ action: 'inject', key: 'auth_docs', query: 'auth flow' });
+
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        workspaceId: 'ws-42',
+        toolName: 'rlm_multi_query',
+        args: { queries: ['auth flow', 'jwt refresh'], tokens_per_query: 1500 },
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        workspaceId: 'ws-42',
+        toolName: 'rlm_multi_project_query',
+        args: { query: 'multi-tenant auth', max_tokens: 6000 },
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        workspaceId: 'ws-42',
+        toolName: 'rlm_inject',
+        args: { context: 'Task focus: auth hardening', append: false },
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        workspaceId: 'ws-42',
+        toolName: 'rlm_list_collections',
+        args: { include_public: true },
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        workspaceId: 'ws-42',
+        toolName: 'rlm_list_templates',
+        args: { category: 'review' },
+      })
+    );
+    expect(callSniparaTool).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({
+        workspaceId: 'ws-42',
+        toolName: 'rlm_repl_context',
+        args: { action: 'inject', key: 'auth_docs', query: 'auth flow' },
+      })
+    );
+  });
 });

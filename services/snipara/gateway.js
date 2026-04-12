@@ -7,6 +7,30 @@ function extractSniparaText(response) {
   if (!response) return '';
   const result = response.result || response;
   if (typeof result === 'string') return result;
+  if (Array.isArray(result.results)) {
+    return result.results.map((entry) => {
+      if (typeof entry?.content === 'string') return entry.content;
+      if (Array.isArray(entry?.sections)) {
+        return entry.sections
+          .map((section) => section.content || section.text || section.title || '')
+          .filter(Boolean)
+          .join('\n');
+      }
+      return entry?.query || '';
+    }).filter(Boolean).join('\n\n');
+  }
+  if (Array.isArray(result.templates)) {
+    return result.templates
+      .map((template) => [template.name, template.description].filter(Boolean).join(' — '))
+      .filter(Boolean)
+      .join('\n');
+  }
+  if (Array.isArray(result.collections)) {
+    return result.collections
+      .map((collection) => [collection.name, collection.description].filter(Boolean).join(' — '))
+      .filter(Boolean)
+      .join('\n');
+  }
   if (result.content) {
     if (Array.isArray(result.content)) return result.content.map((c) => c.text || '').join('\n');
     if (typeof result.content === 'string') return result.content;
@@ -99,6 +123,8 @@ class SniparaGateway {
 
     this.knowledge = {
       contextQuery: (input = {}) => this.call('rlm_context_query', input),
+      multiQuery: (input = {}) => this.call('rlm_multi_query', input),
+      multiProjectQuery: (input = {}) => this.call('rlm_multi_project_query', input),
       sharedContext: (input = {}) => this.call('rlm_shared_context', input),
       loadDocument: (input = {}) => this.call('rlm_load_document', input),
       loadProject: (input = {}) => this.call('rlm_load_project', input),
@@ -115,6 +141,25 @@ class SniparaGateway {
       plan: (input = {}) => this.call('rlm_plan', input),
       decompose: (input = {}) => this.call('rlm_decompose', input),
       orchestrate: (input = {}) => this.call('rlm_orchestrate', input),
+    };
+
+    this.session = {
+      inject: (input = {}) => this.call('rlm_inject', input),
+      context: (input = {}) => this.call('rlm_context', input),
+      clearContext: (input = {}) => this.call('rlm_clear_context', input),
+    };
+
+    this.shared = {
+      listTemplates: (input = {}) => this.call('rlm_list_templates', input),
+      getTemplate: (input = {}) => this.call('rlm_get_template', input),
+      listCollections: (input = {}) => this.call('rlm_list_collections', input),
+      uploadDocument: (input = {}) => this.call('rlm_upload_shared_document', input),
+    };
+
+    this.runtime = {
+      loadDocument: (input = {}) => this.call('rlm_load_document', input),
+      loadProject: (input = {}) => this.call('rlm_load_project', input),
+      replContext: (input = {}) => this.call('rlm_repl_context', input),
     };
 
     this.summaries = {

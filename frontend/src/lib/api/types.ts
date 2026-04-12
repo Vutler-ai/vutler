@@ -2112,6 +2112,47 @@ export interface SniparaHtaskMetrics {
   raw?: Record<string, unknown>;
 }
 
+export interface SniparaSharedTemplate {
+  id?: string | null;
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  category?: string | null;
+  collection_name?: string | null;
+}
+
+export interface SniparaSharedTemplates {
+  supported: boolean;
+  degraded: boolean;
+  total_count: number;
+  categories: string[];
+  templates: SniparaSharedTemplate[];
+  message?: string | null;
+  error?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
+}
+
+export interface SniparaSharedCollection {
+  id?: string | null;
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  scope?: string | null;
+  access_type?: string | null;
+  document_count: number;
+  template_count: number;
+}
+
+export interface SniparaSharedCollections {
+  supported: boolean;
+  degraded: boolean;
+  count: number;
+  collections: SniparaSharedCollection[];
+  message?: string | null;
+  error?: Record<string, unknown> | null;
+  raw?: Record<string, unknown>;
+}
+
 // ─── Admin ───────────────────────────────────────────────────────────────────
 
 export interface AdminStats {
