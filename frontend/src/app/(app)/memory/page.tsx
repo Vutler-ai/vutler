@@ -11,6 +11,9 @@ import {
   updateWorkspaceKnowledgePolicy,
   getWorkspaceSessionBrief,
   updateWorkspaceSessionBrief,
+  getWorkspaceJournal,
+  updateWorkspaceJournal,
+  summarizeWorkspaceJournal,
   getTemplateScopes,
   searchMemory,
   getAgentMemorySummary,
@@ -19,6 +22,7 @@ import type {
   Agent,
   WorkspaceKnowledge,
   ContinuityBrief,
+  JournalState,
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
@@ -317,6 +321,125 @@ function WorkspaceSessionBriefSection() {
             className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
           >
             {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save Brief'}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WorkspaceJournalSection() {
+  const today = new Date().toISOString().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState(today);
+  const { data, error, isLoading, mutate } = useApi<JournalState>(
+    `/api/v1/memory/journal/workspace?date=${selectedDate}`,
+    () => getWorkspaceJournal(selectedDate)
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'saved' | 'summarized' | 'error'>('idle');
+
+  useEffect(() => {
+    setDraft(null);
+    setStatus('idle');
+  }, [selectedDate]);
+
+  const content = draft ?? data?.content ?? '';
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus('idle');
+    try {
+      const updated = await updateWorkspaceJournal(selectedDate, content);
+      await mutate(updated, { revalidate: false });
+      setDraft(updated.content);
+      setStatus('saved');
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSummarize() {
+    setSummarizing(true);
+    setStatus('idle');
+    try {
+      const result = await summarizeWorkspaceJournal(selectedDate);
+      await mutate(result.journal, { revalidate: false });
+      setDraft(result.journal.content);
+      setStatus('summarized');
+      setTimeout(() => setStatus('idle'), 3000);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
+      <SectionHeader
+        icon={<Brain className="w-4 h-4" />}
+        title="Workspace Daily Journal"
+        subtitle="Operational notes for the day. Compact them into the workspace session brief when needed."
+      />
+
+      <div className="mb-4 max-w-[220px]">
+        <label className="text-xs uppercase tracking-wide text-[#6b7280]">Journal Date</label>
+        <Input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value || today)}
+          className="mt-1 bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white"
+        />
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-4 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
+      ) : (
+        <Textarea
+          value={content}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Capture the important events, decisions, failures, and operator notes for this day."
+          className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[180px] text-sm focus:border-blue-500/50"
+        />
+      )}
+
+      <div className="flex items-center justify-between mt-3 gap-3">
+        <div className="text-xs text-[#4b5563]">
+          {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'No journal saved for this date'}
+          {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+        </div>
+        <div className="flex items-center gap-2">
+          {status === 'saved' && <span className="text-xs text-emerald-400">Saved</span>}
+          {status === 'summarized' && <span className="text-xs text-emerald-400">Brief refreshed</span>}
+          {status === 'error' && <span className="text-xs text-red-400">Action failed</span>}
+          <Button
+            size="sm"
+            onClick={handleSummarize}
+            disabled={summarizing || isLoading || error !== undefined || !content.trim() || data?.readOnly}
+            className="bg-[#1f2937] hover:bg-[#111827] text-white disabled:opacity-40"
+          >
+            {summarizing ? 'Compacting...' : 'Summarize To Brief'}
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || isLoading || error !== undefined || !content.trim() || data?.readOnly}
+            className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+          >
+            {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save Journal'}
           </Button>
         </div>
       </div>
@@ -706,6 +829,7 @@ export default function MemoryPage() {
       <div className="space-y-6">
         <WorkspaceKnowledgeSection />
         <WorkspaceSessionBriefSection />
+        <WorkspaceJournalSection />
         <AgentMemoriesSection />
         <SharedKnowledgeSection />
         <SearchAllMemorySection />

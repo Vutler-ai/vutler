@@ -173,6 +173,11 @@ class SniparaGateway {
       delete: (input = {}) => this.call('rlm_delete_summary', input),
     };
 
+    this.journal = {
+      append: (input = {}) => this.call('rlm_journal_append', input),
+      summarize: (input = {}) => this.call('rlm_journal_summarize', input),
+    };
+
     this.coordination = {
       swarmCreate: (input = {}) => this.call('rlm_swarm_create', input),
       swarmJoin: (input = {}) => this.call('rlm_swarm_join', input),

@@ -18,8 +18,11 @@ import {
   updateAgentProfileBrief,
   getAgentSessionBrief,
   updateAgentSessionBrief,
+  getAgentJournal,
+  updateAgentJournal,
+  summarizeAgentJournal,
 } from '@/lib/api/endpoints/memory';
-import type { Memory, AgentContext, ContinuityBrief } from '@/lib/api/types';
+import type { Memory, AgentContext, ContinuityBrief, JournalState } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -201,6 +204,125 @@ function ContinuityEditor({ cacheKey, title, subtitle, placeholder, load, save }
             className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
           >
             {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save Brief'}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function JournalEditor({ agentId }: { agentId: string }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState(today);
+  const { data, isLoading, error, mutate } = useApi<JournalState>(
+    `/api/v1/memory/agents/${agentId}/journal?date=${selectedDate}`,
+    () => getAgentJournal(agentId, selectedDate)
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'success' | 'summarized' | 'error'>('idle');
+
+  const content = draft ?? data?.content ?? '';
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus('idle');
+    try {
+      const updated = await updateAgentJournal(agentId, selectedDate, content);
+      await mutate(updated, { revalidate: false });
+      setDraft(updated.content);
+      setStatus('success');
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSummarize() {
+    setSummarizing(true);
+    setStatus('idle');
+    try {
+      const result = await summarizeAgentJournal(agentId, selectedDate);
+      await mutate(result.journal, { revalidate: false });
+      setDraft(result.journal.content);
+      setStatus('summarized');
+      setTimeout(() => setStatus('idle'), 3000);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Daily Journal</h3>
+          <p className="text-xs text-[#6b7280] mt-1">
+            Day-level operator or runtime notes that can be compacted into the agent session brief.
+          </p>
+        </div>
+        <div className="w-[180px]">
+          <Input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => {
+              setSelectedDate(e.target.value || today);
+              setDraft(null);
+              setStatus('idle');
+            }}
+            className="h-9 bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white"
+          />
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <Skeleton key={index} className="h-4 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
+      ) : (
+        <Textarea
+          value={content}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Capture what changed today for this agent: task progress, blockers, corrections, and next moves."
+          className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[140px] text-sm focus:border-blue-500/50"
+        />
+      )}
+
+      <div className="flex items-center justify-between mt-3">
+        <div className="text-xs text-[#4b5563]">
+          {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'Not set yet'}
+          {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+        </div>
+        <div className="flex items-center gap-2">
+          {status === 'success' && <span className="text-xs text-emerald-400">Saved</span>}
+          {status === 'summarized' && <span className="text-xs text-emerald-400">Session brief refreshed</span>}
+          {status === 'error' && <span className="text-xs text-red-400">Action failed</span>}
+          <Button
+            size="sm"
+            onClick={handleSummarize}
+            disabled={summarizing || isLoading || error !== undefined || !content.trim() || data?.readOnly}
+            className="bg-[#1f2937] hover:bg-[#111827] text-white disabled:opacity-40"
+          >
+            {summarizing ? 'Compacting...' : 'Summarize To Session Brief'}
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || isLoading || error !== undefined || !content.trim() || data?.readOnly}
+            className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+          >
+            {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save Journal'}
           </Button>
         </div>
       </div>
@@ -905,6 +1027,8 @@ export default function MemoryPage() {
               save={(content) => updateAgentSessionBrief(agentId, content)}
             />
           </section>
+
+          <JournalEditor agentId={agentId} />
 
           <section>
             <div className="flex items-center justify-between mb-3">

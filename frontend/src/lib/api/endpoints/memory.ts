@@ -6,6 +6,8 @@ import type {
   SuccessResponse,
   WorkspaceKnowledge,
   ContinuityBrief,
+  JournalState,
+  JournalSummarizeResult,
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
@@ -173,6 +175,27 @@ export async function updateWorkspaceSessionBrief(content: string): Promise<Cont
   });
 }
 
+export async function getWorkspaceJournal(date?: string): Promise<JournalState> {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  return apiFetch<JournalState>(`/api/v1/memory/journal/workspace${params.toString() ? `?${params}` : ''}`);
+}
+
+export async function updateWorkspaceJournal(date: string, content: string): Promise<JournalState> {
+  return apiFetch<JournalState>('/api/v1/memory/journal/workspace', {
+    method: 'PUT',
+    body: JSON.stringify({ date, content }),
+  });
+}
+
+export async function summarizeWorkspaceJournal(date: string): Promise<JournalSummarizeResult['data']> {
+  const response = await apiFetch<JournalSummarizeResult>('/api/v1/memory/journal/workspace/summarize', {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  });
+  return response.data;
+}
+
 export async function getAgentProfileBrief(agentId: string): Promise<ContinuityBrief> {
   return apiFetch<ContinuityBrief>(`/api/v1/memory/agents/${agentId}/profile-brief`);
 }
@@ -193,6 +216,27 @@ export async function updateAgentSessionBrief(agentId: string, content: string):
     method: 'PUT',
     body: JSON.stringify({ content }),
   });
+}
+
+export async function getAgentJournal(agentId: string, date?: string): Promise<JournalState> {
+  const params = new URLSearchParams();
+  if (date) params.set('date', date);
+  return apiFetch<JournalState>(`/api/v1/memory/agents/${agentId}/journal${params.toString() ? `?${params}` : ''}`);
+}
+
+export async function updateAgentJournal(agentId: string, date: string, content: string): Promise<JournalState> {
+  return apiFetch<JournalState>(`/api/v1/memory/agents/${agentId}/journal`, {
+    method: 'PUT',
+    body: JSON.stringify({ date, content }),
+  });
+}
+
+export async function summarizeAgentJournal(agentId: string, date: string): Promise<JournalSummarizeResult['data']> {
+  const response = await apiFetch<JournalSummarizeResult>(`/api/v1/memory/agents/${agentId}/journal/summarize`, {
+    method: 'POST',
+    body: JSON.stringify({ date }),
+  });
+  return response.data;
 }
 
 export async function getTemplateScopes(): Promise<TemplateScope[]> {

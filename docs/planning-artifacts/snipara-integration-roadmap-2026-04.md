@@ -141,7 +141,8 @@ Recommendation:
 - medium priority
 - Vutler is now aligned on first-class tier projection and graveyard handling
 - session continuity is now wired through governed workspace/agent briefs plus runtime injection
-- next step is journal automation and compaction hooks, not another parallel taxonomy
+- daily journal capture and summarize-to-brief compaction are now productized
+- next step is deeper journal automation and compaction hooks, not another parallel taxonomy
 
 ### 3. Group Memory and Multi-Agent Coordination
 
@@ -430,7 +431,7 @@ Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
   - failed sync visibility
   - operator-facing source freshness health for autonomous runs
 - group-memory governance
-- journal append / summarize tooling
+- journal append / summarize tooling beyond the new daily journal + brief compaction flow
 - stronger `@vutler/mcp` bootstrap ergonomics beyond CLI templates
   - who can promote shared knowledge
   - who can consume or mutate shared memory
