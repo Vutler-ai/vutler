@@ -409,6 +409,29 @@ Status update 2026-04-12:
 - FULL workflow mode now uses Snipara recursive decomposition plus `rlm_multi_query` before falling back to a single `rlm_context_query`
 - group-memory governance and shared-document authoring UI are still not productized
 
+Remaining productizable Snipara work after `f38572b`:
+- first-class GitHub/source freshness surfaces
+  - last successful sync
+  - failed sync visibility
+  - operator-facing source freshness health for autonomous runs
+- shared document authoring flows around `rlm_upload_shared_document`
+  - governed upload/edit flows
+  - ownership and write controls
+- group-memory governance
+  - who can promote shared knowledge
+  - who can consume or mutate shared memory
+- session continuity and journal/profile semantics where they improve task/chat continuity
+- stronger paging channels for critical `RLM Runtime` incidents beyond in-app notifications plus workspace email
+- `@vutler/mcp` bootstrap ergonomics closer to Snipara's integration guide
+
+Intentionally not exposed as tenant-facing product surfaces:
+- unrestricted `rlm_multi_project_query` across unrelated customer workspaces
+  - keep this confined to explicitly governed scopes so multitenant isolation stays intact
+- full Snipara Integrator API lifecycle mirroring
+  - defer until Vutler needs reseller-style external workspace/client provisioning
+- replacing Vutler's run engine with `RLM Runtime`
+  - `RLM Runtime` remains an optional bounded executor for technical agents only
+
 ### Phase 5 - Improve Distribution and External Adoption
 
 Target: after runtime gaps are closed
