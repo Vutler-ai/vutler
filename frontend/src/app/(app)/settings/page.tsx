@@ -15,7 +15,9 @@ import {
   getSniparaHtaskMetrics,
   getSniparaSharedTemplates,
   getSniparaSharedCollections,
+  getSniparaSharedUploads,
   getSniparaSyncStatus,
+  uploadSniparaSharedDocument,
 } from "@/lib/api/endpoints/memory";
 import type {
   UserProfile,
@@ -34,6 +36,7 @@ import type {
   SniparaHtaskMetrics,
   SniparaSharedTemplates,
   SniparaSharedCollections,
+  SniparaSharedUploads,
   SniparaSyncStatus,
 } from "@/lib/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -43,6 +46,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -189,6 +201,14 @@ function formatPercent(value: number | null | undefined): string {
   if (typeof value !== "number" || Number.isNaN(value)) return "n/a";
   const normalized = value <= 1 ? value * 100 : value;
   return `${Math.round(normalized)}%`;
+}
+
+function normalizeTagList(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
@@ -484,10 +504,36 @@ function WorkspaceTab({
     "/api/v1/snipara/admin/shared/collections?include_public=true",
     () => getSniparaSharedCollections(true)
   );
+  const {
+    data: sniparaSharedUploads,
+    isLoading: loadingSniparaSharedUploads,
+    mutate: mutateSniparaSharedUploads,
+  } = useApi<SniparaSharedUploads>(
+    "/api/v1/snipara/admin/shared/uploads?limit=10",
+    () => getSniparaSharedUploads(10)
+  );
   const { data: sniparaSyncStatus, isLoading: loadingSniparaSyncStatus } = useApi<SniparaSyncStatus>(
     "/api/v1/snipara/admin/sync-status",
     getSniparaSyncStatus
   );
+  const writableSharedCollections = (sniparaSharedCollections?.collections ?? []).filter((collection) => (
+    String(collection.access_type || "").toLowerCase() !== "public"
+    && String(collection.scope || "").toLowerCase() !== "public"
+  ));
+  const [sharedDocDialogOpen, setSharedDocDialogOpen] = useState(false);
+  const [sharedDocCollectionId, setSharedDocCollectionId] = useState("");
+  const [sharedDocTitle, setSharedDocTitle] = useState("");
+  const [sharedDocCategory, setSharedDocCategory] = useState("BEST_PRACTICES");
+  const [sharedDocPriority, setSharedDocPriority] = useState("0");
+  const [sharedDocTags, setSharedDocTags] = useState("");
+  const [sharedDocContent, setSharedDocContent] = useState("");
+  const [uploadingSharedDoc, setUploadingSharedDoc] = useState(false);
+
+  useEffect(() => {
+    if (!sharedDocCollectionId && writableSharedCollections.length > 0) {
+      setSharedDocCollectionId(writableSharedCollections[0]?.id || "");
+    }
+  }, [sharedDocCollectionId, writableSharedCollections]);
 
   const transportOk = sniparaHealth?.ok === true;
   const sniparaConfigured = sniparaStatus?.configured ?? Boolean(sniparaProjectSlug || sniparaKey);
@@ -502,6 +548,7 @@ function WorkspaceTab({
     || loadingSniparaAnalytics
     || loadingSniparaTemplates
     || loadingSniparaCollections
+    || loadingSniparaSharedUploads
     || loadingSniparaSyncStatus
     || Boolean(sniparaStatus)
     || Boolean(sniparaHealth)
@@ -509,6 +556,7 @@ function WorkspaceTab({
     || Boolean(sniparaSearchAnalytics)
     || Boolean(sniparaSharedTemplates)
     || Boolean(sniparaSharedCollections)
+    || Boolean(sniparaSharedUploads)
     || Boolean(sniparaSyncStatus);
 
   const handleSave = async () => {
@@ -543,6 +591,45 @@ function WorkspaceTab({
       onToast(err instanceof Error ? err.message : "Failed to save", "error");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSharedDocumentUpload = async () => {
+    if (!sharedDocCollectionId) {
+      onToast("Choose a writable shared collection", "error");
+      return;
+    }
+    if (!sharedDocTitle.trim()) {
+      onToast("Document title is required", "error");
+      return;
+    }
+    if (!sharedDocContent.trim()) {
+      onToast("Document content is required", "error");
+      return;
+    }
+
+    setUploadingSharedDoc(true);
+    try {
+      const result = await uploadSniparaSharedDocument({
+        collection_id: sharedDocCollectionId,
+        title: sharedDocTitle.trim(),
+        content: sharedDocContent.trim(),
+        category: sharedDocCategory,
+        priority: Number(sharedDocPriority) || 0,
+        tags: normalizeTagList(sharedDocTags),
+      });
+      await mutateSniparaSharedUploads();
+      onToast(result.action === "updated" ? "Shared document updated" : "Shared document uploaded", "success");
+      setSharedDocDialogOpen(false);
+      setSharedDocTitle("");
+      setSharedDocCategory("BEST_PRACTICES");
+      setSharedDocPriority("0");
+      setSharedDocTags("");
+      setSharedDocContent("");
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Shared document upload failed", "error");
+    } finally {
+      setUploadingSharedDoc(false);
     }
   };
 
@@ -719,15 +806,26 @@ function WorkspaceTab({
                     Operator signals for source freshness, context quality, search quality, and htask governance.
                   </p>
                 </div>
-                <Badge
-                  className={
-                    sniparaRuntimeDegraded
-                      ? "bg-amber-500/15 text-amber-300 border-amber-500/20"
-                      : "bg-emerald-500/15 text-emerald-300 border-emerald-500/20"
-                  }
-                >
-                  {sniparaRuntimeDegraded ? "Degraded" : "Healthy"}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={writableSharedCollections.length === 0}
+                    onClick={() => setSharedDocDialogOpen(true)}
+                    className="border-[rgba(255,255,255,0.1)] bg-[#14151f] text-white hover:bg-[#1b1d28]"
+                  >
+                    Upload Shared Doc
+                  </Button>
+                  <Badge
+                    className={
+                      sniparaRuntimeDegraded
+                        ? "bg-amber-500/15 text-amber-300 border-amber-500/20"
+                        : "bg-emerald-500/15 text-emerald-300 border-emerald-500/20"
+                    }
+                  >
+                    {sniparaRuntimeDegraded ? "Degraded" : "Healthy"}
+                  </Badge>
+                </div>
               </div>
 
               {(loadingSniparaStatus
@@ -736,9 +834,10 @@ function WorkspaceTab({
                 || loadingSniparaAnalytics
                 || loadingSniparaTemplates
                 || loadingSniparaCollections
+                || loadingSniparaSharedUploads
                 || loadingSniparaSyncStatus) ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {Array.from({ length: 7 }).map((_, index) => (
+                  {Array.from({ length: 8 }).map((_, index) => (
                     <Skeleton key={index} className="h-20 rounded-xl bg-[#14151f]" />
                   ))}
                 </div>
@@ -871,12 +970,165 @@ function WorkspaceTab({
                         Wired tools: rlm_decompose · rlm_multi_query · rlm_multi_project_query · rlm_inject/context.
                       </p>
                     </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Shared Document Writes</p>
+                      <p className="text-sm text-white mt-2">
+                        {sniparaSharedUploads?.uploads?.length
+                          ? `${sniparaSharedUploads.uploads[0]?.title || "Latest upload"} written to ${sniparaSharedUploads.uploads[0]?.collection_name || "shared context"}.`
+                          : "No governed shared-document uploads recorded for this workspace yet."}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaSharedUploads?.uploads?.length
+                          ? `${sniparaSharedUploads.uploads[0]?.created_by_email || "Unknown operator"} · ${sniparaSharedUploads.uploads[0]?.created_at ? new Date(sniparaSharedUploads.uploads[0].created_at).toLocaleString() : "timestamp unavailable"}`
+                          : "Uploads are tracked locally per workspace for auditability."}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Recent Shared Uploads</p>
+                        <p className="text-[11px] text-[#4b5563] mt-1">
+                          Only writable, non-public shared collections can be modified from Vutler.
+                        </p>
+                      </div>
+                      <p className="text-xs text-[#6b7280]">{sniparaSharedUploads?.count ?? 0} tracked</p>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {(sniparaSharedUploads?.uploads ?? []).length === 0 ? (
+                        <p className="text-sm text-[#9ca3af]">No shared document uploads recorded yet.</p>
+                      ) : (
+                        (sniparaSharedUploads?.uploads ?? []).slice(0, 5).map((upload) => (
+                          <div
+                            key={upload.id}
+                            className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0a0b14] px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-white">{upload.title}</p>
+                              <span className="text-[11px] uppercase tracking-wide text-[#6b7280]">
+                                {upload.action || "created"}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] text-[#9ca3af]">
+                              {upload.collection_name || upload.collection_id}
+                              {upload.category ? ` · ${upload.category}` : ""}
+                              {upload.tags?.length ? ` · ${upload.tags.join(", ")}` : ""}
+                            </p>
+                            <p className="mt-1 text-[11px] text-[#4b5563]">
+                              {upload.created_by_email || "Unknown operator"}
+                              {upload.created_at ? ` · ${new Date(upload.created_at).toLocaleString()}` : ""}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </>
               )}
             </div>
           )}
         </div>
+
+        <Dialog open={sharedDocDialogOpen} onOpenChange={setSharedDocDialogOpen}>
+          <DialogContent className="border-[rgba(255,255,255,0.08)] bg-[#0f1119] text-white sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Upload Shared Document</DialogTitle>
+              <DialogDescription className="text-[#9ca3af]">
+                Write a governed workspace standard into an authorized Snipara shared collection.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className={cx.label}>Collection</Label>
+                <select
+                  value={sharedDocCollectionId}
+                  onChange={(e) => setSharedDocCollectionId(e.target.value)}
+                  className="w-full h-10 px-3 bg-[#14151f] border border-[rgba(255,255,255,0.08)] rounded-md text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+                >
+                  {writableSharedCollections.length === 0 ? (
+                    <option value="">No writable collection available</option>
+                  ) : (
+                    writableSharedCollections.map((collection) => (
+                      <option key={collection.id || collection.slug || collection.name} value={collection.id || ""}>
+                        {collection.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className={cx.label}>Title</Label>
+                <Input
+                  value={sharedDocTitle}
+                  onChange={(e) => setSharedDocTitle(e.target.value)}
+                  placeholder="Coding standard, runbook, or guideline title"
+                  className={cx.input}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className={cx.label}>Category</Label>
+                <select
+                  value={sharedDocCategory}
+                  onChange={(e) => setSharedDocCategory(e.target.value)}
+                  className="w-full h-10 px-3 bg-[#14151f] border border-[rgba(255,255,255,0.08)] rounded-md text-white text-sm focus:outline-none focus:ring-2 focus:ring-[#3b82f6]"
+                >
+                  <option value="MANDATORY">MANDATORY</option>
+                  <option value="BEST_PRACTICES">BEST_PRACTICES</option>
+                  <option value="GUIDELINES">GUIDELINES</option>
+                  <option value="REFERENCE">REFERENCE</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className={cx.label}>Priority</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={sharedDocPriority}
+                  onChange={(e) => setSharedDocPriority(e.target.value)}
+                  className={cx.input}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className={cx.label}>Tags</Label>
+                <Input
+                  value={sharedDocTags}
+                  onChange={(e) => setSharedDocTags(e.target.value)}
+                  placeholder="security, backend, review"
+                  className={cx.input}
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label className={cx.label}>Markdown Content</Label>
+                <Textarea
+                  value={sharedDocContent}
+                  onChange={(e) => setSharedDocContent(e.target.value)}
+                  placeholder="# Standard\n\nDescribe the reusable rule or practice here."
+                  className="min-h-[220px] border-[rgba(255,255,255,0.08)] bg-[#14151f] text-white placeholder:text-[#6b7280] focus-visible:ring-[#3b82f6]"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setSharedDocDialogOpen(false)}
+                className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[#1b1d28]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={uploadingSharedDoc || writableSharedCollections.length === 0}
+                onClick={handleSharedDocumentUpload}
+                className="bg-[#3b82f6] text-white hover:bg-[#2563eb]"
+              >
+                {uploadingSharedDoc ? "Uploading..." : "Upload Document"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="flex justify-end pt-2">
           <Button

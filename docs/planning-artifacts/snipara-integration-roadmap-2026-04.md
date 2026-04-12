@@ -434,6 +434,10 @@ Roadmap execution update 2026-04-12:
   - recent failure visibility
   - stale/fresh/failed status for operator review
 - this remains multitenant-compatible because the telemetry stays workspace-scoped and does not widen retrieval scope across tenants
+- started governed shared-document authoring for Snipara shared collections
+  - admin-only uploads from Vutler settings
+  - local workspace audit trail of writes
+  - public collections kept read-only from Vutler
 
 Intentionally not exposed as tenant-facing product surfaces:
 - unrestricted `rlm_multi_project_query` across unrelated customer workspaces

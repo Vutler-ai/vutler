@@ -8,6 +8,10 @@ const { readExistingProvisioning, provisionWorkspaceSnipara } = require('../serv
 const { resolveSniparaConfig, probeSniparaHealth, serializeSniparaError } = require('../services/sniparaResolver');
 const { createSniparaGateway } = require('../services/snipara/gateway');
 const { getWorkspaceSyncStatus } = require('../services/sniparaSyncStatusService');
+const {
+  listSharedDocumentUploads,
+  recordSharedDocumentUpload,
+} = require('../services/sniparaSharedDocumentService');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -224,6 +228,70 @@ function normalizeSharedCollectionsPayload(payload = {}) {
   };
 }
 
+function normalizeSharedUploadsPayload(rows = []) {
+  const uploads = Array.isArray(rows) ? rows : [];
+  return {
+    count: uploads.length,
+    uploads: uploads.map((row) => ({
+      id: row.id,
+      collection_id: row.collection_id,
+      collection_name: row.collection_name || null,
+      remote_document_id: row.remote_document_id || null,
+      title: row.title,
+      category: row.category || null,
+      priority: toNumber(row.priority) || 0,
+      tags: Array.isArray(row.tags) ? row.tags : [],
+      action: row.action || null,
+      content_length: toNumber(row.content_length) || 0,
+      content_preview: row.content_preview || null,
+      created_by_user_id: row.created_by_user_id || null,
+      created_by_email: row.created_by_email || null,
+      created_at: row.created_at || null,
+    })),
+  };
+}
+
+function normalizeSharedUploadResultPayload(payload = {}, audit = null) {
+  return {
+    success: payload.success !== false,
+    document_id: payload.document_id || payload.id || null,
+    collection_id: payload.collection_id || null,
+    title: payload.title || null,
+    category: payload.category || null,
+    action: payload.action || null,
+    audit: audit ? {
+      id: audit.id,
+      collection_id: audit.collection_id,
+      collection_name: audit.collection_name || null,
+      title: audit.title,
+      category: audit.category || null,
+      priority: toNumber(audit.priority) || 0,
+      tags: Array.isArray(audit.tags) ? audit.tags : [],
+      created_by_email: audit.created_by_email || null,
+      created_at: audit.created_at || null,
+    } : null,
+    raw: payload,
+  };
+}
+
+function normalizeSharedDocumentInput(body = {}) {
+  const tags = Array.isArray(body.tags)
+    ? body.tags
+    : String(body.tags || '')
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+  return {
+    collection_id: String(body.collection_id || '').trim(),
+    title: String(body.title || '').trim(),
+    content: String(body.content || '').trim(),
+    category: String(body.category || 'BEST_PRACTICES').trim().toUpperCase() || 'BEST_PRACTICES',
+    priority: Math.max(0, Math.min(100, Number(body.priority) || 0)),
+    tags: tags.slice(0, 20),
+  };
+}
+
 function normalizeSyncStatusPayload(payload = {}, now = Date.now()) {
   const staleAfterMs = Math.max(
     5 * 60_000,
@@ -423,6 +491,74 @@ router.get('/shared/collections', async (req, res) => {
   );
 });
 
+router.get('/shared/uploads', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 10));
+    const rows = await listSharedDocumentUploads(workspaceId, { limit, db: pool });
+    return res.json({
+      success: true,
+      data: normalizeSharedUploadsPayload(rows),
+    });
+  } catch (error) {
+    console.error('[SniparaAdmin] shared uploads error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/shared/documents', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const input = normalizeSharedDocumentInput(req.body || {});
+    if (!input.collection_id) {
+      return res.status(400).json({ success: false, error: 'collection_id is required' });
+    }
+    if (!input.title) {
+      return res.status(400).json({ success: false, error: 'title is required' });
+    }
+    if (!input.content) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+
+    const gateway = createSniparaGateway({ db: pool, workspaceId });
+    const collectionsPayload = await gateway.shared.listCollections({ include_public: true });
+    const collections = Array.isArray(collectionsPayload?.collections) ? collectionsPayload.collections : [];
+    const targetCollection = collections.find((entry) => String(entry?.id || '').trim() === input.collection_id);
+    if (!targetCollection) {
+      return res.status(400).json({ success: false, error: 'Shared collection is not accessible for this workspace' });
+    }
+    if (String(targetCollection.access_type || '').trim().toLowerCase() === 'public'
+      || String(targetCollection.scope || '').trim().toLowerCase() === 'public') {
+      return res.status(403).json({ success: false, error: 'Public shared collections are read-only in Vutler' });
+    }
+
+    const payload = await gateway.shared.uploadDocument(input);
+    const audit = await recordSharedDocumentUpload({
+      workspaceId,
+      collectionId: targetCollection.id,
+      collectionName: targetCollection.name || null,
+      remoteDocumentId: payload?.document_id || payload?.id || null,
+      title: input.title,
+      category: input.category,
+      priority: input.priority,
+      tags: input.tags,
+      action: payload?.action || null,
+      content: input.content,
+      createdByUserId: req.user?.id || null,
+      createdByEmail: req.user?.email || null,
+      db: pool,
+    });
+
+    return res.json({
+      success: true,
+      data: normalizeSharedUploadResultPayload(payload, audit),
+    });
+  } catch (error) {
+    console.error('[SniparaAdmin] shared document upload error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/sync-status', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -473,5 +609,8 @@ module.exports.__private = {
   normalizeHtaskMetricsPayload,
   normalizeSharedTemplatesPayload,
   normalizeSharedCollectionsPayload,
+  normalizeSharedUploadsPayload,
+  normalizeSharedUploadResultPayload,
+  normalizeSharedDocumentInput,
   normalizeSyncStatusPayload,
 };

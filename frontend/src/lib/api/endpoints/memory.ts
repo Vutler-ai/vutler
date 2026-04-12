@@ -17,6 +17,9 @@ import type {
   SniparaHtaskMetrics,
   SniparaSharedTemplates,
   SniparaSharedCollections,
+  SniparaSharedUploads,
+  SniparaSharedDocumentUploadPayload,
+  SniparaSharedDocumentUploadResult,
   SniparaSyncStatus,
 } from '../types';
 
@@ -210,6 +213,26 @@ export async function getSniparaSharedCollections(includePublic = true): Promise
     `/api/v1/snipara/admin/shared/collections?include_public=${includePublic ? 'true' : 'false'}`
   );
   return response.data as SniparaSharedCollections;
+}
+
+export async function getSniparaSharedUploads(limit = 10): Promise<SniparaSharedUploads> {
+  const response = await apiFetch<{ data?: SniparaSharedUploads }>(
+    `/api/v1/snipara/admin/shared/uploads?limit=${Math.max(1, Math.min(50, limit))}`
+  );
+  return response.data as SniparaSharedUploads;
+}
+
+export async function uploadSniparaSharedDocument(
+  payload: SniparaSharedDocumentUploadPayload
+): Promise<SniparaSharedDocumentUploadResult> {
+  const response = await apiFetch<{ data?: SniparaSharedDocumentUploadResult }>(
+    '/api/v1/snipara/admin/shared/documents',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return response.data as SniparaSharedDocumentUploadResult;
 }
 
 export async function getSniparaSyncStatus(): Promise<SniparaSyncStatus> {

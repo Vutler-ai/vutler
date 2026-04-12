@@ -2153,6 +2153,48 @@ export interface SniparaSharedCollections {
   raw?: Record<string, unknown>;
 }
 
+export interface SniparaSharedUploadRecord {
+  id: string;
+  collection_id: string;
+  collection_name?: string | null;
+  remote_document_id?: string | null;
+  title: string;
+  category?: string | null;
+  priority: number;
+  tags: string[];
+  action?: string | null;
+  content_length: number;
+  content_preview?: string | null;
+  created_by_user_id?: string | null;
+  created_by_email?: string | null;
+  created_at?: string | null;
+}
+
+export interface SniparaSharedUploads {
+  count: number;
+  uploads: SniparaSharedUploadRecord[];
+}
+
+export interface SniparaSharedDocumentUploadPayload {
+  collection_id: string;
+  title: string;
+  content: string;
+  category?: string;
+  priority?: number;
+  tags?: string[];
+}
+
+export interface SniparaSharedDocumentUploadResult {
+  success: boolean;
+  document_id?: string | null;
+  collection_id?: string | null;
+  title?: string | null;
+  category?: string | null;
+  action?: string | null;
+  audit?: SniparaSharedUploadRecord | null;
+  raw?: Record<string, unknown> | null;
+}
+
 export interface SniparaSyncStatus {
   supported: boolean;
   degraded: boolean;

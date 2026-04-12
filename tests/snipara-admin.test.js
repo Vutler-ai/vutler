@@ -115,4 +115,55 @@ describe('snipara admin payload normalizers', () => {
       last_task_error: 'Snipara MCP timeout',
     });
   });
+
+  test('normalizes shared document input and upload history', () => {
+    const router = require('../api/sniparaAdmin');
+    const input = router.__private.normalizeSharedDocumentInput({
+      collection_id: ' col_1 ',
+      title: ' Team Standards ',
+      content: ' # Title ',
+      category: 'guidelines',
+      priority: '42',
+      tags: 'security, backend , review',
+    });
+    const uploads = router.__private.normalizeSharedUploadsPayload([
+      {
+        id: 'up_1',
+        collection_id: 'col_1',
+        collection_name: 'Team Standards',
+        title: 'Error Handling',
+        category: 'GUIDELINES',
+        priority: 42,
+        tags: ['security', 'backend'],
+        action: 'created',
+        content_length: 1200,
+        created_by_email: 'ops@vutler.ai',
+        created_at: '2026-04-12T21:00:00.000Z',
+      },
+    ]);
+
+    expect(input).toMatchObject({
+      collection_id: 'col_1',
+      title: 'Team Standards',
+      content: '# Title',
+      category: 'GUIDELINES',
+      priority: 42,
+      tags: ['security', 'backend', 'review'],
+    });
+    expect(uploads).toMatchObject({
+      count: 1,
+      uploads: [
+        {
+          id: 'up_1',
+          collection_id: 'col_1',
+          collection_name: 'Team Standards',
+          title: 'Error Handling',
+          category: 'GUIDELINES',
+          priority: 42,
+          action: 'created',
+          created_by_email: 'ops@vutler.ai',
+        },
+      ],
+    });
+  });
 });
