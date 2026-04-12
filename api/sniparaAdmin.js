@@ -7,6 +7,7 @@ const pool = require('../lib/vaultbrix');
 const { readExistingProvisioning, provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
 const { resolveSniparaConfig, probeSniparaHealth, serializeSniparaError } = require('../services/sniparaResolver');
 const { createSniparaGateway } = require('../services/snipara/gateway');
+const { getWorkspaceSyncStatus } = require('../services/sniparaSyncStatusService');
 
 const SCHEMA = 'tenant_vutler';
 
@@ -37,6 +38,26 @@ function toNumber(...values) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
+}
+
+function toTimestampMs(value) {
+  if (!value) return null;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pickLatestTimestamp(...values) {
+  let winner = null;
+  let winnerMs = null;
+  for (const value of values) {
+    const parsed = toTimestampMs(value);
+    if (parsed === null) continue;
+    if (winnerMs === null || parsed > winnerMs) {
+      winner = value;
+      winnerMs = parsed;
+    }
+  }
+  return winner || null;
 }
 
 function normalizeToolError(error, fallbackMessage) {
@@ -203,6 +224,75 @@ function normalizeSharedCollectionsPayload(payload = {}) {
   };
 }
 
+function normalizeSyncStatusPayload(payload = {}, now = Date.now()) {
+  const staleAfterMs = Math.max(
+    5 * 60_000,
+    Number(process.env.SNIPARA_SOURCE_FRESHNESS_STALE_MS || 15 * 60_000)
+  );
+  const taskFailures = toNumber(payload.task_consecutive_failures) || 0;
+  const eventFailures = toNumber(payload.event_consecutive_failures) || 0;
+  const lastTaskSyncAt = payload.last_task_sync_at || null;
+  const lastEventSyncAt = payload.last_event_sync_at || null;
+  const latestSyncAt = pickLatestTimestamp(lastTaskSyncAt, lastEventSyncAt);
+  const latestSyncMs = toTimestampMs(latestSyncAt);
+  const latestSuccessAt = pickLatestTimestamp(payload.last_task_success_at, payload.last_event_success_at);
+  const latestFailureAt = pickLatestTimestamp(payload.last_task_failure_at, payload.last_event_failure_at);
+  const hasRecentIssue = payload.last_task_result === 'partial'
+    || payload.last_task_result === 'failed'
+    || payload.last_event_result === 'failed'
+    || taskFailures > 0
+    || eventFailures > 0;
+
+  let status = 'unknown';
+  let degraded = false;
+  let message = 'No Snipara sync has been recorded yet for this workspace.';
+
+  if (latestSyncMs !== null) {
+    const isStale = (now - latestSyncMs) > staleAfterMs;
+    const isFailed = taskFailures >= 3 || eventFailures >= 3;
+    degraded = isStale || hasRecentIssue;
+
+    if (isFailed) {
+      status = 'failed';
+      message = 'Repeated Snipara sync failures are blocking freshness updates for this workspace.';
+    } else if (isStale || hasRecentIssue) {
+      status = 'stale';
+      message = isStale
+        ? 'Snipara sync telemetry is stale and should be refreshed before trusting autonomous runs.'
+        : 'Snipara reported recent sync issues; operator review is recommended.';
+    } else {
+      status = 'healthy';
+      message = 'Snipara sync telemetry is fresh for this workspace.';
+    }
+  }
+
+  return {
+    supported: true,
+    degraded,
+    status,
+    stale_after_minutes: Math.round(staleAfterMs / 60_000),
+    last_task_sync_at: lastTaskSyncAt,
+    last_task_success_at: payload.last_task_success_at || null,
+    last_task_failure_at: payload.last_task_failure_at || null,
+    last_task_result: payload.last_task_result || null,
+    last_task_synced: toNumber(payload.last_task_synced) || 0,
+    last_task_errors: toNumber(payload.last_task_errors) || 0,
+    last_task_error: payload.last_task_error || null,
+    task_consecutive_failures: taskFailures,
+    last_event_sync_at: lastEventSyncAt,
+    last_event_success_at: payload.last_event_success_at || null,
+    last_event_failure_at: payload.last_event_failure_at || null,
+    last_event_result: payload.last_event_result || null,
+    last_event_count: toNumber(payload.last_event_count) || 0,
+    last_event_error: payload.last_event_error || null,
+    event_consecutive_failures: eventFailures,
+    last_success_at: latestSuccessAt,
+    last_failure_at: latestFailureAt,
+    message,
+    raw: payload || {},
+  };
+}
+
 async function callAdminSniparaTool(req, res, toolCall, normalizer, fallbackMessage) {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -333,6 +423,20 @@ router.get('/shared/collections', async (req, res) => {
   );
 });
 
+router.get('/sync-status', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const payload = await getWorkspaceSyncStatus(workspaceId, pool);
+    return res.json({
+      success: true,
+      data: normalizeSyncStatusPayload(payload || {}),
+    });
+  } catch (error) {
+    console.error('[SniparaAdmin] sync status error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/provision', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -369,4 +473,5 @@ module.exports.__private = {
   normalizeHtaskMetricsPayload,
   normalizeSharedTemplatesPayload,
   normalizeSharedCollectionsPayload,
+  normalizeSyncStatusPayload,
 };

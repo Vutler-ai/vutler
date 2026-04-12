@@ -2,9 +2,14 @@
 
 const pool = require('../lib/vaultbrix');
 const { getSwarmCoordinator } = require('./swarmCoordinator');
+const {
+  recordTaskSyncSuccess,
+  recordTaskSyncFailure,
+  recordEventSyncSuccess,
+  recordEventSyncFailure,
+} = require('./sniparaSyncStatusService');
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const SYNC_INTERVAL_MS = Number(process.env.SNIPARA_SYNC_INTERVAL_MS || 120000);
 const EVENT_LIMIT = Number(process.env.SNIPARA_SYNC_EVENT_LIMIT || 100);
 const MAX_TRACKED_EVENTS = 500;
@@ -93,12 +98,19 @@ class SniparaSyncLoop {
     try {
       const result = await coordinator.syncFromSnipara(workspaceId);
       this.clearFailureLog(workspaceId, 'task');
+      await recordTaskSyncSuccess({
+        workspaceId,
+        synced: result?.synced || 0,
+        errors: result?.errors || 0,
+        db: pool,
+      }).catch(() => {});
       console.log('[SniparaSyncLoop] synced tasks', {
         workspaceId,
         synced: result?.synced || 0,
         errors: result?.errors || 0,
       });
     } catch (err) {
+      await recordTaskSyncFailure({ workspaceId, error: err, db: pool }).catch(() => {});
       this.logFailureOnce('task', workspaceId, err);
     }
 
@@ -109,7 +121,13 @@ class SniparaSyncLoop {
       for (const event of events.slice().reverse()) {
         await this.projectEvent(workspaceId, event, coordinator);
       }
+      await recordEventSyncSuccess({
+        workspaceId,
+        eventCount: events.length,
+        db: pool,
+      }).catch(() => {});
     } catch (err) {
+      await recordEventSyncFailure({ workspaceId, error: err, db: pool }).catch(() => {});
       this.logFailureOnce('event', workspaceId, err);
     }
   }

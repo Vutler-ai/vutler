@@ -15,6 +15,7 @@ import {
   getSniparaHtaskMetrics,
   getSniparaSharedTemplates,
   getSniparaSharedCollections,
+  getSniparaSyncStatus,
 } from "@/lib/api/endpoints/memory";
 import type {
   UserProfile,
@@ -33,6 +34,7 @@ import type {
   SniparaHtaskMetrics,
   SniparaSharedTemplates,
   SniparaSharedCollections,
+  SniparaSyncStatus,
 } from "@/lib/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -482,21 +484,32 @@ function WorkspaceTab({
     "/api/v1/snipara/admin/shared/collections?include_public=true",
     () => getSniparaSharedCollections(true)
   );
+  const { data: sniparaSyncStatus, isLoading: loadingSniparaSyncStatus } = useApi<SniparaSyncStatus>(
+    "/api/v1/snipara/admin/sync-status",
+    getSniparaSyncStatus
+  );
 
   const transportOk = sniparaHealth?.ok === true;
   const sniparaConfigured = sniparaStatus?.configured ?? Boolean(sniparaProjectSlug || sniparaKey);
+  const sniparaRuntimeDegraded = Boolean(
+    sniparaIndexHealth?.degraded
+    || sniparaSyncStatus?.status === "stale"
+    || sniparaSyncStatus?.status === "failed"
+  );
   const showSniparaAdminMetrics = loadingSniparaStatus
     || loadingSniparaHealth
     || loadingSniparaIndex
     || loadingSniparaAnalytics
     || loadingSniparaTemplates
     || loadingSniparaCollections
+    || loadingSniparaSyncStatus
     || Boolean(sniparaStatus)
     || Boolean(sniparaHealth)
     || Boolean(sniparaIndexHealth)
     || Boolean(sniparaSearchAnalytics)
     || Boolean(sniparaSharedTemplates)
-    || Boolean(sniparaSharedCollections);
+    || Boolean(sniparaSharedCollections)
+    || Boolean(sniparaSyncStatus);
 
   const handleSave = async () => {
     setSaving(true);
@@ -703,17 +716,17 @@ function WorkspaceTab({
                 <div>
                   <p className="text-white text-sm font-medium">Snipara Runtime Health</p>
                   <p className="text-[11px] text-[#6b7280] mt-1">
-                    Operator signals for context freshness, search quality, and htask governance.
+                    Operator signals for source freshness, context quality, search quality, and htask governance.
                   </p>
                 </div>
                 <Badge
                   className={
-                    sniparaIndexHealth?.degraded
+                    sniparaRuntimeDegraded
                       ? "bg-amber-500/15 text-amber-300 border-amber-500/20"
                       : "bg-emerald-500/15 text-emerald-300 border-emerald-500/20"
                   }
                 >
-                  {sniparaIndexHealth?.degraded ? "Degraded" : "Healthy"}
+                  {sniparaRuntimeDegraded ? "Degraded" : "Healthy"}
                 </Badge>
               </div>
 
@@ -722,9 +735,10 @@ function WorkspaceTab({
                 || loadingSniparaIndex
                 || loadingSniparaAnalytics
                 || loadingSniparaTemplates
-                || loadingSniparaCollections) ? (
+                || loadingSniparaCollections
+                || loadingSniparaSyncStatus) ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {Array.from({ length: 6 }).map((_, index) => (
+                  {Array.from({ length: 7 }).map((_, index) => (
                     <Skeleton key={index} className="h-20 rounded-xl bg-[#14151f]" />
                   ))}
                 </div>
@@ -766,6 +780,23 @@ function WorkspaceTab({
                       </p>
                     </div>
                     <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Source Freshness</p>
+                      <p className="text-lg font-semibold text-white mt-2">
+                        {sniparaSyncStatus?.status === "healthy" && !sniparaIndexHealth?.degraded
+                          ? "Fresh"
+                          : sniparaSyncStatus?.status === "failed"
+                            ? "Blocked"
+                            : sniparaSyncStatus?.status === "stale" || sniparaIndexHealth?.degraded
+                              ? "Review"
+                              : "Unknown"}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaSyncStatus?.last_success_at
+                          ? `Last sync: ${new Date(sniparaSyncStatus.last_success_at).toLocaleString()}`
+                          : String(sniparaSyncStatus?.message || "No sync recorded yet")}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
                       <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Shared Collections</p>
                       <p className="text-lg font-semibold text-white mt-2">
                         {sniparaSharedCollections?.count ?? 0}
@@ -793,13 +824,15 @@ function WorkspaceTab({
                     <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
                       <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Context Risk</p>
                       <p className="text-sm text-white mt-2">
-                        {sniparaIndexHealth?.degraded
-                          ? "Autonomy can degrade because the documentation index is stale or error-prone."
-                          : "No context-quality degradation signal from Snipara right now."}
+                        {sniparaRuntimeDegraded
+                          ? "Autonomy can degrade because sources are stale, sync telemetry is failing, or retrieval quality is degrading."
+                          : "No source or context degradation signal from Snipara right now."}
                       </p>
-                      {sniparaIndexHealth?.last_indexed_at && (
+                      {(sniparaIndexHealth?.last_indexed_at || sniparaSyncStatus?.last_failure_at) && (
                         <p className="text-[11px] text-[#4b5563] mt-1">
-                          Last indexed: {new Date(sniparaIndexHealth.last_indexed_at).toLocaleString()}
+                          {sniparaSyncStatus?.last_failure_at
+                            ? `Last sync failure: ${new Date(sniparaSyncStatus.last_failure_at).toLocaleString()}`
+                            : `Last indexed: ${new Date(sniparaIndexHealth?.last_indexed_at as string).toLocaleString()}`}
                         </p>
                       )}
                     </div>

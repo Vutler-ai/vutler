@@ -2153,6 +2153,32 @@ export interface SniparaSharedCollections {
   raw?: Record<string, unknown>;
 }
 
+export interface SniparaSyncStatus {
+  supported: boolean;
+  degraded: boolean;
+  status: 'healthy' | 'stale' | 'failed' | 'unknown' | string;
+  stale_after_minutes?: number;
+  last_task_sync_at?: string | null;
+  last_task_success_at?: string | null;
+  last_task_failure_at?: string | null;
+  last_task_result?: string | null;
+  last_task_synced?: number;
+  last_task_errors?: number;
+  last_task_error?: string | null;
+  task_consecutive_failures?: number;
+  last_event_sync_at?: string | null;
+  last_event_success_at?: string | null;
+  last_event_failure_at?: string | null;
+  last_event_result?: string | null;
+  last_event_count?: number;
+  last_event_error?: string | null;
+  event_consecutive_failures?: number;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  message?: string | null;
+  raw?: Record<string, unknown> | null;
+}
+
 // ─── Admin ───────────────────────────────────────────────────────────────────
 
 export interface AdminStats {

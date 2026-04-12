@@ -17,6 +17,7 @@ import type {
   SniparaHtaskMetrics,
   SniparaSharedTemplates,
   SniparaSharedCollections,
+  SniparaSyncStatus,
 } from '../types';
 
 export interface RecallMemoriesOptions {
@@ -209,4 +210,9 @@ export async function getSniparaSharedCollections(includePublic = true): Promise
     `/api/v1/snipara/admin/shared/collections?include_public=${includePublic ? 'true' : 'false'}`
   );
   return response.data as SniparaSharedCollections;
+}
+
+export async function getSniparaSyncStatus(): Promise<SniparaSyncStatus> {
+  const response = await apiFetch<{ data?: SniparaSyncStatus }>('/api/v1/snipara/admin/sync-status');
+  return response.data as SniparaSyncStatus;
 }

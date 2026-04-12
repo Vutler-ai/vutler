@@ -70,4 +70,49 @@ describe('snipara admin payload normalizers', () => {
       ],
     });
   });
+
+  test('normalizes sync status payloads as healthy when recent', () => {
+    const router = require('../api/sniparaAdmin');
+    const now = Date.parse('2026-04-12T20:00:00.000Z');
+    const result = router.__private.normalizeSyncStatusPayload({
+      last_task_sync_at: '2026-04-12T19:55:00.000Z',
+      last_task_success_at: '2026-04-12T19:55:00.000Z',
+      last_task_result: 'ok',
+      last_task_synced: 4,
+      last_event_sync_at: '2026-04-12T19:56:00.000Z',
+      last_event_success_at: '2026-04-12T19:56:00.000Z',
+      last_event_result: 'ok',
+      last_event_count: 9,
+      task_consecutive_failures: 0,
+      event_consecutive_failures: 0,
+    }, now);
+
+    expect(result).toMatchObject({
+      supported: true,
+      degraded: false,
+      status: 'healthy',
+      last_task_synced: 4,
+      last_event_count: 9,
+    });
+  });
+
+  test('normalizes sync status payloads as failed after repeated failures', () => {
+    const router = require('../api/sniparaAdmin');
+    const now = Date.parse('2026-04-12T20:00:00.000Z');
+    const result = router.__private.normalizeSyncStatusPayload({
+      last_task_sync_at: '2026-04-12T19:58:00.000Z',
+      last_task_failure_at: '2026-04-12T19:58:00.000Z',
+      last_task_result: 'failed',
+      last_task_error: 'Snipara MCP timeout',
+      task_consecutive_failures: 3,
+    }, now);
+
+    expect(result).toMatchObject({
+      supported: true,
+      degraded: true,
+      status: 'failed',
+      task_consecutive_failures: 3,
+      last_task_error: 'Snipara MCP timeout',
+    });
+  });
 });

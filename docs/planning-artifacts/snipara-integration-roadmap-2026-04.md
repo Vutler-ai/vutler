@@ -424,6 +424,17 @@ Remaining productizable Snipara work after `f38572b`:
 - stronger paging channels for critical `RLM Runtime` incidents beyond in-app notifications plus workspace email
 - `@vutler/mcp` bootstrap ergonomics closer to Snipara's integration guide
 
+Roadmap execution update 2026-04-12:
+- started the first remaining operator-facing freshness tranche
+- Vutler now persists workspace-scoped Snipara sync telemetry for:
+  - task reconcile success/failure
+  - event reconcile success/failure
+- workspace admin now exposes a `Source Freshness` surface with:
+  - last successful sync
+  - recent failure visibility
+  - stale/fresh/failed status for operator review
+- this remains multitenant-compatible because the telemetry stays workspace-scoped and does not widen retrieval scope across tenants
+
 Intentionally not exposed as tenant-facing product surfaces:
 - unrestricted `rlm_multi_project_query` across unrelated customer workspaces
   - keep this confined to explicitly governed scopes so multitenant isolation stays intact
