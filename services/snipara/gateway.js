@@ -156,6 +156,11 @@ class SniparaGateway {
       uploadDocument: (input = {}) => this.call('rlm_upload_shared_document', input),
     };
 
+    this.sync = {
+      uploadDocument: (input = {}) => this.call('rlm_upload_document', input),
+      syncDocuments: (input = {}) => this.call('rlm_sync_documents', input),
+    };
+
     this.runtime = {
       loadDocument: (input = {}) => this.call('rlm_load_document', input),
       loadProject: (input = {}) => this.call('rlm_load_project', input),

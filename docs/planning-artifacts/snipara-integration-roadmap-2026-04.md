@@ -438,6 +438,10 @@ Roadmap execution update 2026-04-12:
   - admin-only uploads from Vutler settings
   - local workspace audit trail of writes
   - public collections kept read-only from Vutler
+- started governed group-memory policy for workspace shared instructions
+  - `workspace-knowledge` is now editable through Vutler
+  - writes sync to Snipara via `rlm_upload_document`
+  - read/write policy is workspace-scoped with admin or workspace-member modes
 
 Intentionally not exposed as tenant-facing product surfaces:
 - unrestricted `rlm_multi_project_query` across unrelated customer workspaces

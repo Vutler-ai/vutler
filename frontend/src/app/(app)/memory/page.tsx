@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Brain, Search, ChevronRight, BookOpen, Users, Layers } from 'lucide-react';
 import { useApi } from '@/hooks/use-api';
@@ -8,6 +8,7 @@ import { getAgents } from '@/lib/api/endpoints/agents';
 import {
   getWorkspaceKnowledge,
   updateWorkspaceKnowledge,
+  updateWorkspaceKnowledgePolicy,
   getTemplateScopes,
   searchMemory,
   getAgentMemorySummary,
@@ -69,30 +70,61 @@ function SectionHeader({
 // ─── Section 1: Workspace Knowledge ──────────────────────────────────────────
 
 function WorkspaceKnowledgeSection() {
-  const { data, isLoading, mutate } = useApi<WorkspaceKnowledge>(
+  const { data, error, isLoading, mutate } = useApi<WorkspaceKnowledge>(
     '/api/v1/memory/workspace-knowledge',
     () => getWorkspaceKnowledge()
   );
 
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingPolicy, setSavingPolicy] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [policyStatus, setPolicyStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [readAccess, setReadAccess] = useState<'workspace' | 'admin'>('workspace');
+  const [writeAccess, setWriteAccess] = useState<'workspace' | 'admin'>('admin');
 
   const content = draft ?? data?.content ?? '';
+  const policy = data?.policy ?? {
+    read_access: 'workspace' as const,
+    write_access: 'admin' as const,
+  };
+
+  useEffect(() => {
+    setReadAccess(policy.read_access);
+    setWriteAccess(policy.write_access);
+  }, [policy.read_access, policy.write_access]);
 
   async function handleSave() {
     setSaving(true);
     setSaveStatus('idle');
     try {
-      await updateWorkspaceKnowledge(content);
-      await mutate();
-      setDraft(null);
+      const updated = await updateWorkspaceKnowledge(content);
+      await mutate(updated, { revalidate: false });
+      setDraft(updated.content);
       setSaveStatus('success');
       setTimeout(() => setSaveStatus('idle'), 2500);
     } catch {
       setSaveStatus('error');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSavePolicy() {
+    setSavingPolicy(true);
+    setPolicyStatus('idle');
+    try {
+      const updated = await updateWorkspaceKnowledgePolicy({
+        read_access: readAccess,
+        write_access: writeAccess,
+      });
+      await mutate(updated, { revalidate: false });
+      setPolicyStatus('success');
+      setTimeout(() => setPolicyStatus('idle'), 2500);
+    } catch {
+      setPolicyStatus('error');
+    } finally {
+      setSavingPolicy(false);
     }
   }
 
@@ -110,28 +142,66 @@ function WorkspaceKnowledgeSection() {
             <Skeleton key={i} className="h-4 w-full" />
           ))}
         </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
       ) : (
-        <Textarea
-          value={content}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Write global workspace instructions here..."
-          className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[200px] font-mono text-sm focus:border-blue-500/50"
-        />
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs uppercase tracking-wide text-[#6b7280]">Read Access</label>
+              <select
+                value={readAccess}
+                onChange={(e) => setReadAccess(e.target.value as 'workspace' | 'admin')}
+                disabled={data?.readOnly}
+                className="w-full h-10 px-3 rounded-md bg-[#0e0f1a] border border-[rgba(255,255,255,0.1)] text-white text-sm disabled:opacity-50"
+              >
+                <option value="workspace">Workspace members</option>
+                <option value="admin">Admins only</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs uppercase tracking-wide text-[#6b7280]">Write Access</label>
+              <select
+                value={writeAccess}
+                onChange={(e) => setWriteAccess(e.target.value as 'workspace' | 'admin')}
+                disabled={data?.readOnly}
+                className="w-full h-10 px-3 rounded-md bg-[#0e0f1a] border border-[rgba(255,255,255,0.1)] text-white text-sm disabled:opacity-50"
+              >
+                <option value="admin">Admins only</option>
+                <option value="workspace">Workspace members</option>
+              </select>
+            </div>
+          </div>
+
+          <Textarea
+            value={content}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Write global workspace instructions here..."
+            className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[200px] font-mono text-sm focus:border-blue-500/50"
+          />
+        </div>
       )}
 
       <p className="mt-3 text-xs text-[#6b7280] leading-relaxed">
         This content is shared across agents in the workspace. Agent-specific soul/identity docs live inside each agent memory screen.
+        Governance is workspace-scoped and persisted with the shared-memory policy.
       </p>
 
       <div className="flex items-center justify-between mt-3">
-        {data?.updatedAt && (
-          <span className="text-xs text-[#4b5563]">
-            Last updated: {formatDate(data.updatedAt)}
-          </span>
-        )}
-        {!data?.updatedAt && <span />}
+        <div className="text-xs text-[#4b5563]">
+          {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'No shared instructions saved yet'}
+          {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+        </div>
 
         <div className="flex items-center gap-2">
+          {policyStatus === 'success' && (
+            <span className="text-xs text-emerald-400">Policy saved</span>
+          )}
+          {policyStatus === 'error' && (
+            <span className="text-xs text-red-400">Policy save failed</span>
+          )}
           {saveStatus === 'success' && (
             <span className="text-xs text-emerald-400">Saved</span>
           )}
@@ -140,8 +210,22 @@ function WorkspaceKnowledgeSection() {
           )}
           <Button
             size="sm"
+            onClick={handleSavePolicy}
+            disabled={
+              savingPolicy
+              || isLoading
+              || error !== undefined
+              || data?.readOnly
+              || (readAccess === policy.read_access && writeAccess === policy.write_access)
+            }
+            className="bg-[#1f2937] hover:bg-[#111827] text-white disabled:opacity-40"
+          >
+            {savingPolicy ? 'Saving policy...' : 'Save Policy'}
+          </Button>
+          <Button
+            size="sm"
             onClick={handleSave}
-            disabled={saving || isLoading || draft === null || data?.readOnly}
+            disabled={saving || isLoading || error !== undefined || draft === null || data?.readOnly}
             className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
           >
             {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save'}

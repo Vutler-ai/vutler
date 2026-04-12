@@ -17,6 +17,14 @@ const {
   softDeleteAgentMemory,
   promoteAgentMemoryToTemplate,
 } = require('../services/sniparaMemoryService');
+const {
+  normalizeSharedMemoryPolicy,
+  canReadSharedMemory,
+  canWriteSharedMemory,
+  getWorkspaceKnowledgeState,
+  saveWorkspaceKnowledge,
+  saveSharedMemoryPolicy,
+} = require('../services/workspaceKnowledgeService');
 
 function getWorkspaceId(req) {
   return req.workspaceId || '00000000-0000-0000-0000-000000000001';
@@ -355,15 +363,90 @@ router.post('/agents/:agentId/memories/:memoryId/promote', async (req, res) => {
 
 router.get('/workspace-knowledge', async (req, res) => {
   try {
-    const knowledge = await loadWorkspaceKnowledge({ db: pool, workspaceId: getWorkspaceId(req) });
-    return res.json(knowledge);
+    const workspaceId = getWorkspaceId(req);
+    const state = await getWorkspaceKnowledgeState({ db: pool, workspaceId });
+    const canRead = canReadSharedMemory(state.policy, req.user || {});
+    const canWrite = canWriteSharedMemory(state.policy, req.user || {});
+    if (!canRead) {
+      return res.status(403).json({ success: false, error: 'Shared workspace knowledge is restricted to admins' });
+    }
+
+    const knowledge = await loadWorkspaceKnowledge({ db: pool, workspaceId });
+    return res.json({
+      content: knowledge.content || state.content || '',
+      updatedAt: state.metadata.updatedAt || '',
+      updatedByEmail: state.metadata.updatedByEmail || null,
+      readOnly: !canWrite,
+      canRead,
+      canWrite,
+      policy: normalizeSharedMemoryPolicy(state.policy),
+    });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-router.put('/workspace-knowledge', (_req, res) => {
-  return res.status(501).json({ success: false, error: 'Workspace knowledge editing is not implemented yet' });
+router.put('/workspace-knowledge', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const state = await getWorkspaceKnowledgeState({ db: pool, workspaceId });
+    if (!canWriteSharedMemory(state.policy, req.user || {})) {
+      return res.status(403).json({ success: false, error: 'Shared workspace knowledge is read-only for your role' });
+    }
+
+    const content = String(req.body?.content || '').trim();
+    if (!content) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+
+    const metadata = await saveWorkspaceKnowledge({
+      db: pool,
+      workspaceId,
+      content,
+      user: req.user || {},
+    });
+
+    return res.json({
+      content,
+      updatedAt: metadata.updatedAt || '',
+      updatedByEmail: metadata.updatedByEmail || null,
+      readOnly: false,
+      canRead: true,
+      canWrite: true,
+      policy: normalizeSharedMemoryPolicy(state.policy),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/workspace-knowledge/policy', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    if (req.user?.role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin access required to change shared memory policy' });
+    }
+
+    const policy = await saveSharedMemoryPolicy({
+      db: pool,
+      workspaceId,
+      policy: req.body || {},
+    });
+    const state = await getWorkspaceKnowledgeState({ db: pool, workspaceId });
+    const knowledge = await loadWorkspaceKnowledge({ db: pool, workspaceId });
+
+    return res.json({
+      content: knowledge.content || state.content || '',
+      updatedAt: state.metadata.updatedAt || '',
+      updatedByEmail: state.metadata.updatedByEmail || null,
+      readOnly: !canWriteSharedMemory(policy, req.user || {}),
+      canRead: canReadSharedMemory(policy, req.user || {}),
+      canWrite: canWriteSharedMemory(policy, req.user || {}),
+      policy,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 router.get('/templates', async (req, res) => {

@@ -2011,7 +2011,14 @@ export interface MemoryActionResult {
 export interface WorkspaceKnowledge {
   content: string;
   updatedAt: string;
+  updatedByEmail?: string | null;
   readOnly?: boolean;
+  canRead?: boolean;
+  canWrite?: boolean;
+  policy?: {
+    read_access: 'workspace' | 'admin';
+    write_access: 'workspace' | 'admin';
+  };
 }
 
 export interface TemplateScope {

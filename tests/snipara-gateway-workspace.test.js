@@ -167,4 +167,25 @@ describe('SniparaGateway workspace requirements', () => {
       })
     );
   });
+
+  test('exposes document sync wrappers through the shared workspace context', async () => {
+    const { createSniparaGateway, callSniparaTool } = loadGateway();
+    const gateway = createSniparaGateway({ workspaceId: 'ws-sync' });
+
+    await gateway.sync.uploadDocument({
+      path: 'SOUL.md',
+      title: 'Workspace Shared Instructions',
+      content: '# Instructions',
+    });
+
+    expect(callSniparaTool).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'ws-sync',
+      toolName: 'rlm_upload_document',
+      args: {
+        path: 'SOUL.md',
+        title: 'Workspace Shared Instructions',
+        content: '# Instructions',
+      },
+    }));
+  });
 });

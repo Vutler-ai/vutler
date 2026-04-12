@@ -152,6 +152,15 @@ export async function updateWorkspaceKnowledge(content: string): Promise<Workspa
   });
 }
 
+export async function updateWorkspaceKnowledgePolicy(
+  policy: { read_access: 'workspace' | 'admin'; write_access: 'workspace' | 'admin' }
+): Promise<WorkspaceKnowledge> {
+  return apiFetch<WorkspaceKnowledge>('/api/v1/memory/workspace-knowledge/policy', {
+    method: 'PUT',
+    body: JSON.stringify(policy),
+  });
+}
+
 export async function getTemplateScopes(): Promise<TemplateScope[]> {
   const data = await apiFetch<{ templates?: TemplateScope[] } | TemplateScope[]>(
     '/api/v1/memory/templates'
