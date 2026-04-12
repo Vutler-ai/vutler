@@ -11,6 +11,10 @@ const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const pool = require('../lib/vaultbrix');
 const {
+  createWorkspaceNotification,
+  readWorkspaceNotificationSettings,
+} = require('./workspaceNotificationService');
+const {
   assertColumnsExist,
   assertTableExists,
   runtimeSchemaMutationsAllowed,
@@ -23,6 +27,8 @@ const DEFAULT_BATCH_SYNC_WAIT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 250;
 const MAX_OUTPUT_BYTES = 512 * 1024;
 const MAX_ANALYTICS_WINDOW_DAYS = 90;
+const SANDBOX_ALERT_WINDOW_DAYS = 7;
+const SANDBOX_ALERT_COOLDOWN_MINUTES = 180;
 const DEFAULT_RUNTIME = process.env.NODE_ENV === 'production' ? 'docker' : 'process';
 const DEFAULT_MINIMAL_ENV = {
   PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
@@ -361,6 +367,36 @@ function buildSandboxAnalyticsSummary(summary = {}, fallbackReasons = [], days =
   };
 }
 
+function formatPercent(value) {
+  return `${Math.round(Number(value || 0) * 100)}%`;
+}
+
+function buildSandboxCriticalAlertPayload(analytics) {
+  const fallbackSummary = analytics?.totals?.rlm_attempts
+    ? `${analytics.totals.fallbacks} fallback(s) across `
+      + `${analytics.totals.rlm_attempts} RLM attempt(s) `
+      + `(${formatPercent(analytics.rates?.fallback_rate)})`
+    : `${analytics?.totals?.failed || 0} failed and `
+      + `${analytics?.totals?.timeout || 0} timeout execution(s)`;
+  const topReasons = Array.isArray(analytics?.top_fallback_reasons)
+    && analytics.top_fallback_reasons.length > 0
+    ? analytics.top_fallback_reasons
+      .slice(0, 2)
+      .map((entry) => `${entry.reason} (${entry.count})`)
+      .join(', ')
+    : 'No dominant fallback reason was recorded.';
+  const recommendation = analytics?.recommendation
+    ? ` ${analytics.recommendation}`
+    : '';
+
+  return {
+    title: 'Sandbox runtime health is critical',
+    message: 'Sandbox telemetry over the last '
+      + `${analytics?.days || SANDBOX_ALERT_WINDOW_DAYS} days is critical: `
+      + `${fallbackSummary}. Top reasons: ${topReasons}.${recommendation}`,
+  };
+}
+
 async function createSandboxJob({
   language,
   code,
@@ -577,6 +613,29 @@ async function querySandboxAnalytics({
   );
 }
 
+async function emitSandboxHealthNotification(workspaceId, db = pool) {
+  if (!workspaceId) return null;
+
+  const notificationSettings = await readWorkspaceNotificationSettings(workspaceId, db).catch(() => null);
+  if (!notificationSettings?.sandbox_alert) return null;
+
+  const analytics = await querySandboxAnalytics({
+    workspaceId,
+    days: SANDBOX_ALERT_WINDOW_DAYS,
+  }, db);
+
+  if (analytics.status !== 'critical') return null;
+
+  const payload = buildSandboxCriticalAlertPayload(analytics);
+  return createWorkspaceNotification({
+    workspaceId,
+    type: 'error',
+    title: payload.title,
+    message: payload.message,
+    cooldownMinutes: SANDBOX_ALERT_COOLDOWN_MINUTES,
+  }, db);
+}
+
 async function awaitSandboxJob(id, {
   workspaceId,
   maxWaitMs = DEFAULT_SYNC_WAIT_MS,
@@ -736,6 +795,11 @@ async function updateSandboxJob(jobId, updates = {}, db = pool) {
   const mapped = mapSandboxJobRow(result.rows[0] || null);
   if (mapped) {
     await upsertSandboxExecutionMirror(result.rows[0], db).catch(() => {});
+    if (mapped.workspace_id && TERMINAL_STATUSES.has(mapped.status)) {
+      await emitSandboxHealthNotification(mapped.workspace_id, db).catch((err) => {
+        console.warn('[sandbox] critical alert skipped:', err.message);
+      });
+    }
   }
   return mapped;
 }
@@ -1027,5 +1091,7 @@ module.exports = {
     updateSandboxJob,
     skipPendingBatchJobs,
     computeSyncWaitWindow,
+    buildSandboxCriticalAlertPayload,
+    emitSandboxHealthNotification,
   },
 };

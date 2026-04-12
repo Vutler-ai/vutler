@@ -89,6 +89,7 @@ const notifTypes: NotifSetting[] = [
   { key: 'deployment_offline', label: 'Deployment Offline', desc: 'Alert when a deployment goes offline' },
   { key: 'daily_digest', label: 'Daily Digest', desc: 'Daily summary of activity and stats' },
   { key: 'security_alert', label: 'Security Alerts', desc: 'Important security notifications' },
+  { key: 'sandbox_alert', label: 'Sandbox Runtime Alerts', desc: 'Critical alerts when sandbox runtime health degrades for this workspace' },
 ];
 
 const DNS_RECORD_LABELS: Record<string, string> = {
@@ -247,6 +248,7 @@ export default function EmailSettingsPage() {
     deployment_offline: true,
     daily_digest: false,
     security_alert: true,
+    sandbox_alert: true,
   });
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);

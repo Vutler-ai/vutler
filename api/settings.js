@@ -8,6 +8,9 @@ const { decryptProviderSecret, encryptProviderSecret } = require('../services/pr
 const { clearSniparaConfigCache } = require('../services/sniparaResolver');
 const { normalizeWorkspaceRlmRuntimePolicy } = require('../services/executors/rlmRuntimePolicy');
 const {
+  normalizeNotificationSettings,
+} = require('../services/workspaceNotificationService');
+const {
   assertColumnsExist,
   runtimeSchemaMutationsAllowed,
 } = require('../lib/schemaReadiness');
@@ -19,13 +22,6 @@ try { pool = require('../lib/vaultbrix'); } catch (e) {
 }
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_NOTIFICATION_SETTINGS = {
-  agent_error: true,
-  deployment_offline: true,
-  daily_digest: false,
-  security_alert: true,
-};
-
 async function ensureTables() {
   try {
     await ensureApiKeysTable();
@@ -191,19 +187,6 @@ async function syncDefaultProvider(wsId, providerRef) {
 function maskKey(key) {
   if (!key || key.length < 8) return '••••••••';
   return key.substring(0, 6) + '••••••••' + key.substring(key.length - 4);
-}
-
-function normalizeNotificationSettings(value) {
-  const input = (value && typeof value === 'object' && !Array.isArray(value))
-    ? value
-    : {};
-
-  return {
-    agent_error: input.agent_error !== undefined ? Boolean(input.agent_error) : DEFAULT_NOTIFICATION_SETTINGS.agent_error,
-    deployment_offline: input.deployment_offline !== undefined ? Boolean(input.deployment_offline) : DEFAULT_NOTIFICATION_SETTINGS.deployment_offline,
-    daily_digest: input.daily_digest !== undefined ? Boolean(input.daily_digest) : DEFAULT_NOTIFICATION_SETTINGS.daily_digest,
-    security_alert: input.security_alert !== undefined ? Boolean(input.security_alert) : DEFAULT_NOTIFICATION_SETTINGS.security_alert,
-  };
 }
 
 async function ensureFlatNotificationColumns() {
