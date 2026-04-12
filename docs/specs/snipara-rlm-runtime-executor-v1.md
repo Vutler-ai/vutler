@@ -68,6 +68,7 @@ Behavior:
   - top fallback reasons
   - operator status `healthy | degraded | critical`
 - workspace-scoped critical runtime alerts are now emitted through Vutler notifications with a cooldown guard
+- when a workspace `notification_email` is configured, the same critical alert is also delivered through Postal email
 - operators can disable these alerts per workspace with the `sandbox_alert` notification setting
 
 Binary resolution order:
@@ -115,5 +116,5 @@ Validated locally on 2026-04-11:
 ## Remaining Follow-Ups
 
 - decide whether JavaScript support should stay on native sandbox only
-- add email delivery or realtime fan-out for workspace-wide sandbox critical alerts if operators need stronger paging semantics
+- add realtime fan-out for workspace-wide sandbox critical alerts if operators need stronger immediate paging semantics
 - verify the VPS `rlm` binary and env config before enabling in production

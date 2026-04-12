@@ -79,6 +79,24 @@ describe('workspace notification service', () => {
     });
   });
 
+  test('reads notification email and settings from workspace settings', async () => {
+    const service = require('../services/workspaceNotificationService');
+
+    const result = await service.readWorkspaceNotificationProfile(
+      'ws-1',
+      'fallback@example.com',
+      { query: queryMock }
+    );
+
+    expect(result).toMatchObject({
+      email: 'fallback@example.com',
+      settings: {
+        sandbox_alert: false,
+        security_alert: true,
+      },
+    });
+  });
+
   test('creates workspace notifications with cooldown dedupe checks', async () => {
     const service = require('../services/workspaceNotificationService');
 

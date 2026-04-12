@@ -120,9 +120,12 @@ async function ensureFlatNotificationColumns(db = pool) {
   `).catch(() => {});
 }
 
-async function readWorkspaceNotificationSettings(workspaceId, db = pool) {
+async function readWorkspaceNotificationProfile(workspaceId, fallbackEmail = '', db = pool) {
   if (!db || !workspaceId) {
-    return normalizeNotificationSettings();
+    return {
+      email: fallbackEmail || '',
+      settings: normalizeNotificationSettings(),
+    };
   }
 
   const layout = await detectSettingsLayout(db);
@@ -134,19 +137,40 @@ async function readWorkspaceNotificationSettings(workspaceId, db = pool) {
         WHERE workspace_id = $1`,
       [workspaceId]
     );
-    const row = result.rows.find((entry) => entry.key === 'notification_settings');
-    return normalizeNotificationSettings(row?.value);
+    const map = {};
+    for (const row of result.rows) {
+      map[row.key] = row.value;
+    }
+    const get = (key, defaultValue = null) => {
+      const value = map[key];
+      if (value === undefined || value === null) return defaultValue;
+      if (typeof value === 'object' && value && 'value' in value) return value.value;
+      return value;
+    };
+
+    return {
+      email: get('notification_email', fallbackEmail || '') || fallbackEmail || '',
+      settings: normalizeNotificationSettings(map.notification_settings),
+    };
   }
 
   await ensureFlatNotificationColumns(db);
   const result = await db.query(
-    `SELECT notification_settings
+    `SELECT notification_email, notification_settings
        FROM ${SCHEMA}.workspace_settings
       WHERE workspace_id = $1
       LIMIT 1`,
     [workspaceId]
   );
-  return normalizeNotificationSettings(result.rows[0]?.notification_settings);
+  return {
+    email: result.rows[0]?.notification_email || fallbackEmail || '',
+    settings: normalizeNotificationSettings(result.rows[0]?.notification_settings),
+  };
+}
+
+async function readWorkspaceNotificationSettings(workspaceId, db = pool) {
+  const profile = await readWorkspaceNotificationProfile(workspaceId, '', db);
+  return profile.settings;
 }
 
 async function createWorkspaceNotification({
@@ -203,6 +227,7 @@ async function createWorkspaceNotification({
 module.exports = {
   DEFAULT_NOTIFICATION_SETTINGS,
   normalizeNotificationSettings,
+  readWorkspaceNotificationProfile,
   readWorkspaceNotificationSettings,
   createWorkspaceNotification,
   __private: {

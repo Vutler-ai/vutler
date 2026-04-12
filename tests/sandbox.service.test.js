@@ -577,4 +577,100 @@ describe('sandbox analytics', () => {
       ])
     );
   });
+
+  test('emails the workspace notification address when a new critical alert is created', async () => {
+    const sendPostalMail = jest.fn().mockResolvedValue({ success: true, data: { message_id: 'postal-1' } });
+    const query = jest.fn(async (sql) => {
+      if (sql.includes('SELECT column_name') && sql.includes('information_schema.columns')) {
+        return {
+          rows: [
+            { column_name: 'workspace_id' },
+            { column_name: 'key' },
+            { column_name: 'value' },
+          ],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.workspace_settings') && sql.includes('SELECT key, value')) {
+        return {
+          rows: [
+            {
+              key: 'notification_settings',
+              value: {
+                sandbox_alert: true,
+              },
+            },
+            {
+              key: 'notification_email',
+              value: 'alerts@example.com',
+            },
+          ],
+        };
+      }
+
+      if (
+        sql.includes('COUNT(*) FILTER (WHERE backend_selected = \'rlm_runtime\')')
+        && sql.includes('COUNT(*) FILTER (WHERE used_fallback = TRUE)')
+      ) {
+        return {
+          rows: [{
+            total: 8,
+            terminal_total: 8,
+            running_count: 0,
+            rlm_attempt_count: 4,
+            rlm_effective_count: 1,
+            native_effective_count: 7,
+            fallback_count: 3,
+            failed_count: 1,
+            timeout_count: 0,
+            last_fallback_at: '2026-04-12T08:00:00.000Z',
+            last_rlm_at: '2026-04-12T09:00:00.000Z',
+            last_execution_at: '2026-04-12T10:00:00.000Z',
+          }],
+        };
+      }
+
+      if (sql.includes('SELECT fallback_reason AS reason')) {
+        return {
+          rows: [
+            { reason: 'runtime timeout', count: 2 },
+          ],
+        };
+      }
+
+      if (sql.includes('CREATE TABLE IF NOT EXISTS tenant_vutler.notifications')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM tenant_vutler.notifications') && sql.includes('created_at >= NOW()')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('INSERT INTO tenant_vutler.notifications')) {
+        return {
+          rows: [{
+            id: 'notif-2',
+            workspace_id: 'ws-1',
+            user_id: null,
+            type: 'error',
+            title: 'Sandbox runtime health is critical',
+          }],
+        };
+      }
+
+      return { rows: [] };
+    });
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../services/postalMailer', () => ({ sendPostalMail }));
+    const sandbox = require('../services/sandbox');
+
+    await sandbox.__private.emitSandboxHealthNotification('ws-1', { query });
+
+    expect(sendPostalMail).toHaveBeenCalledWith({
+      to: 'alerts@example.com',
+      subject: 'Sandbox runtime health is critical',
+      plain_body: expect.stringContaining('Sandbox telemetry over the last 7 days is critical'),
+    });
+  });
 });

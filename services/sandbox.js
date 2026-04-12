@@ -10,9 +10,10 @@
 const { spawn } = require('child_process');
 const { randomUUID } = require('crypto');
 const pool = require('../lib/vaultbrix');
+const { sendPostalMail } = require('./postalMailer');
 const {
   createWorkspaceNotification,
-  readWorkspaceNotificationSettings,
+  readWorkspaceNotificationProfile,
 } = require('./workspaceNotificationService');
 const {
   assertColumnsExist,
@@ -616,8 +617,8 @@ async function querySandboxAnalytics({
 async function emitSandboxHealthNotification(workspaceId, db = pool) {
   if (!workspaceId) return null;
 
-  const notificationSettings = await readWorkspaceNotificationSettings(workspaceId, db).catch(() => null);
-  if (!notificationSettings?.sandbox_alert) return null;
+  const notificationProfile = await readWorkspaceNotificationProfile(workspaceId, '', db).catch(() => null);
+  if (!notificationProfile?.settings?.sandbox_alert) return null;
 
   const analytics = await querySandboxAnalytics({
     workspaceId,
@@ -627,13 +628,36 @@ async function emitSandboxHealthNotification(workspaceId, db = pool) {
   if (analytics.status !== 'critical') return null;
 
   const payload = buildSandboxCriticalAlertPayload(analytics);
-  return createWorkspaceNotification({
+  const notification = await createWorkspaceNotification({
     workspaceId,
     type: 'error',
     title: payload.title,
     message: payload.message,
     cooldownMinutes: SANDBOX_ALERT_COOLDOWN_MINUTES,
   }, db);
+
+  if (!notification) return null;
+
+  const notificationEmail = String(notificationProfile.email || '').trim();
+  if (notificationEmail) {
+    const delivery = await sendPostalMail({
+      to: notificationEmail,
+      subject: payload.title,
+      plain_body: payload.message,
+    }).catch((err) => ({
+      success: false,
+      error: err.message,
+    }));
+
+    if (delivery?.success === false || delivery?.skipped) {
+      console.warn(
+        '[sandbox] critical alert email skipped:',
+        delivery.error || delivery.reason || 'unknown email delivery failure'
+      );
+    }
+  }
+
+  return notification;
 }
 
 async function awaitSandboxJob(id, {

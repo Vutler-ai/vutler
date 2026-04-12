@@ -70,7 +70,8 @@ This matches the current codebase:
   - active optional runtime backend exists for technical Python sandbox runs
   - workspace and agent policy now decide whether it is allowed, inherited, or forced
   - operator telemetry, fallback analytics, and critical workspace alerts now exist
-  - alert delivery is still limited to Vutler notifications rather than full paging/email fan-out
+  - alert delivery now covers Vutler notifications plus workspace notification email
+  - realtime/paging fan-out beyond that is still pending
 
 ### Not Yet Integrated In Product Runtime
 
@@ -269,7 +270,7 @@ Vutler already has:
 What is missing:
 - bounded technical inner loops where sandbox alone is too shallow across more technical workflows
 - optional runtime-env selection if operators need different trusted execution targets per workspace
-- stronger operator paging channels beyond in-product notifications when runtime health turns critical
+- stronger operator paging channels beyond notifications plus workspace email when runtime health turns critical
 
 Recommendation:
 - high priority, but strictly as an optional technical executor
@@ -374,7 +375,7 @@ Status update 2026-04-11:
   - agent governance can inherit, force native sandbox, or force `RLM Runtime`
 - per-execution backend telemetry is now visible in sandbox audit/history and carried in orchestration sandbox payloads
 - aggregate sandbox analytics now expose workspace-scoped `RLM` usage, effective backend split, fallback rate, and top fallback reasons
-- workspace-scoped `Sandbox Runtime Alerts` now emit a deduplicated critical notification and can be disabled per tenant
+- workspace-scoped `Sandbox Runtime Alerts` now emit a deduplicated critical notification, fan out to the workspace notification email, and can be disabled per tenant
 - fallback remains the native governed sandbox, and runtime authority remains in Vutler
 - broader production rollout controls and stronger alert routing still remain to be finished
 
