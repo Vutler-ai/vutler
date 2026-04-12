@@ -1,7 +1,7 @@
 'use strict';
 
 jest.mock('../services/sniparaMemoryService', () => ({
-  buildRuntimeMemoryBundle: jest.fn(async () => ({
+  buildRuntimeMemoryBundle: jest.fn(() => Promise.resolve({
     memories: [{ id: 'm1', type: 'fact', text: 'User prefers concise French answers.' }],
     stats: { runtime: 'chat', query: 'French answers', selected: { total: 1, instance: 1, template: 0, global: 0 } },
     sections: {
@@ -12,7 +12,14 @@ jest.mock('../services/sniparaMemoryService', () => ({
   })),
 }));
 
+jest.mock('../services/sessionContinuityService', () => ({
+  listRuntimeContinuitySummaries: jest.fn(() => Promise.resolve([
+    { type: 'workspace-session', text: 'Current workspace priority: keep answers concise.' },
+  ])),
+}));
+
 const { MemoryRuntimeService } = require('../services/memory/runtime');
+const { listRuntimeContinuitySummaries } = require('../services/sessionContinuityService');
 
 describe('memory runtime service', () => {
   test('returns empty prompt in passive mode', async () => {
@@ -30,10 +37,10 @@ describe('memory runtime service', () => {
   test('builds a prompt in active mode', async () => {
     const gatewayFactory = () => ({
       knowledge: {
-        sharedContext: jest.fn(async () => 'Always respect workspace conventions.'),
+        sharedContext: jest.fn(() => Promise.resolve('Always respect workspace conventions.')),
       },
       summaries: {
-        list: jest.fn(async () => []),
+        list: jest.fn(() => Promise.resolve([])),
       },
     });
 
@@ -48,5 +55,34 @@ describe('memory runtime service', () => {
     expect(result.prompt).toContain('Shared Context');
     expect(result.prompt).toContain('Agent Memory');
     expect(result.mode.mode).toBe('active');
+  });
+
+  test('uses targeted continuity summaries by default', async () => {
+    const gatewayFactory = () => ({
+      knowledge: {
+        sharedContext: jest.fn(() => Promise.resolve('Always respect workspace conventions.')),
+      },
+      summaries: {
+        list: jest.fn(() => Promise.resolve([])),
+      },
+    });
+
+    const service = new MemoryRuntimeService({ gatewayFactory });
+    const result = await service.preparePromptContext({
+      db: { query: jest.fn() },
+      workspaceId: 'ws-1',
+      agent: { id: 'agent-1', username: 'atlas', memory_mode: 'active' },
+      runtime: 'chat',
+      query: 'resume work',
+      includeSummaries: true,
+    });
+
+    expect(listRuntimeContinuitySummaries).toHaveBeenCalledWith({
+      db: { query: expect.any(Function) },
+      workspaceId: 'ws-1',
+      agent: { id: 'agent-1', username: 'atlas', memory_mode: 'active' },
+    });
+    expect(result.prompt).toContain('## Summaries');
+    expect(result.prompt).toContain('Current workspace priority: keep answers concise.');
   });
 });

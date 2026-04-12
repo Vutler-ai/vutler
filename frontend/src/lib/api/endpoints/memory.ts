@@ -5,6 +5,7 @@ import type {
   RememberPayload,
   SuccessResponse,
   WorkspaceKnowledge,
+  ContinuityBrief,
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
@@ -158,6 +159,39 @@ export async function updateWorkspaceKnowledgePolicy(
   return apiFetch<WorkspaceKnowledge>('/api/v1/memory/workspace-knowledge/policy', {
     method: 'PUT',
     body: JSON.stringify(policy),
+  });
+}
+
+export async function getWorkspaceSessionBrief(): Promise<ContinuityBrief> {
+  return apiFetch<ContinuityBrief>('/api/v1/memory/session-brief');
+}
+
+export async function updateWorkspaceSessionBrief(content: string): Promise<ContinuityBrief> {
+  return apiFetch<ContinuityBrief>('/api/v1/memory/session-brief', {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function getAgentProfileBrief(agentId: string): Promise<ContinuityBrief> {
+  return apiFetch<ContinuityBrief>(`/api/v1/memory/agents/${agentId}/profile-brief`);
+}
+
+export async function updateAgentProfileBrief(agentId: string, content: string): Promise<ContinuityBrief> {
+  return apiFetch<ContinuityBrief>(`/api/v1/memory/agents/${agentId}/profile-brief`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function getAgentSessionBrief(agentId: string): Promise<ContinuityBrief> {
+  return apiFetch<ContinuityBrief>(`/api/v1/memory/agents/${agentId}/session-brief`);
+}
+
+export async function updateAgentSessionBrief(agentId: string, content: string): Promise<ContinuityBrief> {
+  return apiFetch<ContinuityBrief>(`/api/v1/memory/agents/${agentId}/session-brief`, {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
   });
 }
 

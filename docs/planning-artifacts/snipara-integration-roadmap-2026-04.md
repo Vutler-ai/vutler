@@ -61,7 +61,8 @@ This matches the current codebase:
 
 - shared memory runtime
   - present, with Memory V2 lifecycle plus first-class tiering/graveyard/contradiction projection in Vutler
-  - still centered on Vutler's runtime shaping rather than full session/journal semantics from Snipara docs
+  - workspace session briefs and agent profile/session briefs are now productized and injected into runtime as targeted continuity summaries
+  - journal append/summarize primitives from Snipara docs are still not surfaced as operator tooling
 - swarm PM
   - core htask flow exists, but not the full documented policy and metrics surface
 - automation / continuity
@@ -75,7 +76,7 @@ This matches the current codebase:
 
 ### Not Yet Integrated In Product Runtime
 
-- session memory / journal style primitives from Snipara docs
+- journal style primitives from Snipara docs
 - advanced shared-context and RELP helper tools
   - template and shared collection management
   - multi-query / multi-project retrieval helpers
@@ -132,14 +133,15 @@ Relevant local references:
 - [services/memory/writePipeline.js](/Users/alopez/Devs/Vutler/services/memory/writePipeline.js:9)
 
 What is missing:
-- explicit session-memory concept mapped to chat/task/runtime episodes
+- explicit journal-style append/summarize flows mapped to chat/task/runtime episodes
 - deeper tier automation beyond the current `hot/warm/cold/graveyard` projection
-- journal/profile style primitives if they become product-relevant
+- richer compaction hooks beyond the current governed brief model
 
 Recommendation:
 - medium priority
 - Vutler is now aligned on first-class tier projection and graveyard handling
-- next step is session continuity and compaction semantics, not another parallel taxonomy
+- session continuity is now wired through governed workspace/agent briefs plus runtime injection
+- next step is journal automation and compaction hooks, not another parallel taxonomy
 
 ### 3. Group Memory and Multi-Agent Coordination
 
@@ -395,6 +397,10 @@ Done when:
 
 Status update 2026-04-12:
 - Vutler now exposes shared Snipara collections and prompt templates in workspace admin surfaces
+- Vutler now exposes governed continuity briefs backed by Snipara docs and summaries:
+  - workspace session brief on the global memory page
+  - agent profile brief and agent session brief on the agent memory page
+  - targeted runtime injection for workspace + agent continuity instead of broad untargeted summaries
 - the Snipara gateway now wires:
   - `rlm_list_collections`
   - `rlm_list_templates`
@@ -407,17 +413,16 @@ Status update 2026-04-12:
   - `rlm_multi_project_query`
   - `rlm_repl_context`
 - FULL workflow mode now uses Snipara recursive decomposition plus `rlm_multi_query` before falling back to a single `rlm_context_query`
-- group-memory governance and shared-document authoring UI are still not productized
+- group-memory governance is still not fully productized beyond shared instructions, shared uploads, and continuity briefs
 
-Remaining productizable Snipara work after `f38572b`:
+Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
 - first-class GitHub/source freshness surfaces
   - last successful sync
   - failed sync visibility
   - operator-facing source freshness health for autonomous runs
-- shared document authoring flows around `rlm_upload_shared_document`
-  - governed upload/edit flows
-  - ownership and write controls
 - group-memory governance
+- journal append / summarize tooling
+- stronger `@vutler/mcp` bootstrap ergonomics
   - who can promote shared knowledge
   - who can consume or mutate shared memory
 - session continuity and journal/profile semantics where they improve task/chat continuity

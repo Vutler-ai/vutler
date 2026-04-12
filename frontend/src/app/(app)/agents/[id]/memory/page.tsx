@@ -14,8 +14,12 @@ import {
   verifyMemory,
   invalidateMemory,
   supersedeMemory,
+  getAgentProfileBrief,
+  updateAgentProfileBrief,
+  getAgentSessionBrief,
+  updateAgentSessionBrief,
 } from '@/lib/api/endpoints/memory';
-import type { Memory, AgentContext } from '@/lib/api/types';
+import type { Memory, AgentContext, ContinuityBrief } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -115,6 +119,92 @@ function MemoryCardSkeleton() {
       <Skeleton className="h-4 w-3/4" />
       <Skeleton className="h-2 w-20" />
     </div>
+  );
+}
+
+interface ContinuityEditorProps {
+  cacheKey: string;
+  title: string;
+  subtitle: string;
+  placeholder: string;
+  load: () => Promise<ContinuityBrief>;
+  save: (content: string) => Promise<ContinuityBrief>;
+}
+
+function ContinuityEditor({ cacheKey, title, subtitle, placeholder, load, save }: ContinuityEditorProps) {
+  const { data, isLoading, error, mutate } = useApi<ContinuityBrief>(cacheKey, load);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  const content = draft ?? data?.content ?? '';
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus('idle');
+    try {
+      const updated = await save(content);
+      await mutate(updated, { revalidate: false });
+      setDraft(updated.content);
+      setStatus('success');
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          <p className="text-xs text-[#6b7280] mt-1">{subtitle}</p>
+        </div>
+        {data?.path && (
+          <span className="text-[11px] text-[#4b5563] text-right">{data.path}</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <Skeleton key={index} className="h-4 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
+      ) : (
+        <Textarea
+          value={content}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={placeholder}
+          className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[130px] text-sm focus:border-blue-500/50"
+        />
+      )}
+
+      <div className="flex items-center justify-between mt-3">
+        <div className="text-xs text-[#4b5563]">
+          {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'Not set yet'}
+          {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+        </div>
+        <div className="flex items-center gap-2">
+          {status === 'success' && <span className="text-xs text-emerald-400">Saved</span>}
+          {status === 'error' && <span className="text-xs text-red-400">Save failed</span>}
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || isLoading || error !== undefined || !content.trim() || data?.readOnly}
+            className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+          >
+            {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save Brief'}
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -710,11 +800,19 @@ export default function MemoryPage() {
     `/api/v1/agents/${agentId}/memories/context`,
     () => getAgentContext(agentId)
   );
+  const { mutate: mutateProfileBrief } = useApi<ContinuityBrief>(
+    `/api/v1/memory/agents/${agentId}/profile-brief`,
+    () => getAgentProfileBrief(agentId)
+  );
+  const { mutate: mutateSessionBrief } = useApi<ContinuityBrief>(
+    `/api/v1/memory/agents/${agentId}/session-brief`,
+    () => getAgentSessionBrief(agentId)
+  );
   const contextRole = context?.role;
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([mutateInstance(), mutateContext()]);
-  }, [mutateContext, mutateInstance]);
+    await Promise.all([mutateInstance(), mutateContext(), mutateProfileBrief(), mutateSessionBrief()]);
+  }, [mutateContext, mutateInstance, mutateProfileBrief, mutateSessionBrief]);
 
   const handleAddMemory = useCallback(async (text: string, type: MemoryType, importance: number) => {
     await rememberMemory(agentId, { text, type, importance });
@@ -789,6 +887,25 @@ export default function MemoryPage() {
 
       <div className="flex gap-6 items-start">
         <div className="flex-1 min-w-0 space-y-8">
+          <section className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <ContinuityEditor
+              cacheKey={`/api/v1/memory/agents/${agentId}/profile-brief`}
+              title="Agent Profile Brief"
+              subtitle="Stable identity, operating style, and durable role expectations for this agent."
+              placeholder="Summarize who this agent is, what it owns, and how it should operate."
+              load={() => getAgentProfileBrief(agentId)}
+              save={(content) => updateAgentProfileBrief(agentId, content)}
+            />
+            <ContinuityEditor
+              cacheKey={`/api/v1/memory/agents/${agentId}/session-brief`}
+              title="Agent Session Brief"
+              subtitle="Short current-state handoff note for resets, retries, and autonomous resumption."
+              placeholder="Capture the active task state, latest decisions, blockers, and next moves."
+              load={() => getAgentSessionBrief(agentId)}
+              save={(content) => updateAgentSessionBrief(agentId, content)}
+            />
+          </section>
+
           <section>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">

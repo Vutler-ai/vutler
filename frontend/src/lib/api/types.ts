@@ -2021,6 +2021,27 @@ export interface WorkspaceKnowledge {
   };
 }
 
+export interface ContinuityBrief {
+  kind: 'workspace_session' | 'agent_profile' | 'agent_session' | string;
+  title: string;
+  path: string;
+  content: string;
+  updatedAt: string;
+  updatedByEmail?: string | null;
+  readOnly?: boolean;
+  canRead?: boolean;
+  canWrite?: boolean;
+  policy?: {
+    read_access: 'workspace' | 'admin';
+    write_access: 'workspace' | 'admin';
+  };
+  agent?: {
+    id: string;
+    username?: string | null;
+    role?: string | null;
+  };
+}
+
 export interface TemplateScope {
   scope: string;
   role: string;

@@ -2,6 +2,7 @@
 
 const { createSniparaGateway } = require('../snipara/gateway');
 const { buildRuntimeMemoryBundle } = require('../sniparaMemoryService');
+const { listRuntimeContinuitySummaries } = require('../sessionContinuityService');
 const { buildMemoryPrompt } = require('./promptBuilder');
 const { resolveMemoryMode } = require('./modeResolver');
 const { createMemoryWritePipeline } = require('./writePipeline');
@@ -41,15 +42,28 @@ class MemoryRuntimeService {
     }
 
     const gateway = this.gatewayFactory({ db, workspaceId });
+    const summariesPromise = !includeSummaries
+      ? Promise.resolve([])
+      : summaryArgs
+        ? gateway.summaries.list(summaryArgs).catch(() => [])
+        : listRuntimeContinuitySummaries({ db, workspaceId, agent })
+          .catch(() => (
+            gateway.summaries.list({}).catch(() => [])
+          ));
+
     const [runtimeBundle, sharedContext, summaries] = await Promise.all([
       buildRuntimeMemoryBundle({ db, workspaceId, agent, humanContext, query, runtime }).catch(() => ({
         prompt: '',
         memories: [],
-        stats: { runtime, query, selected: { total: 0, human: 0, human_agent: 0, instance: 0, template: 0, global: 0 } },
+        stats: {
+          runtime,
+          query,
+          selected: { total: 0, human: 0, human_agent: 0, instance: 0, template: 0, global: 0 },
+        },
         sections: { human: [], human_agent: [], instance: [], template: [], global: [] },
       })),
       includeSharedContext ? gateway.knowledge.sharedContext({}).catch(() => '') : Promise.resolve(''),
-      includeSummaries ? gateway.summaries.list(summaryArgs || {}).catch(() => []) : Promise.resolve([]),
+      summariesPromise,
     ]);
 
     const prompt = buildMemoryPrompt({

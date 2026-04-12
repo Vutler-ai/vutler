@@ -25,6 +25,14 @@ const {
   saveWorkspaceKnowledge,
   saveSharedMemoryPolicy,
 } = require('../services/workspaceKnowledgeService');
+const {
+  AGENT_PROFILE_KIND,
+  AGENT_SESSION_KIND,
+  getWorkspaceSessionBrief,
+  saveWorkspaceSessionBrief,
+  getAgentContinuityBrief,
+  saveAgentContinuityBrief,
+} = require('../services/sessionContinuityService');
 
 function getWorkspaceId(req) {
   return req.workspaceId || '00000000-0000-0000-0000-000000000001';
@@ -444,6 +452,141 @@ router.put('/workspace-knowledge/policy', async (req, res) => {
       canWrite: canWriteSharedMemory(policy, req.user || {}),
       policy,
     });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/session-brief', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const state = await getWorkspaceKnowledgeState({ db: pool, workspaceId });
+    const canRead = canReadSharedMemory(state.policy, req.user || {});
+    const canWrite = canWriteSharedMemory(state.policy, req.user || {});
+    if (!canRead) {
+      return res.status(403).json({ success: false, error: 'Workspace session brief is restricted to admins' });
+    }
+
+    const brief = await getWorkspaceSessionBrief({ db: pool, workspaceId });
+    return res.json({
+      ...brief,
+      readOnly: !canWrite,
+      canRead,
+      canWrite,
+      policy: normalizeSharedMemoryPolicy(state.policy),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/session-brief', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const state = await getWorkspaceKnowledgeState({ db: pool, workspaceId });
+    if (!canWriteSharedMemory(state.policy, req.user || {})) {
+      return res.status(403).json({ success: false, error: 'Workspace session brief is read-only for your role' });
+    }
+
+    const content = String(req.body?.content || '').trim();
+    if (!content) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+
+    const brief = await saveWorkspaceSessionBrief({
+      db: pool,
+      workspaceId,
+      content,
+      user: req.user || {},
+    });
+
+    return res.json({
+      ...brief,
+      readOnly: false,
+      canRead: true,
+      canWrite: true,
+      policy: normalizeSharedMemoryPolicy(state.policy),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/agents/:agentId/profile-brief', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId } = req.params;
+    const brief = await getAgentContinuityBrief({
+      db: pool,
+      workspaceId,
+      agentIdOrUsername: agentId,
+      kind: AGENT_PROFILE_KIND,
+    });
+    return res.json({ ...brief, readOnly: false, canWrite: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/agents/:agentId/profile-brief', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId } = req.params;
+    const content = String(req.body?.content || '').trim();
+    if (!content) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+
+    const brief = await saveAgentContinuityBrief({
+      db: pool,
+      workspaceId,
+      agentIdOrUsername: agentId,
+      kind: AGENT_PROFILE_KIND,
+      content,
+      user: req.user || {},
+    });
+
+    return res.json({ ...brief, readOnly: false, canWrite: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/agents/:agentId/session-brief', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId } = req.params;
+    const brief = await getAgentContinuityBrief({
+      db: pool,
+      workspaceId,
+      agentIdOrUsername: agentId,
+      kind: AGENT_SESSION_KIND,
+    });
+    return res.json({ ...brief, readOnly: false, canWrite: true });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/agents/:agentId/session-brief', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId } = req.params;
+    const content = String(req.body?.content || '').trim();
+    if (!content) {
+      return res.status(400).json({ success: false, error: 'content is required' });
+    }
+
+    const brief = await saveAgentContinuityBrief({
+      db: pool,
+      workspaceId,
+      agentIdOrUsername: agentId,
+      kind: AGENT_SESSION_KIND,
+      content,
+      user: req.user || {},
+    });
+
+    return res.json({ ...brief, readOnly: false, canWrite: true });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }

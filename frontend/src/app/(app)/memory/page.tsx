@@ -9,6 +9,8 @@ import {
   getWorkspaceKnowledge,
   updateWorkspaceKnowledge,
   updateWorkspaceKnowledgePolicy,
+  getWorkspaceSessionBrief,
+  updateWorkspaceSessionBrief,
   getTemplateScopes,
   searchMemory,
   getAgentMemorySummary,
@@ -16,6 +18,7 @@ import {
 import type {
   Agent,
   WorkspaceKnowledge,
+  ContinuityBrief,
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
@@ -229,6 +232,91 @@ function WorkspaceKnowledgeSection() {
             className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
           >
             {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function WorkspaceSessionBriefSection() {
+  const { data, error, isLoading, mutate } = useApi<ContinuityBrief>(
+    '/api/v1/memory/session-brief',
+    () => getWorkspaceSessionBrief()
+  );
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  const content = draft ?? data?.content ?? '';
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveStatus('idle');
+    try {
+      const updated = await updateWorkspaceSessionBrief(content);
+      await mutate(updated, { revalidate: false });
+      setDraft(updated.content);
+      setSaveStatus('success');
+      setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch {
+      setSaveStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
+      <SectionHeader
+        icon={<Brain className="w-4 h-4" />}
+        title="Workspace Session Brief"
+        subtitle="Short continuity note injected at runtime for handoffs, resets, and autonomous retries."
+      />
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-4 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
+      ) : (
+        <Textarea
+          value={content}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Summarize the current workspace operating state, recent decisions, and active constraints."
+          className="bg-[#0e0f1a] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[180px] text-sm focus:border-blue-500/50"
+        />
+      )}
+
+      <p className="mt-3 text-xs text-[#6b7280] leading-relaxed">
+        This brief is stored as a governed Snipara summary and mirrored as a workspace continuity doc. Keep it compact and current.
+      </p>
+
+      <div className="flex items-center justify-between mt-3">
+        <div className="text-xs text-[#4b5563]">
+          {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'No continuity brief saved yet'}
+          {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {saveStatus === 'success' && (
+            <span className="text-xs text-emerald-400">Saved</span>
+          )}
+          {saveStatus === 'error' && (
+            <span className="text-xs text-red-400">Save failed</span>
+          )}
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || isLoading || error !== undefined || !content.trim() || data?.readOnly}
+            className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+          >
+            {data?.readOnly ? 'Read only' : saving ? 'Saving...' : 'Save Brief'}
           </Button>
         </div>
       </div>
@@ -617,6 +705,7 @@ export default function MemoryPage() {
 
       <div className="space-y-6">
         <WorkspaceKnowledgeSection />
+        <WorkspaceSessionBriefSection />
         <AgentMemoriesSection />
         <SharedKnowledgeSection />
         <SearchAllMemorySection />
