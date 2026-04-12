@@ -316,6 +316,15 @@ What is missing:
 Recommendation:
 - medium priority
 - important for external adoption, but not a runtime blocker
+- current minimum bar should be: CLI help, config templates, and public quick-start docs before building a heavier installer
+
+Status update 2026-04-12:
+- `@vutler/mcp` now ships a built-in bootstrap aid:
+  - `--help`
+  - `--print-env`
+  - `--print-config claude-desktop|cursor|continue`
+- package-level quick-start documentation now exists in `packages/mcp/README.md`
+- a fuller `create-snipara`-style installer is still not implemented
 
 ## Prioritized Roadmap
 
@@ -422,7 +431,7 @@ Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
   - operator-facing source freshness health for autonomous runs
 - group-memory governance
 - journal append / summarize tooling
-- stronger `@vutler/mcp` bootstrap ergonomics
+- stronger `@vutler/mcp` bootstrap ergonomics beyond CLI templates
   - who can promote shared knowledge
   - who can consume or mutate shared memory
 - session continuity and journal/profile semantics where they improve task/chat continuity

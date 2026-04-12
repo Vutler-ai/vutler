@@ -2,12 +2,6 @@
 'use strict';
 
 const { Buffer } = require('buffer');
-const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
-const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
-const {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} = require('@modelcontextprotocol/sdk/types.js');
 
 const api = require('./lib/api-client');
 const {
@@ -16,20 +10,112 @@ const {
   resolveWorkspacePlanId,
 } = require('./lib/plan-gating');
 
+const DEFAULT_API_URL = 'https://app.vutler.ai';
+const CLIENT_CONFIG_TEMPLATES = {
+  'claude-desktop': {
+    label: 'Claude Desktop',
+    config: {
+      mcpServers: {
+        vutler: {
+          command: 'npx',
+          args: ['-y', '@vutler/mcp'],
+          env: {
+            VUTLER_API_URL: DEFAULT_API_URL,
+            VUTLER_API_KEY: 'vt_your_key_here',
+          },
+        },
+      },
+    },
+  },
+  cursor: {
+    label: 'Cursor',
+    config: {
+      mcpServers: {
+        vutler: {
+          command: 'npx',
+          args: ['-y', '@vutler/mcp'],
+          env: {
+            VUTLER_API_URL: DEFAULT_API_URL,
+            VUTLER_API_KEY: 'vt_your_key_here',
+          },
+        },
+      },
+    },
+  },
+  continue: {
+    label: 'Continue.dev',
+    config: {
+      mcpServers: {
+        vutler: {
+          command: 'npx',
+          args: ['-y', '@vutler/mcp'],
+          env: {
+            VUTLER_API_URL: DEFAULT_API_URL,
+            VUTLER_API_KEY: 'vt_your_key_here',
+          },
+        },
+      },
+    },
+  },
+};
+
+function normalizeClientName(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return 'claude-desktop';
+  if (raw === 'claude' || raw === 'claude_desktop') return 'claude-desktop';
+  if (raw === 'continue.dev') return 'continue';
+  return raw;
+}
+
+function printHelp() {
+  process.stdout.write(
+    'vutler-mcp\n\n' +
+    'Usage:\n' +
+    '  npx @vutler/mcp\n' +
+    '  npx @vutler/mcp --help\n' +
+    '  npx @vutler/mcp --print-config [claude-desktop|cursor|continue]\n' +
+    '  npx @vutler/mcp --print-env\n\n' +
+    'Environment:\n' +
+    `  VUTLER_API_URL   Optional, defaults to ${DEFAULT_API_URL}\n` +
+    '  VUTLER_API_KEY   Required workspace API key\n'
+  );
+}
+
+function printEnvTemplate() {
+  process.stdout.write(
+    `VUTLER_API_URL=${process.env.VUTLER_API_URL || DEFAULT_API_URL}\n` +
+    'VUTLER_API_KEY=vt_your_key_here\n'
+  );
+}
+
+function printClientConfig(clientName) {
+  const normalized = normalizeClientName(clientName);
+  const template = CLIENT_CONFIG_TEMPLATES[normalized];
+  if (!template) {
+    const supported = Object.keys(CLIENT_CONFIG_TEMPLATES).join(', ');
+    throw new Error(`Unsupported client "${clientName}". Supported clients: ${supported}`);
+  }
+
+  process.stdout.write(
+    `# ${template.label}\n` +
+    `${JSON.stringify(template.config, null, 2)}\n`
+  );
+}
+
 function normalizeAgentList(result) {
   const agents = result?.agents || result?.data?.agents || result?.data || [];
   return Array.isArray(agents)
     ? agents.map((agent) => ({
-        id: agent.id,
-        name: agent.name,
-        username: agent.username || null,
-        role: agent.role || null,
-        status: agent.status || null,
-        model: agent.model || null,
-        provider: agent.provider || null,
-        capabilities: agent.capabilities || [],
-        description: agent.description || null,
-      }))
+      id: agent.id,
+      name: agent.name,
+      username: agent.username || null,
+      role: agent.role || null,
+      status: agent.status || null,
+      model: agent.model || null,
+      provider: agent.provider || null,
+      capabilities: agent.capabilities || [],
+      description: agent.description || null,
+    }))
     : [];
 }
 
@@ -57,13 +143,13 @@ function normalizeClientList(result) {
   const clients = result?.clients || result?.data || [];
   return Array.isArray(clients)
     ? clients.map((client) => ({
-        id: client.id,
-        name: client.name,
-        email: client.contact_email || client.email || null,
-        notes: client.notes || null,
-        logo_url: client.logo_url || null,
-        created_at: client.created_at || null,
-      }))
+      id: client.id,
+      name: client.name,
+      email: client.contact_email || client.email || null,
+      notes: client.notes || null,
+      logo_url: client.logo_url || null,
+      created_at: client.created_at || null,
+    }))
     : [];
 }
 
@@ -513,98 +599,127 @@ const ALL_TOOLS = [
 const TOOL_HANDLERS = Object.fromEntries(ALL_TOOLS.map((tool) => [tool.name, tool.handler]));
 const ALL_TOOL_NAMES = ALL_TOOLS.map((tool) => tool.name);
 
-const server = new Server(
-  {
-    name: 'vutler-mcp',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
+function createServer() {
+  const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
+  const {
+    CallToolRequestSchema,
+    ListToolsRequestSchema,
+  } = require('@modelcontextprotocol/sdk/types.js');
+
+  const server = new Server(
+    {
+      name: 'vutler-mcp',
+      version: '1.0.0',
     },
-  }
-);
+    {
+      capabilities: {
+        tools: {},
+      },
+    }
+  );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const planId = await resolveWorkspacePlanId();
-  const allowedToolNames = getAllowedToolNames(planId, ALL_TOOL_NAMES);
-  const tools = ALL_TOOLS
-    .filter((tool) => allowedToolNames.has(tool.name))
-    .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const planId = await resolveWorkspacePlanId();
+    const allowedToolNames = getAllowedToolNames(planId, ALL_TOOL_NAMES);
+    const tools = ALL_TOOLS
+      .filter((tool) => allowedToolNames.has(tool.name))
+      .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 
-  return { tools };
-});
+    return { tools };
+  });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args = {} } = request.params;
-  const planId = await resolveWorkspacePlanId();
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args = {} } = request.params;
+    const planId = await resolveWorkspacePlanId();
 
-  if (!isToolAllowed(planId, name, ALL_TOOL_NAMES)) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            error: `Tool "${name}" is not available on the current workspace plan.`,
-            tool: name,
-            planId: planId || 'unknown',
-          }),
-        },
-      ],
-      isError: true,
-    };
-  }
+    if (!isToolAllowed(planId, name, ALL_TOOL_NAMES)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: `Tool "${name}" is not available on the current workspace plan.`,
+              tool: name,
+              planId: planId || 'unknown',
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
 
-  const handler = TOOL_HANDLERS[name];
-  if (!handler) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({ error: `Unknown tool: ${name}` }),
-        },
-      ],
-      isError: true,
-    };
-  }
+    const handler = TOOL_HANDLERS[name];
+    if (!handler) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ error: `Unknown tool: ${name}` }),
+          },
+        ],
+        isError: true,
+      };
+    }
 
-  try {
-    const result = await handler(args);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  } catch (err) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            error: err.message || 'An unexpected error occurred.',
-            tool: name,
-          }),
-        },
-      ],
-      isError: true,
-    };
-  }
-});
+    try {
+      const result = await handler(args);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: err.message || 'An unexpected error occurred.',
+              tool: name,
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  });
+
+  return server;
+}
 
 async function main() {
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    printHelp();
+    return;
+  }
+
+  if (args.includes('--print-env')) {
+    printEnvTemplate();
+    return;
+  }
+
+  const printConfigIndex = args.indexOf('--print-config');
+  if (printConfigIndex >= 0) {
+    printClientConfig(args[printConfigIndex + 1]);
+    return;
+  }
+
   if (!process.env.VUTLER_API_KEY) {
     process.stderr.write('[vutler-mcp] WARNING: VUTLER_API_KEY is not set. All API calls will likely fail.\n');
   }
 
+  const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+  const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   process.stderr.write(
     `[vutler-mcp] Server started. ${ALL_TOOLS.length} tools registered.\n` +
-    `[vutler-mcp] API URL: ${process.env.VUTLER_API_URL || 'https://app.vutler.ai'}\n`
+    `[vutler-mcp] API URL: ${process.env.VUTLER_API_URL || DEFAULT_API_URL}\n`
   );
 }
 
