@@ -682,6 +682,109 @@ function buildScheduleToolResult(data = {}) {
   };
 }
 
+function normalizeSwarmTaskList(payload) {
+  const tasks = payload?.tasks || payload?.data?.tasks || payload?.data || payload;
+  return Array.isArray(tasks) ? tasks : [];
+}
+
+function normalizeSwarmEventList(payload) {
+  const events = payload?.events || payload?.data?.events || payload?.data || payload;
+  return Array.isArray(events) ? events : [];
+}
+
+function normalizeSwarmStatusFilter(status) {
+  const values = Array.isArray(status) ? status : (status ? [status] : []);
+  return values
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function matchesSwarmQuery(task, query) {
+  const needle = String(query || '').trim().toLowerCase();
+  if (!needle) return true;
+
+  const haystack = [
+    task?.title,
+    task?.description,
+    task?.status,
+    task?.assigned_to,
+    task?.for_agent_id,
+    task?.agent_id,
+    task?.owner,
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase();
+
+  return haystack.includes(needle);
+}
+
+function sanitizeSwarmTask(task = {}) {
+  return {
+    id: task.id || task.task_id || null,
+    title: task.title || '',
+    description: task.description || '',
+    status: task.status || null,
+    priority: task.priority ?? null,
+    agent_id: task.assigned_to || task.for_agent_id || task.agent_id || task.owner || null,
+    parent_id: task.parent_id || task.parent_task_id || null,
+    created_at: task.created_at || task.createdAt || null,
+    updated_at: task.updated_at || task.updatedAt || null,
+    due_date: task.deadline || task.due_date || task.dueDate || null,
+    metadata: task.metadata || null,
+  };
+}
+
+function sanitizeSwarmEvent(event = {}) {
+  return {
+    id: event.id || event.event_id || null,
+    type: event.type || event.event || null,
+    task_id: event.task_id || event.id || null,
+    agent_id: event.agent_id || event.owner || null,
+    message: event.message || event.summary || null,
+    timestamp: event.timestamp || event.created_at || event.createdAt || null,
+    payload: event.payload || event.data || null,
+  };
+}
+
+function buildSwarmTasksToolResult(tasks = [], applied = {}) {
+  const normalized = tasks.map(sanitizeSwarmTask);
+  const summary = normalized.length === 0
+    ? 'No matching swarm tasks found.'
+    : `Found ${normalized.length} swarm task(s).`;
+  const payload = {
+    summary,
+    count: normalized.length,
+    filters: applied,
+    tasks: normalized,
+  };
+
+  return {
+    success: true,
+    data: payload,
+    persisted_output: payload,
+  };
+}
+
+function buildSwarmEventsToolResult(events = [], applied = {}) {
+  const normalized = events.map(sanitizeSwarmEvent);
+  const summary = normalized.length === 0
+    ? 'No recent swarm events found.'
+    : `Found ${normalized.length} swarm event(s).`;
+  const payload = {
+    summary,
+    count: normalized.length,
+    filters: applied,
+    events: normalized,
+  };
+
+  return {
+    success: true,
+    data: payload,
+    persisted_output: payload,
+  };
+}
+
 async function executeToolThroughOrchestration({
   toolName,
   args,
@@ -798,6 +901,69 @@ const MEMORY_RECALL_TOOL = {
         query: { type: 'string', description: 'What to search for in memory' },
       },
       required: ['query'],
+    },
+  },
+};
+
+const SWARM_LIST_TASKS_TOOL = {
+  type: 'function',
+  function: {
+    name: 'vutler_list_swarm_tasks',
+    description: 'List the current Snipara swarm backlog and queued tasks for this workspace. Use before acting on work that may already be assigned, queued, or duplicated.',
+    parameters: {
+      type: 'object',
+      properties: {
+        status: {
+          oneOf: [
+            { type: 'string' },
+            { type: 'array', items: { type: 'string' } },
+          ],
+          description: 'Optional task status filter, such as pending, claimed, in_progress, blocked, or done.',
+        },
+        agent_id: {
+          type: 'string',
+          description: 'Optional agent username/id filter.',
+        },
+        query: {
+          type: 'string',
+          description: 'Optional text filter applied to task title, description, status, and agent fields.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+          description: 'Maximum number of tasks to return. Defaults to 20.',
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+};
+
+const SWARM_LIST_EVENTS_TOOL = {
+  type: 'function',
+  function: {
+    name: 'vutler_list_swarm_events',
+    description: 'List recent Snipara swarm coordination events for this workspace. Use to inspect recent task activity before deciding what to do next.',
+    parameters: {
+      type: 'object',
+      properties: {
+        event: {
+          type: 'string',
+          description: 'Optional event type filter if supported by the swarm runtime.',
+        },
+        agent_id: {
+          type: 'string',
+          description: 'Optional agent username/id filter if supported by the swarm runtime.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+          description: 'Maximum number of events to return. Defaults to 20.',
+        },
+      },
+      additionalProperties: false,
     },
   },
 };
@@ -1755,10 +1921,24 @@ async function chat(agent, messages, db, opts = {}) {
       role: agent?.role,
     }, workspaceId, opts.humanContext || null)
     : null;
-  const memoryGateway = memoryScope ? createSniparaGateway({ db, workspaceId }) : null;
+  const sniparaGateway = workspaceId ? createSniparaGateway({ db, workspaceId }) : null;
+  const memoryGateway = memoryScope ? sniparaGateway : null;
   const memoryTools = [];
   if (memoryScope && memoryMode.write) memoryTools.push(MEMORY_REMEMBER_TOOL);
   if (memoryScope && memoryMode.read) memoryTools.push(MEMORY_RECALL_TOOL);
+  let swarmConfig = null;
+  const swarmTools = [];
+  if (sniparaGateway && typeof sniparaGateway.resolveConfig === 'function') {
+    try {
+      const resolvedSwarmConfig = await sniparaGateway.resolveConfig();
+      if (resolvedSwarmConfig?.configured && resolvedSwarmConfig?.swarmId) {
+        swarmConfig = resolvedSwarmConfig;
+        swarmTools.push(SWARM_LIST_TASKS_TOOL, SWARM_LIST_EVENTS_TOOL);
+      }
+    } catch (_) {
+      swarmConfig = null;
+    }
+  }
 
   const integrationAccess = await resolveAgentRuntimeIntegrations({
     workspaceId,
@@ -1943,6 +2123,9 @@ async function chat(agent, messages, db, opts = {}) {
       effectiveSystemPrompt += '\n\nThe internal Vutler calendar is writable in this run. When the user asks to schedule, create, or update an internal event, use the Vutler calendar skill directly instead of saying that calendar writing is unavailable.';
     }
   }
+  if (swarmTools.length > 0) {
+    effectiveSystemPrompt += '\n\nYou can inspect the live swarm backlog and recent coordination activity with vutler_list_swarm_tasks() and vutler_list_swarm_events(). Before assuming missing context, claiming work is unassigned, or taking an external/public action, check the queue for already-related tasks or recent swarm events.';
+  }
   if (hasSocialMediaAccess) {
     const platformHint = allowedSocialPlatforms.length > 0
       ? ` Limit social posting to these enabled platforms unless the user asks otherwise and you have access: ${allowedSocialPlatforms.join(', ')}.`
@@ -1950,7 +2133,10 @@ async function chat(agent, messages, db, opts = {}) {
     const accountHint = allowedSocialAccountIds.length > 0 || allowedSocialBrandIds.length > 0
       ? ' Posts are automatically restricted to the social accounts assigned to this agent.'
       : '';
-    effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}${accountHint}`;
+    const backlogHint = swarmTools.length > 0
+      ? ' Before publishing or scheduling social content, inspect the swarm backlog/events to avoid reposting or creating duplicate queue entries.'
+      : '';
+    effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}${accountHint}${backlogHint}`;
   }
   if (scheduleTools.length > 0) {
     effectiveSystemPrompt += '\n\nYou can create follow-up execution with vutler_create_schedule(). Use it when the user asks for work to happen on future days or on a recurring cadence. For finite requests like "for the next 30 days", use occurrences to materialize dated tasks immediately instead of creating only an abstract recurring schedule. Do not merely promise future execution for multi-day sequences; create a schedule or dated tasks.';
@@ -2111,7 +2297,7 @@ async function chat(agent, messages, db, opts = {}) {
         }
         const sandboxTools = hasCodeExecution ? [SANDBOX_CODE_EXECUTION_TOOL] : [];
         const allTools = applyContextualToolFiltering(
-          [...memoryTools, ...socialMediaTools, ...scheduleTools, ...sandboxTools, ...nexusTools, ...skillTools],
+          [...memoryTools, ...swarmTools, ...socialMediaTools, ...scheduleTools, ...sandboxTools, ...nexusTools, ...skillTools],
           latestUserMessage
         );
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
@@ -2211,6 +2397,84 @@ async function chat(agent, messages, db, opts = {}) {
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
                 { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: `Error: ${recallErr.message}` },
+              ];
+            }
+            continueLoop = true;
+
+          } else if (toolCall.name === 'vutler_list_swarm_tasks' && swarmConfig && sniparaGateway && typeof sniparaGateway.call === 'function') {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_list_swarm_tasks', 'swarm', args);
+            try {
+              const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
+              const statusFilter = normalizeSwarmStatusFilter(args.status);
+              const agentFilter = String(args.agent_id || '').trim().toLowerCase();
+              const queryFilter = typeof args.query === 'string' ? args.query.trim() : '';
+              const rawTaskResult = await sniparaGateway.call('rlm_tasks', {
+                swarm_id: swarmConfig.swarmId,
+              });
+              const filteredTasks = normalizeSwarmTaskList(rawTaskResult)
+                .filter((task) => statusFilter.length === 0 || statusFilter.includes(String(task?.status || '').trim().toLowerCase()))
+                .filter((task) => {
+                  if (!agentFilter) return true;
+                  const candidates = [task?.assigned_to, task?.for_agent_id, task?.agent_id, task?.owner];
+                  return candidates.some((value) => String(value || '').trim().toLowerCase() === agentFilter);
+                })
+                .filter((task) => matchesSwarmQuery(task, queryFilter))
+                .slice(0, limit);
+              const swarmResult = buildSwarmTasksToolResult(filteredTasks, {
+                status: statusFilter,
+                agent_id: agentFilter || null,
+                query: queryFilter || null,
+                limit,
+              });
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, swarmResult, null);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_tasks', content: formatToolResultContent(swarmResult) },
+              ];
+            } catch (swarmTaskErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, swarmTaskErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_tasks', content: `Error: ${swarmTaskErr.message}` },
+              ];
+            }
+            continueLoop = true;
+
+          } else if (toolCall.name === 'vutler_list_swarm_events' && swarmConfig && sniparaGateway && typeof sniparaGateway.call === 'function') {
+            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_list_swarm_events', 'swarm', args);
+            try {
+              const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
+              const eventFilter = String(args.event || '').trim().toLowerCase();
+              const agentFilter = String(args.agent_id || '').trim().toLowerCase();
+              const rawEventResult = await sniparaGateway.call('rlm_swarm_events', {
+                swarm_id: swarmConfig.swarmId,
+                limit,
+                ...(eventFilter ? { event: eventFilter } : {}),
+                ...(agentFilter ? { agent_id: args.agent_id } : {}),
+              });
+              const filteredEvents = normalizeSwarmEventList(rawEventResult)
+                .filter((event) => !eventFilter || String(event?.type || event?.event || '').trim().toLowerCase() === eventFilter)
+                .filter((event) => !agentFilter || String(event?.agent_id || event?.owner || '').trim().toLowerCase() === agentFilter)
+                .slice(0, limit);
+              const swarmResult = buildSwarmEventsToolResult(filteredEvents, {
+                event: eventFilter || null,
+                agent_id: agentFilter || null,
+                limit,
+              });
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, swarmResult, null);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_events', content: formatToolResultContent(swarmResult) },
+              ];
+            } catch (swarmEventErr) {
+              await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, swarmEventErr);
+              currentMessages = [
+                ...currentMessages,
+                { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
+                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_events', content: `Error: ${swarmEventErr.message}` },
               ];
             }
             continueLoop = true;
