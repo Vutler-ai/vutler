@@ -17,7 +17,10 @@ jest.mock('../services/sniparaMemoryService', () => ({
 
 const {
   getWorkspaceJournal,
+  saveAgentJournal,
+  saveJournalAutomationPolicy,
   saveWorkspaceJournal,
+  getJournalAutomationPolicy,
   summarizeAgentJournalToBrief,
 } = require('../services/journalCompactionService');
 
@@ -77,6 +80,7 @@ describe('journal compaction service', () => {
     expect(journal.path).toBe('journals/workspace/2026-04-12.md');
     expect(journal.content).toContain('Morning deploy completed');
     expect(journal.updatedByEmail).toBe('ops@vutler.ai');
+    expect(journal.automationPolicy.mode).toBe('manual');
   });
 
   test('saves workspace journal and mirrors it to Snipara', async () => {
@@ -107,6 +111,8 @@ describe('journal compaction service', () => {
       text: 'Rolled out continuity briefs.\nNeed to monitor operator adoption.',
     }));
     expect(journal.updatedByEmail).toBe('admin@vutler.ai');
+    expect(journal.automation.status).toBe('skipped');
+    expect(journal.automation.reason).toBe('manual_mode');
   });
 
   test('summarizes an agent journal into the session brief', async () => {
@@ -143,5 +149,105 @@ describe('journal compaction service', () => {
       path: 'agents/atlas/SESSION.md',
       type: 'agent-session',
     }));
+  });
+
+  test('stores and retrieves journal automation policy per workspace scope', async () => {
+    const db = createWorkspaceSettingsDb();
+
+    const updated = await saveJournalAutomationPolicy({
+      db,
+      workspaceId: 'ws-1',
+      scope: 'workspace',
+      policy: {
+        mode: 'on_save',
+        minimum_length: 220,
+      },
+      user: { email: 'admin@vutler.ai' },
+    });
+
+    expect(updated.mode).toBe('on_save');
+    expect(updated.enabled).toBe(true);
+    expect(updated.minimum_length).toBe(220);
+
+    const fetched = await getJournalAutomationPolicy({
+      db,
+      workspaceId: 'ws-1',
+      scope: 'workspace',
+    });
+
+    expect(fetched.mode).toBe('on_save');
+    expect(fetched.updatedByEmail).toBe('admin@vutler.ai');
+  });
+
+  test('auto-refreshes the workspace session brief when journal automation is enabled', async () => {
+    const db = createWorkspaceSettingsDb({
+      'journal_automation:workspace:policy': {
+        scope: 'workspace',
+        mode: 'on_save',
+        minimum_length: 10,
+      },
+    });
+    const uploadDocument = jest.fn(() => Promise.resolve({ ok: true }));
+    const appendJournal = jest.fn(() => Promise.resolve({ ok: true }));
+    const summarizeJournal = jest.fn(() => Promise.resolve({
+      result: 'Deploy finished, monitor one retry path.',
+    }));
+    const storeSummary = jest.fn(() => Promise.resolve({ ok: true }));
+
+    const journal = await saveWorkspaceJournal({
+      db,
+      workspaceId: 'ws-1',
+      date: '2026-04-12',
+      content: 'Deploy finished.\nMonitor one retry path.',
+      user: { id: 'u-1', email: 'admin@vutler.ai' },
+      gatewayFactory: () => ({
+        sync: { uploadDocument },
+        journal: { append: appendJournal, summarize: summarizeJournal },
+        summaries: { store: storeSummary },
+      }),
+    });
+
+    expect(journal.automation.triggered).toBe(true);
+    expect(journal.automation.status).toBe('refreshed');
+    expect(journal.automation.brief_path).toBe('continuity/WORKSPACE-SESSION.md');
+    expect(storeSummary).toHaveBeenCalledWith(expect.objectContaining({
+      path: 'continuity/WORKSPACE-SESSION.md',
+      type: 'workspace-session',
+    }));
+  });
+
+  test('skips agent auto-refresh when the journal is below the configured threshold', async () => {
+    const db = createWorkspaceSettingsDb({
+      'journal_automation:agent:policy': {
+        scope: 'agent',
+        mode: 'on_save',
+        minimum_length: 120,
+      },
+    });
+    const uploadDocument = jest.fn(() => Promise.resolve({ ok: true }));
+    const appendJournal = jest.fn(() => Promise.resolve({ ok: true }));
+    const summarizeJournal = jest.fn(() => Promise.resolve({
+      result: 'Should not run.',
+    }));
+    const storeSummary = jest.fn(() => Promise.resolve({ ok: true }));
+
+    const journal = await saveAgentJournal({
+      db,
+      workspaceId: 'ws-1',
+      agentIdOrUsername: 'agent-1',
+      date: '2026-04-12',
+      content: 'Short note.',
+      user: { id: 'u-1', email: 'admin@vutler.ai' },
+      gatewayFactory: () => ({
+        sync: { uploadDocument },
+        journal: { append: appendJournal, summarize: summarizeJournal },
+        summaries: { store: storeSummary },
+      }),
+    });
+
+    expect(journal.automation.triggered).toBe(false);
+    expect(journal.automation.reason).toBe('below_minimum_length');
+    expect(summarizeJournal).not.toHaveBeenCalled();
+    expect(storeSummary).not.toHaveBeenCalled();
   });
 });

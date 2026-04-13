@@ -34,13 +34,18 @@ const {
   saveAgentContinuityBrief,
 } = require('../services/sessionContinuityService');
 const {
+  JOURNAL_AUTOMATION_MODE_MANUAL,
+  JOURNAL_AUTOMATION_MODE_ON_SAVE,
   normalizeJournalDate,
+  normalizeJournalAutomationScope,
   getWorkspaceJournal,
   saveWorkspaceJournal,
   summarizeWorkspaceJournalToBrief,
   getAgentJournal,
   saveAgentJournal,
   summarizeAgentJournalToBrief,
+  listJournalAutomationPolicies,
+  saveJournalAutomationPolicy,
 } = require('../services/journalCompactionService');
 const {
   listGroupMemorySpaces,
@@ -57,6 +62,10 @@ function getWorkspaceId(req) {
 function parseLimit(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isWorkspaceAdmin(user) {
+  return String(user?.role || '').trim().toLowerCase() === 'admin';
 }
 
 function toTemplateScope(role, count, hasMore) {
@@ -671,6 +680,47 @@ router.post('/journal/workspace/summarize', async (req, res) => {
     });
 
     return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/journal-automation', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const policies = await listJournalAutomationPolicies({ db: pool, workspaceId });
+    return res.json({ success: true, data: policies });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/journal-automation/:scope', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    if (!isWorkspaceAdmin(req.user || {})) {
+      return res.status(403).json({ success: false, error: 'Journal automation policy is restricted to admins' });
+    }
+
+    const scope = normalizeJournalAutomationScope(req.params.scope);
+    const mode = String(req.body?.mode || '').trim();
+    const minimumLength = req.body?.minimum_length;
+    if (![JOURNAL_AUTOMATION_MODE_MANUAL, JOURNAL_AUTOMATION_MODE_ON_SAVE].includes(mode)) {
+      return res.status(400).json({ success: false, error: 'mode must be manual or on_save' });
+    }
+
+    const policy = await saveJournalAutomationPolicy({
+      db: pool,
+      workspaceId,
+      scope,
+      policy: {
+        mode,
+        minimum_length: minimumLength,
+      },
+      user: req.user || {},
+    });
+
+    return res.json({ success: true, data: policy });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }

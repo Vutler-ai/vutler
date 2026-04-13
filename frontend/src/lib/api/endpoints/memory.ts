@@ -7,6 +7,8 @@ import type {
   WorkspaceKnowledge,
   ContinuityBrief,
   JournalState,
+  JournalAutomationPolicies,
+  JournalAutomationPolicy,
   JournalSummarizeResult,
   GroupMemorySpace,
   AgentGroupMemoryResponse,
@@ -194,6 +196,22 @@ export async function summarizeWorkspaceJournal(date: string): Promise<JournalSu
   const response = await apiFetch<JournalSummarizeResult>('/api/v1/memory/journal/workspace/summarize', {
     method: 'POST',
     body: JSON.stringify({ date }),
+  });
+  return response.data;
+}
+
+export async function getJournalAutomationPolicies(): Promise<JournalAutomationPolicies> {
+  const response = await apiFetch<{ data: JournalAutomationPolicies }>('/api/v1/memory/journal-automation');
+  return response.data;
+}
+
+export async function updateJournalAutomationPolicy(
+  scope: 'workspace' | 'agent',
+  payload: { mode: 'manual' | 'on_save'; minimum_length: number }
+): Promise<JournalAutomationPolicy> {
+  const response = await apiFetch<{ data: JournalAutomationPolicy }>(`/api/v1/memory/journal-automation/${scope}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
   });
   return response.data;
 }

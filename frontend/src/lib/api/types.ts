@@ -2049,6 +2049,8 @@ export interface JournalState {
   content: string;
   updatedAt: string;
   updatedByEmail?: string | null;
+  automationPolicy?: JournalAutomationPolicy;
+  automation?: JournalAutomationResult;
   readOnly?: boolean;
   canRead?: boolean;
   canWrite?: boolean;
@@ -2061,6 +2063,36 @@ export interface JournalState {
     username?: string | null;
     role?: string | null;
   };
+}
+
+export interface JournalAutomationPolicy {
+  scope: 'workspace' | 'agent' | string;
+  mode: 'manual' | 'on_save' | string;
+  enabled: boolean;
+  minimum_length: number;
+  target: 'workspace_session_brief' | 'agent_session_brief' | string;
+  updatedAt: string;
+  updatedByEmail?: string | null;
+}
+
+export interface JournalAutomationResult {
+  scope: 'workspace' | 'agent' | string;
+  mode: 'manual' | 'on_save' | string;
+  enabled: boolean;
+  minimum_length: number;
+  content_length: number;
+  status: 'refreshed' | 'skipped' | string;
+  reason: string;
+  triggered: boolean;
+  target: 'workspace_session_brief' | 'agent_session_brief' | string;
+  brief_kind?: string | null;
+  brief_path?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface JournalAutomationPolicies {
+  workspace: JournalAutomationPolicy;
+  agent: JournalAutomationPolicy;
 }
 
 export interface JournalSummarizeResult {

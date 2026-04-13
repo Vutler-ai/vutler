@@ -222,7 +222,7 @@ function JournalEditor({ agentId }: { agentId: string }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'success' | 'summarized' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'success' | 'automated' | 'summarized' | 'error'>('idle');
 
   const content = draft ?? data?.content ?? '';
 
@@ -233,7 +233,7 @@ function JournalEditor({ agentId }: { agentId: string }) {
       const updated = await updateAgentJournal(agentId, selectedDate, content);
       await mutate(updated, { revalidate: false });
       setDraft(updated.content);
-      setStatus('success');
+      setStatus(updated.automation?.triggered ? 'automated' : 'success');
       setTimeout(() => setStatus('idle'), 2500);
     } catch {
       setStatus('error');
@@ -264,7 +264,7 @@ function JournalEditor({ agentId }: { agentId: string }) {
         <div>
           <h3 className="text-sm font-semibold text-white">Daily Journal</h3>
           <p className="text-xs text-[#6b7280] mt-1">
-            Day-level operator or runtime notes that can be compacted into the agent session brief.
+            Day-level operator or runtime notes that can be compacted into the agent session brief, with optional auto-refresh on save.
           </p>
         </div>
         <div className="w-[180px]">
@@ -304,9 +304,13 @@ function JournalEditor({ agentId }: { agentId: string }) {
         <div className="text-xs text-[#4b5563]">
           {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'Not set yet'}
           {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+          {data?.automationPolicy?.enabled
+            ? ` · Auto-refresh on save from ${data.automationPolicy.minimum_length} chars`
+            : ' · Manual compaction only'}
         </div>
         <div className="flex items-center gap-2">
           {status === 'success' && <span className="text-xs text-emerald-400">Saved</span>}
+          {status === 'automated' && <span className="text-xs text-emerald-400">Saved + session brief refreshed</span>}
           {status === 'summarized' && <span className="text-xs text-emerald-400">Session brief refreshed</span>}
           {status === 'error' && <span className="text-xs text-red-400">Action failed</span>}
           <Button

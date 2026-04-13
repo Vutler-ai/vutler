@@ -11,7 +11,9 @@ import {
   updateWorkspaceKnowledgePolicy,
   getWorkspaceSessionBrief,
   updateWorkspaceSessionBrief,
+  getJournalAutomationPolicies,
   getWorkspaceJournal,
+  updateJournalAutomationPolicy,
   updateWorkspaceJournal,
   summarizeWorkspaceJournal,
   getGroupMemorySpaces,
@@ -26,6 +28,8 @@ import type {
   Agent,
   WorkspaceKnowledge,
   ContinuityBrief,
+  JournalAutomationPolicies,
+  JournalAutomationPolicy,
   JournalState,
   GroupMemorySpace,
   TemplateScope,
@@ -343,7 +347,7 @@ function WorkspaceJournalSection() {
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'saved' | 'summarized' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'saved' | 'automated' | 'summarized' | 'error'>('idle');
 
   useEffect(() => {
     setDraft(null);
@@ -359,7 +363,7 @@ function WorkspaceJournalSection() {
       const updated = await updateWorkspaceJournal(selectedDate, content);
       await mutate(updated, { revalidate: false });
       setDraft(updated.content);
-      setStatus('saved');
+      setStatus(updated.automation?.triggered ? 'automated' : 'saved');
       setTimeout(() => setStatus('idle'), 2500);
     } catch {
       setStatus('error');
@@ -389,7 +393,7 @@ function WorkspaceJournalSection() {
       <SectionHeader
         icon={<Brain className="w-4 h-4" />}
         title="Workspace Daily Journal"
-        subtitle="Operational notes for the day. Compact them into the workspace session brief when needed."
+        subtitle="Operational notes for the day. Manual compaction remains available, and automation can now refresh the workspace brief on save."
       />
 
       <div className="mb-4 max-w-[220px]">
@@ -425,9 +429,13 @@ function WorkspaceJournalSection() {
         <div className="text-xs text-[#4b5563]">
           {data?.updatedAt ? `Last updated: ${formatDate(data.updatedAt)}` : 'No journal saved for this date'}
           {data?.updatedByEmail ? ` · ${data.updatedByEmail}` : ''}
+          {data?.automationPolicy?.enabled
+            ? ` · Auto-refresh on save from ${data.automationPolicy.minimum_length} chars`
+            : ' · Manual compaction only'}
         </div>
         <div className="flex items-center gap-2">
           {status === 'saved' && <span className="text-xs text-emerald-400">Saved</span>}
+          {status === 'automated' && <span className="text-xs text-emerald-400">Saved + brief refreshed</span>}
           {status === 'summarized' && <span className="text-xs text-emerald-400">Brief refreshed</span>}
           {status === 'error' && <span className="text-xs text-red-400">Action failed</span>}
           <Button
@@ -448,6 +456,152 @@ function WorkspaceJournalSection() {
           </Button>
         </div>
       </div>
+    </section>
+  );
+}
+
+function JournalAutomationPolicyCard({
+  label,
+  description,
+  policy,
+  onSave,
+}: {
+  label: string;
+  description: string;
+  policy: JournalAutomationPolicy;
+  onSave: (next: { mode: 'manual' | 'on_save'; minimum_length: number }) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<'manual' | 'on_save'>(policy.mode === 'on_save' ? 'on_save' : 'manual');
+  const [minimumLength, setMinimumLength] = useState(String(policy.minimum_length || 120));
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  useEffect(() => {
+    setMode(policy.mode === 'on_save' ? 'on_save' : 'manual');
+    setMinimumLength(String(policy.minimum_length || 120));
+  }, [policy.mode, policy.minimum_length]);
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus('idle');
+    try {
+      await onSave({
+        mode,
+        minimum_length: Math.max(1, Number.parseInt(minimumLength, 10) || policy.minimum_length || 120),
+      });
+      setStatus('success');
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0e0f1a] p-4 space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-white">{label}</h3>
+        <p className="text-xs text-[#6b7280] mt-1">{description}</p>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_140px_auto]">
+        <label className="space-y-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-[#6b7280]">Mode</span>
+          <select
+            value={mode}
+            onChange={(e) => setMode((e.target.value as 'manual' | 'on_save') || 'manual')}
+            className="h-10 w-full rounded-md border border-[rgba(255,255,255,0.1)] bg-[#14151f] px-3 text-sm text-white outline-none"
+          >
+            <option value="manual">Manual only</option>
+            <option value="on_save">Auto refresh on save</option>
+          </select>
+        </label>
+
+        <label className="space-y-1.5">
+          <span className="text-[11px] uppercase tracking-wide text-[#6b7280]">Min Chars</span>
+          <Input
+            type="number"
+            min={1}
+            value={minimumLength}
+            onChange={(e) => setMinimumLength(e.target.value)}
+            className="bg-[#14151f] border-[rgba(255,255,255,0.1)] text-white"
+          />
+        </label>
+
+        <div className="flex items-end gap-2">
+          {status === 'success' && <span className="text-xs text-emerald-400">Saved</span>}
+          {status === 'error' && <span className="text-xs text-red-400">Failed</span>}
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving}
+            className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+          >
+            {saving ? 'Saving...' : 'Save Policy'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="text-xs text-[#4b5563]">
+        {policy.enabled
+          ? `Active. Journals above ${policy.minimum_length} chars refresh the target brief on save.`
+          : 'Inactive. Operators keep full manual control over compaction.'}
+        {policy.updatedAt ? ` Last policy update: ${formatDate(policy.updatedAt)}` : ''}
+        {policy.updatedByEmail ? ` · ${policy.updatedByEmail}` : ''}
+      </div>
+    </div>
+  );
+}
+
+function JournalAutomationSection() {
+  const { data, error, isLoading, mutate } = useApi<JournalAutomationPolicies>(
+    '/api/v1/memory/journal-automation',
+    () => getJournalAutomationPolicies()
+  );
+
+  async function handleSave(scope: 'workspace' | 'agent', next: { mode: 'manual' | 'on_save'; minimum_length: number }) {
+    if (!data) return;
+    const updated = await updateJournalAutomationPolicy(scope, next);
+    await mutate({
+      workspace: scope === 'workspace' ? updated : data.workspace,
+      agent: scope === 'agent' ? updated : data.agent,
+    }, { revalidate: false });
+  }
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
+      <SectionHeader
+        icon={<Layers className="w-4 h-4" />}
+        title="Journal Automation"
+        subtitle="Move beyond manual compaction by auto-refreshing continuity briefs when a saved journal is substantive enough."
+      />
+
+      {isLoading ? (
+        <div className="space-y-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
+      ) : data ? (
+        <div className="space-y-4">
+          <JournalAutomationPolicyCard
+            label="Workspace Journal"
+            description="Refresh the workspace session brief automatically after a journal save when the note is long enough to be worth compacting."
+            policy={data.workspace}
+            onSave={(next) => handleSave('workspace', next)}
+          />
+          <JournalAutomationPolicyCard
+            label="Agent Journals"
+            description="Refresh each agent session brief automatically after journal saves, while still keeping the manual summarize action available."
+            policy={data.agent}
+            onSave={(next) => handleSave('agent', next)}
+          />
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1138,6 +1292,7 @@ export default function MemoryPage() {
       <div className="space-y-6">
         <WorkspaceKnowledgeSection />
         <WorkspaceSessionBriefSection />
+        <JournalAutomationSection />
         <WorkspaceJournalSection />
         <GroupMemorySection />
         <AgentMemoriesSection />

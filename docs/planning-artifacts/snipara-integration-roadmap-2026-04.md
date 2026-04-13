@@ -1,5 +1,5 @@
 # Snipara Integration Roadmap
-_Updated: 2026-04-12_
+_Updated: 2026-04-13_
 
 ## Scope
 
@@ -143,6 +143,15 @@ Recommendation:
 - session continuity is now wired through governed workspace/agent briefs plus runtime injection
 - daily journal capture and summarize-to-brief compaction are now productized
 - next step is deeper journal automation and compaction hooks, not another parallel taxonomy
+
+Status update 2026-04-13:
+- Vutler now exposes governed journal automation policy per workspace:
+  - workspace journals can auto-refresh the workspace session brief on save
+  - agent journals can auto-refresh the agent session brief on save
+  - each policy has `manual` or `on_save` mode plus a minimum content threshold
+- manual summarize actions remain available as an explicit operator override
+- journal saves no longer depend on manual compaction to keep continuity briefs current
+- remaining work is now around runtime/session-bound hook triggers and scheduled sweep automation, not the basic automation surface
 
 ### 3. Group Memory and Multi-Agent Coordination
 
@@ -444,7 +453,7 @@ Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
   - failed sync visibility
   - operator-facing source freshness health for autonomous runs
 - automatic promotion/reporting around group memory
-- journal append / summarize tooling beyond the new daily journal + brief compaction flow
+- deeper session-bound journal hooks and scheduled sweep automation beyond the new on-save policy
 - stronger `@vutler/mcp` bootstrap ergonomics beyond CLI templates
   - who can promote shared knowledge
   - who can consume or mutate shared memory
