@@ -24,11 +24,20 @@ jest.mock('../services/groupMemoryService', () => ({
   ])),
 }));
 
+jest.mock('../services/journalCompactionService', () => ({
+  runJournalAutomationRuntimeRefresh: jest.fn(() => Promise.resolve(null)),
+}));
+
 const { MemoryRuntimeService } = require('../services/memory/runtime');
 const { listRuntimeContinuitySummaries } = require('../services/sessionContinuityService');
 const { listRuntimeGroupMemories } = require('../services/groupMemoryService');
+const { runJournalAutomationRuntimeRefresh } = require('../services/journalCompactionService');
 
 describe('memory runtime service', () => {
+  beforeEach(() => {
+    runJournalAutomationRuntimeRefresh.mockClear();
+  });
+
   test('returns empty prompt in passive mode', async () => {
     const service = new MemoryRuntimeService();
     const result = await service.preparePromptContext({
@@ -88,6 +97,13 @@ describe('memory runtime service', () => {
       db: { query: expect.any(Function) },
       workspaceId: 'ws-1',
       agent: { id: 'agent-1', username: 'atlas', memory_mode: 'active' },
+    });
+    expect(runJournalAutomationRuntimeRefresh).toHaveBeenCalledWith({
+      db: { query: expect.any(Function) },
+      workspaceId: 'ws-1',
+      agentIdOrUsername: 'agent-1',
+      date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      runtime: 'chat',
     });
     expect(listRuntimeGroupMemories).toHaveBeenCalledWith({
       db: { query: expect.any(Function) },

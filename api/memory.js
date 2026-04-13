@@ -49,6 +49,7 @@ const {
   summarizeAgentJournalToBrief,
   listJournalAutomationPolicies,
   getJournalAutomationSweepStatus,
+  getJournalAutomationRuntimeStatus,
   saveJournalAutomationPolicy,
   runJournalAutomationSweep,
 } = require('../services/journalCompactionService');
@@ -743,6 +744,16 @@ router.get('/journal-automation/sweep-status', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const status = await getJournalAutomationSweepStatus({ db: pool, workspaceId });
+    return res.json({ success: true, data: status });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/journal-automation/runtime-status', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const status = await getJournalAutomationRuntimeStatus({ db: pool, workspaceId });
     return res.json({ success: true, data: status });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });

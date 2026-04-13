@@ -12,6 +12,7 @@ import {
   getWorkspaceSessionBrief,
   updateWorkspaceSessionBrief,
   getJournalAutomationPolicies,
+  getJournalAutomationRuntimeStatus,
   getJournalAutomationSweepStatus,
   getWorkspaceJournal,
   updateJournalAutomationPolicy,
@@ -32,6 +33,7 @@ import type {
   ContinuityBrief,
   JournalAutomationPolicies,
   JournalAutomationPolicy,
+  JournalAutomationRuntimeStatus,
   JournalAutomationSweepResult,
   JournalState,
   GroupMemorySpace,
@@ -585,6 +587,10 @@ function JournalAutomationSection() {
     '/api/v1/memory/journal-automation/sweep-status',
     () => getJournalAutomationSweepStatus()
   );
+  const { data: runtimeStatus } = useApi<JournalAutomationRuntimeStatus>(
+    '/api/v1/memory/journal-automation/runtime-status',
+    () => getJournalAutomationRuntimeStatus()
+  );
   const [runningSweep, setRunningSweep] = useState(false);
   const [sweepActionStatus, setSweepActionStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -684,6 +690,47 @@ function JournalAutomationSection() {
                 <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#14151f] px-3 py-2">
                   <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Skipped</p>
                   <p className="mt-1 text-sm text-white">{sweepStatus.totals.skipped}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0e0f1a] p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Runtime Hooks</h3>
+                <p className="text-xs text-[#6b7280] mt-1">
+                  Chat and task prompt preparation can now refresh stale continuity briefs automatically before summaries are injected.
+                </p>
+                <p className="mt-2 text-xs text-[#4b5563]">
+                  {runtimeStatus?.updated_at
+                    ? `Last runtime refresh: ${formatDate(runtimeStatus.updated_at)} · ${runtimeStatus.refreshed_count} brief${runtimeStatus.refreshed_count === 1 ? '' : 's'} refreshed`
+                    : 'No runtime-triggered refresh recorded yet.'}
+                </p>
+              </div>
+              {runtimeStatus && (
+                <div className="text-right text-xs text-[#9ca3af]">
+                  <p>{runtimeStatus.runtime}</p>
+                  <p>{runtimeStatus.date}</p>
+                </div>
+              )}
+            </div>
+
+            {runtimeStatus && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#14151f] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Workspace</p>
+                  <p className="mt-1 text-sm text-white">{runtimeStatus.workspace.status}</p>
+                  <p className="mt-1 text-xs text-[#4b5563]">{runtimeStatus.workspace.reason}</p>
+                </div>
+                <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#14151f] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Agent</p>
+                  <p className="mt-1 text-sm text-white">{runtimeStatus.agent?.status || 'not_checked'}</p>
+                  <p className="mt-1 text-xs text-[#4b5563]">
+                    {runtimeStatus.agent
+                      ? `${runtimeStatus.agent.username || runtimeStatus.agent.agent_id || 'agent'} · ${runtimeStatus.agent.reason}`
+                      : 'No agent runtime refresh recorded yet.'}
+                  </p>
                 </div>
               </div>
             )}

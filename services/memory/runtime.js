@@ -4,6 +4,7 @@ const { createSniparaGateway } = require('../snipara/gateway');
 const { buildRuntimeMemoryBundle } = require('../sniparaMemoryService');
 const { listRuntimeGroupMemories } = require('../groupMemoryService');
 const { listRuntimeContinuitySummaries } = require('../sessionContinuityService');
+const { runJournalAutomationRuntimeRefresh } = require('../journalCompactionService');
 const { buildMemoryPrompt } = require('./promptBuilder');
 const { resolveMemoryMode } = require('./modeResolver');
 const { createMemoryWritePipeline } = require('./writePipeline');
@@ -41,6 +42,22 @@ class MemoryRuntimeService {
         },
         sections: { human: [], human_agent: [], instance: [], template: [], global: [] },
       };
+    }
+
+    if (
+      includeSummaries
+      && (runtime === 'chat' || runtime === 'task')
+      && db
+      && workspaceId
+      && agent
+    ) {
+      await runJournalAutomationRuntimeRefresh({
+        db,
+        workspaceId,
+        agentIdOrUsername: agent.id || agent.username,
+        date: new Date().toISOString().slice(0, 10),
+        runtime,
+      }).catch(() => null);
     }
 
     const gateway = this.gatewayFactory({ db, workspaceId });

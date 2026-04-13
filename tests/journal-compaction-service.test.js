@@ -21,6 +21,7 @@ const {
   saveJournalAutomationPolicy,
   saveWorkspaceJournal,
   getJournalAutomationPolicy,
+  runJournalAutomationRuntimeRefresh,
   runJournalAutomationSweep,
   summarizeAgentJournalToBrief,
 } = require('../services/journalCompactionService');
@@ -304,5 +305,73 @@ describe('journal compaction service', () => {
       path: 'continuity/WORKSPACE-SESSION.md',
       type: 'workspace-session',
     }));
+  });
+
+  test('refreshes stale workspace and agent briefs during runtime hook execution', async () => {
+    const db = createWorkspaceSettingsDb({
+      'journal_automation:workspace:policy': {
+        scope: 'workspace',
+        mode: 'manual',
+        minimum_length: 10,
+        sweep_enabled: true,
+      },
+      'journal_automation:agent:policy': {
+        scope: 'agent',
+        mode: 'manual',
+        minimum_length: 10,
+        sweep_enabled: true,
+      },
+      'journal:workspace:2026-04-12': 'Workspace journal note.\nNeed to monitor release health.',
+      'journal:workspace:2026-04-12:meta': {
+        updatedAt: '2026-04-12T12:00:00.000Z',
+      },
+      'session_continuity:workspace': 'Older workspace brief',
+      'session_continuity:workspace:meta': {
+        updatedAt: '2026-04-12T10:00:00.000Z',
+      },
+      'journal:atlas:2026-04-12': 'Agent journal note.\nFollow up one warning.',
+      'journal:atlas:2026-04-12:meta': {
+        updatedAt: '2026-04-12T12:05:00.000Z',
+      },
+      'session_continuity:atlas:agent_session': 'Older agent brief',
+      'session_continuity:atlas:agent_session:meta': {
+        updatedAt: '2026-04-12T10:05:00.000Z',
+      },
+    });
+    const uploadDocument = jest.fn(() => Promise.resolve({ ok: true }));
+    const summarizeJournal = jest.fn()
+      .mockResolvedValueOnce({ result: 'Workspace runtime summary.' })
+      .mockResolvedValueOnce({ result: 'Agent runtime summary.' });
+    const storeSummary = jest.fn(() => Promise.resolve({ ok: true }));
+
+    const result = await runJournalAutomationRuntimeRefresh({
+      db,
+      workspaceId: 'ws-1',
+      agentIdOrUsername: 'agent-1',
+      date: '2026-04-12',
+      runtime: 'task',
+      gatewayFactory: () => ({
+        sync: { uploadDocument },
+        journal: { summarize: summarizeJournal, append: jest.fn(() => Promise.resolve({ ok: true })) },
+        summaries: { store: storeSummary },
+      }),
+    });
+
+    expect(result.refreshed_count).toBe(2);
+    expect(result.workspace).toEqual(expect.objectContaining({
+      status: 'refreshed',
+      reason: 'stale_brief',
+      brief_path: 'continuity/WORKSPACE-SESSION.md',
+    }));
+    expect(result.agent).toEqual(expect.objectContaining({
+      status: 'refreshed',
+      reason: 'stale_brief',
+      brief_path: 'agents/atlas/SESSION.md',
+    }));
+    expect(db.store.get('journal_automation:runtime:last_result')).toEqual(expect.objectContaining({
+      runtime: 'task',
+      refreshed_count: 2,
+    }));
+    expect(storeSummary).toHaveBeenCalledTimes(2);
   });
 });

@@ -2140,6 +2140,28 @@ export interface JournalAutomationSweepResult {
   };
 }
 
+export interface JournalAutomationRuntimeStatus {
+  date: string;
+  runtime: string;
+  updated_at: string;
+  refreshed_count: number;
+  workspace: {
+    status: 'refreshed' | 'skipped' | string;
+    reason: string;
+    brief_path?: string | null;
+    updatedAt?: string | null;
+  };
+  agent?: {
+    agent_id?: string | null;
+    username?: string | null;
+    role?: string | null;
+    status: 'refreshed' | 'skipped' | string;
+    reason: string;
+    brief_path?: string | null;
+    updatedAt?: string | null;
+  } | null;
+}
+
 export interface JournalSummarizeResult {
   success: boolean;
   data: {

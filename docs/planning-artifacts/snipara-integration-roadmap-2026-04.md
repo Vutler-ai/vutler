@@ -155,7 +155,9 @@ Status update 2026-04-13:
 - workspace memory now exposes a `Run Sweep Now` action and last sweep status
 - a cron-friendly repository script now exists for external scheduling:
   - `npm run memory:journal:sweep`
-- remaining work is now mainly around runtime/session-bound hook triggers, not the basic scheduled sweep layer
+- chat and task prompt preparation now trigger a targeted runtime refresh when the current workspace or agent journal is newer than the injected brief
+- workspace memory now exposes the last runtime-triggered refresh status separately from the manual sweep status
+- remaining work is now around richer episode-bound journal capture, not the basic runtime refresh layer
 
 ### 3. Group Memory and Multi-Agent Coordination
 

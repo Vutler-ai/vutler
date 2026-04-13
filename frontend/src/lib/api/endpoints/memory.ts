@@ -10,6 +10,7 @@ import type {
   JournalAutomationPolicies,
   JournalAutomationPolicy,
   JournalAutomationSweepResult,
+  JournalAutomationRuntimeStatus,
   JournalSummarizeResult,
   GroupMemorySpace,
   AgentGroupMemoryResponse,
@@ -210,6 +211,11 @@ export async function getJournalAutomationPolicies(): Promise<JournalAutomationP
 
 export async function getJournalAutomationSweepStatus(): Promise<JournalAutomationSweepResult> {
   const response = await apiFetch<{ data: JournalAutomationSweepResult }>('/api/v1/memory/journal-automation/sweep-status');
+  return response.data;
+}
+
+export async function getJournalAutomationRuntimeStatus(): Promise<JournalAutomationRuntimeStatus> {
+  const response = await apiFetch<{ data: JournalAutomationRuntimeStatus }>('/api/v1/memory/journal-automation/runtime-status');
   return response.data;
 }
 
