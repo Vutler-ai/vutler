@@ -5,13 +5,17 @@ const router = express.Router();
 
 const pool = require('../lib/vaultbrix');
 const {
+  appendWorkspaceSniparaProvisioningOperation,
   readExistingProvisioning,
   provisionWorkspaceSnipara,
   getWorkspaceSniparaProvisioningDiagnostics,
+  getWorkspaceSniparaProvisioningOperations,
+  runWorkspaceSniparaProvisioningProbe,
 } = require('../services/sniparaProvisioningService');
 const { resolveSniparaConfig, probeSniparaHealth, serializeSniparaError } = require('../services/sniparaResolver');
 const { createSniparaGateway } = require('../services/snipara/gateway');
 const { getWorkspaceSyncStatus } = require('../services/sniparaSyncStatusService');
+const { getWorkspaceSniparaWebhookEvents } = require('../services/sniparaWebhookEventLogService');
 const {
   listSharedDocumentUploads,
   recordSharedDocumentUpload,
@@ -365,6 +369,20 @@ function normalizeSyncStatusPayload(payload = {}, now = Date.now()) {
   };
 }
 
+function normalizeProvisioningOperationsPayload(payload = {}) {
+  return {
+    operations: Array.isArray(payload.operations) ? payload.operations : [],
+    count: Number.isFinite(Number(payload.count)) ? Number(payload.count) : 0,
+  };
+}
+
+function normalizeWebhookEventsPayload(payload = {}) {
+  return {
+    events: Array.isArray(payload.events) ? payload.events : [],
+    count: Number.isFinite(Number(payload.count)) ? Number(payload.count) : 0,
+  };
+}
+
 async function callAdminSniparaTool(req, res, toolCall, normalizer, fallbackMessage) {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -591,10 +609,56 @@ router.get('/provisioning', async (req, res) => {
   }
 });
 
-router.post('/provision', async (req, res) => {
+router.get('/provisioning/operations', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
+    const data = await getWorkspaceSniparaProvisioningOperations({
+      db: pool,
+      workspaceId,
+      limit: Math.min(25, Math.max(1, Number(req.query?.limit) || 10)),
+    });
+    return res.json({ success: true, data: normalizeProvisioningOperationsPayload(data) });
+  } catch (error) {
+    console.error('[SniparaAdmin] provisioning operations error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
 
+router.post('/provisioning/probe', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const data = await runWorkspaceSniparaProvisioningProbe({
+      db: pool,
+      workspaceId,
+      user: req.user || null,
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[SniparaAdmin] provisioning probe error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/webhook-events', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const data = await getWorkspaceSniparaWebhookEvents({
+      db: pool,
+      workspaceId,
+      limit: Math.min(25, Math.max(1, Number(req.query?.limit) || 10)),
+      eventType: typeof req.query?.event_type === 'string' ? req.query.event_type : null,
+      status: typeof req.query?.status === 'string' ? req.query.status : null,
+    });
+    return res.json({ success: true, data: normalizeWebhookEventsPayload(data) });
+  } catch (error) {
+    console.error('[SniparaAdmin] webhook events error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/provision', async (req, res) => {
+  const workspaceId = getWorkspaceId(req);
+  try {
     const workspaceResult = await pool.query(
       `SELECT name, slug FROM ${SCHEMA}.workspaces WHERE id = $1 LIMIT 1`,
       [workspaceId]
@@ -611,9 +675,67 @@ router.post('/provision', async (req, res) => {
       force: Boolean(req.body?.force),
     });
 
+    await appendWorkspaceSniparaProvisioningOperation({
+      db: pool,
+      workspaceId,
+      operation: {
+        kind: result.skipped ? 'reconcile_skipped' : 'reconcile',
+        status: 'ok',
+        summary: result.skipped
+          ? 'Snipara provisioning was already healthy.'
+          : result.recoveredApiKey
+            ? 'Workspace API key was reissued from the existing integrator client binding.'
+            : result.createdProject
+              ? 'Workspace was provisioned through the Snipara Integrator flow.'
+              : result.createdSwarm
+                ? 'Missing Snipara swarm binding was recreated.'
+                : 'Snipara provisioning was reconciled successfully.',
+        actor_user_id: req.user?.id || null,
+        actor_email: req.user?.email || null,
+        recommended_action: result.recoveredApiKey
+          ? 'repair_api_key'
+          : result.createdSwarm
+            ? 'create_swarm'
+            : result.createdProject
+              ? 'provision'
+              : 'repair',
+        provisioning_mode: result.createdProject ? 'integrator' : 'partial',
+        details: {
+          skipped: Boolean(result.skipped),
+          reason: result.reason || null,
+          created_project: Boolean(result.createdProject),
+          created_swarm: Boolean(result.createdSwarm),
+          recovered_api_key: Boolean(result.recoveredApiKey),
+          client_id: result.clientId || null,
+          project_id: result.projectId || null,
+          project_slug: result.projectSlug || null,
+          swarm_id: result.swarmId || null,
+          swarm_creation_mode: result.swarmCreationMode || null,
+        },
+      },
+    });
+
     res.json({ success: true, data: result });
   } catch (error) {
     console.error('[SniparaAdmin] provision error:', error);
+    try {
+      await appendWorkspaceSniparaProvisioningOperation({
+        db: pool,
+        workspaceId,
+        operation: {
+          kind: 'reconcile',
+          status: 'error',
+          summary: error.message || 'Snipara provisioning failed.',
+          actor_user_id: req.user?.id || null,
+          actor_email: req.user?.email || null,
+          details: {
+            error: error.message || 'Unknown error',
+          },
+        },
+      });
+    } catch (logError) {
+      console.warn('[SniparaAdmin] failed to log provisioning error:', logError.message);
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -630,5 +752,7 @@ module.exports.__private = {
   normalizeSharedUploadsPayload,
   normalizeSharedUploadResultPayload,
   normalizeSharedDocumentInput,
+  normalizeProvisioningOperationsPayload,
   normalizeSyncStatusPayload,
+  normalizeWebhookEventsPayload,
 };

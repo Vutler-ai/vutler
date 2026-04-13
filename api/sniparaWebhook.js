@@ -15,6 +15,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
+const pool = require('../lib/vaultbrix');
+const { recordWorkspaceSniparaWebhookEvent } = require('../services/sniparaWebhookEventLogService');
 
 const WEBHOOK_SECRET = process.env.SNIPARA_WEBHOOK_SECRET || '';
 
@@ -103,6 +105,10 @@ async function routeWebhookEvent(eventType, payload) {
       console.log(`[SniparaWebhook] ${eventType}:`, payload.data?.task_id);
       break;
 
+    case 'test.ping':
+      console.log('[SniparaWebhook] test.ping received');
+      break;
+
     default:
       console.log(`[SniparaWebhook] Unhandled event type: ${eventType}`);
   }
@@ -117,16 +123,45 @@ router.post('/',
     const signature = req.headers['x-snipara-signature'];
     const eventType = req.headers['x-snipara-event'];
     const deliveryId = req.headers['x-snipara-delivery'];
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
+    const rawText = rawBody.toString();
+
+    let payload;
+    try {
+      payload = JSON.parse(rawText);
+    } catch (err) {
+      console.error('[SniparaWebhook] Invalid JSON body:', err.message);
+      return res.status(400).json({ error: 'Invalid JSON body' });
+    }
+
+    const type = eventType || payload.event_type || payload.event || 'unknown';
+    const workspaceId = payload?.workspace_id || payload?.data?.workspace_id || null;
 
     // Verify HMAC signature
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
     if (WEBHOOK_SECRET && !verifySignature(rawBody, signature)) {
       console.warn('[SniparaWebhook] Invalid signature, rejecting');
+      await recordWorkspaceSniparaWebhookEvent({
+        db: pool,
+        workspaceId,
+        eventType: type,
+        deliveryId,
+        status: 'invalid_signature',
+        payload,
+        error: 'Invalid signature',
+      }).catch(() => null);
       return res.status(401).json({ error: 'Invalid signature' });
     }
 
     // Idempotency check
     if (deliveryId && _processed.has(deliveryId)) {
+      await recordWorkspaceSniparaWebhookEvent({
+        db: pool,
+        workspaceId,
+        eventType: type,
+        deliveryId,
+        status: 'duplicate',
+        payload,
+      }).catch(() => null);
       return res.status(200).json({ received: true, duplicate: true });
     }
 
@@ -145,23 +180,30 @@ router.post('/',
       }
     }
 
-    // Parse body
-    let payload;
-    try {
-      payload = JSON.parse(rawBody.toString());
-    } catch (err) {
-      console.error('[SniparaWebhook] Invalid JSON body:', err.message);
-      return;
-    }
-
-    const type = eventType || payload.event_type;
     console.log(`[SniparaWebhook] Received ${type} (delivery: ${deliveryId || 'none'})`);
 
     // Route to handler (fire-and-forget)
     try {
       await routeWebhookEvent(type, payload);
+      await recordWorkspaceSniparaWebhookEvent({
+        db: pool,
+        workspaceId,
+        eventType: type,
+        deliveryId,
+        status: 'processed',
+        payload,
+      }).catch(() => null);
     } catch (err) {
       console.error(`[SniparaWebhook] Handler error for ${type}:`, err.message);
+      await recordWorkspaceSniparaWebhookEvent({
+        db: pool,
+        workspaceId,
+        eventType: type,
+        deliveryId,
+        status: 'handler_error',
+        payload,
+        error: err.message,
+      }).catch(() => null);
     }
   }
 );

@@ -1,5 +1,7 @@
 'use strict';
 
+const { randomUUID } = require('crypto');
+
 const pool = require('../lib/vaultbrix');
 const {
   buildSniparaProjectUrl,
@@ -9,6 +11,8 @@ const {
 const sniparaService = require('./sniparaService');
 
 const SCHEMA = 'tenant_vutler';
+const PROVISIONING_OPERATIONS_KEY = 'snipara_integrator:operations';
+const MAX_PROVISIONING_OPERATIONS = 25;
 
 function extractClientApiKey(payload = {}) {
   return payload?.api_key
@@ -77,6 +81,28 @@ async function writeWorkspaceSetting(db, workspaceId, key, value) {
   });
 }
 
+function normalizeWorkspaceSettingValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, 'value')) {
+    return value.value;
+  }
+  return value;
+}
+
+async function readWorkspaceSettingValue(db, workspaceId, key) {
+  const result = await db.query(
+    `SELECT value
+     FROM ${SCHEMA}.workspace_settings
+     WHERE workspace_id = $1
+       AND key = $2
+     ORDER BY updated_at DESC NULLS LAST
+     LIMIT 1`,
+    [workspaceId, key]
+  );
+
+  if (!result.rows[0]) return null;
+  return normalizeWorkspaceSettingValue(result.rows[0].value);
+}
+
 async function readExistingProvisioning(db, workspaceId) {
   const result = await db.query(
     `SELECT key, value
@@ -104,6 +130,59 @@ async function readExistingProvisioning(db, workspaceId) {
     projectSlug: map.get('snipara_project_slug') || null,
     clientId: map.get('snipara_client_id') || null,
     swarmId: map.get('snipara_swarm_id') || null,
+  };
+}
+
+function buildProvisioningOperationStatus(diagnostics = {}) {
+  if (diagnostics.remote?.error) return 'error';
+  if (!diagnostics.integration_key_present && !diagnostics.runtime_ready) return 'error';
+  if (!diagnostics.configured || diagnostics.recommended_action !== 'none') return 'warn';
+  return 'ok';
+}
+
+function buildProvisioningOperationSummary(diagnostics = {}) {
+  if (diagnostics.remote?.error) {
+    return `Remote integrator probe failed: ${diagnostics.remote.error}`;
+  }
+  if (diagnostics.configured) {
+    return 'Runtime and integrator bindings look healthy for this workspace.';
+  }
+  return diagnostics.message || 'Provisioning probe completed with follow-up required.';
+}
+
+async function appendWorkspaceSniparaProvisioningOperation({
+  db = pool,
+  workspaceId,
+  operation,
+  maxEntries = MAX_PROVISIONING_OPERATIONS,
+}) {
+  if (!workspaceId) throw new Error('workspaceId is required');
+  if (!operation || typeof operation !== 'object') throw new Error('operation is required');
+
+  const current = await readWorkspaceSettingValue(db, workspaceId, PROVISIONING_OPERATIONS_KEY);
+  const existingEntries = Array.isArray(current) ? current : [];
+  const entry = {
+    id: operation.id || randomUUID(),
+    created_at: operation.created_at || new Date().toISOString(),
+    ...operation,
+  };
+  const next = [entry, ...existingEntries].slice(0, Math.max(1, maxEntries));
+  await writeWorkspaceSetting(db, workspaceId, PROVISIONING_OPERATIONS_KEY, next);
+  return entry;
+}
+
+async function getWorkspaceSniparaProvisioningOperations({
+  db = pool,
+  workspaceId,
+  limit = 10,
+}) {
+  if (!workspaceId) throw new Error('workspaceId is required');
+
+  const current = await readWorkspaceSettingValue(db, workspaceId, PROVISIONING_OPERATIONS_KEY);
+  const entries = Array.isArray(current) ? current : [];
+  return {
+    operations: entries.slice(0, Math.max(1, limit)),
+    count: entries.length,
   };
 }
 
@@ -204,6 +283,47 @@ async function getWorkspaceSniparaProvisioningDiagnostics({
       integratorReady,
       recommendedAction,
     }),
+  };
+}
+
+async function runWorkspaceSniparaProvisioningProbe({
+  db = pool,
+  workspaceId,
+  user = null,
+}) {
+  if (!workspaceId) throw new Error('workspaceId is required');
+
+  const startedAt = Date.now();
+  const diagnostics = await getWorkspaceSniparaProvisioningDiagnostics({
+    db,
+    workspaceId,
+  });
+  const operation = await appendWorkspaceSniparaProvisioningOperation({
+    db,
+    workspaceId,
+    operation: {
+      kind: 'probe',
+      status: buildProvisioningOperationStatus(diagnostics),
+      summary: buildProvisioningOperationSummary(diagnostics),
+      recommended_action: diagnostics.recommended_action || 'none',
+      provisioning_mode: diagnostics.provisioning_mode || 'unknown',
+      duration_ms: Date.now() - startedAt,
+      actor_user_id: user?.id || null,
+      actor_email: user?.email || null,
+      details: {
+        configured: Boolean(diagnostics.configured),
+        runtime_ready: Boolean(diagnostics.runtime_ready),
+        integrator_ready: Boolean(diagnostics.integrator_ready),
+        missing_fields: Array.isArray(diagnostics.missing_fields) ? diagnostics.missing_fields : [],
+        remote: diagnostics.remote || null,
+        webhook: diagnostics.webhook || null,
+      },
+    },
+  });
+
+  return {
+    diagnostics,
+    operation,
   };
 }
 
@@ -331,8 +451,12 @@ async function provisionWorkspaceSnipara({
 
 module.exports = {
   extractClientApiKey,
+  appendWorkspaceSniparaProvisioningOperation,
   getWorkspaceSniparaProvisioningDiagnostics,
+  getWorkspaceSniparaProvisioningOperations,
   provisionWorkspaceSnipara,
   readExistingProvisioning,
+  readWorkspaceSettingValue,
+  runWorkspaceSniparaProvisioningProbe,
   writeWorkspaceSetting,
 };

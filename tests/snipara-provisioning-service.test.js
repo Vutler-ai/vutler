@@ -251,4 +251,111 @@ describe('sniparaProvisioningService', () => {
       },
     });
   });
+
+  test('runs a live provisioning probe and records the operation in workspace settings', async () => {
+    const writes = [];
+    const query = jest.fn((sql, params) => {
+      if (sql.includes('key IN')) {
+        return Promise.resolve({
+          rows: [
+            { key: 'snipara_api_url', value: 'https://existing.snipara.test/mcp' },
+            { key: 'snipara_project_slug', value: 'workspace-1' },
+            { key: 'snipara_client_id', value: 'client-1' },
+          ],
+        });
+      }
+
+      if (sql.includes('WHERE workspace_id = $1') && sql.includes('key = $2')) {
+        return Promise.resolve({ rows: [] });
+      }
+
+      if (sql.includes('INSERT INTO tenant_vutler.workspace_settings')) {
+        writes.push(params);
+        return Promise.resolve({ rows: [] });
+      }
+
+      if (sql.includes('DELETE FROM tenant_vutler.workspace_settings')) {
+        return Promise.resolve({ rows: [] });
+      }
+
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../services/sniparaService', () => ({
+      createProject: jest.fn(),
+      createClientApiKey: jest.fn(),
+      createClientSwarm: jest.fn(),
+      listClientSwarms: jest.fn().mockResolvedValue({
+        swarms: [{ id: 'swarm-1' }],
+      }),
+      createSwarm: jest.fn(),
+    }));
+    jest.doMock('../services/sniparaResolver', () => ({
+      buildSniparaProjectUrl: jest.fn((slug) => `https://api.snipara.com/mcp/${slug}`),
+      clearSniparaConfigCache: jest.fn(),
+      normalizeProjectSlug: jest.fn((value) => value),
+    }));
+
+    const { runWorkspaceSniparaProvisioningProbe } = require('../services/sniparaProvisioningService');
+    const result = await runWorkspaceSniparaProvisioningProbe({
+      db: { query },
+      workspaceId: 'ws-1',
+      user: { id: 'user-1', email: 'admin@example.com' },
+    });
+
+    expect(result.diagnostics.recommended_action).toBe('repair_api_key');
+    expect(result.operation).toMatchObject({
+      kind: 'probe',
+      status: 'warn',
+      actor_email: 'admin@example.com',
+      recommended_action: 'repair_api_key',
+    });
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(writes[0][2])[0]).toMatchObject({
+      kind: 'probe',
+      status: 'warn',
+    });
+  });
+
+  test('returns stored provisioning operations with the requested limit', async () => {
+    const query = jest.fn((sql) => {
+      if (sql.includes('WHERE workspace_id = $1') && sql.includes('key = $2')) {
+        return Promise.resolve({
+          rows: [{
+            value: [
+              { id: 'op-1', kind: 'probe', status: 'ok', created_at: '2026-04-13T08:00:00Z' },
+              { id: 'op-2', kind: 'reconcile', status: 'warn', created_at: '2026-04-13T07:00:00Z' },
+            ],
+          }],
+        });
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../services/sniparaService', () => ({
+      createProject: jest.fn(),
+      createClientApiKey: jest.fn(),
+      createClientSwarm: jest.fn(),
+      listClientSwarms: jest.fn(),
+      createSwarm: jest.fn(),
+    }));
+    jest.doMock('../services/sniparaResolver', () => ({
+      buildSniparaProjectUrl: jest.fn((slug) => `https://api.snipara.com/mcp/${slug}`),
+      clearSniparaConfigCache: jest.fn(),
+      normalizeProjectSlug: jest.fn((value) => value),
+    }));
+
+    const { getWorkspaceSniparaProvisioningOperations } = require('../services/sniparaProvisioningService');
+    const result = await getWorkspaceSniparaProvisioningOperations({
+      db: { query },
+      workspaceId: 'ws-1',
+      limit: 1,
+    });
+
+    expect(result.count).toBe(2);
+    expect(result.operations).toHaveLength(1);
+    expect(result.operations[0].id).toBe('op-1');
+  });
 });

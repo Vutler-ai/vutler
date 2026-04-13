@@ -2325,6 +2325,51 @@ export interface SniparaProvisionResult {
   recoveredApiKey?: boolean;
 }
 
+export interface SniparaProvisioningOperation {
+  id: string;
+  kind: string;
+  status: 'ok' | 'warn' | 'error' | string;
+  summary?: string | null;
+  recommended_action?: string | null;
+  provisioning_mode?: string | null;
+  created_at: string;
+  actor_user_id?: string | null;
+  actor_email?: string | null;
+  duration_ms?: number | null;
+  details?: Record<string, unknown> | null;
+}
+
+export interface SniparaProvisioningOperationsResponse {
+  operations: SniparaProvisioningOperation[];
+  count: number;
+}
+
+export interface SniparaProvisioningProbeResult {
+  diagnostics: SniparaProvisioningDiagnostics;
+  operation: SniparaProvisioningOperation;
+}
+
+export interface SniparaWebhookEventLogEntry {
+  id: string;
+  event_type: string;
+  delivery_id?: string | null;
+  status: string;
+  created_at: string;
+  summary?: string | null;
+  client_id?: string | null;
+  task_id?: string | null;
+  htask_id?: string | null;
+  swarm_id?: string | null;
+  agent_id?: string | null;
+  project_id?: string | null;
+  error?: string | null;
+}
+
+export interface SniparaWebhookEventLogResponse {
+  events: SniparaWebhookEventLogEntry[];
+  count: number;
+}
+
 export interface SniparaIndexHealth {
   supported: boolean;
   degraded: boolean;

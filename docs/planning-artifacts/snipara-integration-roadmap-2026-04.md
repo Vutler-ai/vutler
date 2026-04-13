@@ -336,9 +336,14 @@ Status update 2026-04-13:
   - partial provisioning states now produce actionable repair guidance
   - repairs can reuse an existing `client_id` to mint a replacement workspace API key instead of recreating a client/project blindly
   - remote client swarm visibility is surfaced when integrator access is available
+- Vutler now also exposes operator-facing integrator operations tooling per workspace:
+  - manual `Run Live Probe` checks current integrator reachability and stores the result in a workspace-scoped operations log
+  - manual provision/repair actions now append a local operations trail with actor, outcome, and reconciliation details
+  - retained webhook event logs now surface operationally relevant Snipara deliveries such as lifecycle, blocked, timeout, closure, and `test.ping` events
 - this is the right current cut for Vutler:
   - it industrializes provisioning and repair
-  - it avoids productizing reseller/client CRUD that Vutler does not yet need as a tenant-facing surface
+  - it adds operator visibility without productizing reseller/client CRUD that Vutler does not yet need as a tenant-facing surface
+  - it still avoids wiring session-auth dashboard routes such as full webhook replay/test-send until Vutler has a justified auth model for them
 
 ### 10. Client Integration and Distribution Ergonomics
 

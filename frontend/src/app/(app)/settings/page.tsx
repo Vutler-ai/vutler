@@ -10,6 +10,7 @@ import {
   getSniparaAdminStatus,
   getSniparaTransportHealth,
   getSniparaProvisioningDiagnostics,
+  getSniparaProvisioningOperations,
   getSniparaIndexHealth,
   getSniparaSearchAnalytics,
   getSniparaHtaskPolicy,
@@ -19,6 +20,8 @@ import {
   getSniparaSharedUploads,
   getSniparaSyncStatus,
   provisionSniparaWorkspace,
+  runSniparaProvisioningProbe,
+  getSniparaWebhookEvents,
   uploadSniparaSharedDocument,
 } from "@/lib/api/endpoints/memory";
 import type {
@@ -33,6 +36,9 @@ import type {
   SniparaStatusResponse,
   SniparaHealthResponse,
   SniparaProvisioningDiagnostics,
+  SniparaProvisioningOperationsResponse,
+  SniparaProvisioningProbeResult,
+  SniparaProvisioningOperation,
   SniparaIndexHealth,
   SniparaSearchAnalytics,
   SniparaHtaskPolicy,
@@ -41,6 +47,8 @@ import type {
   SniparaSharedCollections,
   SniparaSharedUploads,
   SniparaSyncStatus,
+  SniparaWebhookEventLogEntry,
+  SniparaWebhookEventLogResponse,
 } from "@/lib/api/types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -212,6 +220,28 @@ function normalizeTagList(value: string): string[] {
     .map((entry) => entry.trim())
     .filter(Boolean)
     .slice(0, 20);
+}
+
+function getProvisioningOperationTone(status: string | null | undefined): string {
+  switch (status) {
+    case "ok":
+      return "bg-emerald-500/15 text-emerald-300 border-emerald-500/20";
+    case "error":
+      return "bg-red-500/15 text-red-300 border-red-500/20";
+    default:
+      return "bg-amber-500/15 text-amber-300 border-amber-500/20";
+  }
+}
+
+function getWebhookEventTone(status: string | null | undefined): string {
+  switch (status) {
+    case "processed":
+      return "bg-emerald-500/15 text-emerald-300 border-emerald-500/20";
+    case "duplicate":
+      return "bg-slate-500/15 text-slate-200 border-slate-500/20";
+    default:
+      return "bg-amber-500/15 text-amber-300 border-amber-500/20";
+  }
 }
 
 // ─── Profile Tab ──────────────────────────────────────────────────────────────
@@ -499,6 +529,22 @@ function WorkspaceTab({
     "/api/v1/snipara/admin/provisioning",
     getSniparaProvisioningDiagnostics
   );
+  const {
+    data: sniparaProvisioningOperations,
+    isLoading: loadingSniparaProvisioningOperations,
+    mutate: mutateSniparaProvisioningOperations,
+  } = useApi<SniparaProvisioningOperationsResponse>(
+    "/api/v1/snipara/admin/provisioning/operations?limit=8",
+    () => getSniparaProvisioningOperations(8)
+  );
+  const {
+    data: sniparaWebhookEvents,
+    isLoading: loadingSniparaWebhookEvents,
+    mutate: mutateSniparaWebhookEvents,
+  } = useApi<SniparaWebhookEventLogResponse>(
+    "/api/v1/snipara/admin/webhook-events?limit=8",
+    () => getSniparaWebhookEvents(8)
+  );
   const { data: sniparaIndexHealth, isLoading: loadingSniparaIndex } = useApi<SniparaIndexHealth>(
     "/api/v1/snipara/admin/index-health",
     getSniparaIndexHealth
@@ -548,6 +594,7 @@ function WorkspaceTab({
   const [sharedDocContent, setSharedDocContent] = useState("");
   const [uploadingSharedDoc, setUploadingSharedDoc] = useState(false);
   const [repairingProvisioning, setRepairingProvisioning] = useState(false);
+  const [probingProvisioning, setProbingProvisioning] = useState(false);
 
   useEffect(() => {
     if (!sharedDocCollectionId && writableSharedCollections.length > 0) {
@@ -575,6 +622,8 @@ function WorkspaceTab({
   const showSniparaAdminMetrics = loadingSniparaStatus
     || loadingSniparaHealth
     || loadingSniparaProvisioning
+    || loadingSniparaProvisioningOperations
+    || loadingSniparaWebhookEvents
     || loadingSniparaIndex
     || loadingSniparaAnalytics
     || loadingSniparaTemplates
@@ -584,6 +633,8 @@ function WorkspaceTab({
     || Boolean(sniparaStatus)
     || Boolean(sniparaHealth)
     || Boolean(sniparaProvisioning)
+    || Boolean(sniparaProvisioningOperations)
+    || Boolean(sniparaWebhookEvents)
     || Boolean(sniparaIndexHealth)
     || Boolean(sniparaSearchAnalytics)
     || Boolean(sniparaSharedTemplates)
@@ -632,6 +683,7 @@ function WorkspaceTab({
       const result = await provisionSniparaWorkspace(false);
       await Promise.all([
         mutateSniparaProvisioning(),
+        mutateSniparaProvisioningOperations(),
         mutateSniparaStatus(),
         mutateSniparaHealth(),
       ]);
@@ -651,6 +703,28 @@ function WorkspaceTab({
       onToast(err instanceof Error ? err.message : "Failed to repair Snipara provisioning", "error");
     } finally {
       setRepairingProvisioning(false);
+    }
+  };
+
+  const handleProvisioningProbe = async () => {
+    setProbingProvisioning(true);
+    try {
+      const result: SniparaProvisioningProbeResult = await runSniparaProvisioningProbe();
+      await Promise.all([
+        mutateSniparaProvisioning(),
+        mutateSniparaProvisioningOperations(),
+        mutateSniparaWebhookEvents(),
+      ]);
+      onToast(
+        result.operation?.status === "error"
+          ? (result.operation.summary || "Snipara integrator probe failed")
+          : (result.operation.summary || "Snipara integrator probe completed"),
+        result.operation?.status === "error" ? "error" : "success"
+      );
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Failed to run Snipara integrator probe", "error");
+    } finally {
+      setProbingProvisioning(false);
     }
   };
 
@@ -870,6 +944,15 @@ function WorkspaceTab({
                   <Button
                     type="button"
                     variant="outline"
+                    disabled={probingProvisioning}
+                    onClick={handleProvisioningProbe}
+                    className="border-[rgba(255,255,255,0.1)] bg-[#14151f] text-white hover:bg-[#1b1d28]"
+                  >
+                    {probingProvisioning ? "Probing..." : "Run Live Probe"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
                     disabled={
                       repairingProvisioning
                       || !sniparaProvisioning?.can_provision
@@ -905,6 +988,9 @@ function WorkspaceTab({
 
               {(loadingSniparaStatus
                 || loadingSniparaHealth
+                || loadingSniparaProvisioning
+                || loadingSniparaProvisioningOperations
+                || loadingSniparaWebhookEvents
                 || loadingSniparaIndex
                 || loadingSniparaAnalytics
                 || loadingSniparaTemplates
@@ -1101,6 +1187,90 @@ function WorkspaceTab({
                           : "Remote swarm lookup not available for this workspace."}
                         {sniparaProvisioning?.remote?.error ? ` · ${sniparaProvisioning.remote.error}` : ""}
                       </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Integrator Operations</p>
+                          <p className="text-[11px] text-[#4b5563] mt-1">
+                            Manual probes and provisioning reconciliations are tracked per workspace.
+                          </p>
+                        </div>
+                        <p className="text-xs text-[#6b7280]">{sniparaProvisioningOperations?.count ?? 0} recorded</p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {(sniparaProvisioningOperations?.operations ?? []).length === 0 ? (
+                          <p className="text-sm text-[#9ca3af]">No explicit integrator operations recorded yet.</p>
+                        ) : (
+                          (sniparaProvisioningOperations?.operations ?? []).map((operation: SniparaProvisioningOperation) => (
+                            <div
+                              key={operation.id}
+                              className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0a0b14] px-3 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-white">{operation.summary || operation.kind}</p>
+                                <span className={`px-2 py-0.5 rounded-full text-[11px] border ${getProvisioningOperationTone(operation.status)}`}>
+                                  {operation.status}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-[#9ca3af]">
+                                {operation.kind}
+                                {operation.recommended_action ? ` · ${operation.recommended_action}` : ""}
+                                {operation.provisioning_mode ? ` · ${operation.provisioning_mode}` : ""}
+                                {typeof operation.duration_ms === "number" ? ` · ${operation.duration_ms} ms` : ""}
+                              </p>
+                              <p className="mt-1 text-[11px] text-[#4b5563]">
+                                {operation.actor_email || "Unknown operator"}
+                                {operation.created_at ? ` · ${new Date(operation.created_at).toLocaleString()}` : ""}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Webhook Event Log</p>
+                          <p className="text-[11px] text-[#4b5563] mt-1">
+                            Operator-focused Snipara deliveries retained for blocked, timeout, lifecycle, and test events.
+                          </p>
+                        </div>
+                        <p className="text-xs text-[#6b7280]">{sniparaWebhookEvents?.count ?? 0} retained</p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {(sniparaWebhookEvents?.events ?? []).length === 0 ? (
+                          <p className="text-sm text-[#9ca3af]">No retained webhook events for this workspace yet.</p>
+                        ) : (
+                          (sniparaWebhookEvents?.events ?? []).map((event: SniparaWebhookEventLogEntry) => (
+                            <div
+                              key={event.id}
+                              className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0a0b14] px-3 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-white">{event.summary || event.event_type}</p>
+                                <span className={`px-2 py-0.5 rounded-full text-[11px] border ${getWebhookEventTone(event.status)}`}>
+                                  {event.status}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-[#9ca3af]">
+                                {event.event_type}
+                                {event.delivery_id ? ` · delivery ${event.delivery_id}` : ""}
+                                {event.task_id ? ` · task ${event.task_id}` : ""}
+                                {event.client_id ? ` · client ${event.client_id}` : ""}
+                              </p>
+                              <p className="mt-1 text-[11px] text-[#4b5563]">
+                                {event.created_at ? new Date(event.created_at).toLocaleString() : "timestamp unavailable"}
+                                {event.error ? ` · ${event.error}` : ""}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
                     </div>
                   </div>
 

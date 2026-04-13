@@ -21,7 +21,10 @@ import type {
   SniparaStatusResponse,
   SniparaHealthResponse,
   SniparaProvisioningDiagnostics,
+  SniparaProvisioningOperationsResponse,
+  SniparaProvisioningProbeResult,
   SniparaProvisionResult,
+  SniparaWebhookEventLogResponse,
   SniparaIndexHealth,
   SniparaSearchAnalytics,
   SniparaHtaskPolicy,
@@ -355,6 +358,27 @@ export async function provisionSniparaWorkspace(force = false): Promise<SniparaP
     body: JSON.stringify({ force }),
   });
   return response.data as SniparaProvisionResult;
+}
+
+export async function getSniparaProvisioningOperations(limit = 10): Promise<SniparaProvisioningOperationsResponse> {
+  const response = await apiFetch<{ data?: SniparaProvisioningOperationsResponse }>(
+    `/api/v1/snipara/admin/provisioning/operations?limit=${limit}`
+  );
+  return response.data as SniparaProvisioningOperationsResponse;
+}
+
+export async function runSniparaProvisioningProbe(): Promise<SniparaProvisioningProbeResult> {
+  const response = await apiFetch<{ data?: SniparaProvisioningProbeResult }>('/api/v1/snipara/admin/provisioning/probe', {
+    method: 'POST',
+  });
+  return response.data as SniparaProvisioningProbeResult;
+}
+
+export async function getSniparaWebhookEvents(limit = 10): Promise<SniparaWebhookEventLogResponse> {
+  const response = await apiFetch<{ data?: SniparaWebhookEventLogResponse }>(
+    `/api/v1/snipara/admin/webhook-events?limit=${limit}`
+  );
+  return response.data as SniparaWebhookEventLogResponse;
 }
 
 export async function getSniparaIndexHealth(): Promise<SniparaIndexHealth> {
