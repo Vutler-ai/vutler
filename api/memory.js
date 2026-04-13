@@ -10,6 +10,7 @@ const {
   buildAgentContext,
   loadWorkspaceKnowledge,
   rememberAgentMemory,
+  getAgentMemoryById,
   attachMemorySource,
   verifyAgentMemory,
   invalidateAgentMemory,
@@ -53,6 +54,7 @@ const {
   updateGroupMemorySpace,
   deleteGroupMemorySpace,
   listAgentGroupMemories,
+  autoPromoteVerifiedMemoryToGroupSpaces,
 } = require('../services/groupMemoryService');
 
 function getWorkspaceId(req) {
@@ -268,7 +270,45 @@ router.post('/agents/:agentId/memories/:memoryId/verify', async (req, res) => {
       probe,
     });
 
-    return res.json({ success: true, data });
+    let groupPromotions = [];
+    try {
+      const memory = await getAgentMemoryById({
+        db: pool,
+        workspaceId,
+        agentIdOrUsername: agentId,
+        memoryId,
+        role: agent.role,
+        fallbackAgent: agent,
+      });
+
+      if (memory) {
+        groupPromotions = await autoPromoteVerifiedMemoryToGroupSpaces({
+          db: pool,
+          workspaceId,
+          agent,
+          memory: {
+            ...memory,
+            verified_at: data.verified_at || memory.verified_at || memory?.metadata?.verified_at || null,
+            verification_note: evidenceNote || memory.verification_note || memory?.metadata?.verification_note || null,
+          },
+          verificationNote: evidenceNote,
+        });
+      }
+    } catch (promotionError) {
+      console.warn('[Memory API] group promotion after verify failed:', promotionError.message);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        ...data,
+        group_promotions: groupPromotions.map((promotion) => ({
+          id: promotion.id,
+          name: promotion.name,
+          path: promotion.path,
+        })),
+      },
+    });
   } catch (error) {
     console.error('[Memory API] verify failed:', error.message);
     return res.status(500).json({ success: false, error: error.message });

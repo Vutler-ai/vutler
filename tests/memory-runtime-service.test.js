@@ -93,6 +93,8 @@ describe('memory runtime service', () => {
       db: { query: expect.any(Function) },
       workspaceId: 'ws-1',
       agent: { id: 'agent-1', username: 'atlas', memory_mode: 'active' },
+      recordUsage: true,
+      runtime: 'chat',
     });
     expect(result.prompt).toContain('## Group Memory');
     expect(result.prompt).toContain('### Operations');

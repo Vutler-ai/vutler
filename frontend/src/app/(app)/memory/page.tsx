@@ -50,6 +50,11 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function formatPercent(value?: number | null): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '0%';
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
 function getAgentInitials(name: string): string {
   return name
     .split(' ')
@@ -616,8 +621,12 @@ function buildEmptyGroupMemoryDraft(): GroupMemorySpace {
     read_access: 'workspace',
     write_access: 'admin',
     runtime_enabled: true,
+    auto_promote_enabled: false,
+    minimum_importance: 0.78,
     path: '',
     content: '',
+    runtime_content: '',
+    auto_entries: [],
     updatedAt: '',
   };
 }
@@ -671,6 +680,8 @@ function GroupMemorySection() {
           read_access: draft.read_access,
           write_access: draft.write_access,
           runtime_enabled: draft.runtime_enabled,
+          auto_promote_enabled: draft.auto_promote_enabled,
+          minimum_importance: draft.minimum_importance,
           content: draft.content,
         });
         await mutate([...spaces, created], { revalidate: true });
@@ -684,6 +695,8 @@ function GroupMemorySection() {
           read_access: draft.read_access,
           write_access: draft.write_access,
           runtime_enabled: draft.runtime_enabled,
+          auto_promote_enabled: draft.auto_promote_enabled,
+          minimum_importance: draft.minimum_importance,
           content: draft.content,
         });
         await mutate(
@@ -774,13 +787,21 @@ function GroupMemorySection() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-medium text-white">{space.name}</p>
-                  <span className="text-[11px] text-[#6b7280]">{space.runtime_enabled ? 'runtime' : 'manual'}</span>
+                  <span className="text-[11px] text-[#6b7280]">
+                    {space.runtime_enabled ? 'runtime' : 'manual'}
+                    {space.auto_promote_enabled ? ' + auto' : ''}
+                  </span>
                 </div>
                 <p className="mt-1 text-[11px] text-[#9ca3af]">
                   {space.scope_type === 'role' ? `Role: ${space.target_role}` : 'Workspace-wide'}
                 </p>
                 {space.description && (
                   <p className="mt-1 text-[11px] text-[#4b5563] line-clamp-2">{space.description}</p>
+                )}
+                {!!space.analytics && (
+                  <p className="mt-1 text-[11px] text-[#4b5563]">
+                    {space.analytics.runtime_injections} runtime injects · {space.analytics.promoted_count} auto-promoted
+                  </p>
                 )}
               </button>
             ))}
@@ -863,6 +884,34 @@ function GroupMemorySection() {
               Inject into runtime when the audience matches
             </label>
 
+            <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_160px] gap-4">
+              <label className="flex items-center gap-3 text-sm text-white">
+                <input
+                  type="checkbox"
+                  checked={draft.auto_promote_enabled === true}
+                  onChange={(e) => setDraft((current) => ({ ...current, auto_promote_enabled: e.target.checked }))}
+                  className="accent-blue-500"
+                />
+                Auto-promote verified discoveries that match this audience
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs uppercase tracking-wide text-[#6b7280]">Min Importance</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={draft.minimum_importance ?? 0.78}
+                  onChange={(e) => setDraft((current) => ({
+                    ...current,
+                    minimum_importance: Number.parseFloat(e.target.value) || 0,
+                  }))}
+                  className="bg-[#090b14] border-[rgba(255,255,255,0.1)] text-white"
+                />
+              </label>
+            </div>
+
             <div className="space-y-1.5">
               <label className="text-xs uppercase tracking-wide text-[#6b7280]">Memory Content</label>
               <Textarea
@@ -872,6 +921,78 @@ function GroupMemorySection() {
                 className="bg-[#090b14] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[220px] text-sm focus:border-blue-500/50"
               />
             </div>
+
+            {selected?.analytics && (
+              <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[#090b14] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">Reuse Analytics</p>
+                    <p className="text-xs text-[#6b7280] mt-1">
+                      Runtime injection frequency and automatic promotion telemetry for this governed space.
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-[#9ca3af]">
+                    <p>{selected.analytics.runtime_injections} runtime injects</p>
+                    <p>{selected.analytics.promoted_count} auto-promoted</p>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0c0f18] px-3 py-2 text-[#9ca3af]">
+                    Chat
+                    <div className="mt-1 text-sm text-white">{selected.analytics.usage_by_runtime.chat}</div>
+                  </div>
+                  <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0c0f18] px-3 py-2 text-[#9ca3af]">
+                    Task
+                    <div className="mt-1 text-sm text-white">{selected.analytics.usage_by_runtime.task}</div>
+                  </div>
+                  <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0c0f18] px-3 py-2 text-[#9ca3af]">
+                    Last runtime
+                    <div className="mt-1 text-sm text-white">{selected.analytics.last_runtime_at ? formatDate(selected.analytics.last_runtime_at) : '—'}</div>
+                  </div>
+                  <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0c0f18] px-3 py-2 text-[#9ca3af]">
+                    Last promoted
+                    <div className="mt-1 text-sm text-white">{selected.analytics.last_promoted_at ? formatDate(selected.analytics.last_promoted_at) : '—'}</div>
+                  </div>
+                </div>
+                <div className="mt-3 text-xs text-[#4b5563]">
+                  {selected.analytics.last_runtime_agent_ref
+                    ? `Last runtime injection for ${selected.analytics.last_runtime_agent_ref}`
+                    : 'No runtime injection recorded yet'}
+                  {selected.analytics.last_promoted_by_agent_ref
+                    ? ` · Last auto-promotion from ${selected.analytics.last_promoted_by_agent_ref}`
+                    : ''}
+                </div>
+              </div>
+            )}
+
+            {!!selected?.auto_entries?.length && (
+              <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[#090b14] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">Auto-Promoted Discoveries</p>
+                    <p className="text-xs text-[#6b7280] mt-1">
+                      Verified memories promoted automatically into this governed group space.
+                    </p>
+                  </div>
+                  <span className="text-xs text-[#9ca3af]">{selected.auto_entries.length} entries</span>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {selected.auto_entries.slice(0, 6).map((entry) => (
+                    <div key={entry.id + entry.promoted_at} className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#0c0f18] p-3">
+                      <div className="flex items-center justify-between gap-3 text-[11px] text-[#6b7280]">
+                        <span>{entry.type} · {entry.source_agent_ref || 'agent'}</span>
+                        <span>{entry.promoted_at ? formatDate(entry.promoted_at) : '—'}</span>
+                      </div>
+                      <p className="mt-2 text-sm text-white leading-relaxed">{entry.text}</p>
+                      <p className="mt-2 text-[11px] text-[#4b5563]">
+                        Importance {formatPercent(entry.importance)}
+                        {entry.verification_note ? ` · ${entry.verification_note}` : ''}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-between gap-3">
               <div className="text-xs text-[#4b5563]">

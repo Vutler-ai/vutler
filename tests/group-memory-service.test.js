@@ -20,6 +20,7 @@ const {
   listGroupMemorySpaces,
   createGroupMemorySpace,
   listRuntimeGroupMemories,
+  autoPromoteVerifiedMemoryToGroupSpaces,
 } = require('../services/groupMemoryService');
 
 function createWorkspaceSettingsDb(initialValues = {}) {
@@ -188,5 +189,102 @@ describe('group memory service', () => {
       expect.objectContaining({ id: 'workspace-ops', name: 'Workspace Ops' }),
       expect.objectContaining({ id: 'ops', name: 'Operations' }),
     ]));
+  });
+
+  test('records runtime reuse analytics when runtime injection tracking is enabled', async () => {
+    const db = createWorkspaceSettingsDb({
+      'group_memory:index': [
+        {
+          id: 'ops',
+          name: 'Operations',
+          scope_type: 'role',
+          target_role: 'operations',
+          read_access: 'workspace',
+          write_access: 'admin',
+          runtime_enabled: true,
+        },
+      ],
+      'group_memory:ops:content': 'Operations-only deployment conventions.',
+      'group_memory:ops:meta': {
+        updatedAt: '2026-04-13T09:00:00.000Z',
+      },
+    });
+
+    const spaces = await listRuntimeGroupMemories({
+      db,
+      workspaceId: 'ws-1',
+      agent: { id: 'agent-1', username: 'atlas', role: 'operations' },
+      recordUsage: true,
+      runtime: 'task',
+    });
+
+    expect(spaces).toHaveLength(1);
+    expect(db.store.get('group_memory:ops:meta')).toEqual(expect.objectContaining({
+      runtime_injections: 1,
+      usage_by_runtime: expect.objectContaining({ task: 1 }),
+      last_runtime_kind: 'task',
+      last_runtime_agent_ref: 'atlas',
+    }));
+  });
+
+  test('auto-promotes verified discoveries into matching governed group memory spaces', async () => {
+    const db = createWorkspaceSettingsDb({
+      'group_memory:index': [
+        {
+          id: 'ops',
+          name: 'Operations',
+          scope_type: 'role',
+          target_role: 'operations',
+          read_access: 'workspace',
+          write_access: 'admin',
+          runtime_enabled: true,
+          auto_promote_enabled: true,
+          minimum_importance: 0.75,
+        },
+      ],
+      'group_memory:ops:content': 'Shared operational conventions.',
+      'group_memory:ops:meta': {
+        updatedAt: '2026-04-13T09:00:00.000Z',
+        updatedByEmail: 'admin@vutler.ai',
+      },
+      'group_memory:ops:auto_entries': [],
+    });
+    const uploadDocument = jest.fn(() => Promise.resolve({ ok: true }));
+
+    const promotions = await autoPromoteVerifiedMemoryToGroupSpaces({
+      db,
+      workspaceId: 'ws-1',
+      agent: { id: 'agent-1', username: 'atlas', role: 'operations' },
+      memory: {
+        id: 'mem-1',
+        text: 'Decision: Always run smoke tests before deploy.',
+        type: 'decision',
+        importance: 0.9,
+        visibility: 'reviewable',
+        verified_at: '2026-04-13T10:00:00.000Z',
+      },
+      verificationNote: 'Validated after post-deploy review.',
+      gatewayFactory: () => ({
+        sync: { uploadDocument },
+      }),
+    });
+
+    expect(promotions).toHaveLength(1);
+    expect(db.store.get('group_memory:ops:auto_entries')).toEqual([
+      expect.objectContaining({
+        source_memory_id: 'mem-1',
+        source_agent_ref: 'atlas',
+        text: 'Decision: Always run smoke tests before deploy.',
+      }),
+    ]);
+    expect(db.store.get('group_memory:ops:meta')).toEqual(expect.objectContaining({
+      promoted_count: 1,
+      last_promoted_by_agent_ref: 'atlas',
+    }));
+    expect(uploadDocument).toHaveBeenCalledWith(expect.objectContaining({
+      path: 'groups/ops/MEMORY.md',
+      title: 'Group Memory · Operations',
+      content: expect.stringContaining('## Auto-Promoted Discoveries'),
+    }));
   });
 });

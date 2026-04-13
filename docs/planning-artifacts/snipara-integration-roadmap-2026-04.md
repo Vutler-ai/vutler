@@ -181,6 +181,14 @@ Status update 2026-04-13:
   - Snipara-backed document sync
 - agent memory pages now show which governed group spaces apply to the current agent
 - runtime prompt injection now includes matching runtime-enabled group memory spaces for eligible agents
+- verified promotable memories can now auto-promote into eligible governed group spaces when admins enable it
+- auto-promoted discoveries stay separate from the operator-authored body and are merged into the runtime/synced document automatically
+- runtime injection now records per-space reuse analytics:
+  - total injections
+  - chat vs task usage split
+  - last injected agent/runtime
+  - promotion counts and last promoted agent
+- remaining work is now mainly finer cohort targeting beyond workspace/role and more advanced reuse reporting, not the basic promotion + analytics layer
 
 ### 4. Swarm Project Management Depth
 

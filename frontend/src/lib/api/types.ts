@@ -2004,6 +2004,11 @@ export interface MemoryActionResult {
   superseded_by_text?: string | null;
   remote_synced?: boolean;
   remote_error?: Record<string, unknown> | null;
+  group_promotions?: Array<{
+    id: string;
+    name: string;
+    path?: string | null;
+  }>;
 }
 
 // ─── Workspace Memory ─────────────────────────────────────────────────────────
@@ -2103,6 +2108,36 @@ export interface JournalSummarizeResult {
   };
 }
 
+export interface GroupMemoryAutoEntry {
+  id: string;
+  text: string;
+  type: string;
+  importance: number;
+  source_memory_id?: string | null;
+  source_agent_id?: string | null;
+  source_agent_ref?: string | null;
+  verified_at?: string | null;
+  verification_note?: string | null;
+  promoted_at: string;
+}
+
+export interface GroupMemoryAnalytics {
+  runtime_injections: number;
+  usage_by_runtime: {
+    chat: number;
+    task: number;
+    dashboard: number;
+    other: number;
+  };
+  last_runtime_at?: string | null;
+  last_runtime_kind?: string | null;
+  last_runtime_agent_ref?: string | null;
+  promoted_count: number;
+  auto_entries_count: number;
+  last_promoted_at?: string | null;
+  last_promoted_by_agent_ref?: string | null;
+}
+
 export interface GroupMemorySpace {
   id: string;
   name: string;
@@ -2112,8 +2147,13 @@ export interface GroupMemorySpace {
   read_access: 'workspace' | 'admin' | string;
   write_access: 'workspace' | 'admin' | string;
   runtime_enabled: boolean;
+  auto_promote_enabled?: boolean;
+  minimum_importance?: number;
   path: string;
   content: string;
+  runtime_content?: string;
+  auto_entries?: GroupMemoryAutoEntry[];
+  analytics?: GroupMemoryAnalytics;
   updatedAt: string;
   updatedByEmail?: string | null;
   readOnly?: boolean;

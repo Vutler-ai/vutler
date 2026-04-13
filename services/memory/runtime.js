@@ -53,7 +53,7 @@ class MemoryRuntimeService {
             gateway.summaries.list({}).catch(() => [])
           ));
     const groupMemoriesPromise = includeGroupMemory
-      ? listRuntimeGroupMemories({ db, workspaceId, agent }).catch(() => [])
+      ? listRuntimeGroupMemories({ db, workspaceId, agent, recordUsage: true, runtime }).catch(() => [])
       : Promise.resolve([]);
 
     const [runtimeBundle, sharedContext, groupMemories, summaries] = await Promise.all([

@@ -1137,6 +1137,49 @@ async function listAgentMemories({
   };
 }
 
+async function getAgentMemoryById({
+  db,
+  workspaceId,
+  agentIdOrUsername,
+  memoryId,
+  role,
+  fallbackAgent = {},
+}) {
+  const normalizedMemoryId = String(memoryId || '').trim();
+  if (!normalizedMemoryId) return null;
+
+  const primary = await listAgentMemories({
+    db,
+    workspaceId,
+    agentIdOrUsername,
+    query: `memory_id:${normalizedMemoryId}`,
+    role,
+    limit: 50,
+    includeInternal: true,
+    includeExpired: true,
+    view: 'all',
+    fallbackAgent,
+  }).catch(() => null);
+
+  const primaryMatch = primary?.memories?.find((memory) => String(memory.id || '').trim() === normalizedMemoryId) || null;
+  if (primaryMatch) return primaryMatch;
+
+  const secondary = await listAgentMemories({
+    db,
+    workspaceId,
+    agentIdOrUsername,
+    query: normalizedMemoryId,
+    role,
+    limit: 50,
+    includeInternal: true,
+    includeExpired: true,
+    view: 'all',
+    fallbackAgent,
+  }).catch(() => null);
+
+  return secondary?.memories?.find((memory) => String(memory.id || '').trim() === normalizedMemoryId) || null;
+}
+
 async function listTemplateMemories({
   db,
   workspaceId,
@@ -1859,6 +1902,7 @@ module.exports = {
   scoreMemoryForRuntime,
   rankMemories,
   listAgentMemories,
+  getAgentMemoryById,
   listTemplateMemories,
   loadWorkspaceKnowledge,
   buildAgentContext,
