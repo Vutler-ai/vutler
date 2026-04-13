@@ -2071,6 +2071,34 @@ export interface JournalSummarizeResult {
   };
 }
 
+export interface GroupMemorySpace {
+  id: string;
+  name: string;
+  description?: string;
+  scope_type: 'workspace' | 'role' | string;
+  target_role?: string | null;
+  read_access: 'workspace' | 'admin' | string;
+  write_access: 'workspace' | 'admin' | string;
+  runtime_enabled: boolean;
+  path: string;
+  content: string;
+  updatedAt: string;
+  updatedByEmail?: string | null;
+  readOnly?: boolean;
+  canRead?: boolean;
+  canWrite?: boolean;
+}
+
+export interface AgentGroupMemoryResponse {
+  agent: {
+    id: string;
+    username?: string | null;
+    role?: string | null;
+  };
+  spaces: GroupMemorySpace[];
+  count: number;
+}
+
 export interface TemplateScope {
   scope: string;
   role: string;

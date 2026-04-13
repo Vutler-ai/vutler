@@ -21,8 +21,9 @@ import {
   getAgentJournal,
   updateAgentJournal,
   summarizeAgentJournal,
+  getAgentGroupMemory,
 } from '@/lib/api/endpoints/memory';
-import type { Memory, AgentContext, ContinuityBrief, JournalState } from '@/lib/api/types';
+import type { Memory, AgentContext, ContinuityBrief, JournalState, AgentGroupMemoryResponse } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -326,6 +327,68 @@ function JournalEditor({ agentId }: { agentId: string }) {
           </Button>
         </div>
       </div>
+    </section>
+  );
+}
+
+function ApplicableGroupMemory({ agentId }: { agentId: string }) {
+  const { data, isLoading, error } = useApi<AgentGroupMemoryResponse>(
+    `/api/v1/memory/agents/${agentId}/group-memory`,
+    () => getAgentGroupMemory(agentId)
+  );
+  const spaces = data?.spaces ?? [];
+
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-3">
+        <h3 className="text-sm font-semibold text-white">Applicable Group Memory</h3>
+        <span className="text-xs text-[#6b7280]">runtime-visible shared context for this agent</span>
+      </div>
+
+      {isLoading && (
+        <div className="space-y-3">
+          {Array.from({ length: 2 }).map((_, index) => <MemoryCardSkeleton key={index} />)}
+        </div>
+      )}
+
+      {!isLoading && error && (
+        <div className="bg-red-900/20 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">
+          {error.message}
+        </div>
+      )}
+
+      {!isLoading && !error && spaces.length === 0 && (
+        <div className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-8 text-center">
+          <p className="text-[#6b7280] text-sm">
+            No governed group memory currently applies to this agent.
+          </p>
+        </div>
+      )}
+
+      {!isLoading && !error && spaces.length > 0 && (
+        <div className="space-y-3">
+          {spaces.map((space) => (
+            <div key={space.id} className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-xl p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-white">{space.name}</p>
+                  <p className="text-[11px] text-[#6b7280] mt-1">
+                    {space.scope_type === 'role' ? `Role: ${space.target_role}` : 'Workspace-wide'}
+                    {space.runtime_enabled ? ' · Runtime enabled' : ''}
+                  </p>
+                </div>
+                <span className="text-[11px] text-[#4b5563]">{space.path}</span>
+              </div>
+              {space.description && (
+                <p className="mt-2 text-xs text-[#9ca3af]">{space.description}</p>
+              )}
+              <pre className="mt-3 text-xs text-[#cbd5e1] whitespace-pre-wrap leading-relaxed">
+                {space.content}
+              </pre>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -1029,6 +1092,7 @@ export default function MemoryPage() {
           </section>
 
           <JournalEditor agentId={agentId} />
+          <ApplicableGroupMemory agentId={agentId} />
 
           <section>
             <div className="flex items-center justify-between mb-3">

@@ -14,6 +14,10 @@ import {
   getWorkspaceJournal,
   updateWorkspaceJournal,
   summarizeWorkspaceJournal,
+  getGroupMemorySpaces,
+  createGroupMemorySpace,
+  updateGroupMemorySpace,
+  deleteGroupMemorySpace,
   getTemplateScopes,
   searchMemory,
   getAgentMemorySummary,
@@ -23,6 +27,7 @@ import type {
   WorkspaceKnowledge,
   ContinuityBrief,
   JournalState,
+  GroupMemorySpace,
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
@@ -447,6 +452,310 @@ function WorkspaceJournalSection() {
   );
 }
 
+function buildEmptyGroupMemoryDraft(): GroupMemorySpace {
+  return {
+    id: '',
+    name: '',
+    description: '',
+    scope_type: 'workspace',
+    target_role: 'general',
+    read_access: 'workspace',
+    write_access: 'admin',
+    runtime_enabled: true,
+    path: '',
+    content: '',
+    updatedAt: '',
+  };
+}
+
+const EMPTY_GROUP_MEMORY_SPACES: GroupMemorySpace[] = [];
+
+function GroupMemorySection() {
+  const { data, error, isLoading, mutate } = useApi<GroupMemorySpace[]>(
+    '/api/v1/memory/group-memory',
+    () => getGroupMemorySpaces()
+  );
+  const spaces = data ?? EMPTY_GROUP_MEMORY_SPACES;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<GroupMemorySpace>(buildEmptyGroupMemoryDraft());
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'saved' | 'deleted' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!selectedId && spaces.length > 0) {
+      setSelectedId(spaces[0].id);
+      return;
+    }
+    if (selectedId && !spaces.find((space) => space.id === selectedId)) {
+      setSelectedId(spaces[0]?.id ?? null);
+    }
+  }, [selectedId, spaces]);
+
+  useEffect(() => {
+    const selected = spaces.find((space) => space.id === selectedId);
+    if (selected) {
+      setDraft(selected);
+    } else if (!selectedId) {
+      setDraft(buildEmptyGroupMemoryDraft());
+    }
+  }, [selectedId, spaces]);
+
+  const selected = spaces.find((space) => space.id === selectedId) ?? null;
+  const isNew = !selected;
+
+  async function handleSave() {
+    setSaving(true);
+    setStatus('idle');
+    try {
+      if (isNew) {
+        const created = await createGroupMemorySpace({
+          name: draft.name,
+          description: draft.description,
+          scope_type: draft.scope_type,
+          target_role: draft.scope_type === 'role' ? draft.target_role : null,
+          read_access: draft.read_access,
+          write_access: draft.write_access,
+          runtime_enabled: draft.runtime_enabled,
+          content: draft.content,
+        });
+        await mutate([...spaces, created], { revalidate: true });
+        setSelectedId(created.id);
+      } else {
+        const updated = await updateGroupMemorySpace(selected.id, {
+          name: draft.name,
+          description: draft.description,
+          scope_type: draft.scope_type,
+          target_role: draft.scope_type === 'role' ? draft.target_role : null,
+          read_access: draft.read_access,
+          write_access: draft.write_access,
+          runtime_enabled: draft.runtime_enabled,
+          content: draft.content,
+        });
+        await mutate(
+          spaces.map((space) => (space.id === updated.id ? updated : space)),
+          { revalidate: true }
+        );
+        setSelectedId(updated.id);
+      }
+      setStatus('saved');
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch {
+      setStatus('error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!selected) return;
+    setDeleting(true);
+    setStatus('idle');
+    try {
+      await deleteGroupMemorySpace(selected.id);
+      const remaining = spaces.filter((space) => space.id !== selected.id);
+      await mutate(remaining, { revalidate: true });
+      setSelectedId(remaining[0]?.id ?? null);
+      if (remaining.length === 0) {
+        setDraft(buildEmptyGroupMemoryDraft());
+      }
+      setStatus('deleted');
+      setTimeout(() => setStatus('idle'), 2500);
+    } catch {
+      setStatus('error');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <section className="bg-[#14151f] border border-[rgba(255,255,255,0.07)] rounded-2xl p-4 sm:p-6">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <SectionHeader
+          icon={<Users className="w-4 h-4" />}
+          title="Group Memory"
+          subtitle="Governed cohort memory shared across matching agents and operators."
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setSelectedId(null);
+            setDraft(buildEmptyGroupMemoryDraft());
+            setStatus('idle');
+          }}
+          className="border-[rgba(255,255,255,0.1)] bg-transparent text-white hover:bg-[rgba(255,255,255,0.05)]"
+        >
+          + New Space
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-4 w-full" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-200">
+          {error.message}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[260px,1fr] gap-4">
+          <div className="space-y-2">
+            {spaces.length === 0 && (
+              <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[#0e0f1a] p-4 text-sm text-[#9ca3af]">
+                No group spaces yet. Create one to share governed memory across teams or roles.
+              </div>
+            )}
+            {spaces.map((space) => (
+              <button
+                key={space.id}
+                onClick={() => setSelectedId(space.id)}
+                className={`w-full text-left rounded-xl border p-3 transition-colors ${
+                  selectedId === space.id
+                    ? 'border-blue-500/40 bg-[#101524]'
+                    : 'border-[rgba(255,255,255,0.07)] bg-[#0e0f1a] hover:border-[rgba(255,255,255,0.14)]'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-white">{space.name}</p>
+                  <span className="text-[11px] text-[#6b7280]">{space.runtime_enabled ? 'runtime' : 'manual'}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-[#9ca3af]">
+                  {space.scope_type === 'role' ? `Role: ${space.target_role}` : 'Workspace-wide'}
+                </p>
+                {space.description && (
+                  <p className="mt-1 text-[11px] text-[#4b5563] line-clamp-2">{space.description}</p>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-[rgba(255,255,255,0.05)] bg-[#0e0f1a] p-4 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs uppercase tracking-wide text-[#6b7280]">Space Name</label>
+                <Input
+                  value={draft.name}
+                  onChange={(e) => setDraft((current) => ({ ...current, name: e.target.value }))}
+                  placeholder="Operations, Sales, Platform..."
+                  className="bg-[#090b14] border-[rgba(255,255,255,0.1)] text-white"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs uppercase tracking-wide text-[#6b7280]">Audience</label>
+                <select
+                  value={draft.scope_type}
+                  onChange={(e) => setDraft((current) => ({ ...current, scope_type: e.target.value as 'workspace' | 'role' }))}
+                  className="w-full h-10 px-3 rounded-md bg-[#090b14] border border-[rgba(255,255,255,0.1)] text-white text-sm"
+                >
+                  <option value="workspace">Workspace</option>
+                  <option value="role">Role-specific</option>
+                </select>
+              </div>
+              {draft.scope_type === 'role' && (
+                <div className="space-y-1.5">
+                  <label className="text-xs uppercase tracking-wide text-[#6b7280]">Target Role</label>
+                  <Input
+                    value={draft.target_role ?? ''}
+                    onChange={(e) => setDraft((current) => ({ ...current, target_role: e.target.value }))}
+                    placeholder="operations"
+                    className="bg-[#090b14] border-[rgba(255,255,255,0.1)] text-white"
+                  />
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <label className="text-xs uppercase tracking-wide text-[#6b7280]">Read Access</label>
+                <select
+                  value={draft.read_access}
+                  onChange={(e) => setDraft((current) => ({ ...current, read_access: e.target.value as 'workspace' | 'admin' }))}
+                  className="w-full h-10 px-3 rounded-md bg-[#090b14] border border-[rgba(255,255,255,0.1)] text-white text-sm"
+                >
+                  <option value="workspace">Workspace members</option>
+                  <option value="admin">Admins only</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs uppercase tracking-wide text-[#6b7280]">Write Access</label>
+                <select
+                  value={draft.write_access}
+                  onChange={(e) => setDraft((current) => ({ ...current, write_access: e.target.value as 'workspace' | 'admin' }))}
+                  className="w-full h-10 px-3 rounded-md bg-[#090b14] border border-[rgba(255,255,255,0.1)] text-white text-sm"
+                >
+                  <option value="admin">Admins only</option>
+                  <option value="workspace">Workspace members</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs uppercase tracking-wide text-[#6b7280]">Description</label>
+              <Input
+                value={draft.description ?? ''}
+                onChange={(e) => setDraft((current) => ({ ...current, description: e.target.value }))}
+                placeholder="What durable knowledge belongs in this group space?"
+                className="bg-[#090b14] border-[rgba(255,255,255,0.1)] text-white"
+              />
+            </div>
+
+            <label className="flex items-center gap-3 text-sm text-white">
+              <input
+                type="checkbox"
+                checked={draft.runtime_enabled}
+                onChange={(e) => setDraft((current) => ({ ...current, runtime_enabled: e.target.checked }))}
+                className="accent-blue-500"
+              />
+              Inject into runtime when the audience matches
+            </label>
+
+            <div className="space-y-1.5">
+              <label className="text-xs uppercase tracking-wide text-[#6b7280]">Memory Content</label>
+              <Textarea
+                value={draft.content}
+                onChange={(e) => setDraft((current) => ({ ...current, content: e.target.value }))}
+                placeholder="Store durable group conventions, handoff knowledge, and shared learnings here..."
+                className="bg-[#090b14] border-[rgba(255,255,255,0.1)] text-white resize-none min-h-[220px] text-sm focus:border-blue-500/50"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs text-[#4b5563]">
+                {selected?.updatedAt ? `Last updated: ${formatDate(selected.updatedAt)}` : 'Unsaved space'}
+                {selected?.updatedByEmail ? ` · ${selected.updatedByEmail}` : ''}
+              </div>
+              <div className="flex items-center gap-2">
+                {status === 'saved' && <span className="text-xs text-emerald-400">Saved</span>}
+                {status === 'deleted' && <span className="text-xs text-emerald-400">Deleted</span>}
+                {status === 'error' && <span className="text-xs text-red-400">Action failed</span>}
+                {!isNew && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="border-red-500/20 bg-transparent text-red-300 hover:bg-red-500/10"
+                  >
+                    {deleting ? 'Deleting...' : 'Delete'}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={saving || !draft.name.trim() || !draft.content.trim() || selected?.readOnly === true}
+                  className="bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+                >
+                  {selected?.readOnly ? 'Read only' : saving ? 'Saving...' : isNew ? 'Create Space' : 'Save Space'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ─── Agent Memory Card ────────────────────────────────────────────────────────
 
 interface AgentMemoryCardProps {
@@ -830,6 +1139,7 @@ export default function MemoryPage() {
         <WorkspaceKnowledgeSection />
         <WorkspaceSessionBriefSection />
         <WorkspaceJournalSection />
+        <GroupMemorySection />
         <AgentMemoriesSection />
         <SharedKnowledgeSection />
         <SearchAllMemorySection />

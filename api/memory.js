@@ -42,6 +42,13 @@ const {
   saveAgentJournal,
   summarizeAgentJournalToBrief,
 } = require('../services/journalCompactionService');
+const {
+  listGroupMemorySpaces,
+  createGroupMemorySpace,
+  updateGroupMemorySpace,
+  deleteGroupMemorySpace,
+  listAgentGroupMemories,
+} = require('../services/groupMemoryService');
 
 function getWorkspaceId(req) {
   return req.workspaceId || '00000000-0000-0000-0000-000000000001';
@@ -466,6 +473,72 @@ router.put('/workspace-knowledge/policy', async (req, res) => {
   }
 });
 
+router.get('/group-memory', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const spaces = await listGroupMemorySpaces({
+      db: pool,
+      workspaceId,
+      user: req.user || {},
+    });
+    return res.json({
+      success: true,
+      spaces,
+      count: spaces.length,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/group-memory', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const space = await createGroupMemorySpace({
+      db: pool,
+      workspaceId,
+      input: req.body || {},
+      user: req.user || {},
+    });
+    return res.status(201).json({ success: true, data: space });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/group-memory/:spaceId', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { spaceId } = req.params;
+    const space = await updateGroupMemorySpace({
+      db: pool,
+      workspaceId,
+      spaceId,
+      input: req.body || {},
+      user: req.user || {},
+    });
+    return res.json({ success: true, data: space });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/group-memory/:spaceId', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { spaceId } = req.params;
+    const result = await deleteGroupMemorySpace({
+      db: pool,
+      workspaceId,
+      spaceId,
+      user: req.user || {},
+    });
+    return res.json({ success: true, data: result });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/session-brief', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -640,6 +713,21 @@ router.put('/agents/:agentId/profile-brief', async (req, res) => {
     return res.json({ ...brief, readOnly: false, canWrite: true });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/agents/:agentId/group-memory', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const { agentId } = req.params;
+    const result = await listAgentGroupMemories({
+      db: pool,
+      workspaceId,
+      agentIdOrUsername: agentId,
+    });
+    return res.json({ success: true, ...result, count: result.spaces.length });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message });
   }
 });
 

@@ -18,8 +18,15 @@ jest.mock('../services/sessionContinuityService', () => ({
   ])),
 }));
 
+jest.mock('../services/groupMemoryService', () => ({
+  listRuntimeGroupMemories: jest.fn(() => Promise.resolve([
+    { id: 'ops', name: 'Operations', content: 'Platform operations use controlled deploy windows.' },
+  ])),
+}));
+
 const { MemoryRuntimeService } = require('../services/memory/runtime');
 const { listRuntimeContinuitySummaries } = require('../services/sessionContinuityService');
+const { listRuntimeGroupMemories } = require('../services/groupMemoryService');
 
 describe('memory runtime service', () => {
   test('returns empty prompt in passive mode', async () => {
@@ -82,6 +89,13 @@ describe('memory runtime service', () => {
       workspaceId: 'ws-1',
       agent: { id: 'agent-1', username: 'atlas', memory_mode: 'active' },
     });
+    expect(listRuntimeGroupMemories).toHaveBeenCalledWith({
+      db: { query: expect.any(Function) },
+      workspaceId: 'ws-1',
+      agent: { id: 'agent-1', username: 'atlas', memory_mode: 'active' },
+    });
+    expect(result.prompt).toContain('## Group Memory');
+    expect(result.prompt).toContain('### Operations');
     expect(result.prompt).toContain('## Summaries');
     expect(result.prompt).toContain('Current workspace priority: keep answers concise.');
   });

@@ -155,13 +155,23 @@ Vutler today has:
 - task and htask projection
 
 What is missing:
-- explicit group memory product surface in Vutler
-- promoted discoveries that become shared operational knowledge across agent cohorts
-- governance around who can write shared memory and who can consume it
+- automatic promotion flows that move verified discoveries into group memory spaces
+- richer cohort targeting than workspace-wide or role-scoped spaces
+- stronger reporting on which group spaces are most reused at runtime
 
 Recommendation:
 - medium priority
 - implement group memory as a governed workspace layer above current shared-context usage
+
+Status update 2026-04-13:
+- Vutler now exposes first-class governed group memory spaces on the workspace memory page
+- each space has:
+  - workspace or role-scoped audience
+  - explicit read/write governance
+  - runtime enable/disable control
+  - Snipara-backed document sync
+- agent memory pages now show which governed group spaces apply to the current agent
+- runtime prompt injection now includes matching runtime-enabled group memory spaces for eligible agents
 
 ### 4. Swarm Project Management Depth
 
@@ -424,13 +434,16 @@ Status update 2026-04-12:
   - `rlm_repl_context`
 - FULL workflow mode now uses Snipara recursive decomposition plus `rlm_multi_query` before falling back to a single `rlm_context_query`
 - group-memory governance is still not fully productized beyond shared instructions, shared uploads, and continuity briefs
+Status update 2026-04-13:
+- group-memory governance is now productized as governed workspace/role spaces with runtime injection
+- remaining work is now around automatic promotion into group spaces and deeper analytics, not the basic product surface
 
 Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
 - first-class GitHub/source freshness surfaces
   - last successful sync
   - failed sync visibility
   - operator-facing source freshness health for autonomous runs
-- group-memory governance
+- automatic promotion/reporting around group memory
 - journal append / summarize tooling beyond the new daily journal + brief compaction flow
 - stronger `@vutler/mcp` bootstrap ergonomics beyond CLI templates
   - who can promote shared knowledge

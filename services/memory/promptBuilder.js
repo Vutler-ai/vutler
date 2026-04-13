@@ -22,6 +22,19 @@ function stringifyTextSection(title, value) {
   return `## ${title}\n${text}`;
 }
 
+function stringifyNamedTextSection(title, entries = []) {
+  const blocks = (entries || [])
+    .map((entry) => {
+      const heading = String(entry?.name || entry?.title || '').trim();
+      const content = String(entry?.content || entry?.text || '').trim();
+      if (!content) return '';
+      return heading ? `### ${heading}\n${content}` : content;
+    })
+    .filter(Boolean);
+  if (blocks.length === 0) return '';
+  return `## ${title}\n${blocks.join('\n\n')}`;
+}
+
 function trimSectionsToBudget(sections = [], budgetTokens = 1200) {
   const accepted = [];
   let used = 0;
@@ -51,6 +64,7 @@ function buildMemoryPrompt({
   instanceMemories = [],
   templateMemories = [],
   globalMemories = [],
+  groupMemories = [],
   summaries = [],
   deepContext = '',
   plan = '',
@@ -63,6 +77,7 @@ function buildMemoryPrompt({
     stringifyMemorySection('Agent Memory', instanceMemories),
     stringifyMemorySection('Role Memory', templateMemories),
     stringifyMemorySection('Workspace Memory', globalMemories),
+    stringifyNamedTextSection('Group Memory', groupMemories),
     stringifyMemorySection('Summaries', summaries),
     stringifyTextSection('Deep Context', deepContext),
     stringifyTextSection('Plan', plan),

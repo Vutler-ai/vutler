@@ -8,6 +8,8 @@ import type {
   ContinuityBrief,
   JournalState,
   JournalSummarizeResult,
+  GroupMemorySpace,
+  AgentGroupMemoryResponse,
   TemplateScope,
   MemorySearchResult,
   AgentMemoryListResponse,
@@ -196,6 +198,38 @@ export async function summarizeWorkspaceJournal(date: string): Promise<JournalSu
   return response.data;
 }
 
+export async function getGroupMemorySpaces(): Promise<GroupMemorySpace[]> {
+  const response = await apiFetch<{ spaces?: GroupMemorySpace[] }>('/api/v1/memory/group-memory');
+  return response.spaces ?? [];
+}
+
+export async function createGroupMemorySpace(
+  payload: Partial<GroupMemorySpace> & { name: string; content?: string }
+): Promise<GroupMemorySpace> {
+  const response = await apiFetch<{ data?: GroupMemorySpace }>('/api/v1/memory/group-memory', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return response.data as GroupMemorySpace;
+}
+
+export async function updateGroupMemorySpace(
+  spaceId: string,
+  payload: Partial<GroupMemorySpace> & { content?: string }
+): Promise<GroupMemorySpace> {
+  const response = await apiFetch<{ data?: GroupMemorySpace }>(`/api/v1/memory/group-memory/${spaceId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  return response.data as GroupMemorySpace;
+}
+
+export async function deleteGroupMemorySpace(spaceId: string): Promise<void> {
+  await apiFetch<SuccessResponse>(`/api/v1/memory/group-memory/${spaceId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function getAgentProfileBrief(agentId: string): Promise<ContinuityBrief> {
   return apiFetch<ContinuityBrief>(`/api/v1/memory/agents/${agentId}/profile-brief`);
 }
@@ -237,6 +271,10 @@ export async function summarizeAgentJournal(agentId: string, date: string): Prom
     body: JSON.stringify({ date }),
   });
   return response.data;
+}
+
+export async function getAgentGroupMemory(agentId: string): Promise<AgentGroupMemoryResponse> {
+  return apiFetch<AgentGroupMemoryResponse>(`/api/v1/memory/agents/${agentId}/group-memory`);
 }
 
 export async function getTemplateScopes(): Promise<TemplateScope[]> {

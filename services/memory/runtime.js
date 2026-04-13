@@ -2,6 +2,7 @@
 
 const { createSniparaGateway } = require('../snipara/gateway');
 const { buildRuntimeMemoryBundle } = require('../sniparaMemoryService');
+const { listRuntimeGroupMemories } = require('../groupMemoryService');
 const { listRuntimeContinuitySummaries } = require('../sessionContinuityService');
 const { buildMemoryPrompt } = require('./promptBuilder');
 const { resolveMemoryMode } = require('./modeResolver');
@@ -21,6 +22,7 @@ class MemoryRuntimeService {
     query = '',
     runtime = 'chat',
     includeSharedContext = true,
+    includeGroupMemory = runtime === 'chat' || runtime === 'task',
     includeSummaries = runtime === 'chat' || runtime === 'task',
     summaryArgs = null,
     budgetTokens = 1200,
@@ -50,8 +52,11 @@ class MemoryRuntimeService {
           .catch(() => (
             gateway.summaries.list({}).catch(() => [])
           ));
+    const groupMemoriesPromise = includeGroupMemory
+      ? listRuntimeGroupMemories({ db, workspaceId, agent }).catch(() => [])
+      : Promise.resolve([]);
 
-    const [runtimeBundle, sharedContext, summaries] = await Promise.all([
+    const [runtimeBundle, sharedContext, groupMemories, summaries] = await Promise.all([
       buildRuntimeMemoryBundle({ db, workspaceId, agent, humanContext, query, runtime }).catch(() => ({
         prompt: '',
         memories: [],
@@ -63,6 +68,7 @@ class MemoryRuntimeService {
         sections: { human: [], human_agent: [], instance: [], template: [], global: [] },
       })),
       includeSharedContext ? gateway.knowledge.sharedContext({}).catch(() => '') : Promise.resolve(''),
+      groupMemoriesPromise,
       summariesPromise,
     ]);
 
@@ -73,6 +79,7 @@ class MemoryRuntimeService {
       instanceMemories: runtimeBundle.sections?.instance || [],
       templateMemories: runtimeBundle.sections?.template || [],
       globalMemories: runtimeBundle.sections?.global || [],
+      groupMemories: Array.isArray(groupMemories) ? groupMemories : [],
       summaries: Array.isArray(summaries) ? summaries : [],
       budgetTokens,
     });
