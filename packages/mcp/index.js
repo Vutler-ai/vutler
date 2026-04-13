@@ -5,67 +5,22 @@ const { Buffer } = require('buffer');
 
 const api = require('./lib/api-client');
 const {
+  DEFAULT_API_URL,
+  DEFAULT_API_KEY_PLACEHOLDER,
+  formatEnvTemplate,
+  getSupportedClients,
+  buildClientConfig,
+  writeClientConfig,
+} = require('./lib/bootstrap');
+const {
+  runDoctor,
+  formatDoctorReport,
+} = require('./lib/doctor');
+const {
   getAllowedToolNames,
   isToolAllowed,
   resolveWorkspacePlanId,
 } = require('./lib/plan-gating');
-
-const DEFAULT_API_URL = 'https://app.vutler.ai';
-const CLIENT_CONFIG_TEMPLATES = {
-  'claude-desktop': {
-    label: 'Claude Desktop',
-    config: {
-      mcpServers: {
-        vutler: {
-          command: 'npx',
-          args: ['-y', '@vutler/mcp'],
-          env: {
-            VUTLER_API_URL: DEFAULT_API_URL,
-            VUTLER_API_KEY: 'vt_your_key_here',
-          },
-        },
-      },
-    },
-  },
-  cursor: {
-    label: 'Cursor',
-    config: {
-      mcpServers: {
-        vutler: {
-          command: 'npx',
-          args: ['-y', '@vutler/mcp'],
-          env: {
-            VUTLER_API_URL: DEFAULT_API_URL,
-            VUTLER_API_KEY: 'vt_your_key_here',
-          },
-        },
-      },
-    },
-  },
-  continue: {
-    label: 'Continue.dev',
-    config: {
-      mcpServers: {
-        vutler: {
-          command: 'npx',
-          args: ['-y', '@vutler/mcp'],
-          env: {
-            VUTLER_API_URL: DEFAULT_API_URL,
-            VUTLER_API_KEY: 'vt_your_key_here',
-          },
-        },
-      },
-    },
-  },
-};
-
-function normalizeClientName(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  if (!raw) return 'claude-desktop';
-  if (raw === 'claude' || raw === 'claude_desktop') return 'claude-desktop';
-  if (raw === 'continue.dev') return 'continue';
-  return raw;
-}
 
 function printHelp() {
   process.stdout.write(
@@ -73,8 +28,13 @@ function printHelp() {
     'Usage:\n' +
     '  npx @vutler/mcp\n' +
     '  npx @vutler/mcp --help\n' +
-    '  npx @vutler/mcp --print-config [claude-desktop|cursor|continue]\n' +
+    '  npx @vutler/mcp --list-clients\n' +
+    '  npx @vutler/mcp --print-config [client]\n' +
+    '  npx @vutler/mcp --setup [client] [--path FILE] [--force] [--dry-run] [--embed-key]\n' +
+    '  npx @vutler/mcp --write-config [client] [--path FILE] [--force] [--dry-run] [--embed-key]\n' +
+    '  npx @vutler/mcp --doctor [--json]\n' +
     '  npx @vutler/mcp --print-env\n\n' +
+    `Supported clients: ${getSupportedClients().join(', ')}\n\n` +
     'Environment:\n' +
     `  VUTLER_API_URL   Optional, defaults to ${DEFAULT_API_URL}\n` +
     '  VUTLER_API_KEY   Required workspace API key\n'
@@ -82,24 +42,27 @@ function printHelp() {
 }
 
 function printEnvTemplate() {
-  process.stdout.write(
-    `VUTLER_API_URL=${process.env.VUTLER_API_URL || DEFAULT_API_URL}\n` +
-    'VUTLER_API_KEY=vt_your_key_here\n'
-  );
+  process.stdout.write(formatEnvTemplate());
 }
 
 function printClientConfig(clientName) {
-  const normalized = normalizeClientName(clientName);
-  const template = CLIENT_CONFIG_TEMPLATES[normalized];
-  if (!template) {
-    const supported = Object.keys(CLIENT_CONFIG_TEMPLATES).join(', ');
-    throw new Error(`Unsupported client "${clientName}". Supported clients: ${supported}`);
-  }
+  const template = buildClientConfig(clientName || 'claude-code');
 
   process.stdout.write(
-    `# ${template.label}\n` +
-    `${JSON.stringify(template.config, null, 2)}\n`
+    `# ${template.label}\n${JSON.stringify(template.config, null, 2)}\n`
   );
+}
+
+function printClientList() {
+  process.stdout.write(`${getSupportedClients().join('\n')}\n`);
+}
+
+function getArgValue(args, flagName) {
+  const index = args.indexOf(flagName);
+  if (index < 0) return null;
+  const candidate = args[index + 1];
+  if (!candidate || candidate.startsWith('--')) return null;
+  return candidate;
 }
 
 function normalizeAgentList(result) {
@@ -264,7 +227,7 @@ const ALL_TOOLS = [
       },
       additionalProperties: false,
     },
-    async handler({ agent_id }) {
+    handler({ agent_id }) {
       return api.post(`/api/v1/agents/${encodeURIComponent(agent_id)}/stop`, {});
     },
   },
@@ -282,7 +245,7 @@ const ALL_TOOLS = [
       },
       additionalProperties: false,
     },
-    async handler({ to, subject, body, htmlBody }) {
+    handler({ to, subject, body, htmlBody }) {
       return api.post('/api/v1/email/send', { to, subject, body, htmlBody });
     },
   },
@@ -320,7 +283,7 @@ const ALL_TOOLS = [
       },
       additionalProperties: false,
     },
-    async handler({ email_id, folder }) {
+    handler({ email_id, folder }) {
       return findEmailById(email_id, folder);
     },
   },
@@ -383,7 +346,7 @@ const ALL_TOOLS = [
       },
       additionalProperties: false,
     },
-    async handler({ task_id, status, title, description }) {
+    handler({ task_id, status, title, description }) {
       return api.patch(`/api/v1/tasks-v2/${encodeURIComponent(task_id)}`, {
         status,
         title,
@@ -512,7 +475,7 @@ const ALL_TOOLS = [
       },
       additionalProperties: false,
     },
-    async handler({ title, start, end, description, color }) {
+    handler({ title, start, end, description, color }) {
       return api.post('/api/v1/calendar/events', {
         title,
         start,
@@ -535,7 +498,7 @@ const ALL_TOOLS = [
       },
       additionalProperties: false,
     },
-    async handler({ channel_id, message }) {
+    handler({ channel_id, message }) {
       return api.post('/api/v1/chat/send', { channel_id, message });
     },
   },
@@ -697,14 +660,58 @@ async function main() {
     return;
   }
 
+  if (args.includes('--list-clients')) {
+    printClientList();
+    return;
+  }
+
   if (args.includes('--print-env')) {
     printEnvTemplate();
     return;
   }
 
-  const printConfigIndex = args.indexOf('--print-config');
-  if (printConfigIndex >= 0) {
-    printClientConfig(args[printConfigIndex + 1]);
+  if (args.includes('--print-config')) {
+    printClientConfig(getArgValue(args, '--print-config') || 'claude-code');
+    return;
+  }
+
+  if (args.includes('--setup') || args.includes('--write-config')) {
+    const clientName = getArgValue(args, '--setup')
+      || getArgValue(args, '--write-config')
+      || 'claude-code';
+    const result = writeClientConfig({
+      clientName,
+      apiKey: args.includes('--embed-key')
+        ? (process.env.VUTLER_API_KEY || DEFAULT_API_KEY_PLACEHOLDER)
+        : DEFAULT_API_KEY_PLACEHOLDER,
+      cwd: getArgValue(args, '--cwd') || process.cwd(),
+      filePath: getArgValue(args, '--path'),
+      dryRun: args.includes('--dry-run'),
+      force: args.includes('--force'),
+    });
+
+    process.stdout.write(
+      `[vutler-mcp] ${result.dryRun ? 'Prepared' : 'Wrote'} ${result.label} config (${result.action}) at ${result.path}\n`
+    );
+    if (result.backupPath) {
+      process.stdout.write(`[vutler-mcp] Backup created at ${result.backupPath}\n`);
+    }
+    if (result.usedPlaceholderKey) {
+      process.stdout.write('[vutler-mcp] Placeholder API key written. Replace it or export VUTLER_API_KEY before use.\n');
+    }
+
+    if (args.includes('--doctor')) {
+      const doctor = await runDoctor({ allToolNames: ALL_TOOL_NAMES });
+      process.stdout.write(`\n${formatDoctorReport(doctor, { json: args.includes('--json') })}`);
+      if (!doctor.ok) process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (args.includes('--doctor')) {
+    const doctor = await runDoctor({ allToolNames: ALL_TOOL_NAMES });
+    process.stdout.write(formatDoctorReport(doctor, { json: args.includes('--json') }));
+    if (!doctor.ok) process.exitCode = 1;
     return;
   }
 
@@ -723,7 +730,21 @@ async function main() {
   );
 }
 
-main().catch((err) => {
-  process.stderr.write(`[vutler-mcp] Fatal error: ${err.message}\n`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    process.stderr.write(`[vutler-mcp] Fatal error: ${err.message}\n`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  ALL_TOOLS,
+  ALL_TOOL_NAMES,
+  createServer,
+  printHelp,
+  printEnvTemplate,
+  printClientConfig,
+  printClientList,
+  getArgValue,
+  main,
+};

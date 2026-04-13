@@ -346,6 +346,21 @@ Status update 2026-04-12:
 - package-level quick-start documentation now exists in `packages/mcp/README.md`
 - a fuller `create-snipara`-style installer is still not implemented
 
+Status update 2026-04-13:
+- `@vutler/mcp` now goes beyond static config templates:
+  - `--list-clients`
+  - `--setup` / `--write-config` with path resolution, merge into existing `mcpServers`, dry-run support, and invalid-JSON backup on `--force`
+  - `--doctor` with connectivity, auth, and plan-gated tool visibility checks
+- supported bootstrap targets now include:
+  - Claude Code
+  - Claude Desktop
+  - Cursor
+  - VS Code
+  - Continue.dev
+- bootstrap is safer by default:
+  - config writing uses a placeholder API key unless `--embed-key` is passed explicitly
+- remaining work is now documentation polish and broader distribution, not the basic bootstrap/doctor surface
+
 ## Prioritized Roadmap
 
 ### Phase 1 - Tighten The Existing Snipara Core
@@ -454,12 +469,11 @@ Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
   - operator-facing source freshness health for autonomous runs
 - automatic promotion/reporting around group memory
 - deeper session-bound journal hooks and scheduled sweep automation beyond the new on-save policy
-- stronger `@vutler/mcp` bootstrap ergonomics beyond CLI templates
-  - who can promote shared knowledge
-  - who can consume or mutate shared memory
 - session continuity and journal/profile semantics where they improve task/chat continuity
 - stronger paging channels for critical `RLM Runtime` incidents beyond in-app notifications plus workspace email
-- `@vutler/mcp` bootstrap ergonomics closer to Snipara's integration guide
+- broader public distribution around `@vutler/mcp`
+  - packaging/publishing polish
+  - public docs examples beyond the package README
 
 Roadmap execution update 2026-04-12:
 - started the first remaining operator-facing freshness tranche
