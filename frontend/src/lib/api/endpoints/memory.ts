@@ -18,6 +18,8 @@ import type {
   MemoryActionResult,
   SniparaStatusResponse,
   SniparaHealthResponse,
+  SniparaProvisioningDiagnostics,
+  SniparaProvisionResult,
   SniparaIndexHealth,
   SniparaSearchAnalytics,
   SniparaHtaskPolicy,
@@ -318,6 +320,19 @@ export async function getSniparaAdminStatus(): Promise<SniparaStatusResponse> {
 export async function getSniparaTransportHealth(): Promise<SniparaHealthResponse> {
   const response = await apiFetch<{ data?: SniparaHealthResponse }>('/api/v1/snipara/admin/health');
   return response.data as SniparaHealthResponse;
+}
+
+export async function getSniparaProvisioningDiagnostics(): Promise<SniparaProvisioningDiagnostics> {
+  const response = await apiFetch<{ data?: SniparaProvisioningDiagnostics }>('/api/v1/snipara/admin/provisioning');
+  return response.data as SniparaProvisioningDiagnostics;
+}
+
+export async function provisionSniparaWorkspace(force = false): Promise<SniparaProvisionResult> {
+  const response = await apiFetch<{ data?: SniparaProvisionResult }>('/api/v1/snipara/admin/provision', {
+    method: 'POST',
+    body: JSON.stringify({ force }),
+  });
+  return response.data as SniparaProvisionResult;
 }
 
 export async function getSniparaIndexHealth(): Promise<SniparaIndexHealth> {

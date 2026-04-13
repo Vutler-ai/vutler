@@ -2176,6 +2176,53 @@ export interface SniparaHealthResponse {
   [key: string]: unknown;
 }
 
+export interface SniparaProvisioningDiagnostics {
+  configured: boolean;
+  runtime_ready: boolean;
+  integrator_ready: boolean;
+  integration_key_present: boolean;
+  can_provision: boolean;
+  can_repair: boolean;
+  provisioning_mode: 'unprovisioned' | 'partial' | 'runtime_only' | 'integrator' | string;
+  recommended_action: 'none' | 'manual_only' | 'provision' | 'repair_api_key' | 'create_swarm' | 'repair' | string;
+  missing_fields: string[];
+  fields: {
+    api_key_present: boolean;
+    api_url?: string | null;
+    project_id?: string | null;
+    project_slug?: string | null;
+    client_id?: string | null;
+    swarm_id?: string | null;
+  };
+  webhook?: {
+    url_present: boolean;
+    secret_present: boolean;
+    configured: boolean;
+  };
+  remote?: {
+    supported: boolean;
+    swarms_count?: number;
+    has_matching_swarm?: boolean;
+    error?: string | null;
+  };
+  message?: string | null;
+}
+
+export interface SniparaProvisionResult {
+  provisioned: boolean;
+  skipped?: boolean;
+  reason?: string | null;
+  createdProject?: boolean;
+  createdSwarm?: boolean;
+  apiUrl?: string | null;
+  clientId?: string | null;
+  projectId?: string | null;
+  projectSlug?: string | null;
+  swarmId?: string | null;
+  swarmCreationMode?: string | null;
+  recoveredApiKey?: boolean;
+}
+
 export interface SniparaIndexHealth {
   supported: boolean;
   degraded: boolean;

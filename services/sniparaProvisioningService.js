@@ -10,6 +10,54 @@ const sniparaService = require('./sniparaService');
 
 const SCHEMA = 'tenant_vutler';
 
+function extractClientApiKey(payload = {}) {
+  return payload?.api_key
+    || payload?.project_api_key
+    || payload?.key
+    || payload?.secret
+    || payload?.token
+    || null;
+}
+
+function isRuntimeReady(existing = {}) {
+  return Boolean(
+    existing.apiKey
+    && existing.apiUrl
+    && (existing.projectId || existing.projectSlug)
+    && existing.swarmId
+  );
+}
+
+function determineProvisioningMessage({
+  integrationKeyPresent,
+  runtimeReady,
+  integratorReady,
+  recommendedAction,
+}) {
+  if (!integrationKeyPresent && !runtimeReady) {
+    return 'Integrator provisioning is unavailable because SNIPARA_INTEGRATION_KEY is not configured.';
+  }
+  if (recommendedAction === 'repair_api_key') {
+    return 'This workspace still has a Snipara client binding but lost its workspace API key. Repair can mint a replacement key without recreating the client.';
+  }
+  if (recommendedAction === 'create_swarm') {
+    return 'This workspace has project credentials but no swarm binding. Repair can create the missing swarm without recreating the project.';
+  }
+  if (recommendedAction === 'repair') {
+    return 'This workspace has partial Snipara provisioning state. Repair should reconcile missing settings before any reprovision attempt.';
+  }
+  if (recommendedAction === 'provision') {
+    return 'This workspace can be provisioned automatically through the Snipara Integrator API.';
+  }
+  if (runtimeReady && !integratorReady) {
+    return 'Snipara runtime is ready, but integrator-level client metadata is incomplete. Runtime execution still works; external provisioning visibility is limited.';
+  }
+  if (runtimeReady && integratorReady) {
+    return 'Snipara runtime and integrator bindings are ready for this workspace.';
+  }
+  return 'Snipara provisioning status is incomplete.';
+}
+
 async function writeWorkspaceSetting(db, workspaceId, key, value) {
   const serialized = JSON.stringify(value);
 
@@ -34,11 +82,21 @@ async function readExistingProvisioning(db, workspaceId) {
     `SELECT key, value
      FROM ${SCHEMA}.workspace_settings
      WHERE workspace_id = $1
-       AND key IN ('snipara_api_key', 'snipara_api_url', 'snipara_project_id', 'snipara_project_slug', 'snipara_client_id', 'snipara_swarm_id')`,
+       AND key IN (
+         'snipara_api_key',
+         'snipara_api_url',
+         'snipara_project_id',
+         'snipara_project_slug',
+         'snipara_client_id',
+         'snipara_swarm_id'
+       )`,
     [workspaceId]
   );
 
-  const map = new Map(result.rows.map((row) => [row.key, typeof row.value?.value === 'string' ? row.value.value : row.value]));
+  const map = new Map(result.rows.map((row) => [
+    row.key,
+    typeof row.value?.value === 'string' ? row.value.value : row.value,
+  ]));
   return {
     apiKey: map.get('snipara_api_key') || null,
     apiUrl: map.get('snipara_api_url') || null,
@@ -46,6 +104,106 @@ async function readExistingProvisioning(db, workspaceId) {
     projectSlug: map.get('snipara_project_slug') || null,
     clientId: map.get('snipara_client_id') || null,
     swarmId: map.get('snipara_swarm_id') || null,
+  };
+}
+
+async function getWorkspaceSniparaProvisioningDiagnostics({
+  db = pool,
+  workspaceId,
+}) {
+  if (!workspaceId) throw new Error('workspaceId is required');
+
+  const existing = await readExistingProvisioning(db, workspaceId);
+  const integrationKeyPresent = Boolean(process.env.SNIPARA_INTEGRATION_KEY);
+  const runtimeReady = isRuntimeReady(existing);
+  const integratorReady = Boolean(runtimeReady && existing.clientId);
+  const missingFields = [];
+
+  if (!existing.apiKey) missingFields.push('api_key');
+  if (!existing.apiUrl) missingFields.push('api_url');
+  if (!existing.projectId && !existing.projectSlug) missingFields.push('project');
+  if (!existing.clientId) missingFields.push('client_id');
+  if (!existing.swarmId) missingFields.push('swarm_id');
+
+  let provisioningMode = 'unprovisioned';
+  if (integratorReady) provisioningMode = 'integrator';
+  else if (runtimeReady) provisioningMode = 'runtime_only';
+  else if (missingFields.length < 5) provisioningMode = 'partial';
+
+  let recommendedAction = 'none';
+  if (!integrationKeyPresent && !runtimeReady) {
+    recommendedAction = 'manual_only';
+  } else if (existing.clientId && !existing.apiKey) {
+    recommendedAction = 'repair_api_key';
+  } else if (existing.apiKey && existing.apiUrl && !existing.swarmId) {
+    recommendedAction = 'create_swarm';
+  } else if (!runtimeReady && missingFields.length < 5) {
+    recommendedAction = 'repair';
+  } else if (!runtimeReady) {
+    recommendedAction = 'provision';
+  }
+
+  let remote = {
+    supported: false,
+    swarms_count: 0,
+    has_matching_swarm: false,
+    error: null,
+  };
+
+  if (integrationKeyPresent && existing.clientId) {
+    try {
+      const payload = await sniparaService.listClientSwarms({ clientId: existing.clientId });
+      const swarms = Array.isArray(payload?.swarms)
+        ? payload.swarms
+        : (Array.isArray(payload) ? payload : []);
+      remote = {
+        supported: true,
+        swarms_count: swarms.length,
+        has_matching_swarm: existing.swarmId
+          ? swarms.some((swarm) => String(swarm?.id || swarm?.swarm_id || '').trim() === String(existing.swarmId).trim())
+          : false,
+        error: null,
+      };
+    } catch (error) {
+      remote = {
+        supported: true,
+        swarms_count: 0,
+        has_matching_swarm: false,
+        error: error.message,
+      };
+    }
+  }
+
+  return {
+    configured: runtimeReady,
+    runtime_ready: runtimeReady,
+    integrator_ready: integratorReady,
+    integration_key_present: integrationKeyPresent,
+    can_provision: integrationKeyPresent,
+    can_repair: integrationKeyPresent && !runtimeReady,
+    provisioning_mode: provisioningMode,
+    recommended_action: recommendedAction,
+    missing_fields: missingFields,
+    fields: {
+      api_key_present: Boolean(existing.apiKey),
+      api_url: existing.apiUrl || null,
+      project_id: existing.projectId || null,
+      project_slug: existing.projectSlug || null,
+      client_id: existing.clientId || null,
+      swarm_id: existing.swarmId || null,
+    },
+    webhook: {
+      url_present: Boolean(process.env.SNIPARA_WEBHOOK_URL),
+      secret_present: Boolean(process.env.SNIPARA_WEBHOOK_SECRET),
+      configured: Boolean(process.env.SNIPARA_WEBHOOK_URL && process.env.SNIPARA_WEBHOOK_SECRET),
+    },
+    remote,
+    message: determineProvisioningMessage({
+      integrationKeyPresent,
+      runtimeReady,
+      integratorReady,
+      recommendedAction,
+    }),
   };
 }
 
@@ -76,7 +234,11 @@ async function provisionWorkspaceSnipara({
   }
 
   const normalizedSlug = normalizeProjectSlug(workspaceSlug || workspaceName || workspaceId);
-  const canReuseProject = Boolean(existing.apiKey && existing.apiUrl && (existing.projectId || existing.projectSlug));
+  const canReuseProject = Boolean(
+    existing.apiUrl
+    && (existing.projectId || existing.projectSlug)
+    && (existing.apiKey || existing.clientId)
+  );
   const project = canReuseProject
     ? null
     : await sniparaService.createProject({
@@ -86,11 +248,24 @@ async function provisionWorkspaceSnipara({
       ownerEmail,
     });
 
-  const apiUrl = existing.apiUrl || project?.api_url || buildSniparaProjectUrl(existing.projectSlug || project?.project_slug || normalizedSlug);
-  const apiKey = existing.apiKey || project?.api_key;
+  const apiUrl = existing.apiUrl
+    || project?.api_url
+    || buildSniparaProjectUrl(existing.projectSlug || project?.project_slug || normalizedSlug);
+  let apiKey = existing.apiKey || project?.api_key || null;
   const projectId = existing.projectId || project?.project_id || null;
   const clientId = existing.clientId || project?.client_id || null;
   const projectSlug = existing.projectSlug || project?.project_slug || normalizedSlug;
+  let recoveredApiKey = false;
+
+  if (!apiKey && clientId) {
+    const keyResult = await sniparaService.createClientApiKey({
+      clientId,
+      name: `${projectSlug}-workspace-key`,
+      accessLevel: 'ADMIN',
+    });
+    apiKey = extractClientApiKey(keyResult);
+    recoveredApiKey = Boolean(apiKey);
+  }
 
   if (!apiKey || !apiUrl) {
     throw new Error('Snipara provisioning did not return usable api credentials');
@@ -150,10 +325,13 @@ async function provisionWorkspaceSnipara({
     projectSlug,
     swarmId,
     swarmCreationMode,
+    recoveredApiKey,
   };
 }
 
 module.exports = {
+  extractClientApiKey,
+  getWorkspaceSniparaProvisioningDiagnostics,
   provisionWorkspaceSnipara,
   readExistingProvisioning,
   writeWorkspaceSetting,

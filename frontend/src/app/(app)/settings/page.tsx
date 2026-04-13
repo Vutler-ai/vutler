@@ -9,6 +9,7 @@ import { getIntegrations, getAvailableProviders, connect, disconnect } from "@/l
 import {
   getSniparaAdminStatus,
   getSniparaTransportHealth,
+  getSniparaProvisioningDiagnostics,
   getSniparaIndexHealth,
   getSniparaSearchAnalytics,
   getSniparaHtaskPolicy,
@@ -17,6 +18,7 @@ import {
   getSniparaSharedCollections,
   getSniparaSharedUploads,
   getSniparaSyncStatus,
+  provisionSniparaWorkspace,
   uploadSniparaSharedDocument,
 } from "@/lib/api/endpoints/memory";
 import type {
@@ -30,6 +32,7 @@ import type {
   ApiKeyRole,
   SniparaStatusResponse,
   SniparaHealthResponse,
+  SniparaProvisioningDiagnostics,
   SniparaIndexHealth,
   SniparaSearchAnalytics,
   SniparaHtaskPolicy,
@@ -472,13 +475,29 @@ function WorkspaceTab({
     }
   }, [settings, providers]);
 
-  const { data: sniparaStatus, isLoading: loadingSniparaStatus } = useApi<SniparaStatusResponse>(
+  const {
+    data: sniparaStatus,
+    isLoading: loadingSniparaStatus,
+    mutate: mutateSniparaStatus,
+  } = useApi<SniparaStatusResponse>(
     "/api/v1/snipara/admin/status",
     getSniparaAdminStatus
   );
-  const { data: sniparaHealth, isLoading: loadingSniparaHealth } = useApi<SniparaHealthResponse>(
+  const {
+    data: sniparaHealth,
+    isLoading: loadingSniparaHealth,
+    mutate: mutateSniparaHealth,
+  } = useApi<SniparaHealthResponse>(
     "/api/v1/snipara/admin/health",
     getSniparaTransportHealth
+  );
+  const {
+    data: sniparaProvisioning,
+    isLoading: loadingSniparaProvisioning,
+    mutate: mutateSniparaProvisioning,
+  } = useApi<SniparaProvisioningDiagnostics>(
+    "/api/v1/snipara/admin/provisioning",
+    getSniparaProvisioningDiagnostics
   );
   const { data: sniparaIndexHealth, isLoading: loadingSniparaIndex } = useApi<SniparaIndexHealth>(
     "/api/v1/snipara/admin/index-health",
@@ -528,6 +547,7 @@ function WorkspaceTab({
   const [sharedDocTags, setSharedDocTags] = useState("");
   const [sharedDocContent, setSharedDocContent] = useState("");
   const [uploadingSharedDoc, setUploadingSharedDoc] = useState(false);
+  const [repairingProvisioning, setRepairingProvisioning] = useState(false);
 
   useEffect(() => {
     if (!sharedDocCollectionId && writableSharedCollections.length > 0) {
@@ -537,6 +557,16 @@ function WorkspaceTab({
 
   const transportOk = sniparaHealth?.ok === true;
   const sniparaConfigured = sniparaStatus?.configured ?? Boolean(sniparaProjectSlug || sniparaKey);
+  const sniparaProvisioningActionLabel = sniparaProvisioning?.recommended_action === "provision"
+    ? "Provision Workspace"
+    : "Repair Provisioning";
+  const sniparaProvisioningBadge = sniparaProvisioning?.configured
+    ? "Ready"
+    : sniparaProvisioning?.recommended_action === "manual_only"
+      ? "Manual"
+      : sniparaProvisioning?.recommended_action === "none"
+        ? "Limited"
+        : "Repair";
   const sniparaRuntimeDegraded = Boolean(
     sniparaIndexHealth?.degraded
     || sniparaSyncStatus?.status === "stale"
@@ -544,6 +574,7 @@ function WorkspaceTab({
   );
   const showSniparaAdminMetrics = loadingSniparaStatus
     || loadingSniparaHealth
+    || loadingSniparaProvisioning
     || loadingSniparaIndex
     || loadingSniparaAnalytics
     || loadingSniparaTemplates
@@ -552,6 +583,7 @@ function WorkspaceTab({
     || loadingSniparaSyncStatus
     || Boolean(sniparaStatus)
     || Boolean(sniparaHealth)
+    || Boolean(sniparaProvisioning)
     || Boolean(sniparaIndexHealth)
     || Boolean(sniparaSearchAnalytics)
     || Boolean(sniparaSharedTemplates)
@@ -591,6 +623,34 @@ function WorkspaceTab({
       onToast(err instanceof Error ? err.message : "Failed to save", "error");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleProvisioningRepair = async () => {
+    setRepairingProvisioning(true);
+    try {
+      const result = await provisionSniparaWorkspace(false);
+      await Promise.all([
+        mutateSniparaProvisioning(),
+        mutateSniparaStatus(),
+        mutateSniparaHealth(),
+      ]);
+
+      if (result.skipped && result.reason === "already_configured") {
+        onToast("Snipara provisioning is already healthy", "success");
+      } else if (result.recoveredApiKey) {
+        onToast("Snipara provisioning repaired and a workspace API key was reissued", "success");
+      } else if (result.createdProject) {
+        onToast("Snipara workspace provisioned", "success");
+      } else if (result.createdSwarm) {
+        onToast("Snipara provisioning repaired and swarm binding created", "success");
+      } else {
+        onToast("Snipara provisioning reconciled", "success");
+      }
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : "Failed to repair Snipara provisioning", "error");
+    } finally {
+      setRepairingProvisioning(false);
     }
   };
 
@@ -810,6 +870,21 @@ function WorkspaceTab({
                   <Button
                     type="button"
                     variant="outline"
+                    disabled={
+                      repairingProvisioning
+                      || !sniparaProvisioning?.can_provision
+                      || sniparaProvisioning?.configured
+                      || sniparaProvisioning?.recommended_action === "none"
+                      || sniparaProvisioning?.recommended_action === "manual_only"
+                    }
+                    onClick={handleProvisioningRepair}
+                    className="border-[rgba(255,255,255,0.1)] bg-[#14151f] text-white hover:bg-[#1b1d28]"
+                  >
+                    {repairingProvisioning ? "Reconciling..." : sniparaProvisioningActionLabel}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
                     disabled={writableSharedCollections.length === 0}
                     onClick={() => setSharedDocDialogOpen(true)}
                     className="border-[rgba(255,255,255,0.1)] bg-[#14151f] text-white hover:bg-[#1b1d28]"
@@ -919,6 +994,34 @@ function WorkspaceTab({
                     </div>
                   </div>
 
+                  <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Integrator Provisioning</p>
+                        <p className="text-lg font-semibold text-white mt-2">{sniparaProvisioningBadge}</p>
+                        <p className="text-[11px] text-[#4b5563] mt-1">
+                          {sniparaProvisioning?.message || "Provisioning diagnostics unavailable."}
+                        </p>
+                      </div>
+                      <Badge
+                        className={
+                          sniparaProvisioning?.configured
+                            ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/20"
+                            : sniparaProvisioning?.recommended_action === "manual_only"
+                              ? "bg-slate-500/15 text-slate-200 border-slate-500/20"
+                              : "bg-amber-500/15 text-amber-300 border-amber-500/20"
+                        }
+                      >
+                        {sniparaProvisioning?.recommended_action || "unknown"}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-[#4b5563] mt-2">
+                      Missing: {(sniparaProvisioning?.missing_fields ?? []).length
+                        ? (sniparaProvisioning?.missing_fields ?? []).join(" · ")
+                        : "none"}
+                    </p>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
                       <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Context Risk</p>
@@ -981,6 +1084,22 @@ function WorkspaceTab({
                         {sniparaSharedUploads?.uploads?.length
                           ? `${sniparaSharedUploads.uploads[0]?.created_by_email || "Unknown operator"} · ${sniparaSharedUploads.uploads[0]?.created_at ? new Date(sniparaSharedUploads.uploads[0].created_at).toLocaleString() : "timestamp unavailable"}`
                           : "Uploads are tracked locally per workspace for auditability."}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-[#14151f] border border-[rgba(255,255,255,0.05)] p-3">
+                      <p className="text-[11px] uppercase tracking-wider text-[#6b7280]">Integrator Reachability</p>
+                      <p className="text-sm text-white mt-2">
+                        {sniparaProvisioning?.integrator_ready
+                          ? "Workspace is linked to a Snipara client and can be repaired without blind reprovisioning."
+                          : sniparaProvisioning?.fields?.client_id
+                            ? "Client metadata exists, but provisioning is still partial."
+                            : "No integrator client binding is stored locally for this workspace yet."}
+                      </p>
+                      <p className="text-[11px] text-[#4b5563] mt-1">
+                        {sniparaProvisioning?.remote?.supported
+                          ? `Remote swarms: ${sniparaProvisioning.remote?.swarms_count ?? 0}${sniparaProvisioning.remote?.has_matching_swarm ? " · local swarm matched" : ""}`
+                          : "Remote swarm lookup not available for this workspace."}
+                        {sniparaProvisioning?.remote?.error ? ` · ${sniparaProvisioning.remote.error}` : ""}
                       </p>
                     </div>
                   </div>

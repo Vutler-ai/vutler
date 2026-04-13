@@ -316,6 +316,16 @@ What is missing:
 Recommendation:
 - deferred unless Vutler explicitly productizes third-party project provisioning or reseller-style tenant management
 
+Status update 2026-04-13:
+- Vutler now uses the Integrator layer more deliberately for provisioning reliability without cloning the whole partner surface:
+  - workspace admin exposes Snipara provisioning diagnostics
+  - partial provisioning states now produce actionable repair guidance
+  - repairs can reuse an existing `client_id` to mint a replacement workspace API key instead of recreating a client/project blindly
+  - remote client swarm visibility is surfaced when integrator access is available
+- this is the right current cut for Vutler:
+  - it industrializes provisioning and repair
+  - it avoids productizing reseller/client CRUD that Vutler does not yet need as a tenant-facing surface
+
 ### 10. Client Integration and Distribution Ergonomics
 
 Snipara's integration guide is not only about MCP connectivity. It also shows a polished distribution model:
@@ -474,6 +484,10 @@ Remaining productizable Snipara work after the 2026-04-12 continuity tranche:
 - broader public distribution around `@vutler/mcp`
   - packaging/publishing polish
   - public docs examples beyond the package README
+- deeper integrator operations if strategy shifts toward reseller-style external provisioning
+  - client lifecycle CRUD
+  - client API key rotation/revocation surfaces
+  - webhook event log/test tooling
 
 Roadmap execution update 2026-04-12:
 - started the first remaining operator-facing freshness tranche

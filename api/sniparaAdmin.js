@@ -4,7 +4,11 @@ const express = require('express');
 const router = express.Router();
 
 const pool = require('../lib/vaultbrix');
-const { readExistingProvisioning, provisionWorkspaceSnipara } = require('../services/sniparaProvisioningService');
+const {
+  readExistingProvisioning,
+  provisionWorkspaceSnipara,
+  getWorkspaceSniparaProvisioningDiagnostics,
+} = require('../services/sniparaProvisioningService');
 const { resolveSniparaConfig, probeSniparaHealth, serializeSniparaError } = require('../services/sniparaResolver');
 const { createSniparaGateway } = require('../services/snipara/gateway');
 const { getWorkspaceSyncStatus } = require('../services/sniparaSyncStatusService');
@@ -428,7 +432,7 @@ router.get('/health', async (req, res) => {
   }
 });
 
-router.get('/index-health', async (req, res) => {
+router.get('/index-health', (req, res) => {
   return callAdminSniparaTool(
     req,
     res,
@@ -438,7 +442,7 @@ router.get('/index-health', async (req, res) => {
   );
 });
 
-router.get('/search-analytics', async (req, res) => {
+router.get('/search-analytics', (req, res) => {
   const days = Math.max(1, Math.min(90, Number(req.query.days) || 30));
   return callAdminSniparaTool(
     req,
@@ -449,7 +453,7 @@ router.get('/search-analytics', async (req, res) => {
   );
 });
 
-router.get('/htask-policy', async (req, res) => {
+router.get('/htask-policy', (req, res) => {
   return callAdminSniparaTool(
     req,
     res,
@@ -459,7 +463,7 @@ router.get('/htask-policy', async (req, res) => {
   );
 });
 
-router.get('/htask-metrics', async (req, res) => {
+router.get('/htask-metrics', (req, res) => {
   return callAdminSniparaTool(
     req,
     res,
@@ -469,7 +473,7 @@ router.get('/htask-metrics', async (req, res) => {
   );
 });
 
-router.get('/shared/templates', async (req, res) => {
+router.get('/shared/templates', (req, res) => {
   const category = String(req.query.category || '').trim();
   return callAdminSniparaTool(
     req,
@@ -480,7 +484,7 @@ router.get('/shared/templates', async (req, res) => {
   );
 });
 
-router.get('/shared/collections', async (req, res) => {
+router.get('/shared/collections', (req, res) => {
   const includePublic = String(req.query.include_public || 'true').trim().toLowerCase() !== 'false';
   return callAdminSniparaTool(
     req,
@@ -569,6 +573,20 @@ router.get('/sync-status', async (req, res) => {
     });
   } catch (error) {
     console.error('[SniparaAdmin] sync status error:', error);
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/provisioning', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const data = await getWorkspaceSniparaProvisioningDiagnostics({
+      db: pool,
+      workspaceId,
+    });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('[SniparaAdmin] provisioning diagnostics error:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
 });
