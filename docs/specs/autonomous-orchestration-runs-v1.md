@@ -82,6 +82,25 @@ Operational effect:
 - durable runs still stay autonomous when verification is grounded
 - fallback verifier behavior is now visible and auditable instead of being silently treated as a normal pass
 
+### Shipped slice: run-level governance controls (2026-04-13)
+
+Durable runs now execute under explicit runtime controls instead of relying only on implicit worker behavior.
+
+Current behavior in code:
+
+- run governance is normalized from task metadata, run plan controls, and run context into one runtime snapshot
+- root task projections now persist that snapshot under `orchestration_governance`, including normalized deadline, budget, and concurrency sections
+- hard deadlines now stop non-finalized runs with a terminal `timed_out` state instead of letting a stale run continue indefinitely
+- delegate creation now enforces `max_delegate_tasks` before creating another child task, and tool-action runs enforce `max_tool_actions` before dispatch
+- workspace-level and agent-level concurrency caps now park the run in `sleeping` with a capacity wait marker instead of silently oversubscribing the runtime
+- governance stalls and violations are emitted as dedicated run events (`governance.deadline_exceeded`, `governance.capacity_wait`, `governance.blocked`) so they are inspectable in run history
+
+Operational effect:
+
+- operators can now put a real ceiling on autonomous drift per run
+- delayed or over-budget runs fail visibly instead of continuing behind the scenes
+- capacity pressure becomes a first-class orchestration state, not an invisible race between workers
+
 ## Why This Is Needed
 
 Current Vutler orchestration is strong at synchronous guarded tool execution, but weak at persistent autonomy:

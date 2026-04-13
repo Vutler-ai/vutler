@@ -45,6 +45,7 @@ const CLAIM_BATCH_SIZE = Number(process.env.RUN_ENGINE_BATCH_SIZE) || 3;
 const WORKER_ID = `${os.hostname()}:${process.pid}:run-engine`;
 const ACTIVE_TASK_STATUSES = new Set(['pending', 'in_progress', 'open']);
 const FAILED_TASK_STATUSES = new Set(['failed', 'cancelled', 'stalled', 'blocked', 'timed_out', 'timeout']);
+const ACTIVE_EXECUTION_RUN_STATUSES = new Set(['planning', 'running', 'waiting_on_tasks']);
 
 function normalizeWorkspaceId(workspaceId) {
   const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
@@ -161,6 +162,138 @@ function buildVerificationReviewSummary(evaluation = {}) {
     return 'Human verification required because no acceptance criteria were available.';
   }
   return 'Human verification required because the automated verdict was not grounded enough.';
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'string' && !value.trim()) continue;
+    return value;
+  }
+  return null;
+}
+
+function normalizeNonNegativeInteger(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) return null;
+  if (normalized < 0) return null;
+  return Math.floor(normalized);
+}
+
+function normalizePositiveInteger(value) {
+  const normalized = normalizeNonNegativeInteger(value);
+  if (normalized === null || normalized < 1) return null;
+  return normalized;
+}
+
+function normalizeIsoDate(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function earliestIsoDate(...values) {
+  const normalized = values
+    .map((value) => normalizeIsoDate(value))
+    .filter(Boolean)
+    .sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+  return normalized[0] || null;
+}
+
+function normalizeRunGovernance(run, rootTask) {
+  const metadata = parseJsonLike(rootTask?.metadata);
+  const metadataGovernance = metadata?.governance && typeof metadata.governance === 'object'
+    ? metadata.governance
+    : {};
+  const orchestrationGovernance = mergeJsonObjects(
+    metadata.orchestration_governance,
+    mergeJsonObjects(
+      metadata.orchestration_controls,
+      mergeJsonObjects(metadataGovernance.orchestration, metadataGovernance.run)
+    )
+  );
+  const plan = parseJsonLike(run?.plan_json);
+  const planGovernance = mergeJsonObjects(plan?.governance, plan?.controls?.governance);
+  const context = parseJsonLike(run?.context_json);
+  const contextGovernance = mergeJsonObjects(context?.run_governance, context?.governance?.run);
+  const combined = mergeJsonObjects(orchestrationGovernance, mergeJsonObjects(planGovernance, contextGovernance));
+  const rawBudget = combined?.budget && typeof combined.budget === 'object'
+    ? combined.budget
+    : {};
+  const rawConcurrency = combined?.concurrency && typeof combined.concurrency === 'object'
+    ? combined.concurrency
+    : {};
+  const explicitDeadlineAt = normalizeIsoDate(firstDefined(
+    combined.deadline_at,
+    combined.deadlineAt,
+    metadata.orchestration_deadline_at,
+    metadata.deadline_at,
+    metadata.deadline,
+    rootTask?.due_date,
+    rootTask?.deadline,
+    rootTask?.dueDate
+  ));
+  const maxRuntimeMinutes = normalizePositiveInteger(firstDefined(
+    combined.max_runtime_minutes,
+    combined.maxRuntimeMinutes,
+    metadata.orchestration_max_runtime_minutes,
+    metadata.max_runtime_minutes,
+    metadataGovernance.max_runtime_minutes
+  ));
+  const runtimeDeadlineAt = run?.started_at && maxRuntimeMinutes
+    ? new Date(new Date(run.started_at).getTime() + (maxRuntimeMinutes * 60_000)).toISOString()
+    : null;
+  const deadlineAt = earliestIsoDate(explicitDeadlineAt, runtimeDeadlineAt);
+
+  return {
+    deadline_at: deadlineAt,
+    explicit_deadline_at: explicitDeadlineAt,
+    runtime_deadline_at: runtimeDeadlineAt,
+    max_runtime_minutes: maxRuntimeMinutes,
+    budget: {
+      max_delegate_tasks: normalizeNonNegativeInteger(firstDefined(
+        rawBudget.max_delegate_tasks,
+        combined.max_delegate_tasks,
+        metadata.orchestration_max_delegate_tasks,
+        metadata.max_delegate_tasks,
+        metadataGovernance.max_delegate_tasks
+      )),
+      max_tool_actions: normalizeNonNegativeInteger(firstDefined(
+        rawBudget.max_tool_actions,
+        combined.max_tool_actions,
+        metadata.orchestration_max_tool_actions,
+        metadata.max_tool_actions,
+        metadataGovernance.max_tool_actions
+      )),
+    },
+    concurrency: {
+      max_active_runs_per_workspace: normalizePositiveInteger(firstDefined(
+        rawConcurrency.max_active_runs_per_workspace,
+        combined.max_active_runs_per_workspace,
+        metadata.orchestration_max_active_runs_per_workspace,
+        metadata.max_active_runs_per_workspace,
+        metadataGovernance.max_active_runs_per_workspace
+      )),
+      max_active_runs_per_agent: normalizePositiveInteger(firstDefined(
+        rawConcurrency.max_active_runs_per_agent,
+        combined.max_active_runs_per_agent,
+        metadata.orchestration_max_active_runs_per_agent,
+        metadata.max_active_runs_per_agent,
+        metadataGovernance.max_active_runs_per_agent
+      )),
+    },
+  };
+}
+
+function buildGovernanceTaskMetadataPatch(governance = {}) {
+  return {
+    orchestration_governance: governance,
+    orchestration_governance_deadline_at: governance.deadline_at || null,
+    orchestration_governance_budget: governance.budget || {},
+    orchestration_governance_concurrency: governance.concurrency || {},
+  };
 }
 
 function extractTaskBlocker(task) {
@@ -897,6 +1030,12 @@ class OrchestrationRunEngine {
       leaseMs: this.leaseMs,
     });
 
+    const rootTask = run.root_task_id ? await loadTask(run.root_task_id).catch(() => null) : null;
+    if (rootTask) {
+      const governanceHandled = await this.enforceRunDeadline(run, currentStep, rootTask);
+      if (governanceHandled) return;
+    }
+
     if (currentStep.step_type === 'plan') {
       await this.processPlanStep(run, currentStep, steps);
       return;
@@ -990,8 +1129,12 @@ class OrchestrationRunEngine {
       },
       suggestedPhases,
     });
+    const governance = normalizeRunGovernance(run, rootTask);
     plan = await this.enrichPlanWithExecutionOverlays(run, rootTask, plan, availableAgents);
     plan.planning_source = suggestedPhases.length > 0 ? 'swarm_llm_decomposition' : 'heuristic';
+    plan.controls = mergeJsonObjects(plan.controls, {
+      governance,
+    });
     const firstPhase = resolvePlanPhase(plan, 0);
     const phaseCount = getPlanPhaseCount(plan);
     const delegatedAgents = Array.isArray(plan.phases)
@@ -1010,6 +1153,7 @@ class OrchestrationRunEngine {
       plan_phase_count: phaseCount,
       delegated_agents: delegatedAgents,
       planning_source: plan.planning_source,
+      run_governance: governance,
     });
 
     await updateRun(pool, run.id, {
@@ -1145,7 +1289,36 @@ class OrchestrationRunEngine {
 
     const refreshedSteps = await listRunSteps(pool, run.id);
     const activeDelegateStep = refreshedSteps.find((entry) => entry.id === delegateStep.id) || delegateStep;
-    const childTask = await this.ensureDelegatedChildTask(run, rootTask, activeDelegateStep);
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, activeDelegateStep, refreshedSteps);
+    if (!childTask) {
+      if (step.status !== 'completed') {
+        await updateRunStep(pool, step.id, {
+          status: 'completed',
+          completedAt: now,
+          output: {
+            strategy: 'single_delegate',
+            delegated_task_id: null,
+            governance_deferred: true,
+            proactive: true,
+          },
+        });
+      }
+      await updateTaskRecord(rootTask.id, {
+        metadata: {
+          orchestration_run_id: run.id,
+          orchestration_step_id: activeDelegateStep.id,
+          orchestration_plan_strategy: plan.strategy,
+          orchestration_planning_source: plan.planning_source,
+          orchestration_delegated_agents: delegatedAgents,
+          orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
+          orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
+          ...buildPhaseOverlayMetadataPatch(firstPhase),
+          ...buildGovernanceTaskMetadataPatch(governance),
+          orchestration_proactive: true,
+        },
+      });
+      return;
+    }
     const wakeAt = buildWakeAt(this.resumeDelayMs);
 
     await updateRunStep(pool, activeDelegateStep.id, {
@@ -1200,6 +1373,7 @@ class OrchestrationRunEngine {
         orchestration_snipara_swarm_id: plan.snipara?.swarm_id || null,
         orchestration_snipara_root_task_id: plan.snipara?.root_task_id || null,
         ...buildPhaseOverlayMetadataPatch(firstPhase),
+        ...buildGovernanceTaskMetadataPatch(governance),
         orchestration_proactive: true,
       },
     });
@@ -1299,6 +1473,7 @@ class OrchestrationRunEngine {
   async processToolPlanStep(run, step, steps, rootTask) {
     const now = new Date();
     const rootMetadata = parseJsonLike(rootTask?.metadata);
+    const governance = normalizeRunGovernance(run, rootTask);
     const decision = this.getToolGovernedDecision(run);
     if (!decision) {
       throw new Error(`Run ${run.id} is missing a governed tool decision.`);
@@ -1307,6 +1482,17 @@ class OrchestrationRunEngine {
     const approvalRequired = String(decision?.metadata?.execution_mode || '').trim() === 'approval_required'
       || decision.actions.some((action) => String(action?.approval || '').trim() === 'required');
     const toolName = rootMetadata.orchestration_tool_name || parseJsonLike(run.context_json).tool_name || 'tool action';
+
+    await updateRun(pool, run.id, {
+      plan: mergeJsonObjects(run.plan_json, {
+        controls: mergeJsonObjects(parseJsonLike(run.plan_json).controls, {
+          governance,
+        }),
+      }),
+      context: mergeJsonObjects(run.context_json, {
+        run_governance: governance,
+      }),
+    });
 
     if (step.status !== 'completed') {
       await updateRunStep(pool, step.id, {
@@ -1353,6 +1539,7 @@ class OrchestrationRunEngine {
           orchestration_step_id: approvalStep.id,
           approval_required: true,
           approval_mode: approvalStep.approval_mode || 'manual',
+          ...buildGovernanceTaskMetadataPatch(governance),
           pending_approval: {
             run_id: run.id,
             step_id: approvalStep.id,
@@ -1382,6 +1569,7 @@ class OrchestrationRunEngine {
         orchestration_status: 'running',
         orchestration_run_id: run.id,
         orchestration_step_id: executeStep.id,
+        ...buildGovernanceTaskMetadataPatch(governance),
         pending_approval: null,
         orchestration_proactive: true,
       },
@@ -1422,6 +1610,9 @@ class OrchestrationRunEngine {
     if (!decision) {
       throw new Error(`Run ${run.id} is missing an executable tool decision.`);
     }
+
+    const toolGovernanceHandled = await this.enforceToolActionGovernance(run, step, steps, rootTask, decision.actions);
+    if (toolGovernanceHandled) return;
 
     const coordinator = getSwarmCoordinator();
     const availableAgents = typeof coordinator.loadAgentDirectory === 'function'
@@ -1705,10 +1896,8 @@ class OrchestrationRunEngine {
       throw new Error(`Root task ${run.root_task_id || 'unknown'} not found for run ${run.id}.`);
     }
 
-    const childTask = await this.ensureDelegatedChildTask(run, rootTask, step);
-    if (!childTask) {
-      throw new Error(`Delegated child task missing for run ${run.id}, step ${step.id}.`);
-    }
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, step, steps);
+    if (!childTask) return;
 
     const taskSignal = extractTaskSignal(childTask);
 
@@ -2507,7 +2696,7 @@ class OrchestrationRunEngine {
     }));
   }
 
-  async ensureDelegatedChildTask(run, rootTask, step) {
+  async ensureDelegatedChildTask(run, rootTask, step, steps = []) {
     if (step.spawned_task_id) {
       const loaded = await loadTask(step.spawned_task_id);
       if (loaded) return loaded;
@@ -2516,6 +2705,11 @@ class OrchestrationRunEngine {
     const existing = await findDelegatedTask(run.workspace_id, run.id, step.id);
     if (existing) {
       return existing;
+    }
+
+    const governanceHandled = await this.enforceDelegatedTaskGovernance(run, rootTask, step, steps);
+    if (governanceHandled) {
+      return null;
     }
 
     const coordinator = getSwarmCoordinator();
@@ -2735,7 +2929,10 @@ class OrchestrationRunEngine {
       }
     }
 
-    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep, steps);
+    if (!childTask) {
+      return delegateStep;
+    }
     const wakeAt = buildWakeAt(this.resumeDelayMs);
 
     await updateRunStep(pool, delegateStep.id, {
@@ -2886,7 +3083,10 @@ class OrchestrationRunEngine {
       }
     }
 
-    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep);
+    const childTask = await this.ensureDelegatedChildTask(run, rootTask, delegateStep, steps);
+    if (!childTask) {
+      return delegateStep;
+    }
     const wakeAt = buildWakeAt(this.resumeDelayMs);
 
     await updateRunStep(pool, delegateStep.id, {
@@ -3218,6 +3418,355 @@ class OrchestrationRunEngine {
 
       await this.postRootTaskFailure(rootTask, message).catch(() => {});
     }
+  }
+
+  async countCompetingWorkspaceRuns(run) {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS count
+         FROM ${SCHEMA}.orchestration_runs
+        WHERE workspace_id = $1
+          AND id <> $2
+          AND status = ANY($3::text[])`,
+      [normalizeWorkspaceId(run.workspace_id), run.id, Array.from(ACTIVE_EXECUTION_RUN_STATUSES)]
+    );
+    return Number(result.rows?.[0]?.count) || 0;
+  }
+
+  async countCompetingAgentRuns(run, agentId, agentUsername) {
+    if (!agentId && !agentUsername) return 0;
+    const result = await pool.query(
+      `SELECT COUNT(*)::int AS count
+         FROM ${SCHEMA}.orchestration_runs
+        WHERE workspace_id = $1
+          AND id <> $2
+          AND status = ANY($3::text[])
+          AND (
+            ($4::text IS NOT NULL AND ($4 = requested_agent_id::text OR $4 = display_agent_id::text))
+            OR ($5::text IS NOT NULL AND ($5 = requested_agent_username OR $5 = display_agent_username))
+          )`,
+      [
+        normalizeWorkspaceId(run.workspace_id),
+        run.id,
+        Array.from(ACTIVE_EXECUTION_RUN_STATUSES),
+        agentId ? String(agentId) : null,
+        agentUsername ? String(agentUsername) : null,
+      ]
+    );
+    return Number(result.rows?.[0]?.count) || 0;
+  }
+
+  async enforceRunDeadline(run, step, rootTask) {
+    if (!rootTask || step?.step_type === 'finalize' || step?.step_type === 'approval_gate') return false;
+    const governance = normalizeRunGovernance(run, rootTask);
+    if (!governance.deadline_at) return false;
+
+    const deadlineAt = new Date(governance.deadline_at);
+    if (Number.isNaN(deadlineAt.getTime()) || deadlineAt.getTime() > Date.now()) return false;
+
+    const now = new Date();
+    const message = `Run governance deadline reached at ${governance.deadline_at}.`;
+
+    if (!isTerminalStepStatus(step?.status) && step?.id) {
+      await updateRunStep(pool, step.id, {
+        status: 'failed',
+        completedAt: now,
+        error: {
+          message,
+          blocker_type: 'deadline_exceeded',
+          governance,
+        },
+      }).catch(() => {});
+    }
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step?.id || null,
+      eventType: 'governance.deadline_exceeded',
+      actor: 'run-engine',
+      payload: {
+        deadline_at: governance.deadline_at,
+      },
+    }).catch(() => {});
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'timed_out',
+      currentStepId: step?.id || run.current_step_id || null,
+      nextWakeAt: null,
+      completedAt: now,
+      lastProgressAt: now,
+      error: {
+        message,
+        blocker_type: 'deadline_exceeded',
+        governance,
+      },
+    })).catch(() => {});
+
+    await updateTaskRecord(rootTask.id, {
+      status: 'failed',
+      metadata: {
+        orchestration_status: 'timed_out',
+        orchestration_run_id: run.id,
+        orchestration_step_id: step?.id || null,
+        orchestration_blocker_type: 'deadline_exceeded',
+        orchestration_blocker_reason: message,
+        orchestration_governance_violation: {
+          type: 'deadline_exceeded',
+          message,
+          deadline_at: governance.deadline_at,
+        },
+        ...buildGovernanceTaskMetadataPatch(governance),
+        pending_approval: null,
+        orchestration_proactive: true,
+      },
+    }).catch(() => {});
+
+    const chatActionRunId = parseJsonLike(rootTask.metadata).chat_action_run_id || null;
+    if (chatActionRunId) {
+      await updateChatActionRun(pool, SCHEMA, chatActionRunId, {
+        status: 'error',
+        executed_by: run.display_agent_id || run.requested_agent_id || null,
+        output_json: null,
+        error_json: {
+          error: message,
+          orchestration_run_id: run.id,
+          root_task_id: rootTask.id,
+          blocker_type: 'deadline_exceeded',
+        },
+      }).catch(() => {});
+    }
+
+    await this.postRootTaskFailure(rootTask, message).catch(() => {});
+    return true;
+  }
+
+  async parkRunForCapacity(run, step, rootTask, governance, {
+    scope,
+    limit,
+    activeCount,
+  } = {}) {
+    const now = new Date();
+    const wakeAt = buildWakeAt(this.resumeDelayMs);
+    const message = scope === 'agent'
+      ? `Run is waiting for agent execution capacity (${activeCount}/${limit} active runs).`
+      : `Run is waiting for workspace execution capacity (${activeCount}/${limit} active runs).`;
+
+    if (step?.id && !isTerminalStepStatus(step.status)) {
+      await updateRunStep(pool, step.id, {
+        startedAt: step.started_at || now,
+        wait: {
+          kind: 'capacity',
+          scope,
+          limit,
+          active_runs: activeCount,
+          next_check_after_ms: this.resumeDelayMs,
+        },
+        error: null,
+      }).catch(() => {});
+    }
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step?.id || null,
+      eventType: 'governance.capacity_wait',
+      actor: 'run-engine',
+      payload: {
+        scope,
+        limit,
+        active_runs: activeCount,
+        next_wake_at: wakeAt.toISOString(),
+      },
+    }).catch(() => {});
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: 'sleeping',
+        orchestration_run_id: run.id,
+        orchestration_step_id: step?.id || null,
+        orchestration_next_wake_at: wakeAt.toISOString(),
+        orchestration_blocker_type: 'capacity_wait',
+        orchestration_blocker_reason: message,
+        orchestration_governance_violation: {
+          type: 'capacity_wait',
+          scope,
+          limit,
+          active_runs: activeCount,
+        },
+        ...buildGovernanceTaskMetadataPatch(governance),
+        pending_approval: null,
+        orchestration_proactive: true,
+      },
+    }).catch(() => {});
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'sleeping',
+      currentStepId: step?.id || run.current_step_id || null,
+      nextWakeAt: wakeAt,
+      lastProgressAt: now,
+      error: null,
+    })).catch(() => {});
+
+    return true;
+  }
+
+  async blockRunForGovernance(run, step, rootTask, governance, {
+    type,
+    message,
+    details = {},
+  } = {}) {
+    const now = new Date();
+
+    if (step?.id && !isTerminalStepStatus(step.status)) {
+      await updateRunStep(pool, step.id, {
+        status: 'blocked',
+        startedAt: step.started_at || now,
+        completedAt: null,
+        wait: null,
+        error: {
+          message,
+          blocker_type: type,
+          ...details,
+        },
+      }).catch(() => {});
+    }
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step?.id || null,
+      eventType: 'governance.blocked',
+      actor: 'run-engine',
+      payload: {
+        type,
+        message,
+        ...details,
+      },
+    }).catch(() => {});
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: 'blocked',
+        orchestration_run_id: run.id,
+        orchestration_step_id: step?.id || null,
+        orchestration_blocker_type: type,
+        orchestration_blocker_reason: message,
+        orchestration_governance_violation: {
+          type,
+          message,
+          ...details,
+        },
+        ...buildGovernanceTaskMetadataPatch(governance),
+        pending_approval: null,
+        orchestration_proactive: true,
+      },
+    }).catch(() => {});
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'blocked',
+      currentStepId: step?.id || run.current_step_id || null,
+      nextWakeAt: null,
+      lastProgressAt: now,
+      error: {
+        message,
+        blocker_type: type,
+        ...details,
+      },
+    })).catch(() => {});
+
+    return true;
+  }
+
+  async enforceDispatchConcurrency(run, step, rootTask, governance, {
+    selectedAgentId = null,
+    selectedAgentUsername = null,
+  } = {}) {
+    const workspaceLimit = governance?.concurrency?.max_active_runs_per_workspace ?? null;
+    if (workspaceLimit !== null) {
+      const activeWorkspaceRuns = await this.countCompetingWorkspaceRuns(run);
+      if (activeWorkspaceRuns >= workspaceLimit) {
+        return this.parkRunForCapacity(run, step, rootTask, governance, {
+          scope: 'workspace',
+          limit: workspaceLimit,
+          activeCount: activeWorkspaceRuns,
+        });
+      }
+    }
+
+    const agentLimit = governance?.concurrency?.max_active_runs_per_agent ?? null;
+    if (agentLimit !== null) {
+      const activeAgentRuns = await this.countCompetingAgentRuns(
+        run,
+        selectedAgentId || run.requested_agent_id || null,
+        selectedAgentUsername || run.requested_agent_username || null
+      );
+      if (activeAgentRuns >= agentLimit) {
+        return this.parkRunForCapacity(run, step, rootTask, governance, {
+          scope: 'agent',
+          limit: agentLimit,
+          activeCount: activeAgentRuns,
+        });
+      }
+    }
+
+    return false;
+  }
+
+  async enforceDelegatedTaskGovernance(run, rootTask, step, steps = []) {
+    const governance = normalizeRunGovernance(run, rootTask);
+    const budgetLimit = governance?.budget?.max_delegate_tasks ?? null;
+    const selectedAgentId = step?.selected_agent_id || run.requested_agent_id || null;
+    const selectedAgentUsername = step?.selected_agent_username || run.requested_agent_username || rootTask?.assigned_agent || null;
+
+    const concurrencyHandled = await this.enforceDispatchConcurrency(run, step, rootTask, governance, {
+      selectedAgentId,
+      selectedAgentUsername,
+    });
+    if (concurrencyHandled) return true;
+
+    if (budgetLimit === null) return false;
+
+    const dispatchedDelegates = steps.filter((entry) => {
+      return entry?.step_type === 'delegate_task' && Boolean(entry?.spawned_task_id);
+    }).length;
+    const projectedDelegates = dispatchedDelegates + 1;
+    if (projectedDelegates <= budgetLimit) return false;
+
+    return this.blockRunForGovernance(run, step, rootTask, governance, {
+      type: 'delegate_budget_exhausted',
+      message: `Run exceeded its delegate task budget (${budgetLimit}).`,
+      details: {
+        limit: budgetLimit,
+        projected_delegate_tasks: projectedDelegates,
+      },
+    });
+  }
+
+  async enforceToolActionGovernance(run, step, steps, rootTask, actions = []) {
+    const governance = normalizeRunGovernance(run, rootTask);
+    const concurrencyHandled = await this.enforceDispatchConcurrency(run, step, rootTask, governance, {
+      selectedAgentId: run.requested_agent_id || null,
+      selectedAgentUsername: run.requested_agent_username || null,
+    });
+    if (concurrencyHandled) return true;
+
+    const budgetLimit = governance?.budget?.max_tool_actions ?? null;
+    if (budgetLimit === null) return false;
+
+    const priorActions = steps
+      .filter((entry) => entry?.step_type === 'execute_actions')
+      .reduce((sum, entry) => {
+        const output = parseJsonLike(entry?.output_json);
+        return sum + (Array.isArray(output?.action_results) ? output.action_results.length : 0);
+      }, 0);
+    const projectedActions = priorActions + (Array.isArray(actions) ? actions.length : 0);
+    if (projectedActions <= budgetLimit) return false;
+
+    return this.blockRunForGovernance(run, step, rootTask, governance, {
+      type: 'tool_budget_exhausted',
+      message: `Run exceeded its tool action budget (${budgetLimit}).`,
+      details: {
+        limit: budgetLimit,
+        projected_tool_actions: projectedActions,
+      },
+    });
   }
 }
 
