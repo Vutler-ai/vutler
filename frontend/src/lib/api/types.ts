@@ -2074,6 +2074,7 @@ export interface JournalAutomationPolicy {
   scope: 'workspace' | 'agent' | string;
   mode: 'manual' | 'on_save' | string;
   enabled: boolean;
+  sweep_enabled?: boolean;
   minimum_length: number;
   target: 'workspace_session_brief' | 'agent_session_brief' | string;
   updatedAt: string;
@@ -2098,6 +2099,45 @@ export interface JournalAutomationResult {
 export interface JournalAutomationPolicies {
   workspace: JournalAutomationPolicy;
   agent: JournalAutomationPolicy;
+}
+
+export interface JournalAutomationSweepItem {
+  agent_id?: string;
+  username?: string | null;
+  role?: string | null;
+  status: 'refreshed' | 'skipped' | string;
+  reason: string;
+  brief_path?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface JournalAutomationSweepResult {
+  scope: 'all' | 'workspace' | 'agent' | string;
+  date: string;
+  forced: boolean;
+  completed_at: string;
+  workspace: {
+    checked: number;
+    refreshed: number;
+    skipped: number;
+    result?: {
+      status: 'refreshed' | 'skipped' | string;
+      reason: string;
+      brief_path?: string | null;
+      updatedAt?: string | null;
+    } | null;
+  };
+  agents: {
+    checked: number;
+    refreshed: number;
+    skipped: number;
+    items: JournalAutomationSweepItem[];
+  };
+  totals: {
+    checked: number;
+    refreshed: number;
+    skipped: number;
+  };
 }
 
 export interface JournalSummarizeResult {

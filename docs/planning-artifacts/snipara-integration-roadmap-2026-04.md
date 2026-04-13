@@ -149,9 +149,13 @@ Status update 2026-04-13:
   - workspace journals can auto-refresh the workspace session brief on save
   - agent journals can auto-refresh the agent session brief on save
   - each policy has `manual` or `on_save` mode plus a minimum content threshold
+  - each policy can now also enable scheduled sweep automation
 - manual summarize actions remain available as an explicit operator override
 - journal saves no longer depend on manual compaction to keep continuity briefs current
-- remaining work is now around runtime/session-bound hook triggers and scheduled sweep automation, not the basic automation surface
+- workspace memory now exposes a `Run Sweep Now` action and last sweep status
+- a cron-friendly repository script now exists for external scheduling:
+  - `npm run memory:journal:sweep`
+- remaining work is now mainly around runtime/session-bound hook triggers, not the basic scheduled sweep layer
 
 ### 3. Group Memory and Multi-Agent Coordination
 

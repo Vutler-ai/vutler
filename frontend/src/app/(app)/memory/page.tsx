@@ -12,9 +12,11 @@ import {
   getWorkspaceSessionBrief,
   updateWorkspaceSessionBrief,
   getJournalAutomationPolicies,
+  getJournalAutomationSweepStatus,
   getWorkspaceJournal,
   updateJournalAutomationPolicy,
   updateWorkspaceJournal,
+  runJournalAutomationSweep,
   summarizeWorkspaceJournal,
   getGroupMemorySpaces,
   createGroupMemorySpace,
@@ -30,6 +32,7 @@ import type {
   ContinuityBrief,
   JournalAutomationPolicies,
   JournalAutomationPolicy,
+  JournalAutomationSweepResult,
   JournalState,
   GroupMemorySpace,
   TemplateScope,
@@ -474,17 +477,19 @@ function JournalAutomationPolicyCard({
   label: string;
   description: string;
   policy: JournalAutomationPolicy;
-  onSave: (next: { mode: 'manual' | 'on_save'; minimum_length: number }) => Promise<void>;
+  onSave: (next: { mode: 'manual' | 'on_save'; minimum_length: number; sweep_enabled: boolean }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<'manual' | 'on_save'>(policy.mode === 'on_save' ? 'on_save' : 'manual');
   const [minimumLength, setMinimumLength] = useState(String(policy.minimum_length || 120));
+  const [sweepEnabled, setSweepEnabled] = useState(policy.sweep_enabled === true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   useEffect(() => {
     setMode(policy.mode === 'on_save' ? 'on_save' : 'manual');
     setMinimumLength(String(policy.minimum_length || 120));
-  }, [policy.mode, policy.minimum_length]);
+    setSweepEnabled(policy.sweep_enabled === true);
+  }, [policy.mode, policy.minimum_length, policy.sweep_enabled]);
 
   async function handleSave() {
     setSaving(true);
@@ -493,6 +498,7 @@ function JournalAutomationPolicyCard({
       await onSave({
         mode,
         minimum_length: Math.max(1, Number.parseInt(minimumLength, 10) || policy.minimum_length || 120),
+        sweep_enabled: sweepEnabled,
       });
       setStatus('success');
       setTimeout(() => setStatus('idle'), 2500);
@@ -548,10 +554,21 @@ function JournalAutomationPolicyCard({
         </div>
       </div>
 
+      <label className="flex items-center gap-3 text-sm text-white">
+        <input
+          type="checkbox"
+          checked={sweepEnabled}
+          onChange={(e) => setSweepEnabled(e.target.checked)}
+          className="accent-blue-500"
+        />
+        Allow scheduled sweep automation to refresh this brief when the journal is newer than the current summary
+      </label>
+
       <div className="text-xs text-[#4b5563]">
         {policy.enabled
           ? `Active. Journals above ${policy.minimum_length} chars refresh the target brief on save.`
           : 'Inactive. Operators keep full manual control over compaction.'}
+        {policy.sweep_enabled ? ' Scheduled sweep is enabled.' : ' Scheduled sweep is disabled.'}
         {policy.updatedAt ? ` Last policy update: ${formatDate(policy.updatedAt)}` : ''}
         {policy.updatedByEmail ? ` · ${policy.updatedByEmail}` : ''}
       </div>
@@ -564,14 +581,35 @@ function JournalAutomationSection() {
     '/api/v1/memory/journal-automation',
     () => getJournalAutomationPolicies()
   );
+  const { data: sweepStatus, mutate: mutateSweepStatus } = useApi<JournalAutomationSweepResult>(
+    '/api/v1/memory/journal-automation/sweep-status',
+    () => getJournalAutomationSweepStatus()
+  );
+  const [runningSweep, setRunningSweep] = useState(false);
+  const [sweepActionStatus, setSweepActionStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
-  async function handleSave(scope: 'workspace' | 'agent', next: { mode: 'manual' | 'on_save'; minimum_length: number }) {
+  async function handleSave(scope: 'workspace' | 'agent', next: { mode: 'manual' | 'on_save'; minimum_length: number; sweep_enabled: boolean }) {
     if (!data) return;
     const updated = await updateJournalAutomationPolicy(scope, next);
     await mutate({
       workspace: scope === 'workspace' ? updated : data.workspace,
       agent: scope === 'agent' ? updated : data.agent,
     }, { revalidate: false });
+  }
+
+  async function handleRunSweep() {
+    setRunningSweep(true);
+    setSweepActionStatus('idle');
+    try {
+      const result = await runJournalAutomationSweep({ scope: 'all', force: true });
+      await mutateSweepStatus(result, { revalidate: false });
+      setSweepActionStatus('success');
+      setTimeout(() => setSweepActionStatus('idle'), 3000);
+    } catch {
+      setSweepActionStatus('error');
+    } finally {
+      setRunningSweep(false);
+    }
   }
 
   return (
@@ -605,6 +643,51 @@ function JournalAutomationSection() {
             policy={data.agent}
             onSave={(next) => handleSave('agent', next)}
           />
+
+          <div className="rounded-xl border border-[rgba(255,255,255,0.07)] bg-[#0e0f1a] p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Sweep Automation</h3>
+                <p className="text-xs text-[#6b7280] mt-1">
+                  Cron-friendly catch-up pass that refreshes workspace and agent session briefs when a saved journal is newer than the current summary.
+                </p>
+                <p className="mt-2 text-xs text-[#4b5563]">
+                  {sweepStatus?.completed_at
+                    ? `Last sweep: ${formatDate(sweepStatus.completed_at)} · ${sweepStatus.totals.refreshed}/${sweepStatus.totals.checked} refreshed`
+                    : 'No sweep has run yet.'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {sweepActionStatus === 'success' && <span className="text-xs text-emerald-400">Sweep complete</span>}
+                {sweepActionStatus === 'error' && <span className="text-xs text-red-400">Sweep failed</span>}
+                <Button
+                  size="sm"
+                  onClick={handleRunSweep}
+                  disabled={runningSweep}
+                  className="bg-[#1f2937] hover:bg-[#111827] text-white disabled:opacity-40"
+                >
+                  {runningSweep ? 'Sweeping...' : 'Run Sweep Now'}
+                </Button>
+              </div>
+            </div>
+
+            {sweepStatus && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#14151f] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Workspace</p>
+                  <p className="mt-1 text-sm text-white">{sweepStatus.workspace.refreshed}/{sweepStatus.workspace.checked} refreshed</p>
+                </div>
+                <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#14151f] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Agents</p>
+                  <p className="mt-1 text-sm text-white">{sweepStatus.agents.refreshed}/{sweepStatus.agents.checked} refreshed</p>
+                </div>
+                <div className="rounded-lg border border-[rgba(255,255,255,0.05)] bg-[#14151f] px-3 py-2">
+                  <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Skipped</p>
+                  <p className="mt-1 text-sm text-white">{sweepStatus.totals.skipped}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
     </section>

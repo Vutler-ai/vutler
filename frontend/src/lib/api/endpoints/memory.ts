@@ -9,6 +9,7 @@ import type {
   JournalState,
   JournalAutomationPolicies,
   JournalAutomationPolicy,
+  JournalAutomationSweepResult,
   JournalSummarizeResult,
   GroupMemorySpace,
   AgentGroupMemoryResponse,
@@ -207,12 +208,27 @@ export async function getJournalAutomationPolicies(): Promise<JournalAutomationP
   return response.data;
 }
 
+export async function getJournalAutomationSweepStatus(): Promise<JournalAutomationSweepResult> {
+  const response = await apiFetch<{ data: JournalAutomationSweepResult }>('/api/v1/memory/journal-automation/sweep-status');
+  return response.data;
+}
+
 export async function updateJournalAutomationPolicy(
   scope: 'workspace' | 'agent',
-  payload: { mode: 'manual' | 'on_save'; minimum_length: number }
+  payload: { mode: 'manual' | 'on_save'; minimum_length: number; sweep_enabled?: boolean }
 ): Promise<JournalAutomationPolicy> {
   const response = await apiFetch<{ data: JournalAutomationPolicy }>(`/api/v1/memory/journal-automation/${scope}`, {
     method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  return response.data;
+}
+
+export async function runJournalAutomationSweep(
+  payload: { scope?: 'all' | 'workspace' | 'agent'; date?: string; force?: boolean } = {}
+): Promise<JournalAutomationSweepResult> {
+  const response = await apiFetch<{ data: JournalAutomationSweepResult }>('/api/v1/memory/journal-automation/sweep', {
+    method: 'POST',
     body: JSON.stringify(payload),
   });
   return response.data;

@@ -21,6 +21,7 @@ const {
   saveJournalAutomationPolicy,
   saveWorkspaceJournal,
   getJournalAutomationPolicy,
+  runJournalAutomationSweep,
   summarizeAgentJournalToBrief,
 } = require('../services/journalCompactionService');
 
@@ -161,6 +162,7 @@ describe('journal compaction service', () => {
       policy: {
         mode: 'on_save',
         minimum_length: 220,
+        sweep_enabled: true,
       },
       user: { email: 'admin@vutler.ai' },
     });
@@ -168,6 +170,7 @@ describe('journal compaction service', () => {
     expect(updated.mode).toBe('on_save');
     expect(updated.enabled).toBe(true);
     expect(updated.minimum_length).toBe(220);
+    expect(updated.sweep_enabled).toBe(true);
 
     const fetched = await getJournalAutomationPolicy({
       db,
@@ -177,6 +180,7 @@ describe('journal compaction service', () => {
 
     expect(fetched.mode).toBe('on_save');
     expect(fetched.updatedByEmail).toBe('admin@vutler.ai');
+    expect(fetched.sweep_enabled).toBe(true);
   });
 
   test('auto-refreshes the workspace session brief when journal automation is enabled', async () => {
@@ -249,5 +253,56 @@ describe('journal compaction service', () => {
     expect(journal.automation.reason).toBe('below_minimum_length');
     expect(summarizeJournal).not.toHaveBeenCalled();
     expect(storeSummary).not.toHaveBeenCalled();
+  });
+
+  test('runs a workspace sweep only when the journal is newer than the current brief', async () => {
+    const db = createWorkspaceSettingsDb({
+      'journal_automation:workspace:policy': {
+        scope: 'workspace',
+        mode: 'manual',
+        minimum_length: 10,
+        sweep_enabled: true,
+      },
+      'journal:workspace:2026-04-12': 'Deploy completed.\nMonitor the rollback guard for one more hour.',
+      'journal:workspace:2026-04-12:meta': {
+        updatedAt: '2026-04-12T12:00:00.000Z',
+      },
+      'session_continuity:workspace': 'Older brief',
+      'session_continuity:workspace:meta': {
+        updatedAt: '2026-04-12T10:00:00.000Z',
+      },
+    });
+    const uploadDocument = jest.fn(() => Promise.resolve({ ok: true }));
+    const summarizeJournal = jest.fn(() => Promise.resolve({
+      result: 'Deploy completed; keep watching the rollback guard.',
+    }));
+    const storeSummary = jest.fn(() => Promise.resolve({ ok: true }));
+
+    const result = await runJournalAutomationSweep({
+      db,
+      workspaceId: 'ws-1',
+      scope: 'workspace',
+      date: '2026-04-12',
+      gatewayFactory: () => ({
+        sync: { uploadDocument },
+        journal: { summarize: summarizeJournal, append: jest.fn(() => Promise.resolve({ ok: true })) },
+        summaries: { store: storeSummary },
+      }),
+    });
+
+    expect(result.workspace.refreshed).toBe(1);
+    expect(result.totals.refreshed).toBe(1);
+    expect(result.workspace.result).toEqual(expect.objectContaining({
+      status: 'refreshed',
+      brief_path: 'continuity/WORKSPACE-SESSION.md',
+    }));
+    expect(db.store.get('journal_automation:sweep:last_result')).toEqual(expect.objectContaining({
+      scope: 'workspace',
+      totals: expect.objectContaining({ refreshed: 1 }),
+    }));
+    expect(storeSummary).toHaveBeenCalledWith(expect.objectContaining({
+      path: 'continuity/WORKSPACE-SESSION.md',
+      type: 'workspace-session',
+    }));
   });
 });

@@ -35,6 +35,8 @@ const {
   saveAgentContinuityBrief,
 } = require('../services/sessionContinuityService');
 const {
+  WORKSPACE_SCOPE,
+  AGENT_SCOPE,
   JOURNAL_AUTOMATION_MODE_MANUAL,
   JOURNAL_AUTOMATION_MODE_ON_SAVE,
   normalizeJournalDate,
@@ -46,7 +48,9 @@ const {
   saveAgentJournal,
   summarizeAgentJournalToBrief,
   listJournalAutomationPolicies,
+  getJournalAutomationSweepStatus,
   saveJournalAutomationPolicy,
+  runJournalAutomationSweep,
 } = require('../services/journalCompactionService');
 const {
   listGroupMemorySpaces,
@@ -735,6 +739,43 @@ router.get('/journal-automation', async (req, res) => {
   }
 });
 
+router.get('/journal-automation/sweep-status', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    const status = await getJournalAutomationSweepStatus({ db: pool, workspaceId });
+    return res.json({ success: true, data: status });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/journal-automation/sweep', async (req, res) => {
+  try {
+    const workspaceId = getWorkspaceId(req);
+    if (!isWorkspaceAdmin(req.user || {})) {
+      return res.status(403).json({ success: false, error: 'Journal automation sweep is restricted to admins' });
+    }
+
+    const scope = String(req.body?.scope || req.query.scope || 'all').trim().toLowerCase();
+    if (!['all', WORKSPACE_SCOPE, AGENT_SCOPE].includes(scope)) {
+      return res.status(400).json({ success: false, error: 'scope must be all, workspace, or agent' });
+    }
+
+    const status = await runJournalAutomationSweep({
+      db: pool,
+      workspaceId,
+      scope,
+      date: normalizeJournalDate(req.body?.date || req.query.date),
+      force: req.body?.force === true || req.query.force === 'true',
+      user: req.user || {},
+    });
+
+    return res.json({ success: true, data: status });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 router.put('/journal-automation/:scope', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
@@ -745,6 +786,7 @@ router.put('/journal-automation/:scope', async (req, res) => {
     const scope = normalizeJournalAutomationScope(req.params.scope);
     const mode = String(req.body?.mode || '').trim();
     const minimumLength = req.body?.minimum_length;
+    const sweepEnabled = req.body?.sweep_enabled === true;
     if (![JOURNAL_AUTOMATION_MODE_MANUAL, JOURNAL_AUTOMATION_MODE_ON_SAVE].includes(mode)) {
       return res.status(400).json({ success: false, error: 'mode must be manual or on_save' });
     }
@@ -756,6 +798,7 @@ router.put('/journal-automation/:scope', async (req, res) => {
       policy: {
         mode,
         minimum_length: minimumLength,
+        sweep_enabled: sweepEnabled,
       },
       user: req.user || {},
     });

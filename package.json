@@ -18,6 +18,7 @@
     "sandbox:worker": "node workers/sandbox-worker.js",
     "memory:backfill:human": "node scripts/backfill-human-memory-scopes.js",
     "memory:backfill:chat": "node scripts/backfill-chat-human-memories.js",
+    "memory:journal:sweep": "node scripts/run-journal-automation-sweep.js",
     "test": "jest --testPathPattern='tests/' 2>/dev/null || bash tests/run-all.sh",
     "test:unit": "jest tests/llm-router.test.js",
     "test:llm": "jest tests/llm-router.test.js tests/llm-api.test.js",

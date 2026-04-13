@@ -3,7 +3,9 @@
 const { createSniparaGateway, extractSniparaText } = require('./snipara/gateway');
 const { buildAgentMemoryBindings, resolveAgentRecord } = require('./sniparaMemoryService');
 const {
+  getWorkspaceSessionBrief,
   saveWorkspaceSessionBrief,
+  getAgentContinuityBrief,
   saveAgentContinuityBrief,
   AGENT_SESSION_KIND,
 } = require('./sessionContinuityService');
@@ -13,6 +15,7 @@ const WORKSPACE_SCOPE = 'workspace';
 const AGENT_SCOPE = 'agent';
 const JOURNAL_AUTOMATION_MODE_MANUAL = 'manual';
 const JOURNAL_AUTOMATION_MODE_ON_SAVE = 'on_save';
+const JOURNAL_AUTOMATION_SWEEP_STATUS_KEY = 'journal_automation:sweep:last_result';
 const DEFAULT_AUTOMATION_MINIMUM_LENGTH = {
   [WORKSPACE_SCOPE]: 160,
   [AGENT_SCOPE]: 120,
@@ -79,12 +82,39 @@ function buildJournalAutomationPolicyKey(scope) {
   return `journal_automation:${normalizeJournalAutomationScope(scope)}:policy`;
 }
 
+function buildJournalAutomationSweepStatus() {
+  return {
+    scope: 'all',
+    date: normalizeJournalDate(),
+    forced: false,
+    completed_at: '',
+    workspace: {
+      checked: 0,
+      refreshed: 0,
+      skipped: 0,
+      result: null,
+    },
+    agents: {
+      checked: 0,
+      refreshed: 0,
+      skipped: 0,
+      items: [],
+    },
+    totals: {
+      checked: 0,
+      refreshed: 0,
+      skipped: 0,
+    },
+  };
+}
+
 function defaultJournalAutomationPolicy(scope) {
   const normalizedScope = normalizeJournalAutomationScope(scope);
   return {
     scope: normalizedScope,
     mode: JOURNAL_AUTOMATION_MODE_MANUAL,
     enabled: false,
+    sweep_enabled: false,
     minimum_length: DEFAULT_AUTOMATION_MINIMUM_LENGTH[normalizedScope],
     target: normalizedScope === WORKSPACE_SCOPE ? 'workspace_session_brief' : 'agent_session_brief',
     updatedAt: '',
@@ -104,6 +134,7 @@ function normalizeJournalAutomationPolicy(scope, rawPolicy = {}) {
     ...defaults,
     mode,
     enabled: mode === JOURNAL_AUTOMATION_MODE_ON_SAVE,
+    sweep_enabled: rawPolicy.sweep_enabled === true,
     minimum_length: minimumLength,
     updatedAt: rawPolicy.updatedAt || '',
     updatedByEmail: rawPolicy.updatedByEmail || null,
@@ -121,6 +152,31 @@ async function listJournalAutomationPolicies({ db, workspaceId }) {
   const workspace = await getJournalAutomationPolicy({ db, workspaceId, scope: WORKSPACE_SCOPE });
   const agent = await getJournalAutomationPolicy({ db, workspaceId, scope: AGENT_SCOPE });
   return { workspace, agent };
+}
+
+async function getJournalAutomationSweepStatus({ db, workspaceId }) {
+  const values = await readWorkspaceSettings(db, workspaceId, [JOURNAL_AUTOMATION_SWEEP_STATUS_KEY]);
+  const raw = values.get(JOURNAL_AUTOMATION_SWEEP_STATUS_KEY);
+  const defaults = buildJournalAutomationSweepStatus();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return defaults;
+
+  return {
+    ...defaults,
+    ...raw,
+    workspace: {
+      ...defaults.workspace,
+      ...(raw.workspace && typeof raw.workspace === 'object' ? raw.workspace : {}),
+    },
+    agents: {
+      ...defaults.agents,
+      ...(raw.agents && typeof raw.agents === 'object' ? raw.agents : {}),
+      items: Array.isArray(raw.agents?.items) ? raw.agents.items : [],
+    },
+    totals: {
+      ...defaults.totals,
+      ...(raw.totals && typeof raw.totals === 'object' ? raw.totals : {}),
+    },
+  };
 }
 
 async function saveJournalAutomationPolicy({
@@ -150,6 +206,29 @@ async function saveJournalAutomationPolicy({
   );
 
   return next;
+}
+
+async function saveJournalAutomationSweepStatus({ db, workspaceId, status }) {
+  const normalized = {
+    ...buildJournalAutomationSweepStatus(),
+    ...(status || {}),
+    workspace: {
+      ...buildJournalAutomationSweepStatus().workspace,
+      ...(status?.workspace || {}),
+    },
+    agents: {
+      ...buildJournalAutomationSweepStatus().agents,
+      ...(status?.agents || {}),
+      items: Array.isArray(status?.agents?.items) ? status.agents.items : [],
+    },
+    totals: {
+      ...buildJournalAutomationSweepStatus().totals,
+      ...(status?.totals || {}),
+    },
+  };
+
+  await upsertWorkspaceSetting(db, workspaceId, JOURNAL_AUTOMATION_SWEEP_STATUS_KEY, normalized);
+  return normalized;
 }
 
 function buildWorkspaceJournalSpec(date) {
@@ -690,6 +769,163 @@ async function summarizeAgentJournalToBrief({
   };
 }
 
+function shouldSweepJournal({ journal, brief, policy, force = false }) {
+  const content = String(journal?.content || '').trim();
+  if (!content) return { ok: false, reason: 'no_content' };
+  if (!force && policy?.sweep_enabled !== true) return { ok: false, reason: 'sweep_disabled' };
+  if (content.length < (Number(policy?.minimum_length) || 1)) {
+    return { ok: false, reason: 'below_minimum_length' };
+  }
+
+  const journalUpdatedAt = String(journal?.updatedAt || '').trim();
+  const briefUpdatedAt = String(brief?.updatedAt || '').trim();
+  if (!force && journalUpdatedAt && briefUpdatedAt) {
+    const journalTs = new Date(journalUpdatedAt).getTime();
+    const briefTs = new Date(briefUpdatedAt).getTime();
+    if (Number.isFinite(journalTs) && Number.isFinite(briefTs) && journalTs <= briefTs) {
+      return { ok: false, reason: 'already_current' };
+    }
+  }
+
+  return { ok: true, reason: force ? 'forced' : 'stale_brief' };
+}
+
+async function listWorkspaceAgents({ db, workspaceId }) {
+  const result = await db.query(
+    `SELECT id, username, role
+       FROM ${SCHEMA}.agents
+      WHERE workspace_id = $1
+      ORDER BY username ASC NULLS LAST, id ASC`,
+    [workspaceId]
+  );
+
+  return result.rows || [];
+}
+
+async function runJournalAutomationSweep({
+  db,
+  workspaceId,
+  scope = 'all',
+  date,
+  force = false,
+  user = {},
+  gatewayFactory = createSniparaGateway,
+  listAgents = listWorkspaceAgents,
+}) {
+  if (!workspaceId) throw new Error('workspaceId is required');
+
+  const normalizedDate = normalizeJournalDate(date);
+  const normalizedScope = String(scope || 'all').trim().toLowerCase();
+  const includeWorkspace = normalizedScope === 'all' || normalizedScope === WORKSPACE_SCOPE;
+  const includeAgents = normalizedScope === 'all' || normalizedScope === AGENT_SCOPE;
+
+  const result = buildJournalAutomationSweepStatus();
+  result.scope = includeWorkspace && includeAgents ? 'all' : (includeWorkspace ? WORKSPACE_SCOPE : AGENT_SCOPE);
+  result.date = normalizedDate;
+  result.forced = force === true;
+
+  if (includeWorkspace) {
+    const [policy, journal, brief] = await Promise.all([
+      getJournalAutomationPolicy({ db, workspaceId, scope: WORKSPACE_SCOPE }),
+      getWorkspaceJournal({ db, workspaceId, date: normalizedDate }),
+      getWorkspaceSessionBrief({ db, workspaceId }),
+    ]);
+    const decision = shouldSweepJournal({ journal, brief, policy, force });
+    result.workspace.checked = 1;
+
+    if (decision.ok) {
+      const refreshed = await summarizeWorkspaceJournalToBrief({
+        db,
+        workspaceId,
+        date: normalizedDate,
+        user,
+        gatewayFactory,
+      });
+      result.workspace.refreshed = 1;
+      result.workspace.result = {
+        status: 'refreshed',
+        reason: decision.reason,
+        brief_path: refreshed.brief.path,
+        updatedAt: refreshed.brief.updatedAt,
+      };
+    } else {
+      result.workspace.skipped = 1;
+      result.workspace.result = {
+        status: 'skipped',
+        reason: decision.reason,
+      };
+    }
+  }
+
+  if (includeAgents) {
+    const [policy, agents] = await Promise.all([
+      getJournalAutomationPolicy({ db, workspaceId, scope: AGENT_SCOPE }),
+      listAgents({ db, workspaceId }),
+    ]);
+
+    for (const agent of agents) {
+      const [journal, brief] = await Promise.all([
+        getAgentJournal({
+          db,
+          workspaceId,
+          agentIdOrUsername: agent.id,
+          date: normalizedDate,
+        }),
+        getAgentContinuityBrief({
+          db,
+          workspaceId,
+          agentIdOrUsername: agent.id,
+          kind: AGENT_SESSION_KIND,
+        }),
+      ]);
+
+      const decision = shouldSweepJournal({ journal, brief, policy, force });
+      result.agents.checked += 1;
+
+      if (decision.ok) {
+        const refreshed = await summarizeAgentJournalToBrief({
+          db,
+          workspaceId,
+          agentIdOrUsername: agent.id,
+          date: normalizedDate,
+          user,
+          gatewayFactory,
+        });
+        result.agents.refreshed += 1;
+        result.agents.items.push({
+          agent_id: agent.id,
+          username: agent.username || null,
+          role: agent.role || null,
+          status: 'refreshed',
+          reason: decision.reason,
+          brief_path: refreshed.brief.path,
+          updatedAt: refreshed.brief.updatedAt,
+        });
+      } else {
+        result.agents.skipped += 1;
+        result.agents.items.push({
+          agent_id: agent.id,
+          username: agent.username || null,
+          role: agent.role || null,
+          status: 'skipped',
+          reason: decision.reason,
+        });
+      }
+    }
+  }
+
+  result.completed_at = new Date().toISOString();
+  result.totals.checked = result.workspace.checked + result.agents.checked;
+  result.totals.refreshed = result.workspace.refreshed + result.agents.refreshed;
+  result.totals.skipped = result.workspace.skipped + result.agents.skipped;
+
+  return saveJournalAutomationSweepStatus({
+    db,
+    workspaceId,
+    status: result,
+  });
+}
+
 module.exports = {
   WORKSPACE_SCOPE,
   AGENT_SCOPE,
@@ -700,7 +936,9 @@ module.exports = {
   normalizeJournalAutomationMode,
   getJournalAutomationPolicy,
   listJournalAutomationPolicies,
+  getJournalAutomationSweepStatus,
   saveJournalAutomationPolicy,
+  runJournalAutomationSweep,
   runWorkspaceJournalAutomation,
   runAgentJournalAutomation,
   getWorkspaceJournal,
