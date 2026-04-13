@@ -11,6 +11,8 @@ const OPTIONAL_COLUMNS = new Set([
   'completed_at',
 ]);
 
+const TERMINAL_STATUSES = new Set(['success', 'error', 'cancelled']);
+
 function isMissingChatActionRunsSchemaError(err) {
   const message = String(err?.message || '');
   return /chat_action_runs|requested_agent_id|display_agent_id|orchestrated_by|executed_by|input_json|output_json|error_json|completed_at|started_at/i.test(message);
@@ -82,7 +84,7 @@ async function updateChatActionRun(pg, schema, runId, patch = {}) {
   assign('executed_by', patch.executed_by);
   assign('output_json', patch.output_json, (value) => JSON.stringify(value));
   assign('error_json', patch.error_json, (value) => JSON.stringify(value));
-  assign('completed_at', patch.completed_at || (patch.status && patch.status !== 'running' ? new Date() : undefined));
+  assign('completed_at', patch.completed_at || (TERMINAL_STATUSES.has(String(patch.status || '').trim().toLowerCase()) ? new Date() : undefined));
 
   if (updates.length === 0) return null;
 

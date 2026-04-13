@@ -36,6 +36,7 @@ const {
 const { orchestrateToolCall } = require('./orchestration/orchestrator');
 const { governOrchestrationDecision } = require('./orchestration/policy');
 const { executeOrchestrationDecision } = require('./orchestration/actionRouter');
+const { queueToolActionRun } = require('./orchestration/toolActionRunBootstrap');
 const memoryRuntime = createMemoryRuntimeService();
 
 function formatToolResultContent(result) {
@@ -538,11 +539,14 @@ async function finishToolActionRun(db, runId, agentId, result, err) {
   if (!db || !runId) return;
 
   const isError = Boolean(err) || result?.success === false;
+  const deferredStatus = result?.orchestration?.durable_run
+    ? (result.orchestration.durable_run.approval_required === true ? 'awaiting_approval' : 'scheduled')
+    : null;
   const persistedOutput = isError
     ? null
     : (result?.persisted_output ?? result?.data ?? result ?? null);
   await updateChatActionRun(db, 'tenant_vutler', runId, {
-    status: isError ? 'error' : 'success',
+    status: isError ? 'error' : (deferredStatus || 'success'),
     executed_by: agentId || null,
     output_json: persistedOutput,
     error_json: isError ? { error: err?.message || result?.error || 'Tool execution failed' } : null,
@@ -583,7 +587,7 @@ function buildSandboxToolPayload(execution) {
   };
 }
 
-function buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults) {
+function buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, durableRun = null) {
   return {
     orchestration_decision: orchestrationDecision || null,
     decision: governance?.decision || null,
@@ -591,7 +595,34 @@ function buildToolOrchestrationPayload(orchestrationDecision, governance, action
     risk_level: governance?.risk_level || null,
     governed_decision: governance?.decisionPayload || null,
     action_results: Array.isArray(actionResults) ? actionResults : [],
+    durable_run: durableRun || null,
   };
+}
+
+function attachDeferredRunMetadata(actionResults = [], deferredRun = null, executionMode = null) {
+  if (!deferredRun || !Array.isArray(actionResults)) return Array.isArray(actionResults) ? actionResults : [];
+  const runLinks = {
+    orchestration_run_id: deferredRun.run?.id || null,
+    orchestration_step_id: deferredRun.step?.id || null,
+    root_task_id: deferredRun.task?.id || null,
+    run_url: deferredRun.links?.run_url || null,
+    task_url: deferredRun.links?.task_url || '/tasks',
+    execution_mode: executionMode || deferredRun.execution_mode || null,
+    approval_required: deferredRun.approval_required === true,
+    message: deferredRun.approval_required === true
+      ? 'Approval is required before this tool action can execute. A durable orchestration run has been created.'
+      : 'This tool action was queued into a durable orchestration run.',
+  };
+
+  return actionResults.map((result) => ({
+    ...result,
+    output_json: result?.output_json && typeof result.output_json === 'object'
+      ? {
+          ...result.output_json,
+          ...runLinks,
+        }
+      : runLinks,
+  }));
 }
 
 function buildPersistedOrchestrationOutput(data, orchestrationPayload) {
@@ -805,16 +836,18 @@ async function executeToolThroughOrchestration({
   memoryMode = null,
   latestUserMessage = '',
   originTaskId = null,
+  humanContext = null,
 } = {}) {
   const orchestrationInput = {
     toolName,
     args,
     adapter,
-    agent,
-    workspaceId,
-    chatActionContext,
-    nexusNodeId,
-    originTaskId,
+      agent,
+      workspaceId,
+      chatActionContext,
+      humanContext,
+      nexusNodeId,
+      originTaskId,
   };
   if (Array.isArray(allowedSocialPlatforms) && allowedSocialPlatforms.length > 0) {
     orchestrationInput.allowedSocialPlatforms = allowedSocialPlatforms;
@@ -861,13 +894,52 @@ async function executeToolThroughOrchestration({
     latestUserMessage,
     originTaskId,
   });
-  const actionResult = Array.isArray(actionResults) ? actionResults[0] : null;
+  let deferredRun = null;
+  let normalizedActionResults = Array.isArray(actionResults) ? actionResults : [];
+  const executionMode = governance?.decisionPayload?.metadata?.execution_mode || governance?.decision || null;
+  if (
+    executionMode
+    && executionMode !== 'sync'
+    && chatActionContext?.messageId
+    && chatActionContext?.channelId
+    && workspaceId
+  ) {
+    deferredRun = await queueToolActionRun({
+      db,
+      workspaceId,
+      agent,
+      chatActionContext,
+      humanContext,
+      actionRun: chatActionRunId ? { id: chatActionRunId } : null,
+      toolName,
+      adapter,
+      args,
+      orchestrationDecision,
+      governance,
+      latestUserMessage,
+      model,
+      provider,
+      nexusNodeId,
+      memoryBindings,
+      memoryMode,
+      originTaskId,
+      wsConnections,
+    }).catch((err) => {
+      console.warn('[LLM Router] durable tool-action run bootstrap failed:', err.message);
+      return null;
+    });
+    if (deferredRun) {
+      normalizedActionResults = attachDeferredRunMetadata(normalizedActionResults, deferredRun, executionMode);
+    }
+  }
+  const actionResult = normalizedActionResults[0] || null;
 
   return {
     orchestrationDecision,
     governance,
-    actionResults,
+    actionResults: normalizedActionResults,
     actionResult,
+    deferredRun,
   };
 }
 
@@ -2319,6 +2391,7 @@ async function chat(agent, messages, db, opts = {}) {
                 governance,
                 actionResults,
                 actionResult,
+                deferredRun,
               } = await executeToolThroughOrchestration({
                 toolName: toolCall.name,
                 args,
@@ -2334,11 +2407,12 @@ async function chat(agent, messages, db, opts = {}) {
                 memoryBindings,
                 memoryMode,
                 latestUserMessage,
+                humanContext: opts.humanContext || null,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Memory remember failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
               const memoryResult = buildMemoryToolResult(toolCall.name, actionResult, orchestrationPayload);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, memoryResult, null);
               currentMessages = [
@@ -2364,6 +2438,7 @@ async function chat(agent, messages, db, opts = {}) {
                 governance,
                 actionResults,
                 actionResult,
+                deferredRun,
               } = await executeToolThroughOrchestration({
                 toolName: toolCall.name,
                 args,
@@ -2379,11 +2454,12 @@ async function chat(agent, messages, db, opts = {}) {
                 memoryBindings,
                 memoryMode,
                 latestUserMessage,
+                humanContext: opts.humanContext || null,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Memory recall failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
               const memoryResult = buildMemoryToolResult(toolCall.name, actionResult, orchestrationPayload);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, memoryResult, null);
               currentMessages = [
@@ -2487,6 +2563,7 @@ async function chat(agent, messages, db, opts = {}) {
                 governance,
                 actionResults,
                 actionResult,
+                deferredRun,
               } = await executeToolThroughOrchestration({
                 toolName: toolCall.name,
                 args,
@@ -2504,11 +2581,12 @@ async function chat(agent, messages, db, opts = {}) {
                 allowedSocialBrandIds,
                 latestUserMessage,
                 originTaskId: opts.originTaskId || null,
+                humanContext: opts.humanContext || null,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Social execution failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
               const socialResult = buildSocialToolResult(actionResult, orchestrationPayload);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, socialResult, null);
               await storeToolObservation(db, workspaceId, agent, 'vutler_post_social_media', args, socialResult);
@@ -2562,6 +2640,7 @@ async function chat(agent, messages, db, opts = {}) {
                 governance,
                 actionResults,
                 actionResult,
+                deferredRun,
               } = await executeToolThroughOrchestration({
                 toolName: toolCall.name,
                 args,
@@ -2575,6 +2654,7 @@ async function chat(agent, messages, db, opts = {}) {
                 model: attempt.model,
                 provider: attempt.provider,
                 latestUserMessage,
+                humanContext: opts.humanContext || null,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Sandbox execution failed.');
@@ -2582,6 +2662,7 @@ async function chat(agent, messages, db, opts = {}) {
               const sandboxToolPayload = actionResult?.status === 'completed'
                 ? buildSandboxToolPayload(actionResult.output_json || {})
                 : {
+                  ...(actionResult?.output_json && typeof actionResult.output_json === 'object' ? actionResult.output_json : {}),
                   status: actionResult?.status || 'awaiting_approval',
                   language: governance.decisionPayload.actions?.[0]?.params?.language || null,
                   executor: governance.decisionPayload.actions?.[0]?.executor || null,
@@ -2589,7 +2670,7 @@ async function chat(agent, messages, db, opts = {}) {
                   timeout_ms: governance.decisionPayload.actions?.[0]?.timeout_ms ?? null,
                   reason: governance.reason || null,
                 };
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
               const sandboxResult = {
                 success: true,
                 data: sandboxToolPayload,
@@ -2639,6 +2720,7 @@ async function chat(agent, messages, db, opts = {}) {
                 governance,
                 actionResults,
                 actionResult,
+                deferredRun,
               } = await executeToolThroughOrchestration({
                 toolName: toolCall.name,
                 args,
@@ -2652,11 +2734,12 @@ async function chat(agent, messages, db, opts = {}) {
                 model: attempt.model,
                 provider: attempt.provider,
                 latestUserMessage,
+                humanContext: opts.humanContext || null,
               });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Skill execution failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
               const skillResult = buildOrchestratedToolResult(actionResult, orchestrationPayload);
 
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, skillResult, null);
@@ -2691,6 +2774,7 @@ async function chat(agent, messages, db, opts = {}) {
                   governance,
                   actionResults,
                   actionResult,
+                  deferredRun,
                 } = await executeToolThroughOrchestration({
                   toolName: toolCall.name,
                   args,
@@ -2705,11 +2789,12 @@ async function chat(agent, messages, db, opts = {}) {
                   provider: attempt.provider,
                   nexusNodeId,
                   latestUserMessage,
+                  humanContext: opts.humanContext || null,
                 });
                 if (actionResult && actionResult.success === false) {
                   throw new Error(actionResult.error || 'Nexus execution failed.');
                 }
-                const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults);
+                const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
                 const toolResult = buildOrchestratedToolResult(actionResult, orchestrationPayload);
                 const content = formatToolResultContent(toolResult);
                 await finishToolActionRun(db, actionRun?.id, agent?.id || null, toolResult, null);

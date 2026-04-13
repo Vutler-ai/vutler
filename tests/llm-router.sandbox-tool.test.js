@@ -8,6 +8,7 @@ describe('llmRouter sandbox tool', () => {
   let orchestrateToolCallMock;
   let governOrchestrationDecisionMock;
   let executeOrchestrationDecisionMock;
+  let queueToolActionRunMock;
   let responses;
   let actionRuns;
   let db;
@@ -38,6 +39,7 @@ describe('llmRouter sandbox tool', () => {
     orchestrateToolCallMock = jest.fn();
     governOrchestrationDecisionMock = jest.fn();
     executeOrchestrationDecisionMock = jest.fn();
+    queueToolActionRunMock = jest.fn();
 
     jest.doMock('../services/orchestration/orchestrator', () => ({
       orchestrateToolCall: orchestrateToolCallMock,
@@ -47,6 +49,9 @@ describe('llmRouter sandbox tool', () => {
     }));
     jest.doMock('../services/orchestration/actionRouter', () => ({
       executeOrchestrationDecision: executeOrchestrationDecisionMock,
+    }));
+    jest.doMock('../services/orchestration/toolActionRunBootstrap', () => ({
+      queueToolActionRun: queueToolActionRunMock,
     }));
     jest.doMock('../services/runtimeCapabilityAvailability', () => ({
       resolveWorkspaceCapabilityAvailability: jest.fn().mockResolvedValue({
@@ -383,5 +388,199 @@ describe('llmRouter sandbox tool', () => {
         ],
       }),
     });
+  });
+
+  test('queues a durable run when sandbox execution requires approval', async () => {
+    orchestrateToolCallMock.mockReturnValue({
+      version: 'v1',
+      workspace_id: 'ws-1',
+      selected_agent_id: 'agent-1',
+      selected_agent_reason: 'Current execution agent is authorized to fulfill this sandbox tool call.',
+      allowed_tools: ['run_code_in_sandbox'],
+      allowed_skills: [],
+      actions: [
+        {
+          id: 'act_sandbox_approval_1',
+          kind: 'tool',
+          key: 'sandbox_code_exec',
+          executor: 'sandbox-worker',
+          mode: 'approval_required',
+          approval: 'required',
+          timeout_ms: 30000,
+          params: {
+            language: 'python',
+            code: 'print("needs approval")',
+          },
+          required_capabilities: ['code_execution'],
+          risk_level: 'high',
+        },
+      ],
+      final_response_strategy: 'async_ack',
+      metadata: {
+        trace_id: 'msg-approval-1',
+        policy_bundle: 'sandbox-default-v1',
+      },
+    });
+    governOrchestrationDecisionMock.mockReturnValue({
+      allowed: true,
+      decision: 'approval_required',
+      reason: 'Sandbox execution exceeds the synchronous runtime policy and requires approval.',
+      risk_level: 'high',
+      decisionPayload: {
+        version: 'v1',
+        workspace_id: 'ws-1',
+        selected_agent_id: 'agent-1',
+        selected_agent_reason: 'Current execution agent is authorized to fulfill this sandbox tool call.',
+        allowed_tools: ['run_code_in_sandbox'],
+        allowed_skills: [],
+        actions: [
+          {
+            id: 'act_sandbox_approval_1',
+            kind: 'tool',
+            key: 'sandbox_code_exec',
+            executor: 'sandbox-worker',
+            mode: 'approval_required',
+            approval: 'required',
+            timeout_ms: 30000,
+            params: {
+              language: 'python',
+              code: 'print("needs approval")',
+            },
+            required_capabilities: ['code_execution'],
+            risk_level: 'high',
+          },
+        ],
+        final_response_strategy: 'async_ack',
+        metadata: {
+          trace_id: 'msg-approval-1',
+          policy_bundle: 'sandbox-default-v1',
+          execution_mode: 'approval_required',
+        },
+      },
+    });
+    executeOrchestrationDecisionMock.mockResolvedValue([
+      {
+        action_id: 'act_sandbox_approval_1',
+        success: true,
+        status: 'awaiting_approval',
+        output_json: {
+          key: 'sandbox_code_exec',
+          executor: 'sandbox-worker',
+          mode: 'approval_required',
+          approval: 'required',
+          timeout_ms: 30000,
+          params: {
+            language: 'python',
+            code: 'print("needs approval")',
+          },
+          risk_level: 'high',
+        },
+        error: null,
+        artifacts: [],
+      },
+    ]);
+    queueToolActionRunMock.mockResolvedValue({
+      run: { id: 'orch-run-1' },
+      step: { id: 'orch-step-1' },
+      task: { id: 'root-task-1' },
+      links: {
+        run_url: '/orchestration/runs/orch-run-1',
+        task_url: '/tasks?task=root-task-1',
+      },
+      approval_required: true,
+      execution_mode: 'approval_required',
+    });
+
+    responses.push(
+      JSON.stringify({
+        id: 'chatcmpl-approval-1',
+        model: 'gpt-5.4',
+        choices: [
+          {
+            finish_reason: 'tool_calls',
+            message: {
+              role: 'assistant',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call-approval-1',
+                  type: 'function',
+                  function: {
+                    name: 'run_code_in_sandbox',
+                    arguments: JSON.stringify({
+                      language: 'python',
+                      code: 'print("needs approval")',
+                      timeout_ms: 30000,
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+      buildStopResponse('Approval requested and durable run queued.')
+    );
+
+    const result = await chat(
+      {
+        id: 'agent-1',
+        workspace_id: 'ws-1',
+        provider: 'openai',
+        model: 'gpt-5.4',
+        capabilities: ['code_execution'],
+        system_prompt: 'You are a technical agent.',
+      },
+      [{ role: 'user', content: 'Run the long sandbox job.' }],
+      db,
+      {
+        chatActionContext: {
+          workspaceId: 'ws-1',
+          messageId: 'msg-approval-1',
+          channelId: 'chan-1',
+          requestedAgentId: 'agent-1',
+          displayAgentId: 'agent-1',
+          orchestratedBy: 'jarvis',
+        },
+      }
+    );
+
+    expect(result.content).toContain('Approval requested and durable run queued.');
+    expect(queueToolActionRunMock).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'ws-1',
+      toolName: 'run_code_in_sandbox',
+      adapter: 'sandbox',
+      governance: expect.objectContaining({
+        decision: 'approval_required',
+      }),
+      chatActionContext: expect.objectContaining({
+        messageId: 'msg-approval-1',
+        channelId: 'chan-1',
+      }),
+      actionRun: { id: 'run-1' },
+    }));
+    expect(actionRuns[0]).toMatchObject({
+      status: 'awaiting_approval',
+    });
+
+    const toolMessage = recordedBodies[1].messages.find(
+      (message) => message.role === 'tool' && message.name === 'run_code_in_sandbox'
+    );
+    expect(toolMessage).toBeTruthy();
+    expect(JSON.parse(toolMessage.content)).toEqual(expect.objectContaining({
+      status: 'awaiting_approval',
+      orchestration_run_id: 'orch-run-1',
+      orchestration_step_id: 'orch-step-1',
+      root_task_id: 'root-task-1',
+      approval_required: true,
+      requires_approval: true,
+    }));
+    expect(actionRuns[0].output_json?.orchestration?.durable_run).toEqual(expect.objectContaining({
+      run: expect.objectContaining({ id: 'orch-run-1' }),
+      step: expect.objectContaining({ id: 'orch-step-1' }),
+      task: expect.objectContaining({ id: 'root-task-1' }),
+      approval_required: true,
+    }));
   });
 });

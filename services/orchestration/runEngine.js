@@ -2,6 +2,7 @@
 
 const os = require('os');
 const pool = require('../../lib/vaultbrix');
+const { updateChatActionRun } = require('../chatActionRuns');
 const { insertChatMessage } = require('../chatMessages');
 const { getSwarmCoordinator } = require('../swarmCoordinator');
 const { getVerificationEngine } = require('../verificationEngine');
@@ -27,6 +28,7 @@ const {
   updateRun,
   updateRunStep,
 } = require('./runStore');
+const { dispatchOrchestratedAction } = require('./actionRouter');
 const {
   buildRunPlan,
   getPlanPhaseCount,
@@ -87,6 +89,61 @@ function extractTaskError(task) {
   const metadata = parseJsonLike(task?.metadata);
   if (typeof metadata.error === 'string' && metadata.error.trim()) return metadata.error.trim();
   return `Task ${task?.id || 'unknown'} ended with status ${task?.status || 'failed'}.`;
+}
+
+function extractToolResultText(action = {}, result = {}) {
+  const outputJson = result?.output_json && typeof result.output_json === 'object'
+    ? result.output_json
+    : null;
+  if (typeof result?.output_text === 'string' && result.output_text.trim()) {
+    return result.output_text.trim();
+  }
+
+  switch (String(action?.key || '').trim()) {
+    case 'sandbox_code_exec': {
+      const stdout = String(outputJson?.stdout || '').trim();
+      const stderr = String(outputJson?.stderr || '').trim();
+      if (stdout) return stdout;
+      if (stderr) return `Sandbox stderr:\n${stderr}`;
+      return `Sandbox execution finished with status ${outputJson?.status || 'completed'}.`;
+    }
+
+    case 'memory_recall':
+      return String(outputJson?.text || 'No relevant memories found.').trim();
+
+    case 'memory_remember':
+      return 'Memory stored successfully.';
+
+    case 'social_post':
+      if (outputJson?.task_id) return `Social publication queued as task ${outputJson.task_id}.`;
+      if (outputJson?.post_id) return `Social publication finished. Post ID: ${outputJson.post_id}.`;
+      return 'Social publication completed.';
+
+    default:
+      if (outputJson?.message) return String(outputJson.message).trim();
+      if (outputJson?.text) return String(outputJson.text).trim();
+      try {
+        return outputJson ? JSON.stringify(outputJson) : 'Tool action completed.';
+      } catch (_) {
+        return 'Tool action completed.';
+      }
+  }
+}
+
+function buildToolActionSummary(actions = [], results = []) {
+  const normalizedResults = Array.isArray(results) ? results : [];
+  if (normalizedResults.length === 0) return 'Tool action completed.';
+
+  if (normalizedResults.length === 1) {
+    return extractToolResultText(actions[0] || {}, normalizedResults[0] || {});
+  }
+
+  return normalizedResults.map((result, index) => {
+    const action = actions[index] || {};
+    const actionLabel = String(action.key || action.executor || `action_${index + 1}`).trim();
+    const text = extractToolResultText(action, result);
+    return `- ${actionLabel}: ${text}`;
+  }).join('\n');
 }
 
 function extractTaskBlocker(task) {
@@ -429,11 +486,16 @@ class OrchestrationRunEngine {
     this.leaseMs = options.leaseMs || LEASE_MS;
     this.claimBatchSize = options.claimBatchSize || CLAIM_BATCH_SIZE;
     this.workerId = options.workerId || WORKER_ID;
+    this.wsConnections = options.wsConnections || null;
     this._running = false;
     this._timer = null;
     this._consecutiveErrors = 0;
     this._polling = false;
     this._immediatePollScheduled = false;
+  }
+
+  bindWsConnections(wsConnections = null) {
+    this.wsConnections = wsConnections || null;
   }
 
   start() {
@@ -567,10 +629,13 @@ class OrchestrationRunEngine {
     });
 
     const steps = await listRunSteps(pool, runId);
-    const finalizeStep = await this.ensureFinalizeStep(run, steps, childTask, 'success');
+    const approvedToolAction = String(input.resume_to || '').trim() === 'execute_actions' || input.tool_action === true;
+    const nextStep = approvedToolAction
+      ? await this.ensureToolExecutionStep(run, steps, rootTask)
+      : await this.ensureFinalizeStep(run, steps, childTask, 'success');
     const resumedRun = await updateRun(pool, runId, {
       status: 'running',
-      currentStepId: finalizeStep.id,
+      currentStepId: nextStep.id,
       nextWakeAt: new Date(),
       lastProgressAt: now,
     });
@@ -580,10 +645,11 @@ class OrchestrationRunEngine {
         metadata: {
           orchestration_status: 'running',
           orchestration_run_id: runId,
-          orchestration_step_id: finalizeStep.id,
+          orchestration_step_id: nextStep.id,
           approval_granted: true,
           approval_granted_note: note || null,
           approval_granted_at: now.toISOString(),
+          pending_approval: null,
           orchestration_proactive: true,
         },
       });
@@ -734,6 +800,20 @@ class OrchestrationRunEngine {
           orchestration_proactive: true,
         },
       });
+      const chatActionRunId = parseJsonLike(rootTask.metadata).chat_action_run_id || null;
+      if (chatActionRunId) {
+        await updateChatActionRun(pool, SCHEMA, chatActionRunId, {
+          status: 'cancelled',
+          executed_by: run.display_agent_id || run.requested_agent_id || null,
+          output_json: null,
+          error_json: {
+            error: 'Run cancelled.',
+            note: note || null,
+            orchestration_run_id: runId,
+            root_task_id: rootTask.id,
+          },
+        }).catch(() => {});
+      }
     }
 
     return { run: cancelledRun, cancelled: true };
@@ -820,6 +900,11 @@ class OrchestrationRunEngine {
       return;
     }
 
+    if (currentStep.step_type === 'execute_actions') {
+      await this.processExecuteActionsStep(run, currentStep, steps);
+      return;
+    }
+
     if (currentStep.step_type === 'finalize') {
       await this.processFinalizeStep(run, currentStep, steps);
       return;
@@ -851,6 +936,10 @@ class OrchestrationRunEngine {
 
     const coordinator = getSwarmCoordinator();
     const rootMetadata = parseJsonLike(rootTask.metadata);
+    if (String(parseJsonLike(run.plan_json).strategy || '').trim() === 'tool_actions') {
+      await this.processToolPlanStep(run, step, steps, rootTask);
+      return;
+    }
     let workspaceContext = '';
     if (typeof coordinator.recallWorkspaceContext === 'function') {
       workspaceContext = await coordinator.recallWorkspaceContext(
@@ -1120,6 +1209,304 @@ class OrchestrationRunEngine {
       nextWakeAt: wakeAt,
       lastProgressAt: now,
     }));
+  }
+
+  getToolGovernedDecision(run) {
+    const context = parseJsonLike(run?.context_json);
+    const decision = context.governed_decision && typeof context.governed_decision === 'object'
+      ? context.governed_decision
+      : null;
+    if (!decision || !Array.isArray(decision.actions) || decision.actions.length === 0) return null;
+    return decision;
+  }
+
+  buildToolExecutionDecision(run) {
+    const decision = this.getToolGovernedDecision(run);
+    if (!decision) return null;
+    return {
+      ...decision,
+      actions: decision.actions.map((action) => ({
+        ...action,
+        mode: 'sync',
+        approval: 'none',
+      })),
+      metadata: {
+        ...(decision.metadata || {}),
+        execution_mode: 'sync',
+      },
+    };
+  }
+
+  async ensureToolExecutionStep(run, steps, rootTask) {
+    const rootMetadata = parseJsonLike(rootTask?.metadata);
+    const context = parseJsonLike(run?.context_json);
+    const existing = steps.find((entry) => {
+      if (entry.step_type !== 'execute_actions') return false;
+      const input = parseJsonLike(entry.input_json);
+      return input.tool_action === true && !isTerminalStepStatus(entry.status);
+    });
+    if (existing) return existing;
+
+    const executeStep = await createRunStep(pool, {
+      runId: run.id,
+      sequenceNo: nextSequenceNo(steps),
+      stepType: 'execute_actions',
+      title: 'Execute deferred tool actions',
+      status: 'queued',
+      executor: 'orchestrator',
+      selectedAgentId: run.requested_agent_id || null,
+      selectedAgentUsername: run.requested_agent_username || null,
+      input: {
+        tool_action: true,
+        chat_action_run_id: context.chat_action_run_id || rootMetadata.chat_action_run_id || null,
+        tool_name: context.tool_name || rootMetadata.orchestration_tool_name || null,
+        tool_adapter: context.tool_adapter || rootMetadata.orchestration_tool_adapter || null,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: executeStep.id,
+      eventType: 'step.queued',
+      actor: 'run-engine',
+      payload: {
+        sequence_no: executeStep.sequence_no,
+        step_type: 'execute_actions',
+        title: executeStep.title,
+      },
+    });
+
+    return executeStep;
+  }
+
+  async processToolPlanStep(run, step, steps, rootTask) {
+    const now = new Date();
+    const rootMetadata = parseJsonLike(rootTask?.metadata);
+    const decision = this.getToolGovernedDecision(run);
+    if (!decision) {
+      throw new Error(`Run ${run.id} is missing a governed tool decision.`);
+    }
+
+    const approvalRequired = String(decision?.metadata?.execution_mode || '').trim() === 'approval_required'
+      || decision.actions.some((action) => String(action?.approval || '').trim() === 'required');
+    const toolName = rootMetadata.orchestration_tool_name || parseJsonLike(run.context_json).tool_name || 'tool action';
+
+    if (step.status !== 'completed') {
+      await updateRunStep(pool, step.id, {
+        status: 'completed',
+        startedAt: step.started_at || now,
+        completedAt: now,
+        output: {
+          strategy: 'tool_actions',
+          approval_required: approvalRequired,
+          tool_name: toolName,
+        },
+      });
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: step.id,
+        eventType: 'step.completed',
+        actor: 'run-engine',
+        payload: {
+          step_type: 'plan',
+          strategy: 'tool_actions',
+          tool_name: toolName,
+          approval_required: approvalRequired,
+        },
+      });
+    }
+
+    if (approvalRequired) {
+      const approvalStep = await this.ensureApprovalGateStep(
+        run,
+        steps,
+        null,
+        { overall_score: null, summary: `${toolName} requires approval before execution.` },
+        rootTask,
+        {
+          toolAction: true,
+          resumeTo: 'execute_actions',
+          chatActionRunId: rootMetadata.chat_action_run_id || null,
+        }
+      );
+      await updateTaskRecord(rootTask.id, {
+        metadata: {
+          orchestration_status: 'awaiting_approval',
+          orchestration_run_id: run.id,
+          orchestration_step_id: approvalStep.id,
+          approval_required: true,
+          approval_mode: approvalStep.approval_mode || 'manual',
+          pending_approval: {
+            run_id: run.id,
+            step_id: approvalStep.id,
+            summary: `${toolName} requires approval before execution.`,
+            blocker_type: 'approval_required',
+          },
+          orchestration_proactive: true,
+        },
+      });
+      await this.postApprovalRequest(rootTask, run, approvalStep, {
+        summary: `${toolName} requires approval before execution.`,
+      }).catch((err) => {
+        console.warn('[RunEngine] Failed to post tool approval request:', err.message);
+      });
+      await updateRun(pool, run.id, buildReleaseLeasePatch({
+        status: 'awaiting_approval',
+        currentStepId: approvalStep.id,
+        nextWakeAt: null,
+        lastProgressAt: now,
+      }));
+      return;
+    }
+
+    const executeStep = await this.ensureToolExecutionStep(run, steps, rootTask);
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: 'running',
+        orchestration_run_id: run.id,
+        orchestration_step_id: executeStep.id,
+        pending_approval: null,
+        orchestration_proactive: true,
+      },
+    });
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'running',
+      currentStepId: executeStep.id,
+      nextWakeAt: now,
+      lastProgressAt: now,
+    }));
+    this.requestImmediatePoll();
+  }
+
+  async processExecuteActionsStep(run, step, steps) {
+    const now = new Date();
+    const rootTask = await loadTask(run.root_task_id);
+    if (!rootTask) {
+      throw new Error(`Root task ${run.root_task_id || 'unknown'} not found for run ${run.id}.`);
+    }
+
+    if (step.status !== 'running') {
+      await updateRunStep(pool, step.id, {
+        status: 'running',
+        startedAt: step.started_at || now,
+      });
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: step.id,
+        eventType: 'step.started',
+        actor: 'run-engine',
+        payload: { step_type: 'execute_actions' },
+      });
+    }
+
+    const rootMetadata = parseJsonLike(rootTask.metadata);
+    const context = parseJsonLike(run.context_json);
+    const decision = this.buildToolExecutionDecision(run);
+    if (!decision) {
+      throw new Error(`Run ${run.id} is missing an executable tool decision.`);
+    }
+
+    const coordinator = getSwarmCoordinator();
+    const availableAgents = typeof coordinator.loadAgentDirectory === 'function'
+      ? await coordinator.loadAgentDirectory(run.workspace_id).catch(() => [])
+      : [];
+    const executionAgent = findAgentRecord(run.requested_agent_id || run.requested_agent_username, availableAgents)
+      || {
+        id: run.requested_agent_id || null,
+        username: run.requested_agent_username || null,
+        workspace_id: run.workspace_id,
+      };
+    const chatActionContext = context.chat_action_context && typeof context.chat_action_context === 'object'
+      ? {
+          ...context.chat_action_context,
+          workspaceId: context.chat_action_context.workspaceId || run.workspace_id,
+          messageId: context.chat_action_context.messageId || rootMetadata.origin_chat_message_id || null,
+          channelId: context.chat_action_context.channelId || rootMetadata.origin_chat_channel_id || null,
+          requestedAgentId: context.chat_action_context.requestedAgentId || run.requested_agent_id || null,
+          displayAgentId: context.chat_action_context.displayAgentId || run.display_agent_id || run.requested_agent_id || null,
+          orchestratedBy: context.chat_action_context.orchestratedBy || run.orchestrated_by || 'jarvis',
+        }
+      : null;
+
+    const actionResults = [];
+    for (const action of decision.actions) {
+      const result = await dispatchOrchestratedAction(action, {
+        db: pool,
+        wsConnections: this.wsConnections || null,
+        workspaceId: run.workspace_id,
+        selectedAgentId: run.requested_agent_id || null,
+        agent: executionAgent,
+        chatActionContext,
+        chatActionRunId: context.chat_action_run_id || rootMetadata.chat_action_run_id || null,
+        model: context.model || null,
+        provider: context.provider || null,
+        nexusNodeId: context.nexus_node_id || null,
+        latestUserMessage: context.latest_user_message || '',
+        originTaskId: context.origin_task_id || null,
+      });
+      actionResults.push(result);
+      if (result?.success === false || result?.status === 'awaiting_approval' || result?.status === 'timeout') {
+        break;
+      }
+    }
+
+    const success = actionResults.length > 0
+      && actionResults.every((result) => result?.success !== false && result?.status === 'completed');
+    const resultText = buildToolActionSummary(decision.actions, actionResults);
+    const finalizeStep = await this.ensureFinalizeStep(run, steps, null, success ? 'success' : 'failure', {
+      toolAction: true,
+      toolResultText: resultText,
+      toolActionResults: actionResults,
+      chatActionRunId: context.chat_action_run_id || rootMetadata.chat_action_run_id || null,
+      toolName: context.tool_name || rootMetadata.orchestration_tool_name || null,
+    });
+
+    await updateRunStep(pool, step.id, success ? {
+      status: 'completed',
+      completedAt: now,
+      output: {
+        result: resultText,
+        action_results: actionResults,
+      },
+    } : {
+      status: 'failed',
+      completedAt: now,
+      error: {
+        message: resultText,
+        action_results: actionResults,
+      },
+    });
+
+    await appendRunEvent(pool, {
+      runId: run.id,
+      stepId: step.id,
+      eventType: success ? 'tool_actions.completed' : 'tool_actions.failed',
+      actor: 'run-engine',
+      payload: {
+        tool_name: context.tool_name || rootMetadata.orchestration_tool_name || null,
+        chat_action_run_id: context.chat_action_run_id || rootMetadata.chat_action_run_id || null,
+      },
+    });
+
+    await updateTaskRecord(rootTask.id, {
+      metadata: {
+        orchestration_status: success ? 'running' : 'failed',
+        orchestration_run_id: run.id,
+        orchestration_step_id: finalizeStep.id,
+        pending_approval: null,
+        chat_action_run_id: context.chat_action_run_id || rootMetadata.chat_action_run_id || null,
+        orchestration_proactive: true,
+      },
+    });
+
+    await updateRun(pool, run.id, buildReleaseLeasePatch({
+      status: 'running',
+      currentStepId: finalizeStep.id,
+      nextWakeAt: now,
+      lastProgressAt: now,
+      error: success ? null : { message: resultText },
+    }));
+    this.requestImmediatePoll();
   }
 
   async buildSuggestedPlanPhases(run, rootTask, workspaceContext, coordinator) {
@@ -1846,8 +2233,17 @@ class OrchestrationRunEngine {
       throw new Error(`Root task ${run.root_task_id || 'unknown'} not found for run ${run.id}.`);
     }
 
+    const finalizeInput = parseJsonLike(step?.input_json);
+    const toolAction = finalizeInput.tool_action === true;
     const childTask = context.childTask || await this.loadFinalizeChildTask(run, step, steps);
-    const outcome = context.outcome || this.resolveFinalizeOutcome(childTask, step);
+    const outcome = context.outcome || (toolAction ? finalizeInput.outcome : this.resolveFinalizeOutcome(childTask, step));
+    const toolResultText = toolAction
+      ? String(finalizeInput.tool_result_text || '').trim()
+      : '';
+    const toolActionResults = Array.isArray(finalizeInput.tool_action_results)
+      ? finalizeInput.tool_action_results
+      : [];
+    const chatActionRunId = finalizeInput.chat_action_run_id || parseJsonLike(rootTask.metadata).chat_action_run_id || null;
 
     if (step.status !== 'running' && step.status !== 'completed' && step.status !== 'failed') {
       await updateRunStep(pool, step.id, {
@@ -1857,7 +2253,9 @@ class OrchestrationRunEngine {
     }
 
     if (outcome === 'success') {
-      const resultText = extractTaskResult(childTask) || run.summary || 'Completed.';
+      const resultText = toolAction
+        ? (toolResultText || run.summary || 'Completed.')
+        : (extractTaskResult(childTask) || run.summary || 'Completed.');
       await updateTaskRecord(rootTask.id, {
         status: 'completed',
         output: resultText,
@@ -1868,6 +2266,7 @@ class OrchestrationRunEngine {
           orchestration_completed_at: now.toISOString(),
           delegated_task_id: childTask?.id || null,
           delegated_task_status: childTask?.status || null,
+          chat_action_run_id: chatActionRunId,
           pending_approval: null,
           escalation_active: false,
           orchestration_proactive: true,
@@ -1888,6 +2287,19 @@ class OrchestrationRunEngine {
       await this.postRootTaskChatResult(rootTask, resultText, run).catch((err) => {
         console.warn('[RunEngine] Failed to post completion in chat:', err.message);
       });
+      if (chatActionRunId) {
+        await updateChatActionRun(pool, SCHEMA, chatActionRunId, {
+          status: 'success',
+          executed_by: run.display_agent_id || run.requested_agent_id || null,
+          output_json: {
+            result: resultText,
+            orchestration_run_id: run.id,
+            orchestration_step_id: step.id,
+            root_task_id: rootTask.id,
+            tool_action_results: toolActionResults,
+          },
+        }).catch(() => {});
+      }
 
       await updateRunStep(pool, step.id, {
         status: 'completed',
@@ -1897,6 +2309,7 @@ class OrchestrationRunEngine {
           result: resultText,
           delegated_task_id: childTask?.id || null,
           delegated_task_status: childTask?.status || null,
+          tool_action_results: toolActionResults,
           proactive: true,
         },
       });
@@ -1927,7 +2340,9 @@ class OrchestrationRunEngine {
       return;
     }
 
-    const message = extractTaskError(childTask);
+    const message = toolAction
+      ? (toolResultText || 'Tool action execution failed.')
+      : extractTaskError(childTask);
     await updateTaskRecord(rootTask.id, {
       status: 'failed',
       metadata: {
@@ -1938,6 +2353,7 @@ class OrchestrationRunEngine {
         orchestration_failed_at: now.toISOString(),
         delegated_task_id: childTask?.id || null,
         delegated_task_status: childTask?.status || null,
+        chat_action_run_id: chatActionRunId,
         pending_approval: null,
         orchestration_proactive: true,
       },
@@ -1954,6 +2370,20 @@ class OrchestrationRunEngine {
     await this.postRootTaskFailure(rootTask, message).catch((err) => {
       console.warn('[RunEngine] Failed to post failure in chat:', err.message);
     });
+    if (chatActionRunId) {
+      await updateChatActionRun(pool, SCHEMA, chatActionRunId, {
+        status: 'error',
+        executed_by: run.display_agent_id || run.requested_agent_id || null,
+        output_json: null,
+        error_json: {
+          error: message,
+          orchestration_run_id: run.id,
+          orchestration_step_id: step.id,
+          root_task_id: rootTask.id,
+          tool_action_results: toolActionResults,
+        },
+      }).catch(() => {});
+    }
 
     await updateRunStep(pool, step.id, {
       status: 'failed',
@@ -2461,11 +2891,12 @@ class OrchestrationRunEngine {
     return verifyStep;
   }
 
-  async ensureApprovalGateStep(run, steps, childTask, verdict, rootTask) {
+  async ensureApprovalGateStep(run, steps, childTask, verdict, rootTask, options = {}) {
     const existing = steps.find((entry) => {
       if (entry.step_type !== 'approval_gate') return false;
       const input = parseJsonLike(entry.input_json);
       return String(input.delegated_task_id || '') === String(childTask?.id || '')
+        && Boolean(input.tool_action) === Boolean(options.toolAction === true)
         && !isTerminalStepStatus(entry.status);
     });
     if (existing) return existing;
@@ -2485,6 +2916,9 @@ class OrchestrationRunEngine {
         verification_score: verdict?.overall_score ?? null,
         verification_summary: verdict?.summary || null,
         approval_required: true,
+        tool_action: options.toolAction === true,
+        resume_to: options.resumeTo || null,
+        chat_action_run_id: options.chatActionRunId || null,
       },
     });
 
@@ -2503,10 +2937,13 @@ class OrchestrationRunEngine {
     return approvalStep;
   }
 
-  async ensureFinalizeStep(run, steps, childTask, outcome) {
+  async ensureFinalizeStep(run, steps, childTask, outcome, options = {}) {
     const existing = steps.find((entry) => {
       if (entry.step_type !== 'finalize') return false;
       const input = parseJsonLike(entry.input_json);
+      if (options.toolAction === true) {
+        return input.tool_action === true && !isTerminalStepStatus(entry.status);
+      }
       return String(input.delegated_task_id || '') === String(childTask?.id || '')
         && !isTerminalStepStatus(entry.status);
     });
@@ -2524,6 +2961,11 @@ class OrchestrationRunEngine {
       input: {
         outcome,
         delegated_task_id: childTask?.id || null,
+        tool_action: options.toolAction === true,
+        tool_result_text: options.toolResultText || null,
+        tool_action_results: options.toolActionResults || null,
+        chat_action_run_id: options.chatActionRunId || null,
+        tool_name: options.toolName || null,
       },
     });
 
@@ -2675,6 +3117,20 @@ class OrchestrationRunEngine {
         },
       }).catch(() => {});
 
+      const chatActionRunId = parseJsonLike(rootTask.metadata).chat_action_run_id || null;
+      if (chatActionRunId) {
+        await updateChatActionRun(pool, SCHEMA, chatActionRunId, {
+          status: 'error',
+          executed_by: run.display_agent_id || run.requested_agent_id || null,
+          output_json: null,
+          error_json: {
+            error: message,
+            orchestration_run_id: run.id,
+            root_task_id: rootTask.id,
+          },
+        }).catch(() => {});
+      }
+
       await this.postRootTaskFailure(rootTask, message).catch(() => {});
     }
   }
@@ -2691,6 +3147,9 @@ let singleton = null;
 
 function getRunEngine(options) {
   if (!singleton) singleton = new OrchestrationRunEngine(options);
+  if (options && Object.prototype.hasOwnProperty.call(options, 'wsConnections')) {
+    singleton.bindWsConnections(options.wsConnections || null);
+  }
   return singleton;
 }
 

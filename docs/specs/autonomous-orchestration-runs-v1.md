@@ -47,6 +47,24 @@ This means Vutler now has one bootstrap contract for autonomous work across:
 - claimed tasks
 - recurring schedules that materialize into run templates
 
+### Shipped slice: deferred tool actions (2026-04-13)
+
+Deferred tool execution from `llmRouter` no longer has to stop at a chat-level acknowledgement when orchestration governance decides the action must leave the synchronous turn.
+
+Current behavior in code:
+
+- approval-required and async tool plans can now create a durable root orchestration run directly from the tool-call loop
+- the bootstrap stores the governed decision, tool arguments, model/provider hints, and the originating chat action context inside the run context
+- chat action audit rows stay open as `scheduled` or `awaiting_approval` until the orchestration run reaches a terminal outcome
+- the run engine now supports a dedicated `tool_actions` planning strategy and a concrete `execute_actions` step type
+- approval-gated tool runs pause before execution, can be approved through the orchestration API, and then resume into `execute_actions` instead of skipping straight to finalization
+- successful tool-action runs finalize back into the root task, close the chat action run, and keep the original chat reply path available through the root task chat projection
+
+Current scope:
+
+- the durable deferred path is now wired for chat-triggered tool actions where a `chatActionContext` exists
+- synchronous tool actions still stay in the normal inline tool loop
+
 ## Why This Is Needed
 
 Current Vutler orchestration is strong at synchronous guarded tool execution, but weak at persistent autonomy:
