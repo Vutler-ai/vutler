@@ -312,6 +312,16 @@ Recommendation:
 - high priority, but strictly as an optional technical executor
 - not recommended as a replacement for Vutler's orchestration runtime
 
+Status update 2026-04-13:
+- Vutler now has stronger operator paging for critical sandbox runtime degradation:
+  - critical health alerts still create deduplicated in-app workspace notifications
+  - the workspace notification email still receives the same alert when configured
+  - subscribed workspace admins now also receive a web-push alert that deep-links to `/sandbox`
+- this keeps the model multitenant and workspace-scoped:
+  - recipient resolution is limited to `tenant_vutler.users_auth` rows in the same `workspace_id`
+  - only users with the `admin` role are targeted for push paging
+- remaining work is now mostly channel policy and escalation tuning, not the core paging path
+
 ### 9. Integrator API
 
 Snipara integrator docs describe:

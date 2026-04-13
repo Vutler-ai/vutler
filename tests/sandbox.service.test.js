@@ -673,4 +673,125 @@ describe('sandbox analytics', () => {
       plain_body: expect.stringContaining('Sandbox telemetry over the last 7 days is critical'),
     });
   });
+
+  test('pushes a critical sandbox alert to workspace admins when a new alert is created', async () => {
+    const sendPushToUsers = jest.fn().mockResolvedValue([
+      { status: 'fulfilled', value: { sent: 1, failed: 0 } },
+      { status: 'fulfilled', value: { sent: 1, failed: 0 } },
+    ]);
+    const query = jest.fn(async (sql) => {
+      if (sql.includes('SELECT column_name') && sql.includes('information_schema.columns')) {
+        return {
+          rows: [
+            { column_name: 'workspace_id' },
+            { column_name: 'key' },
+            { column_name: 'value' },
+          ],
+        };
+      }
+
+      if (sql.includes('SELECT EXISTS (') && sql.includes('table_name = $2') && sql.includes('column_name = $3')) {
+        return {
+          rows: [{ exists: true }],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.workspace_settings') && sql.includes('SELECT key, value')) {
+        return {
+          rows: [
+            {
+              key: 'notification_settings',
+              value: {
+                sandbox_alert: true,
+              },
+            },
+          ],
+        };
+      }
+
+      if (
+        sql.includes('COUNT(*) FILTER (WHERE backend_selected = \'rlm_runtime\')')
+        && sql.includes('COUNT(*) FILTER (WHERE used_fallback = TRUE)')
+      ) {
+        return {
+          rows: [{
+            total: 9,
+            terminal_total: 9,
+            running_count: 0,
+            rlm_attempt_count: 5,
+            rlm_effective_count: 2,
+            native_effective_count: 7,
+            fallback_count: 3,
+            failed_count: 1,
+            timeout_count: 1,
+            last_fallback_at: '2026-04-12T08:00:00.000Z',
+            last_rlm_at: '2026-04-12T09:00:00.000Z',
+            last_execution_at: '2026-04-12T10:00:00.000Z',
+          }],
+        };
+      }
+
+      if (sql.includes('SELECT fallback_reason AS reason')) {
+        return {
+          rows: [
+            { reason: 'runtime timeout', count: 2 },
+            { reason: 'rlm binary missing', count: 1 },
+          ],
+        };
+      }
+
+      if (sql.includes('CREATE TABLE IF NOT EXISTS tenant_vutler.notifications')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('FROM tenant_vutler.notifications') && sql.includes('created_at >= NOW()')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes('INSERT INTO tenant_vutler.notifications')) {
+        return {
+          rows: [{
+            id: 'notif-3',
+            workspace_id: 'ws-1',
+            user_id: null,
+            type: 'error',
+            title: 'Sandbox runtime health is critical',
+          }],
+        };
+      }
+
+      if (sql.includes('FROM tenant_vutler.users_auth') && sql.includes("role = 'admin'")) {
+        return {
+          rows: [
+            { id: 'admin-1' },
+            { id: 'admin-2' },
+          ],
+        };
+      }
+
+      return { rows: [] };
+    });
+
+    jest.doMock('../lib/vaultbrix', () => ({ query }));
+    jest.doMock('../services/pushService', () => ({ sendPushToUsers }));
+    const sandbox = require('../services/sandbox');
+
+    const result = await sandbox.__private.emitSandboxHealthNotification('ws-1', { query });
+
+    expect(sendPushToUsers).toHaveBeenCalledWith(
+      ['admin-1', 'admin-2'],
+      expect.objectContaining({
+        title: 'Sandbox runtime health is critical',
+        body: expect.stringContaining('Sandbox telemetry over the last 7 days is critical'),
+        url: '/sandbox',
+        tag: 'sandbox-runtime-critical',
+      })
+    );
+    expect(result?.delivery?.push).toMatchObject({
+      attempted: true,
+      recipients: 2,
+      sent: 2,
+      failed: 0,
+    });
+  });
 });

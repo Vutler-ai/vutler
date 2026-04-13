@@ -39,6 +39,7 @@ const DEFAULT_MINIMAL_ENV = {
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'timeout', 'skipped']);
 
 let ensureSchemaPromise = null;
+let usersAuthHasDeletedAtColumn = null;
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -398,6 +399,119 @@ function buildSandboxCriticalAlertPayload(analytics) {
   };
 }
 
+function buildSandboxCriticalPushPayload(analytics) {
+  const payload = buildSandboxCriticalAlertPayload(analytics);
+  return {
+    title: payload.title,
+    body: payload.message,
+    url: '/sandbox',
+    tag: 'sandbox-runtime-critical',
+  };
+}
+
+async function hasUsersAuthDeletedAtColumn(db = pool) {
+  if (typeof usersAuthHasDeletedAtColumn === 'boolean') {
+    return usersAuthHasDeletedAtColumn;
+  }
+
+  try {
+    const result = await db.query(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM information_schema.columns
+          WHERE table_schema = $1
+            AND table_name = $2
+            AND column_name = $3
+       ) AS exists`,
+      [SCHEMA, 'users_auth', 'deleted_at']
+    );
+    usersAuthHasDeletedAtColumn = result.rows[0]?.exists === true;
+  } catch (_) {
+    usersAuthHasDeletedAtColumn = false;
+  }
+
+  return usersAuthHasDeletedAtColumn;
+}
+
+async function listWorkspaceAdminUserIds(workspaceId, db = pool) {
+  if (!workspaceId) return [];
+
+  const activeFilter = (await hasUsersAuthDeletedAtColumn(db))
+    ? 'AND deleted_at IS NULL'
+    : '';
+  const result = await db.query(
+    `SELECT id
+       FROM ${SCHEMA}.users_auth
+      WHERE workspace_id = $1
+        AND role = 'admin'
+        ${activeFilter}`,
+    [workspaceId]
+  );
+
+  return result.rows
+    .map((row) => String(row.id || '').trim())
+    .filter(Boolean);
+}
+
+async function sendSandboxHealthPushAlert(workspaceId, analytics, db = pool) {
+  const adminUserIds = await listWorkspaceAdminUserIds(workspaceId, db);
+  if (adminUserIds.length === 0) {
+    return {
+      attempted: false,
+      reason: 'no_admin_users',
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+    };
+  }
+
+  let sendPushToUsers;
+  try {
+    ({ sendPushToUsers } = require('./pushService'));
+  } catch (err) {
+    return {
+      attempted: false,
+      reason: 'push_service_unavailable',
+      recipients: adminUserIds.length,
+      sent: 0,
+      failed: adminUserIds.length,
+      error: err.message,
+    };
+  }
+
+  if (typeof sendPushToUsers !== 'function') {
+    return {
+      attempted: false,
+      reason: 'push_service_unavailable',
+      recipients: adminUserIds.length,
+      sent: 0,
+      failed: adminUserIds.length,
+    };
+  }
+
+  const results = await sendPushToUsers(
+    adminUserIds,
+    buildSandboxCriticalPushPayload(analytics)
+  );
+
+  return results.reduce((acc, result) => {
+    if (result.status === 'fulfilled') {
+      acc.sent += Number(result.value?.sent || 0);
+      acc.failed += Number(result.value?.failed || 0);
+      return acc;
+    }
+
+    acc.failed += 1;
+    return acc;
+  }, {
+    attempted: true,
+    reason: null,
+    recipients: adminUserIds.length,
+    sent: 0,
+    failed: 0,
+  });
+}
+
 async function createSandboxJob({
   language,
   code,
@@ -638,9 +752,26 @@ async function emitSandboxHealthNotification(workspaceId, db = pool) {
 
   if (!notification) return null;
 
+  const delivery = {
+    email: {
+      attempted: false,
+      success: false,
+      skipped: false,
+      error: null,
+    },
+    push: {
+      attempted: false,
+      reason: 'not_attempted',
+      recipients: 0,
+      sent: 0,
+      failed: 0,
+    },
+  };
+
   const notificationEmail = String(notificationProfile.email || '').trim();
   if (notificationEmail) {
-    const delivery = await sendPostalMail({
+    delivery.email.attempted = true;
+    const emailDelivery = await sendPostalMail({
       to: notificationEmail,
       subject: payload.title,
       plain_body: payload.message,
@@ -649,15 +780,38 @@ async function emitSandboxHealthNotification(workspaceId, db = pool) {
       error: err.message,
     }));
 
-    if (delivery?.success === false || delivery?.skipped) {
+    if (emailDelivery?.success) {
+      delivery.email.success = true;
+    } else {
+      delivery.email.skipped = Boolean(emailDelivery?.skipped);
+      delivery.email.error = emailDelivery?.error || emailDelivery?.reason || 'unknown email delivery failure';
+    }
+
+    if (emailDelivery?.success === false || emailDelivery?.skipped) {
       console.warn(
         '[sandbox] critical alert email skipped:',
-        delivery.error || delivery.reason || 'unknown email delivery failure'
+        emailDelivery.error || emailDelivery.reason || 'unknown email delivery failure'
       );
     }
   }
 
-  return notification;
+  delivery.push = await sendSandboxHealthPushAlert(workspaceId, analytics, db).catch((err) => ({
+    attempted: false,
+    reason: 'push_delivery_error',
+    recipients: 0,
+    sent: 0,
+    failed: 0,
+    error: err.message,
+  }));
+
+  if (delivery.push.reason && delivery.push.reason !== 'no_admin_users' && delivery.push.reason !== 'not_attempted') {
+    console.warn('[sandbox] critical alert push skipped:', delivery.push.error || delivery.push.reason);
+  }
+
+  return {
+    ...notification,
+    delivery,
+  };
 }
 
 async function awaitSandboxJob(id, {
@@ -1116,6 +1270,10 @@ module.exports = {
     skipPendingBatchJobs,
     computeSyncWaitWindow,
     buildSandboxCriticalAlertPayload,
+    buildSandboxCriticalPushPayload,
     emitSandboxHealthNotification,
+    hasUsersAuthDeletedAtColumn,
+    listWorkspaceAdminUserIds,
+    sendSandboxHealthPushAlert,
   },
 };
