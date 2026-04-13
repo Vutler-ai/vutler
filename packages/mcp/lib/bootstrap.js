@@ -169,6 +169,94 @@ function writeClientConfig({
   };
 }
 
+function inspectClientConfig({
+  clientName,
+  cwd = process.cwd(),
+  filePath = null,
+} = {}) {
+  const template = getClientTemplate(clientName);
+  const resolvedPath = resolveDefaultConfigPath(template.key, { cwd, explicitPath: filePath });
+  const report = {
+    client: template.key,
+    label: template.label,
+    path: resolvedPath,
+    exists: false,
+    validJson: false,
+    hasVutlerServer: false,
+    usesExpectedPackage: false,
+    apiUrl: DEFAULT_API_URL,
+    apiKeyState: 'missing',
+    command: null,
+    args: [],
+    ready: false,
+    issues: [],
+  };
+
+  if (!fs.existsSync(resolvedPath)) {
+    report.issues.push(`No config file found at ${resolvedPath}.`);
+    return report;
+  }
+
+  report.exists = true;
+
+  const currentRaw = fs.readFileSync(resolvedPath, 'utf8');
+  if (!String(currentRaw).trim()) {
+    report.issues.push(`Config file at ${resolvedPath} is empty.`);
+    return report;
+  }
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(currentRaw);
+    report.validJson = true;
+  } catch (_) {
+    report.issues.push(`Config file at ${resolvedPath} is not valid JSON.`);
+    return report;
+  }
+
+  const serverConfig = parsed?.mcpServers?.[DEFAULT_SERVER_NAME];
+  if (!serverConfig || typeof serverConfig !== 'object' || Array.isArray(serverConfig)) {
+    report.issues.push(`Config file at ${resolvedPath} does not define mcpServers.${DEFAULT_SERVER_NAME}.`);
+    return report;
+  }
+
+  report.hasVutlerServer = true;
+  report.command = typeof serverConfig.command === 'string' ? serverConfig.command : null;
+  report.args = Array.isArray(serverConfig.args) ? serverConfig.args : [];
+  report.usesExpectedPackage = report.command === 'npx' && report.args.includes('@vutler/mcp');
+
+  if (!report.usesExpectedPackage) {
+    report.issues.push(`mcpServers.${DEFAULT_SERVER_NAME} is not configured to launch @vutler/mcp via npx.`);
+  }
+
+  const env = serverConfig.env && typeof serverConfig.env === 'object' && !Array.isArray(serverConfig.env)
+    ? serverConfig.env
+    : {};
+
+  if (typeof env.VUTLER_API_URL === 'string' && env.VUTLER_API_URL.trim()) {
+    report.apiUrl = env.VUTLER_API_URL.trim();
+  }
+
+  const apiKey = typeof env.VUTLER_API_KEY === 'string' ? env.VUTLER_API_KEY.trim() : '';
+  if (!apiKey) {
+    report.apiKeyState = 'missing';
+    report.issues.push(`Config file at ${resolvedPath} does not set VUTLER_API_KEY.`);
+  } else if (apiKey === DEFAULT_API_KEY_PLACEHOLDER) {
+    report.apiKeyState = 'placeholder';
+    report.issues.push(`Config file at ${resolvedPath} still uses the placeholder VUTLER_API_KEY.`);
+  } else {
+    report.apiKeyState = 'embedded';
+  }
+
+  report.ready = report.exists
+    && report.validJson
+    && report.hasVutlerServer
+    && report.usesExpectedPackage
+    && report.apiKeyState === 'embedded';
+
+  return report;
+}
+
 module.exports = {
   CLIENT_CONFIG_TEMPLATES,
   DEFAULT_API_URL,
@@ -183,4 +271,5 @@ module.exports = {
   resolveDefaultConfigPath,
   mergeMcpConfig,
   writeClientConfig,
+  inspectClientConfig,
 };

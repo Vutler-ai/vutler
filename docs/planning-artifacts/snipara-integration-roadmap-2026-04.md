@@ -375,6 +375,9 @@ Status update 2026-04-13:
   - `--list-clients`
   - `--setup` / `--write-config` with path resolution, merge into existing `mcpServers`, dry-run support, and invalid-JSON backup on `--force`
   - `--doctor` with connectivity, auth, and plan-gated tool visibility checks
+- `@vutler/mcp` now also has a short operational bootstrap path:
+  - `--bootstrap` writes the selected client config and immediately runs doctor against that exact file
+  - `--doctor --client ...` now validates the resolved config path, checks `mcpServers.vutler`, confirms it launches `@vutler/mcp`, and flags placeholder API keys
 - supported bootstrap targets now include:
   - Claude Code
   - Claude Desktop
@@ -383,7 +386,8 @@ Status update 2026-04-13:
   - Continue.dev
 - bootstrap is safer by default:
   - config writing uses a placeholder API key unless `--embed-key` is passed explicitly
-- remaining work is now documentation polish and broader distribution, not the basic bootstrap/doctor surface
+- Vutler product surfaces now point operators toward the bootstrap/doctor flow instead of only pasting raw JSON
+- remaining work is now mostly packaging/publishing polish and broader external distribution, not the bootstrap/doctor core
 
 ## Prioritized Roadmap
 

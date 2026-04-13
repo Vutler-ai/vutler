@@ -10,6 +10,19 @@ Run directly:
 VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp
 ```
 
+Bootstrap a client config and immediately validate the written file:
+
+```bash
+VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --bootstrap claude-code --embed-key
+VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --bootstrap claude-desktop --embed-key
+```
+
+If you do not want to persist a real key yet, bootstrap safely with a placeholder and rerun doctor after replacing it:
+
+```bash
+npx @vutler/mcp --bootstrap cursor
+```
+
 List supported clients:
 
 ```bash
@@ -40,11 +53,13 @@ By default, setup writes a placeholder API key so secrets are not persisted acci
 VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --setup claude-code --embed-key
 ```
 
-Validate credentials, connectivity, and plan-gated tool exposure:
+Validate credentials, connectivity, plan-gated tool exposure, and optionally the real client config file:
 
 ```bash
 VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --doctor
 VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --doctor --json
+VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --doctor --client claude-code
+VUTLER_API_KEY=vt_your_key_here npx @vutler/mcp --doctor --client claude-desktop --path ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
 Print the required environment variables:
@@ -153,8 +168,10 @@ Project-scoped `.mcp.json`:
 
 ## Notes
 
+- `--bootstrap` is the shortest operational path: it writes the client config and then runs doctor against that exact file.
 - `--setup` merges into an existing `mcpServers` object instead of wiping unrelated MCP entries.
 - `--force` lets setup replace an invalid JSON config file and stores a timestamped backup first.
 - `--dry-run` resolves the target path and merged config without writing to disk.
+- `--doctor --client ...` validates the resolved config path, confirms `mcpServers.vutler`, checks that it launches `@vutler/mcp`, and flags placeholder API keys.
 - Tool exposure remains gated by the workspace plan and capabilities.
 - Legacy packages such as `@vutler/mcp-office`, `@vutler/mcp-nexus`, and `packages/mcp-server` should not be used for new integrations.

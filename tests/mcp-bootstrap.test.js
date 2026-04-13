@@ -6,6 +6,7 @@ const path = require('path');
 
 const {
   buildClientConfig,
+  inspectClientConfig,
   resolveDefaultConfigPath,
   writeClientConfig,
 } = require('../packages/mcp/lib/bootstrap');
@@ -74,5 +75,49 @@ describe('vutler mcp bootstrap helpers', () => {
     expect(result.backupPath).toContain('.bak.');
     expect(fs.existsSync(result.backupPath)).toBe(true);
     expect(resolveDefaultConfigPath('claude-code', { cwd: tempDir })).toBe(path.join(tempDir, '.mcp.json'));
+  });
+
+  test('inspects a ready client config written with an embedded key', () => {
+    const filePath = path.join(tempDir, '.mcp.json');
+
+    writeClientConfig({
+      clientName: 'claude-code',
+      cwd: tempDir,
+      filePath,
+      apiKey: 'vt_live_key',
+    });
+
+    const report = inspectClientConfig({
+      clientName: 'claude-code',
+      cwd: tempDir,
+      filePath,
+    });
+
+    expect(report.exists).toBe(true);
+    expect(report.validJson).toBe(true);
+    expect(report.hasVutlerServer).toBe(true);
+    expect(report.usesExpectedPackage).toBe(true);
+    expect(report.apiKeyState).toBe('embedded');
+    expect(report.ready).toBe(true);
+  });
+
+  test('flags placeholder keys during config inspection', () => {
+    const filePath = path.join(tempDir, '.mcp.json');
+
+    writeClientConfig({
+      clientName: 'cursor',
+      cwd: tempDir,
+      filePath,
+    });
+
+    const report = inspectClientConfig({
+      clientName: 'cursor',
+      cwd: tempDir,
+      filePath,
+    });
+
+    expect(report.apiKeyState).toBe('placeholder');
+    expect(report.ready).toBe(false);
+    expect(report.issues.some((issue) => issue.includes('placeholder VUTLER_API_KEY'))).toBe(true);
   });
 });

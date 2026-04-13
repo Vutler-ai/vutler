@@ -30,9 +30,10 @@ function printHelp() {
     '  npx @vutler/mcp --help\n' +
     '  npx @vutler/mcp --list-clients\n' +
     '  npx @vutler/mcp --print-config [client]\n' +
+    '  npx @vutler/mcp --bootstrap [client] [--path FILE] [--force] [--dry-run] [--embed-key] [--json]\n' +
     '  npx @vutler/mcp --setup [client] [--path FILE] [--force] [--dry-run] [--embed-key]\n' +
     '  npx @vutler/mcp --write-config [client] [--path FILE] [--force] [--dry-run] [--embed-key]\n' +
-    '  npx @vutler/mcp --doctor [--json]\n' +
+    '  npx @vutler/mcp --doctor [--client CLIENT] [--path FILE] [--json]\n' +
     '  npx @vutler/mcp --print-env\n\n' +
     `Supported clients: ${getSupportedClients().join(', ')}\n\n` +
     'Environment:\n' +
@@ -675,16 +676,21 @@ async function main() {
     return;
   }
 
-  if (args.includes('--setup') || args.includes('--write-config')) {
-    const clientName = getArgValue(args, '--setup')
+  const shouldBootstrap = args.includes('--bootstrap');
+  const shouldWriteConfig = shouldBootstrap || args.includes('--setup') || args.includes('--write-config');
+
+  if (shouldWriteConfig) {
+    const clientName = getArgValue(args, '--bootstrap')
+      || getArgValue(args, '--setup')
       || getArgValue(args, '--write-config')
       || 'claude-code';
+    const cwd = getArgValue(args, '--cwd') || process.cwd();
     const result = writeClientConfig({
       clientName,
       apiKey: args.includes('--embed-key')
         ? (process.env.VUTLER_API_KEY || DEFAULT_API_KEY_PLACEHOLDER)
         : DEFAULT_API_KEY_PLACEHOLDER,
-      cwd: getArgValue(args, '--cwd') || process.cwd(),
+      cwd,
       filePath: getArgValue(args, '--path'),
       dryRun: args.includes('--dry-run'),
       force: args.includes('--force'),
@@ -700,16 +706,30 @@ async function main() {
       process.stdout.write('[vutler-mcp] Placeholder API key written. Replace it or export VUTLER_API_KEY before use.\n');
     }
 
-    if (args.includes('--doctor')) {
-      const doctor = await runDoctor({ allToolNames: ALL_TOOL_NAMES });
-      process.stdout.write(`\n${formatDoctorReport(doctor, { json: args.includes('--json') })}`);
-      if (!doctor.ok) process.exitCode = 1;
+    if (shouldBootstrap || args.includes('--doctor')) {
+      if (result.dryRun) {
+        process.stdout.write('[vutler-mcp] Doctor skipped because --dry-run did not write a real client config.\n');
+      } else {
+        const doctor = await runDoctor({
+          allToolNames: ALL_TOOL_NAMES,
+          clientName,
+          filePath: result.path,
+          cwd,
+        });
+        process.stdout.write(`\n${formatDoctorReport(doctor, { json: args.includes('--json') })}`);
+        if (!doctor.ok) process.exitCode = 1;
+      }
     }
     return;
   }
 
   if (args.includes('--doctor')) {
-    const doctor = await runDoctor({ allToolNames: ALL_TOOL_NAMES });
+    const doctor = await runDoctor({
+      allToolNames: ALL_TOOL_NAMES,
+      clientName: getArgValue(args, '--client'),
+      filePath: getArgValue(args, '--path'),
+      cwd: getArgValue(args, '--cwd') || process.cwd(),
+    });
     process.stdout.write(formatDoctorReport(doctor, { json: args.includes('--json') }));
     if (!doctor.ok) process.exitCode = 1;
     return;

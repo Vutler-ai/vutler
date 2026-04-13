@@ -367,31 +367,24 @@ function FeaturesSection() {
 
 // ─── MCP Server ────────────────────────────────────────────────────────────────
 
-const MCP_CONFIG = `{
-  "mcpServers": {
-    "vutler": {
-      "command": "npx",
-      "args": ["-y", "@vutler/mcp"],
-      "env": {
-        "VUTLER_API_URL": "https://app.vutler.ai",
-        "VUTLER_API_KEY": "vt_your_key_here"
-      }
-    }
-  }
-}`;
+const MCP_BOOTSTRAP_COMMANDS = `# 1. List supported clients
+npx @vutler/mcp --list-clients
 
-const NEXUS_BRIDGE_CONFIG = `{
-  "mcpServers": {
-    "vutler": {
-      "command": "npx",
-      "args": ["-y", "@vutler/mcp"],
-      "env": {
-        "VUTLER_API_URL": "https://app.vutler.ai",
-        "VUTLER_API_KEY": "vt_your_key_here"
-      }
-    }
-  }
-}`;
+# 2. Bootstrap a real client config
+VUTLER_API_KEY=vt_your_key_here \\
+npx @vutler/mcp --bootstrap claude-desktop --embed-key
+
+# 3. Re-run doctor against that file
+VUTLER_API_KEY=vt_your_key_here \\
+npx @vutler/mcp --doctor --client claude-desktop`;
+
+const NEXUS_BRIDGE_COMMANDS = `# Claude Code project bootstrap
+VUTLER_API_KEY=vt_your_key_here \\
+npx @vutler/mcp --bootstrap claude-code --embed-key
+
+# Validate plan-gated tool exposure and the file itself
+VUTLER_API_KEY=vt_your_key_here \\
+npx @vutler/mcp --doctor --client claude-code`;
 
 const MCP_TOOLS = [
   'list_agents', 'run_agent', 'stop_agent',
@@ -459,7 +452,8 @@ function MCPSection() {
             <p className="text-white/50 text-lg mb-6 leading-relaxed">
               Vutler exposes one MCP server for the native Vutler workspace. Connect Claude Desktop,
               Cursor, or any MCP-compatible client and let it operate inside your workspace.
-              Tools appear according to your plan and workspace capabilities.
+              Tools appear according to your plan and workspace capabilities, and the package now ships
+              with a one-command bootstrap plus doctor flow.
             </p>
             <div className="grid grid-cols-2 gap-2">
               {MCP_TOOLS.map((tool) => (
@@ -476,10 +470,10 @@ function MCPSection() {
                 <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
                 <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
                 <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-                <span className="ml-2 text-xs text-white/30 font-mono">claude_desktop_config.json</span>
+                <span className="ml-2 text-xs text-white/30 font-mono">terminal</span>
               </div>
               <pre className="p-5 text-sm font-mono text-green-400 leading-relaxed overflow-x-auto">
-                {MCP_CONFIG}
+                {MCP_BOOTSTRAP_COMMANDS}
               </pre>
             </div>
           </div>
@@ -495,7 +489,7 @@ function MCPSection() {
               <p className="text-white/50 text-lg mb-6 leading-relaxed">
                 The same Vutler MCP also lets Claude Code discover agents, delegate work,
                 and follow execution through the Vutler runtime. Use it for code tasks,
-                reviews, deployments, and governed agent ops.
+                reviews, deployments, and governed agent ops through one short project bootstrap path.
               </p>
 
               {/* Delegation flow */}
@@ -519,10 +513,10 @@ function MCPSection() {
                   <div className="w-2.5 h-2.5 rounded-full bg-red-500/60" />
                   <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/60" />
                   <div className="w-2.5 h-2.5 rounded-full bg-green-500/60" />
-                  <span className="ml-2 text-xs text-white/30 font-mono">.mcp.json</span>
+                  <span className="ml-2 text-xs text-white/30 font-mono">terminal</span>
                 </div>
                 <pre className="p-5 text-sm font-mono text-purple-400 leading-relaxed overflow-x-auto">
-                  {NEXUS_BRIDGE_CONFIG}
+                  {NEXUS_BRIDGE_COMMANDS}
                 </pre>
               </div>
 

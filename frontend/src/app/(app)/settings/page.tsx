@@ -1785,20 +1785,22 @@ curl https://app.vutler.ai/api/v1/agents \\
           </div>
           <div className="space-y-2">
             <p className="text-[#9ca3af] text-sm font-medium">MCP Integration (Claude Desktop, Cursor, Claude Code)</p>
-            <p className="text-[#6b7280] text-xs">Add to your <code className="text-purple-400">.mcp.json</code> to connect AI tools to your Vutler workspace:</p>
+            <p className="text-[#6b7280] text-xs">
+              Recommended path: bootstrap the client config directly, then run the doctor against the written file.
+              Replace <code className="text-purple-400">claude-code</code> with <code className="text-purple-400">claude-desktop</code>,
+              <code className="text-purple-400">cursor</code>, <code className="text-purple-400">vscode</code>, or <code className="text-purple-400">continue</code> as needed.
+            </p>
             <pre className="bg-[#0a0b14] border border-purple-500/10 rounded-lg p-4 text-xs text-purple-300/70 font-mono overflow-x-auto">
-              {`{
-  "mcpServers": {
-    "vutler": {
-      "command": "npx",
-      "args": ["-y", "@vutler/mcp"],
-      "env": {
-        "VUTLER_API_URL": "https://app.vutler.ai",
-        "VUTLER_API_KEY": "vt_your_key_here"
-      }
-    }
-  }
-}`}
+              {`# Write the client config with a live workspace key
+VUTLER_API_KEY=vt_your_key_here \\
+npx @vutler/mcp --bootstrap claude-code --embed-key
+
+# Re-check connectivity, plan gating, and the written config
+VUTLER_API_KEY=vt_your_key_here \\
+npx @vutler/mcp --doctor --client claude-code
+
+# Safer bootstrap without persisting the key yet
+npx @vutler/mcp --setup claude-code`}
             </pre>
           </div>
         </CardContent>
