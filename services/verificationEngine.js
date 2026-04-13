@@ -95,6 +95,7 @@ class VerificationEngine {
         threshold: this._getThreshold(task),
         passed: true,
         autoAccepted: true,
+        autoAcceptedReason: 'no_criteria',
         verdict: {
           overall_pass: true,
           overall_score: 10,
@@ -128,6 +129,7 @@ class VerificationEngine {
         threshold: this._getThreshold(task),
         passed: true,
         autoAccepted: true,
+        autoAcceptedReason: 'verification_unavailable',
         verdict,
       };
     }
@@ -138,6 +140,7 @@ class VerificationEngine {
       threshold,
       passed: Boolean(verdict.overall_pass || verdict.overall_score >= threshold),
       autoAccepted: false,
+      autoAcceptedReason: null,
       verdict,
     };
   }
@@ -211,13 +214,11 @@ class VerificationEngine {
 
   _extractCriteria(task) {
     const criteria = [];
+    const meta = this._parseTaskMetadata(task);
 
     // Try metadata.acceptance_criteria
-    if (task.metadata) {
-      const meta = typeof task.metadata === 'string' ? JSON.parse(task.metadata) : task.metadata;
-      if (Array.isArray(meta.acceptance_criteria)) {
-        criteria.push(...meta.acceptance_criteria.map(c => typeof c === 'string' ? { description: c } : c));
-      }
+    if (Array.isArray(meta.acceptance_criteria)) {
+      criteria.push(...meta.acceptance_criteria.map((entry) => typeof entry === 'string' ? { description: entry } : entry));
     }
 
     // Fallback: extract from description (lines starting with "- [ ]" or "* ")
@@ -227,6 +228,33 @@ class VerificationEngine {
         const trimmed = line.trim();
         if (trimmed.startsWith('- [ ]') || trimmed.startsWith('- [x]') || trimmed.startsWith('* ')) {
           criteria.push({ description: trimmed.replace(/^[-*]\s*(\[.\]\s*)?/, '') });
+        }
+      }
+    }
+
+    if (!criteria.length) {
+      const phaseCriteria = [
+        meta.orchestration_phase_verification_focus,
+        meta.orchestration_phase_objective,
+      ].filter((value) => typeof value === 'string' && value.trim());
+      if (phaseCriteria.length > 0) {
+        criteria.push(...phaseCriteria.map((description) => ({ description })));
+      }
+    }
+
+    if (!criteria.length && Array.isArray(meta.orchestration_phases)) {
+      const phaseIndex = Number.isFinite(Number(meta.orchestration_phase_index))
+        ? Number(meta.orchestration_phase_index)
+        : 0;
+      const phase = meta.orchestration_phases[phaseIndex] || meta.orchestration_phases[0] || null;
+      if (phase) {
+        const phaseCriteria = [
+          phase.verification_focus,
+          phase.objective,
+          phase.title,
+        ].filter((value) => typeof value === 'string' && value.trim());
+        if (phaseCriteria.length > 0) {
+          criteria.push(...phaseCriteria.map((description) => ({ description })));
         }
       }
     }

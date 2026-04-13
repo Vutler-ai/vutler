@@ -146,6 +146,23 @@ function buildToolActionSummary(actions = [], results = []) {
   }).join('\n');
 }
 
+function shouldRequireManualVerificationReview(rootTask, evaluation = {}) {
+  if (evaluation?.autoAccepted !== true) return false;
+  const metadata = parseJsonLike(rootTask?.metadata);
+  return metadata.verification_auto_accept_allowed !== true;
+}
+
+function buildVerificationReviewSummary(evaluation = {}) {
+  const reason = String(evaluation?.autoAcceptedReason || '').trim().toLowerCase();
+  if (reason === 'verification_unavailable') {
+    return 'Human verification required because the verifier was unavailable.';
+  }
+  if (reason === 'no_criteria') {
+    return 'Human verification required because no acceptance criteria were available.';
+  }
+  return 'Human verification required because the automated verdict was not grounded enough.';
+}
+
 function extractTaskBlocker(task) {
   const metadata = parseJsonLike(task?.metadata);
   const blockerType = String(metadata.snipara_blocker_type || metadata.blocker_type || '').trim();
@@ -1883,6 +1900,74 @@ class OrchestrationRunEngine {
         orchestration_proactive: true,
       },
     });
+
+    if (shouldRequireManualVerificationReview(rootTask, evaluation)) {
+      const reviewSummary = buildVerificationReviewSummary(evaluation);
+      await updateRunStep(pool, step.id, {
+        status: 'completed',
+        completedAt: now,
+        output: {
+          delegated_task_id: childTask.id,
+          verification: evaluation.verdict,
+          verification_threshold: evaluation.threshold,
+          passed: true,
+          auto_accepted: true,
+          auto_accepted_reason: evaluation.autoAcceptedReason || null,
+          manual_review_required: true,
+        },
+      });
+
+      await appendRunEvent(pool, {
+        runId: run.id,
+        stepId: step.id,
+        eventType: 'verify.manual_review_required',
+        actor: 'run-engine',
+        payload: {
+          delegated_task_id: childTask.id,
+          auto_accepted_reason: evaluation.autoAcceptedReason || null,
+        },
+      });
+
+      const approvalStep = await this.ensureApprovalGateStep(run, steps, childTask, {
+        overall_score: evaluation.verdict?.overall_score ?? null,
+        summary: reviewSummary,
+      }, rootTask);
+      const awaitingRun = await updateRun(pool, run.id, buildReleaseLeasePatch({
+        status: 'awaiting_approval',
+        currentStepId: approvalStep.id,
+        nextWakeAt: null,
+        lastProgressAt: now,
+      }));
+
+      await updateTaskRecord(rootTask.id, {
+        metadata: {
+          orchestration_status: 'awaiting_approval',
+          orchestration_run_id: run.id,
+          orchestration_step_id: approvalStep.id,
+          delegated_task_id: childTask.id,
+          approval_required: true,
+          approval_mode: approvalModeOf(rootTask),
+          verification_auto_accepted: true,
+          verification_auto_accepted_reason: evaluation.autoAcceptedReason || null,
+          pending_approval: {
+            run_id: run.id,
+            step_id: approvalStep.id,
+            delegated_task_id: childTask.id,
+            verification_score: evaluation.verdict?.overall_score ?? null,
+            summary: reviewSummary,
+            blocker_type: 'verification_review',
+          },
+          orchestration_proactive: true,
+        },
+      });
+
+      await this.postApprovalRequest(rootTask, run, approvalStep, {
+        summary: reviewSummary,
+      }).catch((err) => {
+        console.warn('[RunEngine] Failed to post verification review request:', err.message);
+      });
+      return awaitingRun;
+    }
 
     if (evaluation.passed) {
       await updateRunStep(pool, step.id, {

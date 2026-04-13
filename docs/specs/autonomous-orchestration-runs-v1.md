@@ -65,6 +65,23 @@ Current scope:
 - the durable deferred path is now wired for chat-triggered tool actions where a `chatActionContext` exists
 - synchronous tool actions still stay in the normal inline tool loop
 
+### Shipped slice: verification review hardening (2026-04-13)
+
+Verification no longer silently finalizes a durable run when the verdict was auto-accepted only because the verifier had no grounding signal.
+
+Current behavior in code:
+
+- `VerificationEngine` now records why a result was auto-accepted with explicit reasons such as `no_criteria` and `verification_unavailable`
+- criteria extraction now derives fallback verification prompts from orchestration phase metadata before defaulting to blind auto-accept
+- when a run-managed verification result is auto-accepted and the root task did not explicitly allow blind acceptance, `runEngine` converts that condition into a human review gate instead of proceeding directly to `finalize`
+- the root task projection now stores `verification_auto_accepted`, `verification_auto_accepted_reason`, and a `pending_approval.blocker_type = verification_review` marker so operators can distinguish grounded approvals from fallback review
+- approval chat messages now explain why human review is required when the automated verifier could not make a grounded decision
+
+Operational effect:
+
+- durable runs still stay autonomous when verification is grounded
+- fallback verifier behavior is now visible and auditable instead of being silently treated as a normal pass
+
 ## Why This Is Needed
 
 Current Vutler orchestration is strong at synchronous guarded tool execution, but weak at persistent autonomy:

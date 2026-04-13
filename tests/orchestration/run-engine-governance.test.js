@@ -228,6 +228,220 @@ describe('runEngine verification and approval flow', () => {
     }));
   });
 
+  test('routes auto-accepted verification results to manual review when criteria were unavailable', async () => {
+    const taskUpdates = [];
+    const updateRunCalls = [];
+    const createTask = jest.fn();
+    const insertChatMessage = jest.fn().mockResolvedValue({ id: 'chat-review-1' });
+    const evaluateTaskOutput = jest.fn().mockResolvedValue({
+      passed: true,
+      threshold: 8,
+      autoAccepted: true,
+      autoAcceptedReason: 'no_criteria',
+      verdict: {
+        overall_pass: true,
+        overall_score: 10,
+        scores: [],
+        summary: 'Auto-accepted (no criteria)',
+      },
+    });
+    const recordVerdict = jest.fn().mockResolvedValue(null);
+    const appendRunEvent = jest.fn().mockResolvedValue(null);
+    const claimRunnableRuns = jest.fn().mockResolvedValue([{
+      id: 'run-review-1',
+      workspace_id: 'ws-1',
+      root_task_id: 'root-task-review-1',
+      status: 'waiting_on_tasks',
+      lock_token: 'lock-review-1',
+      requested_agent_id: 'agent-1',
+      requested_agent_username: 'mike',
+      display_agent_id: 'agent-1',
+      display_agent_username: 'mike',
+    }]);
+    const getRunById = jest.fn().mockResolvedValue({
+      id: 'run-review-1',
+      workspace_id: 'ws-1',
+      root_task_id: 'root-task-review-1',
+      status: 'waiting_on_tasks',
+      lock_token: 'lock-review-1',
+      requested_agent_id: 'agent-1',
+      requested_agent_username: 'mike',
+      display_agent_id: 'agent-1',
+      display_agent_username: 'mike',
+      summary: 'Verification review run.',
+    });
+    const getCurrentRunStep = jest.fn().mockResolvedValue({
+      id: 'step-delegate-review-1',
+      run_id: 'run-review-1',
+      sequence_no: 2,
+      step_type: 'delegate_task',
+      status: 'waiting',
+      title: 'Delegate execution task',
+      spawned_task_id: 'child-task-review-1',
+    });
+    const listRunSteps = jest.fn().mockResolvedValue([
+      {
+        id: 'step-plan-review-1',
+        run_id: 'run-review-1',
+        sequence_no: 1,
+        step_type: 'plan',
+        status: 'completed',
+        title: 'Plan orchestration run',
+      },
+      {
+        id: 'step-delegate-review-1',
+        run_id: 'run-review-1',
+        sequence_no: 2,
+        step_type: 'delegate_task',
+        status: 'waiting',
+        title: 'Delegate execution task',
+        spawned_task_id: 'child-task-review-1',
+      },
+    ]);
+    const createRunStep = jest.fn()
+      .mockResolvedValueOnce({
+        id: 'step-verify-review-1',
+        run_id: 'run-review-1',
+        sequence_no: 3,
+        step_type: 'verify',
+        status: 'queued',
+        title: 'Verify delegated result',
+      })
+      .mockResolvedValueOnce({
+        id: 'step-approval-review-1',
+        run_id: 'run-review-1',
+        sequence_no: 4,
+        step_type: 'approval_gate',
+        status: 'awaiting_approval',
+        title: 'Human approval required',
+        approval_mode: 'manual',
+      });
+    const heartbeatRunLease = jest.fn().mockResolvedValue({
+      id: 'run-review-1',
+      lock_token: 'lock-review-1',
+    });
+    const updateRun = jest.fn().mockImplementation(async (_db, _runId, patch) => {
+      updateRunCalls.push(patch);
+      return { id: 'run-review-1', ...patch };
+    });
+    const updateRunStep = jest.fn().mockResolvedValue({});
+
+    const poolQuery = jest.fn(async (sql, params) => {
+      if (sql.includes('FROM tenant_vutler.tasks') && sql.includes('WHERE id = $1')) {
+        if (params[0] === 'root-task-review-1') {
+          return {
+            rows: [{
+              id: 'root-task-review-1',
+              title: 'Review autonomous delivery',
+              description: 'No acceptance criteria were provided here.',
+              priority: 'high',
+              workspace_id: 'ws-1',
+              metadata: {
+                origin: 'chat',
+                origin_chat_channel_id: 'channel-review-1',
+                origin_chat_message_id: 'message-review-1',
+              },
+            }],
+          };
+        }
+
+        if (params[0] === 'child-task-review-1') {
+          return {
+            rows: [{
+              id: 'child-task-review-1',
+              status: 'completed',
+              metadata: {
+                result: 'Deliverable is ready, but criteria were never formalized.',
+              },
+            }],
+          };
+        }
+      }
+
+      if (sql.startsWith('UPDATE tenant_vutler.tasks')) {
+        taskUpdates.push({ sql, params });
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected SQL in verification review test: ${sql}`);
+    });
+
+    jest.doMock('../../lib/vaultbrix', () => ({ query: poolQuery }));
+    jest.doMock('../../services/chatMessages', () => ({ insertChatMessage }));
+    jest.doMock('../../services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({ createTask }),
+    }));
+    jest.doMock('../../services/verificationEngine', () => ({
+      getVerificationEngine: () => ({
+        maxRetries: 3,
+        passThreshold: 7,
+        evaluateTaskOutput,
+        recordVerdict,
+      }),
+    }));
+    jest.doMock('../../services/orchestration/runStore', () => ({
+      DEFAULT_LEASE_MS: 60_000,
+      TERMINAL_RUN_STATUSES: new Set(['completed', 'failed', 'cancelled', 'timed_out']),
+      appendRunEvent,
+      claimRunnableRuns,
+      createRunStep,
+      getCurrentRunStep,
+      getRunById,
+      heartbeatRunLease,
+      listRunSteps,
+      parseJsonLike: jest.requireActual('../../services/orchestration/runStore').parseJsonLike,
+      updateRun,
+      updateRunStep,
+    }));
+
+    const { OrchestrationRunEngine } = require('../../services/orchestration/runEngine');
+    const engine = new OrchestrationRunEngine({
+      pollIntervalMs: 50,
+      resumeDelayMs: 3_000,
+      leaseMs: 30_000,
+      workerId: 'worker-run-engine-test',
+    });
+
+    await engine.pollOnce();
+
+    expect(createRunStep).toHaveBeenNthCalledWith(2, expect.anything(), expect.objectContaining({
+      stepType: 'approval_gate',
+      approvalMode: 'manual',
+      input: expect.objectContaining({
+        delegated_task_id: 'child-task-review-1',
+      }),
+    }));
+    expect(updateRunCalls).toContainEqual(expect.objectContaining({
+      status: 'awaiting_approval',
+      currentStepId: 'step-approval-review-1',
+      lockToken: null,
+      lockedBy: null,
+    }));
+    expect(createTask).not.toHaveBeenCalled();
+    const approvalWrite = taskUpdates.find((call) => {
+      const payload = JSON.parse(call.params[0]);
+      return payload.pending_approval?.blocker_type === 'verification_review';
+    });
+    expect(approvalWrite).toBeTruthy();
+    expect(JSON.parse(approvalWrite.params[0])).toEqual(expect.objectContaining({
+      orchestration_status: 'awaiting_approval',
+      orchestration_run_id: 'run-review-1',
+      orchestration_step_id: 'step-approval-review-1',
+      approval_required: true,
+      verification_auto_accepted: true,
+      verification_auto_accepted_reason: 'no_criteria',
+      pending_approval: expect.objectContaining({
+        run_id: 'run-review-1',
+        step_id: 'step-approval-review-1',
+        blocker_type: 'verification_review',
+      }),
+    }));
+    expect(insertChatMessage).toHaveBeenCalledWith(expect.anything(), null, 'tenant_vutler', expect.objectContaining({
+      channel_id: 'channel-review-1',
+      content: expect.stringContaining('Human verification required because no acceptance criteria were available.'),
+    }));
+  });
+
   test('queues a revision delegate when verification fails below the retry ceiling', async () => {
     const taskUpdates = [];
     const updateRunCalls = [];
