@@ -13,7 +13,7 @@ const pool = require('../lib/vaultbrix');
 const { chat: llmChat } = require('./llmRouter');
 const { getSwarmCoordinator } = require('./swarmCoordinator');
 const { getRunEngine } = require('./orchestration/runEngine');
-const { ensureRunForTask } = require('./orchestration/runStore');
+const { bootstrapTaskRun } = require('./orchestration/runBootstrap');
 const { assertColumnsExist, assertTableExists, runtimeSchemaMutationsAllowed } = require('../lib/schemaReadiness');
 const { deleteCalendarEvent, syncScheduleCalendarEvent, SCHEDULE_EVENT_SOURCE } = require('./taskCalendarSyncService');
 
@@ -803,7 +803,7 @@ async function _executeScheduledTask(schedule) {
       resultPayload = { task_id: taskId, created: true };
 
       if (target.kind === 'run_template' && task?.id) {
-        const runSeed = await ensureRunForTask({
+        const runSeed = await bootstrapTaskRun({
           db: pool,
           workspaceId: schedule.workspace_id,
           task,
@@ -830,27 +830,13 @@ async function _executeScheduledTask(schedule) {
             schedule_id: schedule.id,
             schedule_run_id: runId,
           },
+          taskStatus: 'in_progress',
+          taskMetadataPatch: {
+            execution_backend: 'orchestration_run',
+            execution_mode: 'autonomous',
+            workflow_mode: 'FULL',
+          },
         });
-
-        await pool.query(
-          `UPDATE ${SCHEMA}.tasks
-           SET status = 'in_progress',
-               metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
-               updated_at = NOW()
-           WHERE id = $1`,
-          [
-            task.id,
-            JSON.stringify({
-              orchestration_run_id: runSeed.run?.id || null,
-              orchestration_step_id: runSeed.step?.id || null,
-              orchestration_status: runSeed.run?.status || 'queued',
-              orchestrated_by: runSeed.run?.orchestrated_by || 'scheduler',
-              execution_backend: 'orchestration_run',
-              execution_mode: 'autonomous',
-              workflow_mode: 'FULL',
-            }),
-          ]
-        );
 
         resultPayload = {
           ...resultPayload,

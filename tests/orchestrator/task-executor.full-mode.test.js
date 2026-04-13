@@ -43,9 +43,9 @@ describe('taskExecutor FULL mode', () => {
         };
       }
 
-      if (sql.startsWith('UPDATE tenant_vutler.tasks SET')) {
+      if (sql.includes('UPDATE tenant_vutler.tasks')) {
         updates.push({ sql, params });
-        return { rows: [{ id: params[0], status: params[1] }] };
+        return { rows: [{ id: params[2], status: params[0] }] };
       }
 
       throw new Error(`Unexpected SQL in FULL mode test: ${sql}`);
@@ -100,8 +100,8 @@ describe('taskExecutor FULL mode', () => {
     expect(preparePromptContext).not.toHaveBeenCalled();
     expect(recordTaskEpisode).not.toHaveBeenCalled();
     expect(updates).toHaveLength(1);
-    expect(updates[0].params[1]).toBe('in_progress');
-    expect(JSON.parse(updates[0].params[2])).toEqual(expect.objectContaining({
+    expect(updates[0].params[0]).toBe('in_progress');
+    expect(JSON.parse(updates[0].params[1])).toEqual(expect.objectContaining({
       execution_backend: 'orchestration_run',
       execution_mode: 'autonomous',
       workflow_mode: 'FULL',

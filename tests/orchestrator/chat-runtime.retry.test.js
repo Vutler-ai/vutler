@@ -170,7 +170,7 @@ describe('chatRuntime retry flow', () => {
     expect(state.message.processing_state).toBe('processed');
     expect(llmChat).toHaveBeenCalledTimes(2);
     expect(state.inserts).toHaveLength(1);
-    expect(analyzeAndRoute).toHaveBeenCalledTimes(2);
+    expect(analyzeAndRoute).not.toHaveBeenCalled();
   });
 
   test('falls back when chat_messages.attachments column is missing', async () => {

@@ -19,6 +19,8 @@ const {
   resolveAgentDriveRoot,
 } = require('../../../services/agentDriveService');
 const { signalRunFromTask } = require('../../../services/orchestration/runSignals');
+const { bootstrapTaskRun } = require('../../../services/orchestration/runBootstrap');
+const { isMissingOrchestrationSchemaError } = require('../../../services/orchestration/runStore');
 const { publishTaskEvent } = require('../../../services/workspaceRealtime');
 const { refreshTaskHierarchyRollups } = require('../../../services/taskHierarchyRollupService');
 const { syncTaskCalendarEvent } = require('../../../services/taskCalendarSyncService');
@@ -85,6 +87,13 @@ function safeJsonParse(raw) {
   } catch (_) {
     return null;
   }
+}
+
+function truncateText(value, maxLength = 140) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
 }
 
 function normalizeRemoteStatus(status, eventType = '') {
@@ -766,19 +775,21 @@ class SwarmCoordinator {
       sniparaSwarmId: swarmId,
     });
 
-    if (sniparaReady) {
-      await this.broadcast(
-        `Nouvelle tache assignee a ${agentId}: ${payload.title}`,
-        'task_assigned',
-        { ...payload, task: created || { id: taskRow.id } },
-        ws
-      ).catch((err) => {
-        console.warn('[SwarmCoordinator] rlm_broadcast failed (non-blocking):', err.message);
-      });
-    }
+    if (!task.suppress_coordination) {
+      if (sniparaReady) {
+        await this.broadcast(
+          `Nouvelle tache assignee a ${agentId}: ${payload.title}`,
+          'task_assigned',
+          { ...payload, task: created || { id: taskRow.id } },
+          ws
+        ).catch((err) => {
+          console.warn('[SwarmCoordinator] rlm_broadcast failed (non-blocking):', err.message);
+        });
+      }
 
-    await this.postTaskMessageToAgentChannel(ws, agentId, payload.title, payload.priority);
-    await this.postTeamCoordinationCreate(ws, agentId, payload.title, payload.priority);
+      await this.postTaskMessageToAgentChannel(ws, agentId, payload.title, payload.priority);
+      await this.postTeamCoordinationCreate(ws, agentId, payload.title, payload.priority);
+    }
 
     return {
       ...taskRow,
@@ -924,7 +935,7 @@ class SwarmCoordinator {
     return this.createTask(this.extractTaskFromText(content), workspaceId);
   }
 
-  async analyzeAndRoute(message, availableAgents = [], workspaceId, options = {}) {
+  async planChatWorkRequest(message, availableAgents = [], workspaceId, options = {}) {
     const ws = normalizeWorkspaceId(workspaceId || message?.workspace_id);
     const text = typeof message === 'string' ? message : (message?.content || '');
 
@@ -935,7 +946,10 @@ class SwarmCoordinator {
 
     const recalled = await this.recallWorkspaceContext(text, ws);
     const recentHistory = Array.isArray(options.history) && options.history.length > 0
-      ? options.history.slice(-4).map((entry) => `${entry.role === 'assistant' ? 'Assistant' : 'User'}: ${String(entry.content || '').slice(0, 500)}`).join('\n')
+      ? options.history
+        .slice(-4)
+        .map((entry) => `${entry.role === 'assistant' ? 'Assistant' : 'User'}: ${String(entry.content || '').slice(0, 500)}`)
+        .join('\n')
       : '';
     const routingInput = recentHistory
       ? `Historique recent:\n${recentHistory}\n\nDernier message user:\n${text}`
@@ -944,17 +958,203 @@ class SwarmCoordinator {
       `${routingInput}\n\nContexte workspace:\n${recalled || ''}`,
       availableAgents,
       ws,
-      { preferredAgentId: options.preferredAgentId || message?.requested_agent_id || null }
+      { preferredAgentId: options.planningPreferredAgentId || options.preferredAgentId || message?.requested_agent_id || null }
     );
-    const created = [];
 
-    for (const subtask of subtasks) {
+    const phases = subtasks.map((subtask, index) => {
+      const agentRef = this.resolveAgentForSubtask(
+        subtask,
+        availableAgents,
+        options.planningPreferredAgentId || options.preferredAgentId || message?.requested_agent_id || null
+      );
+      const agentRecord = availableAgents.find((agent) => {
+        const normalized = String(agentRef || '').trim().toLowerCase();
+        return String(agent?.id || '').trim().toLowerCase() === normalized
+          || String(agent?.username || '').trim().toLowerCase() === normalized
+          || String(agent?.name || '').trim().toLowerCase() === normalized;
+      }) || null;
+      return {
+        key: `phase_${index + 1}`,
+        title: truncateText(subtask?.title || `Phase ${index + 1}`, 90),
+        objective: truncateText(subtask?.description || subtask?.title || text, 260),
+        priority: subtask?.priority || 'medium',
+        agent_id: agentRecord?.id || null,
+        agent_username: agentRecord?.username || agentRef || null,
+        verification_focus: subtask?.verification_focus || subtask?.success_criteria || null,
+      };
+    });
+
+    await this.updateSharedContext(`Current priorities: ${subtasks.map((subtask) => subtask.title).join(' | ')}`, ws);
+    await this.maybeOverflowToNexus(ws, subtasks);
+
+    return {
+      routed: true,
+      workspace_id: ws,
+      message_text: text,
+      recalled_context: recalled || '',
+      subtasks,
+      phases,
+      requested_agent_id: options.requestedAgentId || message?.requested_agent_id || null,
+    };
+  }
+
+  buildRootTaskTitleForChat(messageText, phases = []) {
+    if (Array.isArray(phases) && phases.length === 1 && phases[0]?.title) {
+      return truncateText(phases[0].title, 140);
+    }
+    return truncateText(messageText || 'Autonomous chat request', 140);
+  }
+
+  buildRootTaskDescriptionForChat(messageText, phases = [], recalledContext = '') {
+    const phaseLines = Array.isArray(phases)
+      ? phases
+        .map((phase, index) => `${index + 1}. ${phase?.title || `Phase ${index + 1}`}${phase?.objective ? ` — ${phase.objective}` : ''}`)
+        .filter(Boolean)
+      : [];
+
+    return [
+      'User request:',
+      String(messageText || '').trim(),
+      '',
+      phaseLines.length > 0 ? 'Planned phases:' : '',
+      phaseLines.join('\n'),
+      recalledContext ? `\nWorkspace context:\n${String(recalledContext).slice(0, 1200)}` : '',
+    ].filter(Boolean).join('\n');
+  }
+
+  async queueRootOrchestrationRun(message, availableAgents = [], workspaceId, options = {}) {
+    const plan = await this.planChatWorkRequest(message, availableAgents, workspaceId, options);
+    if (!plan?.routed) return plan;
+
+    const ws = normalizeWorkspaceId(workspaceId || message?.workspace_id || plan.workspace_id);
+    const rootTitle = this.buildRootTaskTitleForChat(message?.content || plan.message_text, plan.phases);
+    const rootDescription = this.buildRootTaskDescriptionForChat(
+      message?.content || plan.message_text,
+      plan.phases,
+      plan.recalled_context
+    );
+
+    const requestedAgent = availableAgents.find((agent) => {
+      const requestedRef = String(options.requestedAgentId || message?.requested_agent_id || '').trim().toLowerCase();
+      if (!requestedRef) return false;
+      return String(agent?.id || '').trim().toLowerCase() === requestedRef
+        || String(agent?.username || '').trim().toLowerCase() === requestedRef
+        || String(agent?.name || '').trim().toLowerCase() === requestedRef;
+    }) || null;
+
+    const rootTask = await this.createTask({
+      title: rootTitle,
+      description: rootDescription,
+      priority: plan.phases.some((phase) => String(phase?.priority || '').toLowerCase() === 'high') ? 'high' : 'medium',
+      for_agent_id: requestedAgent?.username || requestedAgent?.id || options.requestedAgentId || message?.requested_agent_id || null,
+      suppress_coordination: true,
+      metadata: {
+        origin: 'chat',
+        origin_chat_channel_id: message?.channel_id || null,
+        origin_chat_message_id: message?.id || null,
+        origin_chat_user_id: message?.sender_id || null,
+        origin_chat_user_name: message?.sender_name || null,
+        requested_agent_id: requestedAgent?.id || options.requestedAgentId || message?.requested_agent_id || null,
+        workspace_id: ws,
+        workflow_mode: 'FULL',
+        execution_backend: 'orchestration_run',
+        execution_mode: 'autonomous',
+        autonomous: true,
+        orchestration_required: true,
+        orchestration_entrypoint: 'chat',
+        orchestration_phases: plan.phases,
+        orchestration_workspace_context_excerpt: String(plan.recalled_context || '').slice(0, 1200),
+        visible_in_kanban: true,
+      },
+    }, ws);
+
+    let runSeed = null;
+    let bootstrapMode = 'root_run';
+    try {
+      runSeed = await bootstrapTaskRun({
+        db: pool,
+        task: rootTask,
+        workspaceId: ws,
+        requestedAgent: {
+          id: requestedAgent?.id || options.requestedAgentId || null,
+          username: requestedAgent?.username || requestedAgent?.id || options.requestedAgentId || null,
+        },
+        displayAgent: {
+          id: requestedAgent?.id || options.displayAgentId || options.requestedAgentId || null,
+          username: requestedAgent?.username || requestedAgent?.id || options.displayAgentId || options.requestedAgentId || null,
+        },
+        orchestratedBy: 'jarvis',
+        summary: `Autonomous chat run for "${rootTitle}".`,
+        plan: {
+          goal: rootTitle,
+          strategy: plan.phases.length > 1 ? 'multi_phase_sequential' : 'single_delegate_verify_finalize',
+          requested_workflow_mode: 'FULL',
+          created_by: 'chat_runtime',
+          phases: plan.phases,
+          source: 'chat',
+        },
+        context: {
+          workspace_id: ws,
+          source: 'chat',
+          origin_human: {
+            id: message?.sender_id || null,
+            name: message?.sender_name || null,
+          },
+          origin_chat: {
+            channel_id: message?.channel_id || null,
+            message_id: message?.id || null,
+          },
+          workspace_context_excerpt: String(plan.recalled_context || '').slice(0, 1200),
+          delegated_agents: plan.phases
+            .map((phase) => ({
+              agentRef: phase.agent_username || null,
+              reason: phase.title || phase.objective || null,
+              domain: phase.key || null,
+            }))
+            .filter((entry) => entry.agentRef || entry.reason),
+        },
+        taskStatus: 'in_progress',
+        taskMetadataPatch: {
+          execution_backend: 'orchestration_run',
+          execution_mode: 'autonomous',
+          workflow_mode: 'FULL',
+        },
+      });
+    } catch (err) {
+      if (!isMissingOrchestrationSchemaError(err)) {
+        console.warn('[SwarmCoordinator] root orchestration run bootstrap failed, task executor will retry:', err.message);
+        bootstrapMode = 'task_executor_retry';
+      } else {
+        bootstrapMode = 'task_executor_fallback';
+      }
+    }
+
+    return {
+      routed: true,
+      mode: bootstrapMode,
+      created_count: 1,
+      root_task: runSeed?.task || rootTask,
+      root_task_id: runSeed?.task?.id || rootTask?.id || null,
+      run: runSeed?.run || null,
+      orchestration_run_id: runSeed?.run?.id || null,
+      orchestration_step_id: runSeed?.step?.id || null,
+      phases: plan.phases,
+    };
+  }
+
+  async analyzeAndRoute(message, availableAgents = [], workspaceId, options = {}) {
+    const plan = await this.planChatWorkRequest(message, availableAgents, workspaceId, options);
+    if (!plan?.routed) return plan;
+
+    const ws = normalizeWorkspaceId(plan.workspace_id || workspaceId || message?.workspace_id);
+    const created = [];
+    for (const subtask of plan.subtasks) {
       const agent = this.resolveAgentForSubtask(
         subtask,
         availableAgents,
         options.preferredAgentId || message?.requested_agent_id || null
       );
-      const enrichedDescription = `${subtask.description || ''}\n\n[Workspace context]\n${String(recalled || '').slice(0, 1200)}`;
+      const enrichedDescription = `${subtask.description || ''}\n\n[Workspace context]\n${String(plan.recalled_context || '').slice(0, 1200)}`;
       const taskRow = await this.createTask({
         title: subtask.title,
         description: enrichedDescription,
@@ -972,9 +1172,6 @@ class SwarmCoordinator {
       }, ws);
       created.push({ ...taskRow, subtask, agent });
     }
-
-    await this.updateSharedContext(`Current priorities: ${subtasks.map((subtask) => subtask.title).join(' | ')}`, ws);
-    await this.maybeOverflowToNexus(ws, subtasks);
 
     return { routed: true, created_count: created.length, tasks: created };
   }

@@ -22,8 +22,8 @@ describe('scheduler orchestration targets', () => {
     jest.doMock('../../services/orchestration/runEngine', () => ({
       getRunEngine: () => ({ wakeRun, requestImmediatePoll }),
     }));
-    jest.doMock('../../services/orchestration/runStore', () => ({
-      ensureRunForTask: jest.fn(),
+    jest.doMock('../../services/orchestration/runBootstrap', () => ({
+      bootstrapTaskRun: jest.fn(),
     }));
     jest.doMock('../../lib/schemaReadiness', () => ({
       assertColumnsExist: jest.fn(),
@@ -73,7 +73,7 @@ describe('scheduler orchestration targets', () => {
         origin: 'schedule',
       },
     });
-    const ensureRunForTask = jest.fn().mockResolvedValue({
+    const bootstrapTaskRun = jest.fn().mockResolvedValue({
       run: {
         id: 'run-template-1',
         status: 'queued',
@@ -81,6 +81,9 @@ describe('scheduler orchestration targets', () => {
       },
       step: {
         id: 'step-template-1',
+      },
+      task: {
+        id: 'root-task-1',
       },
     });
 
@@ -92,8 +95,8 @@ describe('scheduler orchestration targets', () => {
     jest.doMock('../../services/orchestration/runEngine', () => ({
       getRunEngine: () => ({ wakeRun, requestImmediatePoll }),
     }));
-    jest.doMock('../../services/orchestration/runStore', () => ({
-      ensureRunForTask,
+    jest.doMock('../../services/orchestration/runBootstrap', () => ({
+      bootstrapTaskRun,
     }));
     jest.doMock('../../lib/schemaReadiness', () => ({
       assertColumnsExist: jest.fn(),
@@ -141,15 +144,20 @@ describe('scheduler orchestration targets', () => {
         custom_flag: true,
       }),
     }));
-    expect(ensureRunForTask).toHaveBeenCalledWith(expect.objectContaining({
+    expect(bootstrapTaskRun).toHaveBeenCalledWith(expect.objectContaining({
       workspaceId: 'ws-1',
       task: expect.objectContaining({ id: 'root-task-1' }),
       orchestratedBy: 'scheduler',
       requestedAgent: expect.objectContaining({
         username: 'mike',
       }),
+      taskStatus: 'in_progress',
+      taskMetadataPatch: expect.objectContaining({
+        execution_backend: 'orchestration_run',
+        execution_mode: 'autonomous',
+        workflow_mode: 'FULL',
+      }),
     }));
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("SET status = 'in_progress'"), expect.any(Array));
     expect(result).toEqual(expect.objectContaining({
       taskId: 'root-task-1',
       status: 'completed',

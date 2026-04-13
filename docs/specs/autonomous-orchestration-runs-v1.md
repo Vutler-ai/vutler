@@ -22,6 +22,31 @@ Deployment note:
 - apply the full SQL migration on Vaultbrix at the end of the implementation slice
 - use the repo migration runner (`npm run migrate`, `npm run migrate:status`) instead of manual SQL drift
 
+## Implementation Status
+
+### Shipped slice: entrypoint unification (2026-04-13)
+
+The first runtime slice now treats durable orchestration runs as the primary execution backend for autonomous work instead of letting each entrypoint fan out independently.
+
+Current behavior in code:
+
+- chat-routed multi-step work creates one visible root task and seeds one orchestration run immediately when the orchestration schema is available
+- `TaskExecutor` uses the same bootstrap helper to attach a claimed task to a durable run instead of open-coding run creation
+- scheduler `run_template` execution uses the same bootstrap path, so recurring work enters the same runtime contract as chat and task-triggered work
+- the root task projection stores stable orchestration metadata such as `orchestration_run_id`, `orchestration_step_id`, `workflow_mode`, `requested_agent_id`, and `display_agent_id`
+- chat acknowledgements now point to the durable run contract instead of implying a direct task fanout-only execution path
+
+Compatibility behavior remains intentional:
+
+- if the orchestration schema is missing during rollout, chat and task execution fall back to the pre-existing task executor path instead of failing closed
+- direct single-agent chat execution still bypasses swarm orchestration when the request is explicitly addressed to one agent and does not require multi-agent routing
+
+This means Vutler now has one bootstrap contract for autonomous work across:
+
+- chat
+- claimed tasks
+- recurring schedules that materialize into run templates
+
 ## Why This Is Needed
 
 Current Vutler orchestration is strong at synchronous guarded tool execution, but weak at persistent autonomy:

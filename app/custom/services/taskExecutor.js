@@ -17,9 +17,9 @@ const {
   isOverlayEmpty,
 } = require('../../../services/executionOverlayService');
 const {
-  ensureRunForTask,
   isMissingOrchestrationSchemaError,
 } = require('../../../services/orchestration/runStore');
+const { bootstrapTaskRun } = require('../../../services/orchestration/runBootstrap');
 
 const SCHEMA = 'tenant_vutler';
 const POLL_INTERVAL = 10_000;
@@ -339,11 +339,10 @@ async function resolveTaskExecutionOverlay(task, executionAgent, workspaceId) {
 }
 
 async function queueAutonomousRunForTask(task, executionAgent, workspaceId) {
-  const metadata = parseMetadata(task.metadata);
-  const runSeed = await ensureRunForTask({
+  return bootstrapTaskRun({
     db: pool,
-    workspaceId,
     task,
+    workspaceId,
     requestedAgent: {
       id: executionAgent.id,
       username: executionAgent.username,
@@ -356,22 +355,13 @@ async function queueAutonomousRunForTask(task, executionAgent, workspaceId) {
     summary: `Autonomous FULL-mode run for task "${task.title || task.id}".`,
     plan: buildInitialRunPlan(task, executionAgent),
     context: buildInitialRunContext(task, executionAgent, workspaceId),
+    taskStatus: 'in_progress',
+    taskMetadataPatch: {
+      execution_backend: 'orchestration_run',
+      execution_mode: 'autonomous',
+      workflow_mode: resolveTaskWorkflowMode(task) || 'FULL',
+    },
   });
-
-  await updateTask(task.id, 'in_progress', null, {
-    ...metadata,
-    execution_backend: 'orchestration_run',
-    execution_mode: 'autonomous',
-    workflow_mode: resolveTaskWorkflowMode(task) || 'FULL',
-    orchestration_run_id: runSeed.run?.id || null,
-    orchestration_step_id: runSeed.step?.id || null,
-    orchestration_status: runSeed.run?.status || 'queued',
-    orchestrated_by: runSeed.run?.orchestrated_by || 'jarvis',
-    requested_agent_id: runSeed.run?.requested_agent_id || executionAgent.id || null,
-    display_agent_id: runSeed.run?.display_agent_id || executionAgent.id || null,
-  });
-
-  return runSeed;
 }
 
 async function executeTask(task) {

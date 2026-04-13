@@ -634,24 +634,45 @@ async function handleMessage(message) {
 
   if (!bypassSwarmRouting) {
     try {
-      const routing = await swarmCoordinator.analyzeAndRoute(
-        {
-          ...message,
-          requested_agent_id: String(targetAgent.id),
-        },
-        allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
-        workspaceId,
-        {
-          history,
-          preferredAgentId: orchestration.primaryDelegate?.agentRef || String(targetAgent.id),
-        }
-      );
+      const routingPayload = {
+        ...message,
+        requested_agent_id: String(targetAgent.id),
+      };
+      const routingOptions = {
+        history,
+        requestedAgentId: String(targetAgent.id),
+        displayAgentId: String(targetAgent.id),
+        preferredAgentId: String(targetAgent.id),
+        planningPreferredAgentId: orchestration.primaryDelegate?.agentRef || String(targetAgent.id),
+      };
+      const routing = typeof swarmCoordinator.queueRootOrchestrationRun === 'function'
+        ? await swarmCoordinator.queueRootOrchestrationRun(
+          routingPayload,
+          allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+          workspaceId,
+          routingOptions
+        )
+        : await swarmCoordinator.analyzeAndRoute(
+          routingPayload,
+          allWorkspaceAgents.length > 0 ? allWorkspaceAgents : channelAgents,
+          workspaceId,
+          {
+            history,
+            preferredAgentId: orchestration.primaryDelegate?.agentRef || String(targetAgent.id),
+          }
+        );
       if (routing?.routed) {
+        const rootRunId = routing.orchestration_run_id || routing.run?.id || null;
+        const rootTaskId = routing.root_task_id || routing.root_task?.id || null;
+        const phaseCount = Array.isArray(routing.phases) ? routing.phases.length : (routing.created_count || 0);
+        const launchedMessage = rootRunId
+          ? `Bien recu. J'ai lance un run autonome${phaseCount ? ` en ${phaseCount} phase(s)` : ''} et je te tiens au courant ici.`
+          : `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`;
         await insertChatMessage(pool, null, SCHEMA, {
           channel_id: message.channel_id,
           sender_id: 'jarvis',
           sender_name: 'Jarvis',
-          content: `Bien recu. J'orchestre l'equipe et on lance l'execution. (${routing.created_count} tache(s) distribuee(s))`,
+          content: launchedMessage,
           message_type: 'text',
           workspace_id: workspaceId,
           processed_at: new Date(),
@@ -664,6 +685,9 @@ async function handleMessage(message) {
           metadata: {
             orchestration_status: 'routed',
             created_task_count: routing.created_count || 0,
+            orchestration_run_id: rootRunId,
+            root_task_id: rootTaskId,
+            orchestration_mode: routing.mode || null,
             routed_domains: orchestration.domains || [],
             delegated_agents: orchestration.delegatedAgents || [],
             available_runtime_providers: orchestration.availability?.availableProviders || [],
