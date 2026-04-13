@@ -164,6 +164,242 @@ describe('watchdog orchestration integration', () => {
     expect(signalRunFromTask).not.toHaveBeenCalled();
   });
 
+  test('handleTimeout redispatches execution timeouts but persists timeout context first', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'task-timeout-redispatch-1',
+          workspace_id: 'ws-1',
+          status: 'in_progress',
+          assigned_agent: 'mike',
+          title: 'Retry sync',
+          metadata: {
+            orchestration_parent_run_id: 'run-1',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn();
+    const appendRunEventForTask = jest.fn();
+    const postSystemMessage = jest.fn().mockResolvedValue({});
+    const getTeamChannelId = jest.fn().mockResolvedValue('channel-1');
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+    jest.doMock('../../app/custom/services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        getTeamChannelId,
+        postSystemMessage,
+      }),
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({ checkIntervalMs: 1000, stallThresholdMs: 1000, maxNudges: 1 });
+    const redispatchSpy = jest.spyOn(watchdog, '_redispatch').mockResolvedValue();
+
+    await watchdog.handleTimeout({
+      task_id: 'snip-timeout-1',
+      reason: 'execution_timeout',
+      stalled_for_seconds: 720,
+      agent_id: 'mike',
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SET metadata = COALESCE'),
+      expect.any(Array)
+    );
+    expect(postSystemMessage).toHaveBeenCalledWith(
+      'ws-1',
+      'channel-1',
+      'Watchdog',
+      expect.stringContaining('Re-dispatching automatically'),
+      'watchdog',
+    );
+    expect(redispatchSpy).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'task-timeout-redispatch-1',
+      metadata: expect.objectContaining({
+        snipara_timeout_reason: 'execution_timeout',
+        watchdog_timeout_handling: 'redispatch',
+      }),
+    }));
+    expect(appendRunEventForTask).not.toHaveBeenCalled();
+    expect(wakeRunFromTask).not.toHaveBeenCalled();
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
+
+  test('handleTimeout alerts instead of redispatching when a task was never claimed', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'task-timeout-alert-1',
+          workspace_id: 'ws-1',
+          status: 'in_progress',
+          assigned_agent: 'mike',
+          title: 'Review contract clause',
+          metadata: {
+            orchestration_parent_run_id: 'run-1',
+            orchestration_parent_step_id: 'step-1',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn().mockResolvedValue({ signaled: true, runId: 'run-1' });
+    const appendRunEventForTask = jest.fn().mockResolvedValue({ appended: true, runId: 'run-1' });
+    const postSystemMessage = jest.fn().mockResolvedValue({});
+    const getTeamChannelId = jest.fn().mockResolvedValue('channel-1');
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+    jest.doMock('../../app/custom/services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        getTeamChannelId,
+        postSystemMessage,
+      }),
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({ checkIntervalMs: 1000, stallThresholdMs: 1000, maxNudges: 1 });
+    const redispatchSpy = jest.spyOn(watchdog, '_redispatch').mockResolvedValue();
+
+    await watchdog.handleTimeout({
+      task_id: 'snip-timeout-2',
+      reason: 'never_claimed',
+      stalled_for_seconds: 600,
+      agent_id: 'mike',
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'blocked'"),
+      expect.any(Array)
+    );
+    expect(postSystemMessage).toHaveBeenCalledWith(
+      'ws-1',
+      'channel-1',
+      'Watchdog',
+      expect.stringContaining('Manual attention required'),
+      'watchdog',
+    );
+    expect(redispatchSpy).not.toHaveBeenCalled();
+    expect(appendRunEventForTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'task-timeout-alert-1',
+      status: 'blocked',
+      metadata: expect.objectContaining({
+        snipara_timeout_reason: 'never_claimed',
+        watchdog_timeout_handling: 'alert',
+      }),
+    }), expect.objectContaining({
+      eventType: 'watchdog.task_timeout_alert',
+      actor: 'watchdog',
+      payload: expect.objectContaining({
+        timeout_reason: 'never_claimed',
+        timeout_handling: 'alert',
+      }),
+    }));
+    expect(wakeRunFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'task-timeout-alert-1',
+      status: 'blocked',
+    }), expect.objectContaining({
+      reason: 'watchdog_timeout_alert',
+      eventType: 'delegate.task_timeout_alert',
+      actor: 'watchdog',
+      extraPayload: expect.objectContaining({
+        timeout_reason: 'never_claimed',
+        timeout_handling: 'alert',
+      }),
+    }));
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
+
+  test('handleTimeout escalates htask stalls instead of redispatching them', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'task-timeout-escalate-1',
+          workspace_id: 'ws-1',
+          status: 'in_progress',
+          assigned_agent: 'oscar',
+          title: 'Close parent hierarchy',
+          metadata: {
+            orchestration_parent_run_id: 'run-9',
+            orchestration_parent_step_id: 'step-9',
+          },
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+    const signalRunFromTask = jest.fn();
+    const wakeRunFromTask = jest.fn().mockResolvedValue({ signaled: true, runId: 'run-9' });
+    const appendRunEventForTask = jest.fn().mockResolvedValue({ appended: true, runId: 'run-9' });
+    const postSystemMessage = jest.fn().mockResolvedValue({});
+    const getTeamChannelId = jest.fn().mockResolvedValue('channel-1');
+
+    jest.doMock('../../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../../services/orchestration/runSignals', () => ({
+      appendRunEventForTask,
+      signalRunFromTask,
+      wakeRunFromTask,
+    }));
+    jest.doMock('../../app/custom/services/swarmCoordinator', () => ({
+      getSwarmCoordinator: () => ({
+        getTeamChannelId,
+        postSystemMessage,
+      }),
+    }));
+
+    const { AgentWatchdog } = require('../../services/watchdog');
+    const watchdog = new AgentWatchdog({ checkIntervalMs: 1000, stallThresholdMs: 1000, maxNudges: 1 });
+    const redispatchSpy = jest.spyOn(watchdog, '_redispatch').mockResolvedValue();
+
+    await watchdog.handleTimeout({
+      task_id: 'snip-timeout-3',
+      reason: 'htask_stalled',
+      stalled_for_seconds: 86400,
+      agent_id: 'oscar',
+    });
+
+    expect(redispatchSpy).not.toHaveBeenCalled();
+    expect(postSystemMessage).toHaveBeenCalledWith(
+      'ws-1',
+      'channel-1',
+      'Watchdog',
+      expect.stringContaining('Escalating to orchestration follow-up'),
+      'watchdog',
+    );
+    expect(appendRunEventForTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'task-timeout-escalate-1',
+      status: 'blocked',
+      metadata: expect.objectContaining({
+        snipara_timeout_reason: 'htask_stalled',
+        watchdog_timeout_handling: 'escalate',
+      }),
+    }), expect.objectContaining({
+      eventType: 'watchdog.task_timeout_escalated',
+      actor: 'watchdog',
+    }));
+    expect(wakeRunFromTask).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'task-timeout-escalate-1',
+      status: 'blocked',
+    }), expect.objectContaining({
+      reason: 'watchdog_timeout_escalation',
+      eventType: 'delegate.task_timeout_escalated',
+      actor: 'watchdog',
+      extraPayload: expect.objectContaining({
+        timeout_reason: 'htask_stalled',
+        timeout_handling: 'escalate',
+      }),
+    }));
+    expect(signalRunFromTask).not.toHaveBeenCalled();
+  });
+
   test('handleUnblocked marks the task in progress again and wakes the run', async () => {
     const query = jest.fn()
       .mockResolvedValueOnce({

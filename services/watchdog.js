@@ -28,6 +28,48 @@ function resolveTaskWorkspaceId(task) {
   throw new Error('workspace_id is required for watchdog task operations');
 }
 
+function normalizeTimeoutReason(reason) {
+  const normalized = String(reason || '').trim().toLowerCase();
+  return normalized || 'execution_timeout';
+}
+
+function determineTimeoutHandling(reason) {
+  switch (normalizeTimeoutReason(reason)) {
+    case 'never_claimed':
+    case 'unclaimed':
+      return 'alert';
+    case 'htask_stalled':
+      return 'escalate';
+    case 'execution_timeout':
+    default:
+      return 'redispatch';
+  }
+}
+
+function formatTimeoutAge(stalledForSeconds) {
+  if (!Number.isFinite(Number(stalledForSeconds)) || Number(stalledForSeconds) <= 0) {
+    return 'an unknown duration';
+  }
+  return `${Math.round(Number(stalledForSeconds))}s`;
+}
+
+function buildTimeoutSystemMessage(task, data, handling) {
+  const reason = normalizeTimeoutReason(data?.reason);
+  const age = formatTimeoutAge(data?.stalled_for_seconds);
+  const taskLabel = task?.title || task?.id || data?.task_id || 'unknown task';
+
+  if (handling === 'escalate') {
+    return `🚨 Task "${taskLabel}" stalled in Snipara (${reason}) for ${age}. Escalating to orchestration follow-up.`;
+  }
+
+  if (handling === 'alert') {
+    const owner = data?.agent_id || data?.owner || task?.assigned_agent || 'unassigned';
+    return `🚨 Task "${taskLabel}" timed out in Snipara (${reason}) after ${age}. Owner: ${owner}. Manual attention required.`;
+  }
+
+  return `⏱ Task "${taskLabel}" hit Snipara timeout (${reason}) after ${age}. Re-dispatching automatically.`;
+}
+
 class AgentWatchdog {
   constructor(options = {}) {
     this.checkIntervalMs = options.checkIntervalMs || CHECK_INTERVAL;
@@ -229,8 +271,86 @@ class AgentWatchdog {
     );
     const task = result.rows[0];
     if (!task) return;
+    const reason = normalizeTimeoutReason(data?.reason);
+    const handling = determineTimeoutHandling(reason);
+    const meta = this._parseMetadata(task);
+    const nextMetadata = {
+      ...meta,
+      snipara_last_event: 'task.timeout',
+      snipara_timeout_reason: reason,
+      snipara_timeout_stalled_for_seconds: Number.isFinite(Number(data?.stalled_for_seconds))
+        ? Number(data.stalled_for_seconds)
+        : null,
+      watchdog_last_timeout_at: new Date().toISOString(),
+      watchdog_timeout_handling: handling,
+    };
 
-    await this._redispatch(task);
+    const updateQuery = handling === 'redispatch'
+      ? `UPDATE ${SCHEMA}.tasks
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`
+      : `UPDATE ${SCHEMA}.tasks
+         SET status = 'blocked',
+             metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`;
+    await pool.query(updateQuery, [task.id, JSON.stringify(nextMetadata)]);
+
+    const timedOutTask = {
+      ...task,
+      status: handling === 'redispatch' ? task.status : 'blocked',
+      metadata: nextMetadata,
+    };
+    const workspaceId = resolveTaskWorkspaceId(timedOutTask);
+    const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
+    const coordinator = getSwarmCoordinator();
+    const channelId = await coordinator.getTeamChannelId(workspaceId);
+    await coordinator.postSystemMessage(
+      workspaceId,
+      channelId,
+      'Watchdog',
+      buildTimeoutSystemMessage(timedOutTask, data, handling),
+      'watchdog',
+    );
+
+    if (handling === 'redispatch') {
+      await this._redispatch(timedOutTask);
+      return;
+    }
+
+    const eventType = handling === 'escalate'
+      ? 'watchdog.task_timeout_escalated'
+      : 'watchdog.task_timeout_alert';
+    const delegateEventType = handling === 'escalate'
+      ? 'delegate.task_timeout_escalated'
+      : 'delegate.task_timeout_alert';
+    const wakeReason = handling === 'escalate'
+      ? 'watchdog_timeout_escalation'
+      : 'watchdog_timeout_alert';
+
+    await appendRunEventForTask(timedOutTask, {
+      eventType,
+      actor: 'watchdog',
+      payload: {
+        timeout_reason: reason,
+        stalled_for_seconds: nextMetadata.snipara_timeout_stalled_for_seconds,
+        timeout_handling: handling,
+        agent_id: data?.agent_id || null,
+      },
+    }).catch(() => {});
+
+    await wakeRunFromTask(timedOutTask, {
+      reason: wakeReason,
+      eventType: delegateEventType,
+      actor: 'watchdog',
+      extraPayload: {
+        timeout_reason: reason,
+        stalled_for_seconds: nextMetadata.snipara_timeout_stalled_for_seconds,
+        timeout_handling: handling,
+        agent_id: data?.agent_id || null,
+      },
+    }).catch(() => {});
   }
 
   /**

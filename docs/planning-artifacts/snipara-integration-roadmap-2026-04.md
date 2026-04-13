@@ -350,9 +350,13 @@ Status update 2026-04-13:
   - manual `Run Live Probe` checks current integrator reachability and stores the result in a workspace-scoped operations log
   - manual provision/repair actions now append a local operations trail with actor, outcome, and reconciliation details
   - retained webhook event logs now surface operationally relevant Snipara deliveries such as lifecycle, blocked, timeout, closure, and `test.ping` events
+- Vutler now also handles Snipara timeout reasons more deliberately instead of treating every timeout as the same failure:
+  - `execution_timeout` continues to trigger automated redispatch
+  - `never_claimed` and `unclaimed` now raise an operator-facing watchdog alert instead of blind redispatch
+  - `htask_stalled` now escalates back into orchestration instead of being retried like a normal execution timeout
 - this is the right current cut for Vutler:
   - it industrializes provisioning and repair
-  - it adds operator visibility without productizing reseller/client CRUD that Vutler does not yet need as a tenant-facing surface
+  - it adds operator visibility and safer timeout handling without productizing reseller/client CRUD that Vutler does not yet need as a tenant-facing surface
   - it still avoids wiring session-auth dashboard routes such as full webhook replay/test-send until Vutler has a justified auth model for them
 
 ### 10. Client Integration and Distribution Ergonomics
