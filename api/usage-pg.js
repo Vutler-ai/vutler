@@ -6,19 +6,20 @@
 
 const express = require('express');
 const router = express.Router();
+const { getWorkspaceCreditBalance, getWorkspaceCurrentPeriodUsage } = require('../services/workspaceCreditService');
 
 const SCHEMA = 'tenant_vutler';
 
 // Cost-per-token estimates by provider (USD per token, rough averages)
 const COST_PER_TOKEN = {
   anthropic: 0.000015,
-  codex:     0.000010,
-  openai:    0.000010,
-  groq:      0.0000008,
-  mistral:   0.000004,
-  openrouter: 0.000010,
-  ollama:    0,
-  default:   0.000010,
+  codex: 0.00001,
+  openai: 0.00001,
+  groq: 0.0000008,
+  mistral: 0.000004,
+  openrouter: 0.00001,
+  ollama: 0,
+  default: 0.00001,
 };
 
 function estimateCost(tokens, provider) {
@@ -40,6 +41,35 @@ async function queryTokenUsageRecords(pg, workspaceId, intervalSql) {
           ul.tokens_output AS output_tokens,
           (ul.tokens_input + ul.tokens_output) AS tokens,
           ul.latency_ms,
+          ul.billing_source,
+          ul.billing_tier,
+          ul.credit_multiplier,
+          ul.credits_debited,
+          NULL::numeric AS estimated_cost,
+          ul.created_at
+        FROM ${SCHEMA}.llm_usage_logs ul
+        LEFT JOIN ${SCHEMA}.agents a ON a.id = ul.agent_id
+        WHERE ul.workspace_id = $1 %TIME_FILTER%
+        ORDER BY ul.created_at DESC
+        LIMIT 500
+      `,
+    },
+    {
+      timeColumn: 'ul.created_at',
+      query: `
+        SELECT
+          ul.id,
+          COALESCE(a.name, ul.agent_id::text, 'Unknown agent') AS agent_name,
+          ul.model,
+          ul.provider,
+          ul.tokens_input AS input_tokens,
+          ul.tokens_output AS output_tokens,
+          (ul.tokens_input + ul.tokens_output) AS tokens,
+          ul.latency_ms,
+          NULL::text AS billing_source,
+          NULL::text AS billing_tier,
+          NULL::numeric AS credit_multiplier,
+          NULL::bigint AS credits_debited,
           NULL::numeric AS estimated_cost,
           ul.created_at
         FROM ${SCHEMA}.llm_usage_logs ul
@@ -61,6 +91,10 @@ async function queryTokenUsageRecords(pg, workspaceId, intervalSql) {
           ul.output_tokens,
           (ul.input_tokens + ul.output_tokens) AS tokens,
           ul.latency_ms,
+          NULL::text AS billing_source,
+          NULL::text AS billing_tier,
+          NULL::numeric AS credit_multiplier,
+          NULL::bigint AS credits_debited,
           ul.estimated_cost,
           ul.created_at
         FROM ${SCHEMA}.usage_logs ul
@@ -82,6 +116,10 @@ async function queryTokenUsageRecords(pg, workspaceId, intervalSql) {
           ae.output_tokens,
           ae.tokens_used AS tokens,
           ae.latency_ms,
+          NULL::text AS billing_source,
+          NULL::text AS billing_tier,
+          NULL::numeric AS credit_multiplier,
+          NULL::bigint AS credits_debited,
           NULL::numeric AS estimated_cost,
           ae.created_at
         FROM ${SCHEMA}.agent_executions ae
@@ -103,6 +141,10 @@ async function queryTokenUsageRecords(pg, workspaceId, intervalSql) {
           (ct.metadata->>'output_tokens')::int AS output_tokens,
           ABS(ct.amount) AS tokens,
           NULL::int AS latency_ms,
+          COALESCE(ct.billing_source, ct.metadata->>'billing_source', ct.metadata->>'source') AS billing_source,
+          COALESCE(ct.billing_tier, ct.metadata->>'billing_tier') AS billing_tier,
+          ct.credit_multiplier,
+          COALESCE(ct.credits_amount, (ct.metadata->>'credits_debited')::bigint) AS credits_debited,
           NULL::numeric AS estimated_cost,
           ct.created_at
         FROM ${SCHEMA}.credit_transactions ct
@@ -149,6 +191,67 @@ async function queryTokenUsageTotal(pg, workspaceId) {
   return 0;
 }
 
+async function queryUsageBillingAnalytics(pg, workspaceId, intervalSql) {
+  if (!pg || !workspaceId) {
+    return {
+      billing_sources: {
+        byok_tokens: 0,
+        managed_tokens: 0,
+      },
+      billing_tiers: {
+        standard: 0,
+        advanced: 0,
+        premium: 0,
+      },
+      credits_consumed: 0,
+    };
+  }
+
+  const whereTime = intervalSql ? `AND created_at >= ${intervalSql}` : '';
+
+  try {
+    const result = await pg.query(
+      `SELECT
+          COALESCE(SUM(CASE WHEN billing_source = 'byok' THEN tokens_input + tokens_output ELSE 0 END), 0) AS byok_tokens,
+          COALESCE(SUM(CASE WHEN billing_source <> 'byok' OR billing_source IS NULL THEN tokens_input + tokens_output ELSE 0 END), 0) AS managed_tokens,
+          COALESCE(SUM(CASE WHEN billing_tier = 'standard' THEN COALESCE(credits_debited, 0) ELSE 0 END), 0) AS standard_credits,
+          COALESCE(SUM(CASE WHEN billing_tier = 'advanced' THEN COALESCE(credits_debited, 0) ELSE 0 END), 0) AS advanced_credits,
+          COALESCE(SUM(CASE WHEN billing_tier = 'premium' THEN COALESCE(credits_debited, 0) ELSE 0 END), 0) AS premium_credits,
+          COALESCE(SUM(COALESCE(credits_debited, 0)), 0) AS credits_consumed
+         FROM ${SCHEMA}.llm_usage_logs
+        WHERE workspace_id = $1 ${whereTime}`,
+      [workspaceId]
+    );
+
+    const row = result.rows?.[0] || {};
+    return {
+      billing_sources: {
+        byok_tokens: parseInt(row.byok_tokens || 0, 10),
+        managed_tokens: parseInt(row.managed_tokens || 0, 10),
+      },
+      billing_tiers: {
+        standard: parseInt(row.standard_credits || 0, 10),
+        advanced: parseInt(row.advanced_credits || 0, 10),
+        premium: parseInt(row.premium_credits || 0, 10),
+      },
+      credits_consumed: parseInt(row.credits_consumed || 0, 10),
+    };
+  } catch (_) {
+    return {
+      billing_sources: {
+        byok_tokens: 0,
+        managed_tokens: 0,
+      },
+      billing_tiers: {
+        standard: 0,
+        advanced: 0,
+        premium: 0,
+      },
+      credits_consumed: 0,
+    };
+  }
+}
+
 // ─── GET /api/v1/usage ─────────────────────────────────────────────────────────
 // Returns usage records + summary for the workspace.
 // Tries three possible table layouts; returns zeros when all tables are empty.
@@ -158,40 +261,75 @@ router.get('/usage', async (req, res) => {
     const workspaceId = req.workspaceId; // SECURITY: workspace from JWT only (audit 2026-03-29)
     const period = req.query.period || 'month'; // day | week | month | all
 
-    const intervalSql = {
-      day:   "NOW() - INTERVAL '1 day'",
-      week:  "NOW() - INTERVAL '7 days'",
-      month: "NOW() - INTERVAL '30 days'",
-      all:   null,
-    }[period] || "NOW() - INTERVAL '30 days'";
+    const intervalSql =
+      {
+        day: "NOW() - INTERVAL '1 day'",
+        week: "NOW() - INTERVAL '7 days'",
+        month: "NOW() - INTERVAL '30 days'",
+        all: null,
+      }[period] || "NOW() - INTERVAL '30 days'";
 
     const records = pg ? await queryTokenUsageRecords(pg, workspaceId, intervalSql) : [];
+    const billingAnalytics = pg ? await queryUsageBillingAnalytics(pg, workspaceId, intervalSql) : null;
+    const creditSummary = pg ? await getWorkspaceCreditBalance(pg, workspaceId) : null;
+    const periodUsage = pg ? await getWorkspaceCurrentPeriodUsage(pg, workspaceId) : null;
 
     // ── Normalise cost if missing ─────────────────────────────────────────────
     const normalizedRecords = records.map(r => ({
       ...r,
-      tokens:          r.tokens ?? ((r.input_tokens ?? 0) + (r.output_tokens ?? 0)),
-      estimated_cost:  r.estimated_cost ?? estimateCost(
-        (r.input_tokens ?? 0) + (r.output_tokens ?? 0),
-        r.provider
-      ),
+      tokens: r.tokens ?? (r.input_tokens ?? 0) + (r.output_tokens ?? 0),
+      billing_source: r.billing_source ?? null,
+      billing_tier: r.billing_tier ?? null,
+      credit_multiplier: r.credit_multiplier ?? null,
+      credits_debited: r.credits_debited ?? 0,
+      estimated_cost: r.estimated_cost ?? estimateCost((r.input_tokens ?? 0) + (r.output_tokens ?? 0), r.provider),
     }));
 
     // ── Summary ───────────────────────────────────────────────────────────────
-    const total_tokens   = normalizedRecords.reduce((s, r) => s + (r.tokens || 0), 0);
+    const total_tokens = normalizedRecords.reduce((s, r) => s + (r.tokens || 0), 0);
     const total_requests = normalizedRecords.length;
-    const total_cost     = parseFloat(normalizedRecords.reduce((s, r) => s + (r.estimated_cost || 0), 0).toFixed(6));
-    const avg_latency_ms = normalizedRecords.length > 0
-      ? Math.round(normalizedRecords.reduce((s, r) => s + (r.latency_ms || 0), 0) / normalizedRecords.length)
-      : 0;
+    const total_cost = parseFloat(normalizedRecords.reduce((s, r) => s + (r.estimated_cost || 0), 0).toFixed(6));
+    const avg_latency_ms =
+      normalizedRecords.length > 0
+        ? Math.round(normalizedRecords.reduce((s, r) => s + (r.latency_ms || 0), 0) / normalizedRecords.length)
+        : 0;
 
     res.json({
       success: true,
-      data:            normalizedRecords,
+      data: normalizedRecords,
       total_tokens,
       total_requests,
       total_cost,
       avg_latency_ms,
+      billing_sources: billingAnalytics?.billing_sources ?? {
+        byok_tokens: 0,
+        managed_tokens: 0,
+      },
+      billing_tiers: billingAnalytics?.billing_tiers ?? {
+        standard: 0,
+        advanced: 0,
+        premium: 0,
+      },
+      credits_consumed: billingAnalytics?.credits_consumed ?? 0,
+      credit_summary: creditSummary ?? {
+        total_remaining: 0,
+        trial_remaining: 0,
+        plan_remaining: 0,
+        topup_remaining: 0,
+        legacy_remaining: 0,
+      },
+      current_period: periodUsage ?? {
+        credits_consumed: 0,
+        by_tier: {
+          standard: 0,
+          advanced: 0,
+          premium: 0,
+        },
+        by_source: {
+          byok_tokens: 0,
+          managed_tokens: 0,
+        },
+      },
       period,
     });
   } catch (err) {
@@ -207,6 +345,8 @@ router.get('/usage/summary', async (req, res) => {
     const workspaceId = req.workspaceId;
 
     const totalTokens = pg ? await queryTokenUsageTotal(pg, workspaceId) : 0;
+    const creditSummary = pg ? await getWorkspaceCreditBalance(pg, workspaceId) : null;
+    const currentPeriod = pg ? await getWorkspaceCurrentPeriodUsage(pg, workspaceId) : null;
 
     res.json({
       success: true,
@@ -214,6 +354,10 @@ router.get('/usage/summary', async (req, res) => {
         totalTokens,
         totalCost: estimateCost(totalTokens, 'default'),
         requests: 0,
+      },
+      ai: {
+        balances: creditSummary,
+        current_period: currentPeriod,
       },
     });
   } catch (err) {
@@ -237,5 +381,6 @@ router.get('/usage/tiers', (req, res) => {
 
 module.exports = router;
 module.exports.estimateCost = estimateCost;
+module.exports.queryUsageBillingAnalytics = queryUsageBillingAnalytics;
 module.exports.queryTokenUsageRecords = queryTokenUsageRecords;
 module.exports.queryTokenUsageTotal = queryTokenUsageTotal;

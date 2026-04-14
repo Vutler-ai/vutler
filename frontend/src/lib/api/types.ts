@@ -66,14 +66,7 @@ export interface Agent {
   updatedAt?: string;
 }
 
-export type AgentCapabilityKey =
-  | 'email'
-  | 'social'
-  | 'drive'
-  | 'calendar'
-  | 'tasks'
-  | 'memory'
-  | 'sandbox';
+export type AgentCapabilityKey = 'email' | 'social' | 'drive' | 'calendar' | 'tasks' | 'memory' | 'sandbox';
 
 export interface AgentAccessEntry {
   allowed?: boolean;
@@ -275,7 +268,18 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  status: 'todo' | 'in_progress' | 'done' | 'pending' | 'completed' | 'blocked' | 'failed' | 'cancelled' | 'stalled' | 'open' | 'timed_out';
+  status:
+    | 'todo'
+    | 'in_progress'
+    | 'done'
+    | 'pending'
+    | 'completed'
+    | 'blocked'
+    | 'failed'
+    | 'cancelled'
+    | 'stalled'
+    | 'open'
+    | 'timed_out';
   priority: 'low' | 'medium' | 'high';
   assignee: string;
   due_date: string;
@@ -901,6 +905,7 @@ export interface Subscription {
   current_period_end?: string | null;
   limits?: PlanLimits;
   usage?: SubscriptionUsage | null;
+  ai?: SubscriptionAiSummary | null;
   addons?: {
     enterpriseSeats: number;
     enterpriseNodes: number;
@@ -922,6 +927,38 @@ export interface SubscriptionUsage {
   tokens: { used: number; limit: number | null };
   storage_gb: { used: number; limit: number | null };
   social_posts?: { used: number; limit: number | null; addon?: number | null };
+}
+
+export interface CreditBalances {
+  total_remaining: number;
+  trial_remaining: number;
+  plan_remaining: number;
+  topup_remaining: number;
+  legacy_remaining: number;
+  manual_remaining?: number;
+  contract_remaining?: number;
+  total_remaining_tokens_legacy?: number;
+}
+
+export interface CreditPeriodUsage {
+  credits_consumed: number;
+  by_tier: {
+    standard: number;
+    advanced: number;
+    premium: number;
+  };
+  by_source?: {
+    byok_tokens?: number;
+    managed_tokens?: number;
+  };
+}
+
+export interface SubscriptionAiSummary {
+  byok_enabled: boolean;
+  managed_runtime_available: boolean;
+  monthly_included_credits: number;
+  balances: CreditBalances;
+  current_period: CreditPeriodUsage;
 }
 
 export interface CheckoutPayload {
@@ -1120,21 +1157,11 @@ export interface DeployEnterprisePayload {
   selectedHelperProfiles?: string[];
 }
 
-export type NexusEnterpriseEventSubscriptionProvider =
-  | 'microsoft_graph'
-  | 'zoom'
-  | 'google'
-  | 'generic_http';
+export type NexusEnterpriseEventSubscriptionProvider = 'microsoft_graph' | 'zoom' | 'google' | 'generic_http';
 
-export type NexusEnterpriseEventSubscriptionStatus =
-  | 'active'
-  | 'paused'
-  | 'disabled';
+export type NexusEnterpriseEventSubscriptionStatus = 'active' | 'paused' | 'disabled';
 
-export type NexusEnterpriseProvisioningMode =
-  | 'manual'
-  | 'assisted'
-  | 'automatic';
+export type NexusEnterpriseProvisioningMode = 'manual' | 'assisted' | 'automatic';
 
 export type NexusEnterpriseProvisioningStatus =
   | 'manual_required'
@@ -1200,10 +1227,23 @@ export interface NexusTokenResponse {
 // ── Nexus Dispatch Types ─────────────────────────────────────────────────────
 
 export type NexusAction =
-  | 'search' | 'read_document' | 'list_dir' | 'open_file' | 'write_file'
-  | 'shell_exec' | 'read_clipboard' | 'list_emails' | 'search_emails'
-  | 'read_calendar' | 'read_contacts' | 'search_contacts'
-  | 'terminal_open' | 'terminal_exec' | 'terminal_read' | 'terminal_snapshot' | 'terminal_close';
+  | 'search'
+  | 'read_document'
+  | 'list_dir'
+  | 'open_file'
+  | 'write_file'
+  | 'shell_exec'
+  | 'read_clipboard'
+  | 'list_emails'
+  | 'search_emails'
+  | 'read_calendar'
+  | 'read_contacts'
+  | 'search_contacts'
+  | 'terminal_open'
+  | 'terminal_exec'
+  | 'terminal_read'
+  | 'terminal_snapshot'
+  | 'terminal_close';
 
 export interface NexusDispatchResult<T = unknown> {
   taskId: string;
@@ -1566,12 +1606,7 @@ export interface Integration {
 
 export type IntegrationReadiness = 'operational' | 'partial' | 'coming_soon';
 export type IntegrationAccessModel = 'cloud-required' | 'local-first';
-export type IntegrationCapabilityStatus =
-  | 'supported'
-  | 'consented'
-  | 'validated'
-  | 'unsupported'
-  | 'local_fallback';
+export type IntegrationCapabilityStatus = 'supported' | 'consented' | 'validated' | 'unsupported' | 'local_fallback';
 
 export interface IntegrationRuntimeState {
   workspace_available: boolean;
