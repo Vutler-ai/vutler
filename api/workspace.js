@@ -11,8 +11,18 @@ try { pool = require('../lib/vaultbrix'); } catch (e) {
 }
 
 const COORDINATOR_NAME = process.env.VUTLER_COORDINATOR_NAME || 'Jarvis';
-const DEFAULT_WS_ID = '00000000-0000-0000-0000-000000000001';
 const SCHEMA = 'tenant_vutler';
+
+function workspaceIdOf(req) {
+  return req.workspaceId || null;
+}
+
+function requireWorkspace(req, res, next) {
+  if (!workspaceIdOf(req)) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+  return next();
+}
 
 router.get('/', (req, res) => res.json({
   success: true,
@@ -30,8 +40,8 @@ router.get('/', (req, res) => res.json({
 
 // GET /api/v1/workspace/features
 // Returns the workspace plan and its allowed features / Snipara capabilities.
-router.get('/features', async (req, res) => {
-  const wsId = req.workspaceId || DEFAULT_WS_ID;
+router.get('/features', requireWorkspace, async (req, res) => {
+  const wsId = workspaceIdOf(req);
   let plan = 'free';
 
   if (pool) {

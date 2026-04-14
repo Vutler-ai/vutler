@@ -83,6 +83,13 @@ describe('jira integration connection flow', () => {
         JSON.stringify({
           baseUrl: 'https://acme.atlassian.net',
           email: 'ops@acme.com',
+          connectMode: 'api_token',
+          projectKeys: [],
+          sampleProjects: [],
+        }),
+        JSON.stringify({
+          baseUrl: 'https://acme.atlassian.net',
+          email: 'ops@acme.com',
           apiToken: 'encrypted-token',
         }),
         'user@acme.com',

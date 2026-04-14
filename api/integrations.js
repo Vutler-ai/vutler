@@ -1964,29 +1964,49 @@ async function persistJiraIntegrationConnection({
   normalizedUrl,
   email,
   apiToken,
+  projects = [],
   connectedBy,
 }) {
   const { CryptoService } = require('../services/crypto');
   const cryptoSvc = new CryptoService();
   const encryptedToken = cryptoSvc.encrypt(apiToken);
+  const projectList = Array.isArray(projects) ? projects : [];
+  const projectKeys = Array.from(new Set(
+    projectList
+      .map((project) => String(project?.key || '').trim().toUpperCase())
+      .filter(Boolean)
+  ));
+  const sampleProjects = projectList.slice(0, 20).map((project) => ({
+    id: project.id || null,
+    key: project.key || null,
+    name: project.name || null,
+  }));
 
   const credentials = {
     baseUrl: normalizedUrl,
     email,
     apiToken: encryptedToken,
   };
+  const config = {
+    baseUrl: normalizedUrl,
+    email,
+    connectMode: 'api_token',
+    projectKeys,
+    sampleProjects,
+  };
 
   await pool.query(
     `INSERT INTO ${SCHEMA}.workspace_integrations
-      (workspace_id, provider, source, connected, status, credentials, scopes,
+      (workspace_id, provider, source, connected, status, config, credentials, scopes,
        connected_at, disconnected_at, connected_by, updated_at)
-     VALUES ($1, 'jira', 'apitoken', TRUE, 'connected', $2::jsonb,
+     VALUES ($1, 'jira', 'apitoken', TRUE, 'connected', $2::jsonb, $3::jsonb,
        '["read:jira-user","read:jira-work","write:jira-work"]'::jsonb,
-       NOW(), NULL, $3, NOW())
+       NOW(), NULL, $4, NOW())
      ON CONFLICT (workspace_id, provider) DO UPDATE SET
        source = 'apitoken',
        connected = TRUE,
        status = 'connected',
+       config = EXCLUDED.config,
        credentials = EXCLUDED.credentials,
        scopes = EXCLUDED.scopes,
        connected_at = NOW(),
@@ -1995,6 +2015,7 @@ async function persistJiraIntegrationConnection({
        updated_at = NOW()`,
     [
       workspaceId,
+      JSON.stringify(config),
       JSON.stringify(credentials),
       connectedBy,
     ]
@@ -2102,6 +2123,7 @@ router.post('/jira/connect', async (req, res) => {
         normalizedUrl,
         email,
         apiToken,
+        projects,
         connectedBy: req.user?.email || req.user?.name || req.userId || 'system',
       });
 

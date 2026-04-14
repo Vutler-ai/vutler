@@ -13,8 +13,13 @@ const crypto = require("crypto");
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => { console.error('[AUTH] WARNING: JWT_SECRET env var missing'); return 'MISSING-SET-JWT_SECRET-ENV'; })();
 
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 let usersAuthHasDeletedAtColumn = null;
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
 
 // ── API key cache (avoid DB hit on every request) ──
 const apiKeyCache = new Map();
@@ -51,7 +56,7 @@ const PUBLIC_FULL_PATHS = [
   '/api/auth/logout',
   '/health',
   '/api/v1/agents/sync',
-  '/api/v1/task-router',
+  '/api/v1/task-router/sync',
   '/api/v1/billing/webhook',
   '/api/v1/billing/plans',
   '/api/v1/email/incoming',
@@ -88,9 +93,15 @@ function tryDecodeJWT(req) {
     if (s !== expectedSig) return false;
     const decoded = JSON.parse(Buffer.from(b, "base64url").toString());
     if (decoded.exp && decoded.exp < Math.floor(Date.now()/1000)) return false;
-    req.user = { id: decoded.userId, name: decoded.name || decoded.email, email: decoded.email, role: decoded.role || 'user', workspaceId: decoded.workspaceId || DEFAULT_WORKSPACE };
+    req.user = {
+      id: decoded.userId,
+      name: decoded.name || decoded.email,
+      email: decoded.email,
+      role: decoded.role || 'user',
+      workspaceId: normalizeWorkspaceId(decoded.workspaceId),
+    };
     req.userId = decoded.userId;
-    req.workspaceId = decoded.workspaceId || DEFAULT_WORKSPACE;
+    req.workspaceId = normalizeWorkspaceId(decoded.workspaceId);
     return true;
   } catch(e) { return false; }
 }
@@ -133,7 +144,7 @@ async function resolveApiKey(req, apiKey) {
         name: row.display_name || row.name || 'API Service',
         email: row.email || `api-${row.name}@vutler.internal`,
         role: row.role || 'service',
-        workspaceId: row.workspace_id || DEFAULT_WORKSPACE,
+        workspaceId: normalizeWorkspaceId(row.workspace_id),
         apiKeyId: row.id,
         apiKeyName: row.name,
       };
@@ -180,12 +191,13 @@ async function resolveApiKey(req, apiKey) {
  * Attach resolved identity to req (shared by JWT and API key paths)
  */
 function attachIdentity(req, identity) {
+  const workspaceId = normalizeWorkspaceId(identity.workspaceId);
   req.user = {
     id: identity.id,
     name: identity.name,
     email: identity.email,
     role: identity.role,
-    workspaceId: identity.workspaceId,
+    workspaceId,
     avatarUrl: identity.avatarUrl || null,
   };
   req.rcUser = {
@@ -196,7 +208,7 @@ function attachIdentity(req, identity) {
     roles: [identity.role],
   };
   req.userId = identity.id;
-  req.workspaceId = identity.workspaceId;
+  req.workspaceId = workspaceId;
   if (identity.apiKeyId) req.apiKeyId = identity.apiKeyId;
 }
 
@@ -230,7 +242,7 @@ async function resolveActiveJwtIdentity(req, decoded) {
     name: decoded.name || decoded.email,
     email: decoded.email,
     role: decoded.role || 'user',
-    workspaceId: decoded.workspaceId || DEFAULT_WORKSPACE,
+    workspaceId: normalizeWorkspaceId(decoded.workspaceId),
   };
 
   if (!pg || !decoded.userId) return fallback;
@@ -254,7 +266,7 @@ async function resolveActiveJwtIdentity(req, decoded) {
       name: row.name || row.email,
       email: row.email,
       role: row.role || fallback.role,
-      workspaceId: row.workspace_id || fallback.workspaceId,
+      workspaceId: normalizeWorkspaceId(row.workspace_id) || fallback.workspaceId,
       avatarUrl: row.avatar_url || null,
     };
   } catch (err) {

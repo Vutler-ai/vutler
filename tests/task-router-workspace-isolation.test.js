@@ -46,4 +46,24 @@ describe('task router workspace isolation', () => {
       ['ws-1']
     );
   });
+
+  test('createTask rejects calls without workspace context', async () => {
+    const query = jest.fn(async () => ({ rows: [] }));
+    const createTask = jest.fn();
+    jest.doMock('../lib/postgres', () => ({ pool: { query } }));
+    jest.doMock('../services/orchestration/runSignals', () => ({ signalRunFromTask: jest.fn() }));
+    jest.doMock('../app/custom/services/swarmCoordinator', () => ({
+      getSwarmCoordinator: jest.fn(() => ({ createTask })),
+    }));
+
+    const taskRouter = require('../services/taskRouter');
+
+    await expect(taskRouter.createTask({
+      title: 'Tenant-safe task',
+      description: 'Should fail closed',
+      assigned_agent: 'agent-1',
+    })).rejects.toThrow('workspace_id is required for taskRouter.createTask');
+
+    expect(createTask).not.toHaveBeenCalled();
+  });
 });

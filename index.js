@@ -116,9 +116,10 @@ app.use((req, res, next) => {
       if (sig === expected) {
         const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
         if (!data.exp || data.exp > Math.floor(Date.now() / 1000)) {
-          req.user = { id: data.userId, email: data.email, name: data.name, role: data.role, workspaceId: data.workspaceId };
+          const workspaceId = typeof data.workspaceId === 'string' ? data.workspaceId.trim() || null : data.workspaceId || null;
+          req.user = { id: data.userId, email: data.email, name: data.name, role: data.role, workspaceId };
           req.authType = 'jwt';
-          req.workspaceId = data.workspaceId || '00000000-0000-0000-0000-000000000001';
+          req.workspaceId = workspaceId;
         }
       }
     } catch (_) { /* invalid token — continue unauthenticated */ }
@@ -248,8 +249,12 @@ app.post('/api/v1/nexus/register', async (req, res) => {
   try {
     const crypto = require('crypto');
     const pg = app.locals.pg;
-    const DEFAULT_WS = '00000000-0000-0000-0000-000000000001';
-    let workspaceId = DEFAULT_WS, nodeId = crypto.randomUUID(), authMethod = 'dev_mode';
+    if (!pg) {
+      return res.status(503).json({ success: false, error: 'Database unavailable' });
+    }
+    let workspaceId = null;
+    let nodeId = crypto.randomUUID();
+    let authMethod = 'unverified';
 
     const {
       name: requestName,
@@ -281,7 +286,10 @@ app.post('/api/v1/nexus/register', async (req, res) => {
       const payload = validateToken(deployToken);
       if (!payload) return res.status(401).json({ success: false, error: 'Invalid or expired deploy token' });
 
-      workspaceId = payload.workspace_id || DEFAULT_WS;
+      workspaceId = typeof payload.workspace_id === 'string' ? payload.workspace_id.trim() || null : payload.workspace_id || null;
+      if (!workspaceId) {
+        return res.status(400).json({ success: false, error: 'Deploy token is missing workspace context' });
+      }
       nodeId = payload.node_id || nodeId;
       authMethod = `deploy_token_${payload.mode || 'unknown'}`;
       const nodeName = requestName || payload.node_name || payload.name || 'Vutler Nexus';
@@ -308,23 +316,45 @@ app.post('/api/v1/nexus/register', async (req, res) => {
         name: nodeName,
       });
 
-      if (pg) {
-        try {
-          const tokenHash = crypto.createHash('sha256').update(deployToken).digest('hex');
-          const update = await pg.query(
-            `UPDATE tenant_vutler.nexus_nodes
-                SET name = COALESCE($3, name),
-                    type = COALESCE($4, type),
-                    host = COALESCE($5, host),
-                    port = COALESCE($6, port),
-                    api_key = COALESCE($7, api_key),
-                    config = COALESCE(config, '{}'::jsonb) || $8::jsonb,
-                    status = 'online',
-                    last_heartbeat = NOW(),
-                    updated_at = NOW()
-              WHERE id = $1
-                AND workspace_id = $2
-                AND deploy_token_hash = $9
+      try {
+        const tokenHash = crypto.createHash('sha256').update(deployToken).digest('hex');
+        const update = await pg.query(
+          `UPDATE tenant_vutler.nexus_nodes
+              SET name = COALESCE($3, name),
+                  type = COALESCE($4, type),
+                  host = COALESCE($5, host),
+                  port = COALESCE($6, port),
+                  api_key = COALESCE($7, api_key),
+                  config = COALESCE(config, '{}'::jsonb) || $8::jsonb,
+                  status = 'online',
+                  last_heartbeat = NOW(),
+                  updated_at = NOW()
+            WHERE id = $1
+              AND workspace_id = $2
+              AND deploy_token_hash = $9
+            RETURNING id`,
+          [
+            nodeId,
+            workspaceId,
+            nodeName,
+            nodeType,
+            host,
+            port,
+            payload.api_key || null,
+            JSON.stringify(nodeConfig),
+            tokenHash,
+          ]
+        );
+        if (!update.rows[0]) {
+          await assertNexusProvisionAllowed({
+            pg,
+            workspaceId,
+            mode: payload.mode === 'enterprise' ? 'enterprise' : 'local',
+          });
+          const insert = await pg.query(
+            `INSERT INTO tenant_vutler.nexus_nodes (
+                id, workspace_id, name, type, status, host, port, api_key, config, agents_deployed
+              ) VALUES ($1, $2, $3, $4, 'online', $5, $6, $7, $8::jsonb, '[]'::jsonb)
               RETURNING id`,
             [
               nodeId,
@@ -335,36 +365,12 @@ app.post('/api/v1/nexus/register', async (req, res) => {
               port,
               payload.api_key || null,
               JSON.stringify(nodeConfig),
-              tokenHash,
             ]
           );
-          if (!update.rows[0]) {
-            await assertNexusProvisionAllowed({
-              pg,
-              workspaceId,
-              mode: payload.mode === 'enterprise' ? 'enterprise' : 'local',
-            });
-            const insert = await pg.query(
-              `INSERT INTO tenant_vutler.nexus_nodes (
-                  id, workspace_id, name, type, status, host, port, api_key, config, agents_deployed
-                ) VALUES ($1, $2, $3, $4, 'online', $5, $6, $7, $8::jsonb, '[]'::jsonb)
-                RETURNING id`,
-              [
-                nodeId,
-                workspaceId,
-                nodeName,
-                nodeType,
-                host,
-                port,
-                payload.api_key || null,
-                JSON.stringify(nodeConfig),
-              ]
-            );
-            nodeId = insert.rows[0].id;
-          }
-        } catch (error) {
-          if (error?.statusCode) throw error;
+          nodeId = insert.rows[0].id;
         }
+      } catch (error) {
+        throw error;
       }
 
       console.log(`[NEXUS] Node registered via deploy token: ${nodeName} (${nodeId}) [${authMethod}]`);
@@ -378,54 +384,48 @@ app.post('/api/v1/nexus/register', async (req, res) => {
 
     const keyHash = crypto.createHash('sha256').update(String(secret)).digest('hex');
 
-    if (pg) {
-      try {
-        const keyResult = await pg.query(
-          `SELECT id, workspace_id FROM tenant_vutler.workspace_api_keys WHERE key_hash = $1 AND revoked_at IS NULL LIMIT 1`,
-          [keyHash]
-        );
-        if (keyResult.rows[0]) {
-          workspaceId = keyResult.rows[0].workspace_id;
-          authMethod = 'api_key';
-          await pg.query(`UPDATE tenant_vutler.workspace_api_keys SET last_used_at = NOW() WHERE id = $1`, [keyResult.rows[0].id]);
-        } else if (process.env.NODE_ENV === 'production') {
-          return res.status(401).json({ success: false, error: 'Invalid API key' });
-        }
-        // Try to insert nexus node
-        try {
-          const nodeName = requestName || require('os').hostname();
-          const nodeConfig = buildNodeConfig({
-            ...req.body,
-            mode: requestMode || config?.mode,
-            client_name,
-            filesystem_root,
-            role,
-            snipara_instance_id,
-            permissions,
-            llm,
-            seats,
-            max_seats,
-            primary_agent,
-            available_pool,
-            allow_create,
-            routing_rules,
-            auto_spawn_rules,
-            offline_config,
-            config,
-            name: nodeName,
-          });
-          const ins = await pg.query(
-            `INSERT INTO tenant_vutler.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
-             VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
-             RETURNING id`,
-            [workspaceId, nodeName, requestType, host, port, JSON.stringify(nodeConfig)]
-          );
-          nodeId = ins.rows[0].id;
-        } catch (_) {}
-      } catch (dbErr) {
-        if (process.env.NODE_ENV === 'production') throw dbErr;
-        console.warn('[NEXUS] DB error in register, dev mode fallback:', dbErr.message);
+    try {
+      const keyResult = await pg.query(
+        `SELECT id, workspace_id FROM tenant_vutler.workspace_api_keys WHERE key_hash = $1 AND revoked_at IS NULL LIMIT 1`,
+        [keyHash]
+      );
+      if (keyResult.rows[0]) {
+        workspaceId = keyResult.rows[0].workspace_id;
+        authMethod = 'api_key';
+        await pg.query(`UPDATE tenant_vutler.workspace_api_keys SET last_used_at = NOW() WHERE id = $1`, [keyResult.rows[0].id]);
+      } else {
+        return res.status(401).json({ success: false, error: 'Invalid API key' });
       }
+      const nodeName = requestName || require('os').hostname();
+      const nodeConfig = buildNodeConfig({
+        ...req.body,
+        mode: requestMode || config?.mode,
+        client_name,
+        filesystem_root,
+        role,
+        snipara_instance_id,
+        permissions,
+        llm,
+        seats,
+        max_seats,
+        primary_agent,
+        available_pool,
+        allow_create,
+        routing_rules,
+        auto_spawn_rules,
+        offline_config,
+        config,
+        name: nodeName,
+      });
+      const ins = await pg.query(
+        `INSERT INTO tenant_vutler.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+         VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+         RETURNING id`,
+        [workspaceId, nodeName, requestType, host, port, JSON.stringify(nodeConfig)]
+      );
+      nodeId = ins.rows[0].id;
+    } catch (dbErr) {
+      throw dbErr;
     }
 
     console.log(`[NEXUS] Node registered: ${req.body?.name || 'unnamed'} (${nodeId}) [${authMethod}]`);
@@ -649,43 +649,70 @@ app.post('/api/v1/nexus/tokens/enterprise', async (req, res) => {
 
 // ── Nexus node auth middleware (deploy token or API key required) ─────────────
 // SECURITY: all Nexus endpoints require authentication (audit 2026-03-28)
+async function loadScopedNexusNode(pg, workspaceId, nodeId) {
+  if (!pg || !workspaceId || !nodeId) return null;
+  const result = await pg.query(
+    `SELECT *
+       FROM tenant_vutler.nexus_nodes
+      WHERE id = $1
+        AND workspace_id = $2
+      LIMIT 1`,
+    [nodeId, workspaceId]
+  );
+  return result.rows[0] || null;
+}
+
 async function requireNexusAuth(req, res, next) {
   const pg = app.locals.pg;
   if (!pg) return res.status(503).json({ success: false, error: 'Database unavailable' });
 
+  let workspaceId = null;
+
   // Already authenticated via JWT (from global decode above)?
-  if (req.user && req.authType === 'jwt') return next();
-
-  // Check deploy token in Authorization header
-  const authHeader = req.headers['authorization'] || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.headers['x-api-key'];
-  if (!token) return res.status(401).json({ success: false, error: 'Authentication required (Bearer token or X-API-Key)' });
-
-  const crypto = require('crypto');
-  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
   try {
-    // Check nexus_nodes deploy_token_hash
-    const nodeResult = await pg.query(
-      'SELECT id, workspace_id FROM tenant_vutler.nexus_nodes WHERE id = $1 AND deploy_token_hash = $2 AND status != $3',
-      [req.params.nodeId, tokenHash, 'revoked']
-    );
-    if (nodeResult.rows[0]) {
-      req.workspaceId = nodeResult.rows[0].workspace_id;
-      return next();
+    if (req.user && req.authType === 'jwt') {
+      workspaceId = req.workspaceId || req.user?.workspaceId || null;
+    } else {
+      // Check deploy token in Authorization header
+      const authHeader = req.headers['authorization'] || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.headers['x-api-key'];
+      if (!token) return res.status(401).json({ success: false, error: 'Authentication required (Bearer token or X-API-Key)' });
+
+      const crypto = require('crypto');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+      // Check nexus_nodes deploy_token_hash
+      const nodeResult = await pg.query(
+        'SELECT id, workspace_id FROM tenant_vutler.nexus_nodes WHERE id = $1 AND deploy_token_hash = $2 AND status != $3',
+        [req.params.nodeId, tokenHash, 'revoked']
+      );
+      if (nodeResult.rows[0]) {
+        workspaceId = nodeResult.rows[0].workspace_id;
+      } else {
+        // Check workspace_api_keys
+        const keyResult = await pg.query(
+          'SELECT workspace_id FROM tenant_vutler.workspace_api_keys WHERE key_hash = $1 AND revoked_at IS NULL LIMIT 1',
+          [tokenHash]
+        );
+        if (!keyResult.rows[0]) {
+          return res.status(401).json({ success: false, error: 'Invalid deploy token or API key' });
+        }
+        workspaceId = keyResult.rows[0].workspace_id;
+      }
     }
 
-    // Check workspace_api_keys
-    const keyResult = await pg.query(
-      'SELECT workspace_id FROM tenant_vutler.workspace_api_keys WHERE key_hash = $1 AND revoked_at IS NULL LIMIT 1',
-      [tokenHash]
-    );
-    if (keyResult.rows[0]) {
-      req.workspaceId = keyResult.rows[0].workspace_id;
-      return next();
+    if (!workspaceId) {
+      return res.status(401).json({ success: false, error: 'Workspace context is required' });
     }
 
-    return res.status(401).json({ success: false, error: 'Invalid deploy token or API key' });
+    const scopedNode = await loadScopedNexusNode(pg, workspaceId, req.params.nodeId);
+    if (!scopedNode) {
+      return res.status(404).json({ success: false, error: 'Node not found' });
+    }
+
+    req.workspaceId = workspaceId;
+    req.nexusNode = scopedNode;
+    return next();
   } catch (err) {
     console.error('[NEXUS] Auth check failed:', err.message);
     return res.status(500).json({ success: false, error: 'Auth verification failed' });
@@ -697,7 +724,6 @@ app.get('/api/v1/nexus/:nodeId/tasks', requireNexusAuth, async (req, res) => {
   try {
     const pg = app.locals.pg;
     if (!pg) return res.json({ success: true, tasks: [] });
-    // SECURITY: use authenticated workspace_id, not query param (audit 2026-03-28)
     const result = await pg.query(
       `SELECT id, title, description, status, priority, metadata FROM tenant_vutler.tasks
        WHERE workspace_id = $1 AND status IN ('pending', 'assigned')
@@ -722,14 +748,25 @@ app.post('/api/v1/nexus/:nodeId/tasks/:taskId/status', requireNexusAuth, async (
     if (taskError) meta.error = taskError;
 
     await pg.query(
-      `UPDATE tenant_vutler.tasks SET status = $1, metadata = metadata || $2::jsonb, updated_at = NOW() WHERE id = $3`,
-      [status, JSON.stringify(meta), req.params.taskId]
+      `UPDATE tenant_vutler.tasks
+          SET status = $1,
+              metadata = metadata || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $3
+          AND workspace_id = $4`,
+      [status, JSON.stringify(meta), req.params.taskId, req.workspaceId]
     );
 
     // If completed, try to sync back to Snipara
     if (status === 'completed') {
       try {
-        const task = await pg.query(`SELECT snipara_task_id, swarm_task_id, title FROM tenant_vutler.tasks WHERE id = $1`, [req.params.taskId]);
+        const task = await pg.query(
+          `SELECT snipara_task_id, swarm_task_id, title
+             FROM tenant_vutler.tasks
+            WHERE id = $1
+              AND workspace_id = $2`,
+          [req.params.taskId, req.workspaceId]
+        );
         const row = task.rows[0];
         if (row?.swarm_task_id && app.locals.swarmCoordinator) {
           await app.locals.swarmCoordinator.completeTask(row.swarm_task_id, 'nexus', output || '');
@@ -766,7 +803,8 @@ app.post('/api/v1/nexus/:nodeId/connect', requireNexusAuth, async (req, res) => 
                 agents_deployed = $3::jsonb,
                 config = COALESCE(config, '{}'::jsonb) || $4::jsonb,
                 updated_at = NOW()
-          WHERE id = $1`,
+          WHERE id = $1
+            AND workspace_id = $5`,
         [
           req.params.nodeId,
           status,
@@ -779,6 +817,7 @@ app.post('/api/v1/nexus/:nodeId/connect', requireNexusAuth, async (req, res) => 
             client_name,
             filesystem_root,
           })),
+          req.workspaceId,
         ]
       ).catch(() => {});
     }
@@ -788,16 +827,8 @@ app.post('/api/v1/nexus/:nodeId/connect', requireNexusAuth, async (req, res) => 
 
 app.get('/api/v1/nexus/:nodeId/memory/recall', requireNexusAuth, async (req, res) => {
   try {
-    const pg = app.locals.pg;
     const { q, scope, limit } = req.query;
     if (!q) return res.status(400).json({ error: 'q parameter required' });
-
-    // Look up node to get snipara_instance_id
-    let instanceId = null;
-    if (pg) {
-      const node = await pg.query('SELECT snipara_instance_id, mode, role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
-      if (node.rows[0]) instanceId = node.rows[0].snipara_instance_id;
-    }
 
     // Call Snipara via swarmCoordinator
     const coordinator = req.app.locals.swarmCoordinator;
@@ -805,7 +836,7 @@ app.get('/api/v1/nexus/:nodeId/memory/recall', requireNexusAuth, async (req, res
 
     const result = await coordinator.sniparaCall('rlm_recall', {
       query: q,
-      agent_id: instanceId,
+      agent_id: req.nexusNode?.snipara_instance_id || null,
       scope: scope || 'instance',
       limit: parseInt(limit) || 5
     });
@@ -821,12 +852,8 @@ app.post('/api/v1/nexus/:nodeId/memory/remember', requireNexusAuth, async (req, 
     const { content, type, tags, importance } = req.body;
     if (!content) return res.status(400).json({ error: 'content required' });
 
-    const pg = app.locals.pg;
-    let instanceId = null, role = 'general';
-    if (pg) {
-      const node = await pg.query('SELECT snipara_instance_id, role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
-      if (node.rows[0]) { instanceId = node.rows[0].snipara_instance_id; role = node.rows[0].role; }
-    }
+    const instanceId = req.nexusNode?.snipara_instance_id || null;
+    const role = req.nexusNode?.role || 'general';
 
     const coordinator = req.app.locals.swarmCoordinator;
     if (!coordinator?.sniparaCall) return res.json({ success: false, error: 'Snipara not available' });
@@ -854,12 +881,7 @@ app.post('/api/v1/nexus/:nodeId/memory/promote', requireNexusAuth, async (req, r
     const { content, role: overrideRole } = req.body;
     if (!content) return res.status(400).json({ error: 'content required' });
 
-    const pg = app.locals.pg;
-    let role = overrideRole || 'general';
-    if (pg) {
-      const node = await pg.query('SELECT role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
-      if (node.rows[0]) role = node.rows[0].role || role;
-    }
+    const role = overrideRole || req.nexusNode?.role || 'general';
 
     const coordinator = req.app.locals.swarmCoordinator;
     if (!coordinator?.sniparaCall) return res.json({ success: false, error: 'Snipara not available' });
@@ -884,12 +906,7 @@ app.post('/api/v1/nexus/:nodeId/memory/promote', requireNexusAuth, async (req, r
 // Returns the shared context docs (SOUL.md, MEMORY.md, USER.md) + template memories for this role
 app.get('/api/v1/nexus/:nodeId/memory/context', requireNexusAuth, async (req, res) => {
   try {
-    const pg = app.locals.pg;
-    let role = 'general', instanceId = null;
-    if (pg) {
-      const node = await pg.query('SELECT snipara_instance_id, role FROM tenant_vutler.nexus_nodes WHERE id = $1', [req.params.nodeId]);
-      if (node.rows[0]) { instanceId = node.rows[0].snipara_instance_id; role = node.rows[0].role; }
-    }
+    const role = req.nexusNode?.role || 'general';
 
     const coordinator = req.app.locals.swarmCoordinator;
     if (!coordinator?.sniparaCall) return res.json({ soul: '', memory: '', user: '', template: [] });
@@ -914,21 +931,17 @@ app.get('/api/v1/nexus/:nodeId/agent-config', requireNexusAuth, async (req, res)
     const pg = app.locals.pg;
     if (!pg) return res.json({ success: false, error: 'DB unavailable' });
 
-    // Get node info
-    const node = await pg.query(
-      'SELECT mode, clone_source_agent_id, snipara_instance_id, role FROM tenant_vutler.nexus_nodes WHERE id = $1',
-      [req.params.nodeId]
-    );
-    if (!node.rows[0]) return res.status(404).json({ error: 'Node not found' });
-
-    const { mode, clone_source_agent_id, role } = node.rows[0];
+    const { mode, clone_source_agent_id, role } = req.nexusNode;
 
     // For local mode: fetch the source agent's config
     let agentConfig = {};
     if (mode === 'local' && clone_source_agent_id) {
       const agent = await pg.query(
-        'SELECT name, system_prompt, personality, model, tools FROM tenant_vutler.agents WHERE id = $1',
-        [clone_source_agent_id]
+        `SELECT name, system_prompt, personality, model, tools
+           FROM tenant_vutler.agents
+          WHERE id = $1
+            AND workspace_id = $2`,
+        [clone_source_agent_id, req.workspaceId]
       );
       if (agent.rows[0]) agentConfig = agent.rows[0];
     }

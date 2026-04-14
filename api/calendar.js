@@ -65,6 +65,17 @@ function buildStoredEventSelect(columns) {
   ].join(', ');
 }
 
+function workspaceIdOf(req) {
+  return req.workspaceId || null;
+}
+
+function requireWorkspace(req, res, next) {
+  if (!workspaceIdOf(req)) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+  return next();
+}
+
 function parseCron(expr) {
   if (!expr || typeof expr !== 'string') return null;
   const parts = expr.trim().split(/\s+/);
@@ -307,12 +318,14 @@ async function fetchScheduledTaskEvents(workspaceId, start, end) {
 
 /* ── Routes ─────────────────────────────────────────────────────────────────── */
 
+router.use(requireWorkspace);
+
 // GET /api/v1/calendar — merged stored + virtual events
 router.get('/', async (req, res) => {
   try {
     const columns = await ensureSchema();
     const { start, end, source } = req.query;
-    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = workspaceIdOf(req);
 
     // Decide which sources to include
     const wantStored = !source || source === 'all' || source === 'manual' || source === 'agent' || source === 'scheduled_task' || source === 'materialized_task' || (source && source.startsWith('agent'));
@@ -366,7 +379,7 @@ router.get('/', async (req, res) => {
       const googlePromise = (async () => {
         try {
           const { isGoogleConnected } = require('../services/google/tokenManager');
-          const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+          const workspaceId = workspaceIdOf(req);
           const connected = await isGoogleConnected(workspaceId);
           if (!connected) return [];
 
@@ -428,7 +441,7 @@ router.post('/events', async (req, res) => {
 
     const insertColumns = ['workspace_id', 'title', 'description', 'start_time', 'end_time', 'all_day', 'location', 'color'];
     const insertValues = [
-      req.workspaceId || '00000000-0000-0000-0000-000000000001',
+      workspaceIdOf(req),
       title,
       description || '',
       start,
@@ -474,7 +487,7 @@ router.put('/events/:id', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Virtual events are read-only. Edit the source entity directly.' });
     }
     await ensureSchema();
-    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = workspaceIdOf(req);
     const { title, start, end, allDay, description, location, color } = req.body;
     const r = await pool.query(
       `UPDATE ${SCHEMA}.calendar_events SET title=COALESCE($2,title), description=COALESCE($3,description),
@@ -496,7 +509,7 @@ router.delete('/events/:id', async (req, res) => {
     if (req.params.id.startsWith('virtual-')) {
       return res.status(403).json({ success: false, error: 'Virtual events cannot be deleted. Edit the source entity directly.' });
     }
-    const workspaceId = req.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = workspaceIdOf(req);
     await pool.query(`DELETE FROM ${SCHEMA}.calendar_events WHERE id=$1 AND workspace_id = $2`, [req.params.id, workspaceId]);
     res.json({ success: true });
   } catch (err) {

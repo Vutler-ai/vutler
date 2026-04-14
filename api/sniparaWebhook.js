@@ -27,7 +27,7 @@ const MAX_PROCESSED = 10000;
 // ---------- HMAC VERIFICATION ----------
 
 function verifySignature(rawBody, signature) {
-  if (!WEBHOOK_SECRET) return true; // Skip verification if no secret configured
+  if (!WEBHOOK_SECRET) return false;
   if (!signature) return false;
 
   const expected = 'sha256=' + crypto
@@ -137,8 +137,22 @@ router.post('/',
     const type = eventType || payload.event_type || payload.event || 'unknown';
     const workspaceId = payload?.workspace_id || payload?.data?.workspace_id || null;
 
+    if (!WEBHOOK_SECRET) {
+      console.warn('[SniparaWebhook] Rejected request: SNIPARA_WEBHOOK_SECRET is not configured');
+      await recordWorkspaceSniparaWebhookEvent({
+        db: pool,
+        workspaceId,
+        eventType: type,
+        deliveryId,
+        status: 'misconfigured',
+        payload,
+        error: 'SNIPARA_WEBHOOK_SECRET is not configured',
+      }).catch(() => null);
+      return res.status(503).json({ error: 'Webhook not configured' });
+    }
+
     // Verify HMAC signature
-    if (WEBHOOK_SECRET && !verifySignature(rawBody, signature)) {
+    if (!verifySignature(rawBody, signature)) {
       console.warn('[SniparaWebhook] Invalid signature, rejecting');
       await recordWorkspaceSniparaWebhookEvent({
         db: pool,

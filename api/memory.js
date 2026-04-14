@@ -63,7 +63,14 @@ const {
 } = require('../services/groupMemoryService');
 
 function getWorkspaceId(req) {
-  return req.workspaceId || '00000000-0000-0000-0000-000000000001';
+  return req.workspaceId || null;
+}
+
+function requireWorkspace(req, res, next) {
+  if (!getWorkspaceId(req)) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+  return next();
 }
 
 function parseLimit(value, fallback) {
@@ -84,6 +91,8 @@ function toTemplateScope(role, count, hasMore) {
     count_is_estimate: hasMore,
   };
 }
+
+router.use(requireWorkspace);
 
 router.get('/agents/:agentId/memories', async (req, res) => {
   try {

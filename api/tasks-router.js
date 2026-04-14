@@ -1,12 +1,49 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const taskRouter = require('../services/taskRouter');
 const { getSwarmCoordinator } = require('../app/custom/services/swarmCoordinator');
 
 function workspaceIdOf(req) {
-  return req.workspaceId || '00000000-0000-0000-0000-000000000001';
+  return req.workspaceId || null;
+}
+
+function timingSafeEqualString(left, right) {
+  const a = Buffer.from(String(left || ''), 'utf8');
+  const b = Buffer.from(String(right || ''), 'utf8');
+  if (!a.length || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function resolveSyncSecret() {
+  const value = process.env.TASK_ROUTER_WEBHOOK_SECRET || process.env.SNIPARA_WEBHOOK_SECRET || '';
+  return String(value).trim();
+}
+
+function requireSyncAuth(req, res, next) {
+  const secret = resolveSyncSecret();
+  if (!secret) {
+    return res.status(503).json({ success: false, error: 'task-router sync webhook is not configured' });
+  }
+
+  const provided = req.headers['x-webhook-secret']
+    || req.headers['x-vutler-webhook-secret']
+    || req.query.secret;
+
+  if (!timingSafeEqualString(provided, secret)) {
+    return res.status(401).json({ success: false, error: 'Unauthorized' });
+  }
+
+  return next();
+}
+
+function requireWorkspace(req, res, next) {
+  if (!workspaceIdOf(req)) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+  return next();
 }
 
 function mapLegacyEventName(event) {
@@ -18,7 +55,7 @@ function mapLegacyEventName(event) {
 }
 
 // POST /sync — Snipara webhook endpoint
-router.post('/sync', async (req, res) => {
+router.post('/sync', requireSyncAuth, async (req, res) => {
   try {
     const { event, task } = req.body;
     
@@ -55,6 +92,8 @@ router.post('/sync', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+router.use(requireWorkspace);
 
 // POST / — create task
 router.post('/', async (req, res) => {

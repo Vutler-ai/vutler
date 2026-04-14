@@ -1,5 +1,7 @@
 'use strict';
 
+const dns = require('dns').promises;
+const net = require('net');
 const pool = require('../../lib/vaultbrix');
 const {
   assertColumnsExist,
@@ -227,7 +229,93 @@ function assertWorkspaceId(workspaceId) {
   }
 }
 
-function normalizeBaseUrl(baseUrl) {
+function isLocalHostname(hostname) {
+  const normalized = String(hostname || '').trim().toLowerCase();
+  return normalized === 'localhost'
+    || normalized.endsWith('.localhost')
+    || normalized.endsWith('.local')
+    || normalized.endsWith('.internal');
+}
+
+function isBlockedIpAddress(address) {
+  const value = String(address || '').trim().toLowerCase();
+  const family = net.isIP(value);
+  if (!family) return false;
+
+  if (family === 4) {
+    return value === '0.0.0.0'
+      || value.startsWith('10.')
+      || value.startsWith('127.')
+      || value.startsWith('169.254.')
+      || value.startsWith('192.168.')
+      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(value);
+  }
+
+  return value === '::1'
+    || value === '::'
+    || value.startsWith('fc')
+    || value.startsWith('fd')
+    || value.startsWith('fe80:')
+    || value.startsWith('::ffff:127.')
+    || value.startsWith('::ffff:10.')
+    || value.startsWith('::ffff:169.254.')
+    || value.startsWith('::ffff:192.168.')
+    || /^::ffff:172\.(1[6-9]|2\d|3[0-1])\./.test(value);
+}
+
+async function assertSafeTargetHostname(hostname) {
+  if (!hostname) {
+    const error = new Error('target.baseUrl hostname is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (isLocalHostname(hostname) || isBlockedIpAddress(hostname)) {
+    const error = new Error('target.baseUrl must resolve to a public internet host');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let resolvedAddresses = [];
+  try {
+    resolvedAddresses = await dns.lookup(hostname, { all: true, verbatim: true });
+  } catch (lookupError) {
+    const error = new Error(`target.baseUrl host could not be resolved: ${hostname}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!resolvedAddresses.length || resolvedAddresses.some((entry) => isBlockedIpAddress(entry?.address))) {
+    const error = new Error('target.baseUrl must resolve to a public internet host');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+function isHostnameAllowed(hostname, allowedDomains = []) {
+  const normalizedHost = String(hostname || '').trim().toLowerCase();
+  return allowedDomains.some((domain) => {
+    const normalizedDomain = String(domain || '').trim().toLowerCase();
+    return normalizedDomain && (normalizedHost === normalizedDomain || normalizedHost.endsWith(`.${normalizedDomain}`));
+  });
+}
+
+function assertCredentialUrlAllowed(targetUrl, credentials) {
+  const allowedDomains = Array.isArray(credentials?.metadata?.allowedDomains)
+    ? credentials.metadata.allowedDomains.filter(Boolean)
+    : [];
+  if (!allowedDomains.length) return;
+
+  const hostname = new URL(targetUrl).hostname;
+  if (!isHostnameAllowed(hostname, allowedDomains)) {
+    const error = new Error(`Credential cannot be used for target host: ${hostname}`);
+    error.statusCode = 403;
+    error.code = 'CREDENTIAL_DOMAIN_MISMATCH';
+    throw error;
+  }
+}
+
+async function normalizeBaseUrl(baseUrl) {
   const value = String(baseUrl || '').trim();
   if (!value) {
     const error = new Error('target.baseUrl is required');
@@ -235,6 +323,17 @@ function normalizeBaseUrl(baseUrl) {
     throw error;
   }
   const parsed = new URL(value);
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    const error = new Error('target.baseUrl must use http or https');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (parsed.username || parsed.password) {
+    const error = new Error('target.baseUrl must not include embedded credentials');
+    error.statusCode = 400;
+    throw error;
+  }
+  await assertSafeTargetHostname(parsed.hostname);
   return parsed.toString();
 }
 
@@ -280,7 +379,7 @@ async function createRun(workspaceId, payload = {}, userId = null) {
 
   const target = {
     appKey: payload.target?.appKey || null,
-    baseUrl: normalizeBaseUrl(payload.target?.baseUrl),
+    baseUrl: await normalizeBaseUrl(payload.target?.baseUrl),
     path: payload.target?.path || null,
   };
 
@@ -816,6 +915,7 @@ async function resolvePlaywrightStepInputs(run, step) {
       throw error;
     }
 
+    assertCredentialUrlAllowed(run.target.baseUrl, credentials);
     input.resolvedCredentials = credentials;
   }
 
@@ -973,4 +1073,10 @@ module.exports = {
   listRunEvidence,
   getRunReport,
   cancelRun,
+  __private: {
+    normalizeBaseUrl,
+    isBlockedIpAddress,
+    isHostnameAllowed,
+    assertCredentialUrlAllowed,
+  },
 };

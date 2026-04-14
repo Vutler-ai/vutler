@@ -45,6 +45,9 @@ function normalizeResolvedCredential(secretRecord, context = {}) {
       source: context.source || 'vault',
       browserCredentialId: context.browserCredential?.id || null,
       browserCredentialKey: context.browserCredential?.credential_key || null,
+      allowedDomains: Array.isArray(context.browserCredential?.metadata?.allowed_domains)
+        ? context.browserCredential.metadata.allowed_domains.filter(Boolean)
+        : [],
       reference: context.reference || null,
     },
   };

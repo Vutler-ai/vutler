@@ -1612,74 +1612,25 @@ router.post('/register', async (req, res) => {
       ...(config?.permissions ? { consent_state: buildNodeConsentState(config.permissions) } : {}),
     };
 
-    const explicitWorkspaceId = (() => {
-      const candidates = [
-        getWorkspaceContext(req),
-        req.body?.workspaceId,
-        req.body?.workspace_id,
-      ];
-      for (const candidate of candidates) {
-        const value = typeof candidate === 'string' ? candidate.trim() : candidate;
-        if (value) return value;
-      }
-      return null;
-    })();
-    let workspaceId = explicitWorkspaceId;
+    let workspaceId = null;
     let nodeId;
     let authMethod;
-    const isDev = process.env.NODE_ENV !== 'production';
-
-    // In dev mode: accept any key prefixed with "vutler_" without DB validation
-    if (isDev && secret.startsWith('vutler_')) {
-      try {
-        await ensureApiKeysTable();
-        await ensureNexusNodesTable();
-        const keyRecord = await resolveApiKey(secret);
-        if (keyRecord) {
-          workspaceId = keyRecord.workspace_id;
-          authMethod = 'api_key';
-        }
-      } catch (_) { /* DB down in dev — ignore */ }
-
-      if (!authMethod) {
-        if (!workspaceId) {
-          return res.status(400).json({ success: false, error: 'workspace context is required' });
-        }
-        console.warn('[NEXUS] Dev mode — accepting key without DB validation');
-        authMethod = 'dev_mode';
-      }
-
-      nodeId = require('crypto').randomUUID();
-      // Try to persist to DB (best effort)
-      try {
-        const insert = await pool.query(
-          `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
-           VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
-           RETURNING id`,
-          [workspaceId, nodeName, type, host, port, JSON.stringify(registrationConfig)]
-        );
-        nodeId = insert.rows[0].id;
-      } catch (_) { /* DB down — use random UUID */ }
-
-    } else {
-      // Production mode: strict DB validation
-      await ensureApiKeysTable();
-      await ensureNexusNodesTable();
-      const keyRecord = await resolveApiKey(secret);
-      if (!keyRecord) {
-        return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
-      }
-      workspaceId = keyRecord.workspace_id;
-      authMethod = 'api_key';
-
-      const insert = await pool.query(
-        `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
-         VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
-         RETURNING id`,
-        [workspaceId, nodeName, type, host, port, JSON.stringify(registrationConfig)]
-      );
-      nodeId = insert.rows[0].id;
+    await ensureApiKeysTable();
+    await ensureNexusNodesTable();
+    const keyRecord = await resolveApiKey(secret);
+    if (!keyRecord) {
+      return res.status(401).json({ success: false, error: 'Invalid or revoked API key' });
     }
+    workspaceId = keyRecord.workspace_id;
+    authMethod = 'api_key';
+
+    const insert = await pool.query(
+      `INSERT INTO ${SCHEMA}.nexus_nodes (workspace_id, name, type, status, host, port, config, agents_deployed)
+       VALUES ($1, $2, $3, 'online', $4, $5, $6::jsonb, '[]'::jsonb)
+       RETURNING id`,
+      [workspaceId, nodeName, type, host, port, JSON.stringify(registrationConfig)]
+    );
+    nodeId = insert.rows[0].id;
 
     console.log(`[NEXUS] Node registered: ${nodeName} (${nodeId}) [${authMethod}]`);
 

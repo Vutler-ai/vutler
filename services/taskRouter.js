@@ -99,8 +99,17 @@ function matchSkillToTask(taskTitle, taskDescription, agentSkills) {
   return bestSkill;
 }
 
+function assertWorkspaceId(workspaceId, operation) {
+  const normalized = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (!normalized) {
+    throw new Error(`workspace_id is required for taskRouter.${operation}`);
+  }
+  return normalized;
+}
+
 async function createTask({ title, description, source, source_ref, priority, due_date, reminder_at, created_by, workspace_id, assigned_agent, metadata }) {
   try {
+    const effectiveWorkspaceId = assertWorkspaceId(workspace_id, 'createTask');
     if (!assigned_agent) {
       const classification = classifyAndAssign({ title, description, priority });
       assigned_agent = classification.agent;
@@ -114,8 +123,12 @@ async function createTask({ title, description, source, source_ref, priority, du
     if (assigned_agent && !enrichedMetadata.skill_key) {
       try {
         const agentRow = await pool.query(
-          `SELECT config FROM ${SCHEMA}.agents WHERE username = $1 LIMIT 1`,
-          [assigned_agent]
+          `SELECT config
+             FROM ${SCHEMA}.agents
+            WHERE username = $1
+              AND workspace_id = $2
+            LIMIT 1`,
+          [assigned_agent, effectiveWorkspaceId]
         );
         const agentConfig = agentRow.rows[0]?.config || {};
         const agentSkills = agentConfig.skills || [];
@@ -146,7 +159,7 @@ async function createTask({ title, description, source, source_ref, priority, du
         reminder_at: reminder_at || null,
         created_by: created_by || null,
       },
-    }, workspace_id || '00000000-0000-0000-0000-000000000001');
+    }, effectiveWorkspaceId);
 
     console.log('[TaskRouter] Created task:', task.id, '→', assigned_agent);
     return task;
@@ -158,12 +171,11 @@ async function createTask({ title, description, source, source_ref, priority, du
 
 async function getTask(taskId, workspaceId) {
   try {
-    // SECURITY: always scope by workspace_id (audit 2026-03-28)
-    if (workspaceId) {
-      const result = await pool.query(`SELECT * FROM ${SCHEMA}.tasks WHERE id = $1 AND workspace_id = $2`, [taskId, workspaceId]);
-      return result.rows[0] || null;
-    }
-    const result = await pool.query(`SELECT * FROM ${SCHEMA}.tasks WHERE id = $1`, [taskId]);
+    const effectiveWorkspaceId = assertWorkspaceId(workspaceId, 'getTask');
+    const result = await pool.query(
+      `SELECT * FROM ${SCHEMA}.tasks WHERE id = $1 AND workspace_id = $2`,
+      [taskId, effectiveWorkspaceId]
+    );
     return result.rows[0] || null;
   } catch (err) {
     console.error('[TaskRouter] getTask error:', err.message);
@@ -173,13 +185,13 @@ async function getTask(taskId, workspaceId) {
 
 async function listTasks({ status, assigned_agent, workspace_id } = {}) {
   try {
-    const conditions = [];
-    const params = [];
-    let idx = 1;
+    const effectiveWorkspaceId = assertWorkspaceId(workspace_id, 'listTasks');
+    const conditions = ['workspace_id = $1'];
+    const params = [effectiveWorkspaceId];
+    let idx = 2;
 
     if (status) { conditions.push(`status = $${idx++}`); params.push(status); }
     if (assigned_agent) { conditions.push(`assigned_agent = $${idx++}`); params.push(assigned_agent); }
-    if (workspace_id) { conditions.push(`workspace_id = $${idx++}`); params.push(workspace_id); }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const result = await pool.query(
@@ -195,6 +207,7 @@ async function listTasks({ status, assigned_agent, workspace_id } = {}) {
 
 async function updateTask(taskId, updates, workspaceId) {
   try {
+    const effectiveWorkspaceId = assertWorkspaceId(workspaceId, 'updateTask');
     const allowed = ['title', 'description', 'status', 'priority', 'assigned_agent', 'due_date', 'reminder_at', 'escalation_at', 'metadata'];
     const sets = [];
     const params = [];
@@ -215,14 +228,8 @@ async function updateTask(taskId, updates, workspaceId) {
     sets.push(`updated_at = $${idx++}`);
     params.push(new Date());
     params.push(taskId);
-
-    // SECURITY: scope update by workspace_id when available (audit 2026-03-28)
-    let whereClause = `WHERE id = $${idx}`;
-    if (workspaceId) {
-      params.push(workspaceId);
-      idx++;
-      whereClause += ` AND workspace_id = $${idx}`;
-    }
+    params.push(effectiveWorkspaceId);
+    const whereClause = `WHERE id = $${idx} AND workspace_id = $${idx + 1}`;
 
     const result = await pool.query(
       `UPDATE ${SCHEMA}.tasks SET ${sets.join(', ')} ${whereClause} RETURNING *`,
@@ -278,12 +285,9 @@ async function updateTask(taskId, updates, workspaceId) {
 
 async function getDueTasks(workspaceId) {
   try {
-    const params = [];
-    const conditions = [`due_date < NOW() + INTERVAL '2 hours'`, `status NOT IN ('done', 'cancelled')`];
-    if (workspaceId) {
-      params.push(workspaceId);
-      conditions.push(`workspace_id = $${params.length}`);
-    }
+    const effectiveWorkspaceId = assertWorkspaceId(workspaceId, 'getDueTasks');
+    const params = [effectiveWorkspaceId];
+    const conditions = [`workspace_id = $1`, `due_date < NOW() + INTERVAL '2 hours'`, `status NOT IN ('done', 'cancelled')`];
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} ORDER BY due_date ASC`,
       params
@@ -297,12 +301,9 @@ async function getDueTasks(workspaceId) {
 
 async function getOverdueTasks(workspaceId) {
   try {
-    const params = [];
-    const conditions = [`due_date < NOW()`, `status NOT IN ('done', 'cancelled')`];
-    if (workspaceId) {
-      params.push(workspaceId);
-      conditions.push(`workspace_id = $${params.length}`);
-    }
+    const effectiveWorkspaceId = assertWorkspaceId(workspaceId, 'getOverdueTasks');
+    const params = [effectiveWorkspaceId];
+    const conditions = [`workspace_id = $1`, `due_date < NOW()`, `status NOT IN ('done', 'cancelled')`];
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} ORDER BY due_date ASC`,
       params
@@ -316,12 +317,9 @@ async function getOverdueTasks(workspaceId) {
 
 async function checkReminders(workspaceId) {
   try {
-    const params = [];
-    const conditions = [`reminder_at <= NOW()`, `status IN ('open', 'in_progress')`];
-    if (workspaceId) {
-      params.push(workspaceId);
-      conditions.push(`workspace_id = $${params.length}`);
-    }
+    const effectiveWorkspaceId = assertWorkspaceId(workspaceId, 'checkReminders');
+    const params = [effectiveWorkspaceId];
+    const conditions = [`workspace_id = $1`, `reminder_at <= NOW()`, `status IN ('open', 'in_progress')`];
     const result = await pool.query(
       `SELECT * FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} ORDER BY reminder_at ASC`,
       params
@@ -338,12 +336,9 @@ async function checkReminders(workspaceId) {
  */
 async function deleteTask(taskId, workspaceId) {
   try {
-    const conditions = ['id = $1'];
-    const params = [taskId];
-    if (workspaceId) {
-      params.push(workspaceId);
-      conditions.push(`workspace_id = $${params.length}`);
-    }
+    const effectiveWorkspaceId = assertWorkspaceId(workspaceId, 'deleteTask');
+    const conditions = ['id = $1', 'workspace_id = $2'];
+    const params = [taskId, effectiveWorkspaceId];
     const result = await pool.query(
       `DELETE FROM ${SCHEMA}.tasks WHERE ${conditions.join(' AND ')} RETURNING id`,
       params
