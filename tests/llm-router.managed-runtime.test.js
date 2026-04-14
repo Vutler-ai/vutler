@@ -7,6 +7,7 @@ describe('llmRouter managed runtime', () => {
   let requestLog;
   let ledgerInsert;
   let debitUpdate;
+  let usageInsert;
   const originalAllowRuntimeSchemaMutations = process.env.ALLOW_RUNTIME_SCHEMA_MUTATIONS;
 
   beforeEach(() => {
@@ -14,6 +15,7 @@ describe('llmRouter managed runtime', () => {
     requestLog = [];
     ledgerInsert = null;
     debitUpdate = null;
+    usageInsert = null;
     process.env.ALLOW_RUNTIME_SCHEMA_MUTATIONS = 'false';
     process.env.OPENROUTER_API_KEY = 'shared-openrouter-key';
 
@@ -67,9 +69,9 @@ describe('llmRouter managed runtime', () => {
         availableProviders: [],
         unavailableProviders: [],
       }),
-      filterAvailableProviders: jest.fn((providers) => providers || []),
+      filterAvailableProviders: jest.fn(providers => providers || []),
       getUnavailableProviders: jest.fn(() => []),
-      filterAvailableSkillKeys: jest.fn((skills) => skills || []),
+      filterAvailableSkillKeys: jest.fn(skills => skills || []),
       isProviderAvailable: jest.fn(() => false),
       inferProviderForSkill: jest.fn(() => null),
     }));
@@ -80,7 +82,7 @@ describe('llmRouter managed runtime', () => {
         email: null,
         source: 'none',
       }),
-      filterProvisionedSkillKeys: jest.fn((skills) => skills || []),
+      filterProvisionedSkillKeys: jest.fn(skills => skills || []),
       getProvisioningReasonForSkill: jest.fn(() => null),
       getUnavailableAgentProviders: jest.fn(() => []),
     }));
@@ -90,7 +92,7 @@ describe('llmRouter managed runtime', () => {
         const req = new EventEmitter();
         let body = '';
 
-        req.write = (chunk) => {
+        req.write = chunk => {
           body += chunk;
         };
 
@@ -123,7 +125,7 @@ describe('llmRouter managed runtime', () => {
         };
 
         req.setTimeout = () => {};
-        req.destroy = (err) => {
+        req.destroy = err => {
           if (err) req.emit('error', err);
         };
 
@@ -147,7 +149,11 @@ describe('llmRouter managed runtime', () => {
         if (/SELECT default_provider/i.test(sql)) return { rows: [] };
         if (/WHERE workspace_id = \$1 AND is_enabled = true AND is_default = true/i.test(sql)) return { rows: [] };
 
-        if (/WHERE workspace_id = \$1 AND key IN \('trial_tokens_total', 'trial_tokens_used', 'trial_expires_at'\)/i.test(sql)) {
+        if (
+          /WHERE workspace_id = \$1 AND key IN \('trial_tokens_total', 'trial_tokens_used', 'trial_expires_at'\)/i.test(
+            sql
+          )
+        ) {
           return {
             rows: [
               { key: 'trial_tokens_total', value: '50000' },
@@ -159,23 +165,26 @@ describe('llmRouter managed runtime', () => {
 
         if (/FROM tenant_vutler\.llm_providers/i.test(sql) && params?.[1] === 'vutler-trial') {
           return {
-            rows: [{
-              id: 'managed-provider-1',
-              provider: 'vutler-trial',
-              api_key: 'workspace-openrouter-key',
-              base_url: 'https://openrouter.ai/api/v1',
-              config: {
-                source: 'credits',
-                upstream_provider: 'openrouter',
-                upstream_model: 'openrouter/auto',
+            rows: [
+              {
+                id: 'managed-provider-1',
+                provider: 'vutler-trial',
+                api_key: 'workspace-openrouter-key',
+                base_url: 'https://openrouter.ai/api/v1',
+                config: {
+                  source: 'credits',
+                  upstream_provider: 'openrouter',
+                  upstream_model: 'openrouter/auto',
+                },
+                is_enabled: true,
+                is_default: true,
               },
-              is_enabled: true,
-              is_default: true,
-            }],
+            ],
           };
         }
 
         if (/INSERT INTO tenant_vutler\.llm_usage_logs/i.test(sql)) {
+          usageInsert = params;
           return { rows: [] };
         }
 
@@ -216,6 +225,12 @@ describe('llmRouter managed runtime', () => {
     expect(ledgerInsert[1]).toBe('usage');
     expect(ledgerInsert[2]).toBe(-20);
     expect(ledgerInsert[3]).toContain('"source":"credits"');
+    expect(ledgerInsert[3]).toContain('"billing_source":"managed_legacy"');
+    expect(ledgerInsert[3]).toContain('"billing_tier":"standard"');
+    expect(ledgerInsert[3]).toContain('"credits_debited":1');
     expect(ledgerInsert[3]).toContain('"provider":"openrouter"');
+    expect(usageInsert[8]).toBe('managed_legacy');
+    expect(usageInsert[9]).toBe('standard');
+    expect(usageInsert[11]).toBe(1);
   });
 });

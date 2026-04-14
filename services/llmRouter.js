@@ -6,19 +6,19 @@ const { createSniparaGateway } = require('./snipara/gateway');
 const { createMemoryRuntimeService } = require('./memory/runtime');
 const { resolveMemoryMode } = require('./memory/modeResolver');
 const { recordCreditTransaction } = require('./creditLedger');
+const {
+  calculateCreditsDebited,
+  getTierMultiplier,
+  mapGrantSourceToBillingSource,
+  resolveBillingTier,
+} = require('./workspaceCreditService');
 const { insertChatActionRun, updateChatActionRun } = require('./chatActionRuns');
 const { buildInternalPlacementInstruction, normalizeCapabilities } = require('./agentConfigPolicy');
 const { resolveAgentRuntimeIntegrations, getSkillKeysForIntegrationProviders } = require('./agentIntegrationService');
 const { isSandboxEligibleAgentType } = require('./agentTypeProfiles');
-const {
-  MANAGED_PROVIDER_ALIAS,
-  getManagedRuntimeConfig,
-} = require('./managedProviderService');
+const { MANAGED_PROVIDER_ALIAS, getManagedRuntimeConfig } = require('./managedProviderService');
 const { hydrateProviderSecret } = require('./providerSecrets');
-const {
-  resolveLegacyWorkspaceProvider,
-  syncLegacyWorkspaceProviders,
-} = require('./llmProviderCompat');
+const { resolveLegacyWorkspaceProvider, syncLegacyWorkspaceProviders } = require('./llmProviderCompat');
 const {
   resolveWorkspaceCapabilityAvailability,
   filterAvailableProviders,
@@ -149,11 +149,7 @@ function mapAnthropicTool(tool) {
 function prepareToolsForProvider(provider, tools) {
   if (!Array.isArray(tools) || tools.length === 0) return null;
 
-  const mapper = provider === 'anthropic'
-    ? mapAnthropicTool
-    : provider === 'codex'
-      ? mapResponsesTool
-      : mapOpenAITool;
+  const mapper = provider === 'anthropic' ? mapAnthropicTool : provider === 'codex' ? mapResponsesTool : mapOpenAITool;
 
   const preparedTools = tools
     .map((tool, index) => {
@@ -243,7 +239,16 @@ function buildDriveLink({ pathValue, fileId } = {}) {
 }
 
 function safeCalendarLink(data = {}, args = {}) {
-  const eventId = data.id || data.eventId || data.event_id || data.googleEventId || data.sourceId || data.source_id || args.eventId || args.id || null;
+  const eventId =
+    data.id ||
+    data.eventId ||
+    data.event_id ||
+    data.googleEventId ||
+    data.sourceId ||
+    data.source_id ||
+    args.eventId ||
+    args.id ||
+    null;
   const candidate = data.start || data.start_time || data.date || args.start || args.date || null;
   const date = candidate ? String(candidate).slice(0, 10) : '';
   if (eventId && date) return `/calendar?date=${encodeURIComponent(date)}&event=${encodeURIComponent(String(eventId))}`;
@@ -255,7 +260,18 @@ function safeCalendarLink(data = {}, args = {}) {
 
 function safeEmailLink(data = {}, args = {}) {
   const folder = String(data.folder || data.mailbox || data.box || args.folder || 'drafts').toLowerCase();
-  const uid = data.uid || data.id || data.messageId || data.message_id || data.draftId || data.draft_id || args.uid || args.id || args.messageId || args.draftId || null;
+  const uid =
+    data.uid ||
+    data.id ||
+    data.messageId ||
+    data.message_id ||
+    data.draftId ||
+    data.draft_id ||
+    args.uid ||
+    args.id ||
+    args.messageId ||
+    args.draftId ||
+    null;
   if (uid) return `/email?folder=${encodeURIComponent(folder)}&uid=${encodeURIComponent(String(uid))}`;
   return `/email?folder=${encodeURIComponent(folder)}`;
 }
@@ -305,21 +321,22 @@ function analyzeEmailIntent(message = '') {
     };
   }
 
-  const draftOnly = DRAFT_EMAIL_PATTERNS.some((pattern) => pattern.test(text));
-  const directSend = !draftOnly && DIRECT_EMAIL_SEND_PATTERNS.some((pattern) => pattern.test(text));
+  const draftOnly = DRAFT_EMAIL_PATTERNS.some(pattern => pattern.test(text));
+  const directSend = !draftOnly && DIRECT_EMAIL_SEND_PATTERNS.some(pattern => pattern.test(text));
   const normalized = text.toLowerCase();
   const onBehalfRequested =
-    /\bon my behalf\b/i.test(text)
-    || /\ben mon nom\b/i.test(text)
-    || /\bfrom my\b/i.test(text)
-    || /\buse my\b/i.test(text)
-    || /\bavec mon\b/i.test(text)
-    || /\bdepuis mon\b/i.test(text);
-  const personalMailboxMentioned = normalized.includes('gmail') || normalized.includes('google')
-    ? 'google'
-    : (normalized.includes('outlook') || normalized.includes('microsoft 365') || normalized.includes('office 365'))
-      ? 'microsoft365'
-      : null;
+    /\bon my behalf\b/i.test(text) ||
+    /\ben mon nom\b/i.test(text) ||
+    /\bfrom my\b/i.test(text) ||
+    /\buse my\b/i.test(text) ||
+    /\bavec mon\b/i.test(text) ||
+    /\bdepuis mon\b/i.test(text);
+  const personalMailboxMentioned =
+    normalized.includes('gmail') || normalized.includes('google')
+      ? 'google'
+      : normalized.includes('outlook') || normalized.includes('microsoft 365') || normalized.includes('office 365')
+        ? 'microsoft365'
+        : null;
 
   return {
     hasExplicitRecipient: EMAIL_ADDRESS_PATTERN.test(text),
@@ -336,11 +353,9 @@ function applyContextualToolFiltering(tools = [], latestUserMessage = '') {
   const emailIntent = analyzeEmailIntent(latestUserMessage);
   if (!emailIntent.hasExplicitRecipient) return tools;
 
-  const toolNames = new Set(
-    tools.map((tool) => tool?.function?.name || tool?.name).filter(Boolean)
-  );
+  const toolNames = new Set(tools.map(tool => tool?.function?.name || tool?.name).filter(Boolean));
 
-  return tools.filter((tool) => {
+  return tools.filter(tool => {
     const name = tool?.function?.name || tool?.name || '';
     if (!name) return false;
 
@@ -386,14 +401,7 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
   const action = String(args.action || data.action || '').toLowerCase();
 
   if (skill.includes('workspace_drive') || skill.includes('google_drive')) {
-    const fileLike =
-      data.created ||
-      data.file ||
-      data.updated ||
-      data.written ||
-      data.downloaded ||
-      data.read ||
-      data;
+    const fileLike = data.created || data.file || data.updated || data.written || data.downloaded || data.read || data;
 
     const pathValue =
       fileLike?.path ||
@@ -409,8 +417,12 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
       null;
 
     const fileId = fileLike?.id || data.id || data.fileId || data.file_id || args.fileId || args.id || null;
-    const isFolder = String(fileLike?.type || data.type || '').toLowerCase() === 'folder' || action === 'create_folder' || Boolean(data.created && !fileId);
-    const isExactFileAction = ['read', 'download', 'write_text', 'create', 'update'].includes(action) || Boolean(fileId && !isFolder);
+    const isFolder =
+      String(fileLike?.type || data.type || '').toLowerCase() === 'folder' ||
+      action === 'create_folder' ||
+      Boolean(data.created && !fileId);
+    const isExactFileAction =
+      ['read', 'download', 'write_text', 'create', 'update'].includes(action) || Boolean(fileId && !isFolder);
     const shouldRenderDriveArtifact = isFolder || isExactFileAction;
 
     if (!shouldRenderDriveArtifact && !skill.includes('google_drive')) {
@@ -419,7 +431,9 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
 
     if (skill.includes('google_drive')) {
       const webViewLink = fileLike?.webViewLink || data.webViewLink || data.htmlLink || null;
-      const href = webViewLink || (fileId ? buildDriveLink({ pathValue: pathValue ? getDriveParentPath(pathValue) : '', fileId }) : null);
+      const href =
+        webViewLink ||
+        (fileId ? buildDriveLink({ pathValue: pathValue ? getDriveParentPath(pathValue) : '', fileId }) : null);
       const note = fileLike?.name || data.name || pathValue || undefined;
       const artifact = buildArtifact({
         kind: isFolder ? 'drive-folder' : 'drive-file',
@@ -432,9 +446,9 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
       const href = isFolder
         ? buildDriveLink({ pathValue })
         : buildDriveLink({
-          pathValue: pathValue ? getDriveParentPath(pathValue) : args.path || '',
-          fileId: isExactFileAction ? fileId : null,
-        });
+            pathValue: pathValue ? getDriveParentPath(pathValue) : args.path || '',
+            fileId: isExactFileAction ? fileId : null,
+          });
       const note = fileLike?.name || pathValue || undefined;
       const artifact = buildArtifact({
         kind: isFolder ? 'drive-folder' : 'drive-file',
@@ -471,7 +485,11 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
     if (artifact) artifacts.push(artifact);
   }
 
-  if (skill.includes('task_management') || skill.includes('project_management') || /(^|[_-])task(s)?($|[_-])/.test(skill)) {
+  if (
+    skill.includes('task_management') ||
+    skill.includes('project_management') ||
+    /(^|[_-])task(s)?($|[_-])/.test(skill)
+  ) {
     const href = safeTaskLink(data, args);
     const taskId = data.taskId || data.task_id || data.id || args.taskId || args.task_id || args.id || null;
     const taskTitle = data.title || data.task?.title || data.name || args.title || undefined;
@@ -484,7 +502,7 @@ function extractResourceArtifacts(skillKey, result, args = {}) {
     if (artifact) artifacts.push(artifact);
   }
 
-  return artifacts.filter((artifact) => artifact?.href);
+  return artifacts.filter(artifact => artifact?.href);
 }
 
 function dedupeArtifacts(artifacts = []) {
@@ -500,14 +518,17 @@ function dedupeArtifacts(artifacts = []) {
 
 function appendResourceArtifacts(content, artifacts = []) {
   const current = String(content || '').trim();
-  const unique = dedupeArtifacts(artifacts).filter((artifact) => !current.includes(artifact.href));
+  const unique = dedupeArtifacts(artifacts).filter(artifact => !current.includes(artifact.href));
 
   if (unique.length === 0) return { content, artifacts: dedupeArtifacts(artifacts) };
 
-  const block = ['Liens utiles:', ...unique.map((artifact) => {
-    const note = artifact.note ? ` — ${artifact.note}` : '';
-    return `- [${artifact.label}](${artifact.href})${note}`;
-  })].join('\n');
+  const block = [
+    'Liens utiles:',
+    ...unique.map(artifact => {
+      const note = artifact.note ? ` — ${artifact.note}` : '';
+      return `- [${artifact.label}](${artifact.href})${note}`;
+    }),
+  ].join('\n');
 
   return {
     content: current ? `${current}\n\n${block}` : block,
@@ -540,13 +561,13 @@ async function finishToolActionRun(db, runId, agentId, result, err) {
 
   const isError = Boolean(err) || result?.success === false;
   const deferredStatus = result?.orchestration?.durable_run
-    ? (result.orchestration.durable_run.approval_required === true ? 'awaiting_approval' : 'scheduled')
+    ? result.orchestration.durable_run.approval_required === true
+      ? 'awaiting_approval'
+      : 'scheduled'
     : null;
-  const persistedOutput = isError
-    ? null
-    : (result?.persisted_output ?? result?.data ?? result ?? null);
+  const persistedOutput = isError ? null : (result?.persisted_output ?? result?.data ?? result ?? null);
   await updateChatActionRun(db, 'tenant_vutler', runId, {
-    status: isError ? 'error' : (deferredStatus || 'success'),
+    status: isError ? 'error' : deferredStatus || 'success',
     executed_by: agentId || null,
     output_json: persistedOutput,
     error_json: isError ? { error: err?.message || result?.error || 'Tool execution failed' } : null,
@@ -555,16 +576,18 @@ async function finishToolActionRun(db, runId, agentId, result, err) {
 
 async function storeToolObservation(db, workspaceId, agent, toolName, args, result) {
   if (!db || !workspaceId || !agent || !toolName || !result || result.success === false) return;
-  await memoryRuntime.recordToolObservation({
-    db,
-    workspaceId,
-    agent,
-    toolName,
-    args,
-    result,
-  }).catch((err) => {
-    console.warn('[LLM Router] tool memory extraction failed:', err.message);
-  });
+  await memoryRuntime
+    .recordToolObservation({
+      db,
+      workspaceId,
+      agent,
+      toolName,
+      args,
+      result,
+    })
+    .catch(err => {
+      console.warn('[LLM Router] tool memory extraction failed:', err.message);
+    });
 }
 
 function buildSandboxToolPayload(execution) {
@@ -609,19 +632,21 @@ function attachDeferredRunMetadata(actionResults = [], deferredRun = null, execu
     task_url: deferredRun.links?.task_url || '/tasks',
     execution_mode: executionMode || deferredRun.execution_mode || null,
     approval_required: deferredRun.approval_required === true,
-    message: deferredRun.approval_required === true
-      ? 'Approval is required before this tool action can execute. A durable orchestration run has been created.'
-      : 'This tool action was queued into a durable orchestration run.',
+    message:
+      deferredRun.approval_required === true
+        ? 'Approval is required before this tool action can execute. A durable orchestration run has been created.'
+        : 'This tool action was queued into a durable orchestration run.',
   };
 
-  return actionResults.map((result) => ({
+  return actionResults.map(result => ({
     ...result,
-    output_json: result?.output_json && typeof result.output_json === 'object'
-      ? {
-          ...result.output_json,
-          ...runLinks,
-        }
-      : runLinks,
+    output_json:
+      result?.output_json && typeof result.output_json === 'object'
+        ? {
+            ...result.output_json,
+            ...runLinks,
+          }
+        : runLinks,
   }));
 }
 
@@ -650,9 +675,7 @@ function buildOrchestratedToolResult(actionResult, orchestrationPayload) {
 }
 
 function buildOrchestratedTextToolResult(outputText, data, orchestrationPayload) {
-  const persistedData = data && typeof data === 'object'
-    ? data
-    : { text: outputText || null };
+  const persistedData = data && typeof data === 'object' ? data : { text: outputText || null };
   return {
     success: true,
     data: outputText || 'Tool completed successfully.',
@@ -689,20 +712,16 @@ function buildMemoryToolResult(toolName, actionResult, orchestrationPayload) {
     );
   }
 
-  const recalledText = typeof data?.text === 'string' && data.text.trim()
-    ? data.text
-    : (actionResult?.output_text || 'No relevant memories found.');
-  return buildOrchestratedTextToolResult(
-    recalledText,
-    data || { text: recalledText },
-    orchestrationPayload
-  );
+  const recalledText =
+    typeof data?.text === 'string' && data.text.trim()
+      ? data.text
+      : actionResult?.output_text || 'No relevant memories found.';
+  return buildOrchestratedTextToolResult(recalledText, data || { text: recalledText }, orchestrationPayload);
 }
 
 function buildScheduleToolResult(data = {}) {
-  const message = typeof data?.message === 'string' && data.message.trim()
-    ? data.message.trim()
-    : 'Schedule created successfully.';
+  const message =
+    typeof data?.message === 'string' && data.message.trim() ? data.message.trim() : 'Schedule created successfully.';
   return {
     success: true,
     data: message,
@@ -724,14 +743,20 @@ function normalizeSwarmEventList(payload) {
 }
 
 function normalizeSwarmStatusFilter(status) {
-  const values = Array.isArray(status) ? status : (status ? [status] : []);
+  const values = Array.isArray(status) ? status : status ? [status] : [];
   return values
-    .map((value) => String(value || '').trim().toLowerCase())
+    .map(value =>
+      String(value || '')
+        .trim()
+        .toLowerCase()
+    )
     .filter(Boolean);
 }
 
 function matchesSwarmQuery(task, query) {
-  const needle = String(query || '').trim().toLowerCase();
+  const needle = String(query || '')
+    .trim()
+    .toLowerCase();
   if (!needle) return true;
 
   const haystack = [
@@ -780,9 +805,8 @@ function sanitizeSwarmEvent(event = {}) {
 
 function buildSwarmTasksToolResult(tasks = [], applied = {}) {
   const normalized = tasks.map(sanitizeSwarmTask);
-  const summary = normalized.length === 0
-    ? 'No matching swarm tasks found.'
-    : `Found ${normalized.length} swarm task(s).`;
+  const summary =
+    normalized.length === 0 ? 'No matching swarm tasks found.' : `Found ${normalized.length} swarm task(s).`;
   const payload = {
     summary,
     count: normalized.length,
@@ -799,9 +823,8 @@ function buildSwarmTasksToolResult(tasks = [], applied = {}) {
 
 function buildSwarmEventsToolResult(events = [], applied = {}) {
   const normalized = events.map(sanitizeSwarmEvent);
-  const summary = normalized.length === 0
-    ? 'No recent swarm events found.'
-    : `Found ${normalized.length} swarm event(s).`;
+  const summary =
+    normalized.length === 0 ? 'No recent swarm events found.' : `Found ${normalized.length} swarm event(s).`;
   const payload = {
     summary,
     count: normalized.length,
@@ -842,12 +865,12 @@ async function executeToolThroughOrchestration({
     toolName,
     args,
     adapter,
-      agent,
-      workspaceId,
-      chatActionContext,
-      humanContext,
-      nexusNodeId,
-      originTaskId,
+    agent,
+    workspaceId,
+    chatActionContext,
+    humanContext,
+    nexusNodeId,
+    originTaskId,
   };
   if (Array.isArray(allowedSocialPlatforms) && allowedSocialPlatforms.length > 0) {
     orchestrationInput.allowedSocialPlatforms = allowedSocialPlatforms;
@@ -898,11 +921,11 @@ async function executeToolThroughOrchestration({
   let normalizedActionResults = Array.isArray(actionResults) ? actionResults : [];
   const executionMode = governance?.decisionPayload?.metadata?.execution_mode || governance?.decision || null;
   if (
-    executionMode
-    && executionMode !== 'sync'
-    && chatActionContext?.messageId
-    && chatActionContext?.channelId
-    && workspaceId
+    executionMode &&
+    executionMode !== 'sync' &&
+    chatActionContext?.messageId &&
+    chatActionContext?.channelId &&
+    workspaceId
   ) {
     deferredRun = await queueToolActionRun({
       db,
@@ -924,7 +947,7 @@ async function executeToolThroughOrchestration({
       memoryMode,
       originTaskId,
       wsConnections,
-    }).catch((err) => {
+    }).catch(err => {
       console.warn('[LLM Router] durable tool-action run bootstrap failed:', err.message);
       return null;
     });
@@ -949,13 +972,18 @@ const MEMORY_REMEMBER_TOOL = {
   type: 'function',
   function: {
     name: 'remember',
-    description: 'Store important information for future reference. Use when the user shares facts, preferences, decisions, or context you should remember.',
+    description:
+      'Store important information for future reference. Use when the user shares facts, preferences, decisions, or context you should remember.',
     parameters: {
       type: 'object',
       properties: {
         content: { type: 'string', description: 'The information to remember' },
         importance: { type: 'integer', minimum: 1, maximum: 10, description: 'How important (1=trivial, 10=critical)' },
-        type: { type: 'string', enum: ['fact', 'preference', 'decision', 'context', 'action_log'], description: 'Type of memory' },
+        type: {
+          type: 'string',
+          enum: ['fact', 'preference', 'decision', 'context', 'action_log'],
+          description: 'Type of memory',
+        },
       },
       required: ['content'],
     },
@@ -966,7 +994,8 @@ const MEMORY_RECALL_TOOL = {
   type: 'function',
   function: {
     name: 'recall',
-    description: 'Search your memory for relevant information before responding. Use when you need context about the user, project, or previous interactions.',
+    description:
+      'Search your memory for relevant information before responding. Use when you need context about the user, project, or previous interactions.',
     parameters: {
       type: 'object',
       properties: {
@@ -981,15 +1010,13 @@ const SWARM_LIST_TASKS_TOOL = {
   type: 'function',
   function: {
     name: 'vutler_list_swarm_tasks',
-    description: 'List the current Snipara swarm backlog and queued tasks for this workspace. Use before acting on work that may already be assigned, queued, or duplicated.',
+    description:
+      'List the current Snipara swarm backlog and queued tasks for this workspace. Use before acting on work that may already be assigned, queued, or duplicated.',
     parameters: {
       type: 'object',
       properties: {
         status: {
-          oneOf: [
-            { type: 'string' },
-            { type: 'array', items: { type: 'string' } },
-          ],
+          oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
           description: 'Optional task status filter, such as pending, claimed, in_progress, blocked, or done.',
         },
         agent_id: {
@@ -1016,7 +1043,8 @@ const SWARM_LIST_EVENTS_TOOL = {
   type: 'function',
   function: {
     name: 'vutler_list_swarm_events',
-    description: 'List recent Snipara swarm coordination events for this workspace. Use to inspect recent task activity before deciding what to do next.',
+    description:
+      'List recent Snipara swarm coordination events for this workspace. Use to inspect recent task activity before deciding what to do next.',
     parameters: {
       type: 'object',
       properties: {
@@ -1046,7 +1074,8 @@ const SOCIAL_MEDIA_TOOL = {
   type: 'function',
   function: {
     name: 'vutler_post_social_media',
-    description: 'Post content to connected social media accounts (LinkedIn, X, Instagram, TikTok, etc.). Use when asked to publish or share content on social media.',
+    description:
+      'Post content to connected social media accounts (LinkedIn, X, Instagram, TikTok, etc.). Use when asked to publish or share content on social media.',
     parameters: {
       type: 'object',
       properties: {
@@ -1054,7 +1083,8 @@ const SOCIAL_MEDIA_TOOL = {
         platforms: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional: specific platforms to post to (e.g. ["linkedin", "twitter"]). If omitted, posts to all connected accounts.',
+          description:
+            'Optional: specific platforms to post to (e.g. ["linkedin", "twitter"]). If omitted, posts to all connected accounts.',
         },
         scheduled_at: { type: 'string', description: 'Optional: ISO 8601 datetime to schedule the post for later' },
       },
@@ -1067,7 +1097,8 @@ const SANDBOX_CODE_EXECUTION_TOOL = {
   type: 'function',
   function: {
     name: 'run_code_in_sandbox',
-    description: 'Execute short JavaScript or Python code in the Vutler sandbox. Use for calculations, data transformation, parsing, validation, or lightweight technical checks. Shell access is not available.',
+    description:
+      'Execute short JavaScript or Python code in the Vutler sandbox. Use for calculations, data transformation, parsing, validation, or lightweight technical checks. Shell access is not available.',
     parameters: {
       type: 'object',
       properties: {
@@ -1228,6 +1259,41 @@ async function debitTrialTokens(db, workspaceId, tokensUsed) {
   }
 }
 
+function resolveManagedBillingSource(source) {
+  if (source === 'trial') return 'trial';
+  if (source === 'credits') return 'managed_legacy';
+  return mapGrantSourceToBillingSource(source);
+}
+
+function buildBillingContext(provider, llmResult, managedRuntime) {
+  const inputTokens = llmResult.usage?.input_tokens || 0;
+  const outputTokens = llmResult.usage?.output_tokens || 0;
+  const totalTokens = inputTokens + outputTokens;
+
+  if (provider === MANAGED_PROVIDER_ALIAS) {
+    const tier = resolveBillingTier(llmResult.provider, llmResult.model);
+    return {
+      source: resolveManagedBillingSource(managedRuntime?.source),
+      tier,
+      multiplier: getTierMultiplier(tier),
+      credits_debited: calculateCreditsDebited({ totalTokens, tier }),
+      grant_id: null,
+      provider_id: null,
+      model_canonical: llmResult.model || null,
+    };
+  }
+
+  return {
+    source: 'byok',
+    tier: null,
+    multiplier: null,
+    credits_debited: 0,
+    grant_id: null,
+    provider_id: null,
+    model_canonical: llmResult.model || null,
+  };
+}
+
 function parseUrl(baseURL) {
   const u = new URL(baseURL);
   return { hostname: u.hostname, pathPrefix: u.pathname === '/' ? '' : u.pathname.replace(/\/$/, '') };
@@ -1384,7 +1450,9 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
 
   if (cfg.format === 'anthropic') {
     const sysMsg = systemPrompt || messages.find(m => m.role === 'system')?.content || '';
-    const userMsgs = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
+    const userMsgs = messages
+      .filter(m => m.role !== 'system')
+      .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }));
 
     const body = {
       model: model || cfg.defaultModel,
@@ -1410,8 +1478,8 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
   // Responses API format (used by Codex via chatgpt.com/backend-api)
   if (cfg.format === 'responses') {
     const input = messages
-      .filter((message) => message.role !== 'system')
-      .flatMap((message) => {
+      .filter(message => message.role !== 'system')
+      .flatMap(message => {
         const item = mapResponsesInputItem(message);
         if (Array.isArray(item)) return item;
         return item ? [item] : [];
@@ -1431,7 +1499,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
       path,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         ...cfg.defaultHeaders,
       },
       body,
@@ -1455,7 +1523,7 @@ function buildRequest(provider, model, messages, systemPrompt, options = {}) {
     path,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       ...cfg.defaultHeaders,
     },
     body,
@@ -1467,9 +1535,11 @@ function httpPost(hostname, path, headers, body, timeoutMs = 60000) {
     const data = JSON.stringify(body);
     headers['Content-Length'] = Buffer.byteLength(data);
 
-    const req = https.request({ hostname, port: 443, path, method: 'POST', headers }, (res) => {
+    const req = https.request({ hostname, port: 443, path, method: 'POST', headers }, res => {
       let raw = '';
-      res.on('data', c => { raw += c; });
+      res.on('data', c => {
+        raw += c;
+      });
       res.on('end', () => {
         let obj;
         try {
@@ -1493,11 +1563,14 @@ function cloneResponsesContentPart(part = {}) {
   if (typeof part === 'string') return { type: 'output_text', text: part };
   if (!part || typeof part !== 'object') return { type: 'output_text', text: '' };
 
-  const textValue = typeof part.text === 'string'
-    ? part.text
-    : (typeof part.output_text === 'string'
-      ? part.output_text
-      : (typeof part.text?.value === 'string' ? part.text.value : ''));
+  const textValue =
+    typeof part.text === 'string'
+      ? part.text
+      : typeof part.output_text === 'string'
+        ? part.output_text
+        : typeof part.text?.value === 'string'
+          ? part.text.value
+          : '';
 
   return {
     ...part,
@@ -1509,7 +1582,7 @@ function cloneResponsesOutputItem(item = {}) {
   if (!item || typeof item !== 'object') return null;
   return {
     ...item,
-    content: Array.isArray(item.content) ? item.content.map((part) => cloneResponsesContentPart(part)) : item.content,
+    content: Array.isArray(item.content) ? item.content.map(part => cloneResponsesContentPart(part)) : item.content,
   };
 }
 
@@ -1521,8 +1594,10 @@ function mergeResponsesOutputItem(existing = {}, incoming = {}) {
 
   if (Array.isArray(existing.content) || Array.isArray(incoming.content)) {
     next.content = Array.isArray(incoming.content)
-      ? incoming.content.map((part) => cloneResponsesContentPart(part))
-      : (Array.isArray(existing.content) ? existing.content.map((part) => cloneResponsesContentPart(part)) : []);
+      ? incoming.content.map(part => cloneResponsesContentPart(part))
+      : Array.isArray(existing.content)
+        ? existing.content.map(part => cloneResponsesContentPart(part))
+        : [];
   }
 
   if (incoming.arguments !== undefined) {
@@ -1576,15 +1651,19 @@ function ensureResponsesMessageItem(state, { itemId = null, outputIndex = null }
   if (Number.isInteger(outputIndex) && outputIndex >= 0) {
     const existing = state.response.output[outputIndex];
     if (existing?.type === 'message') return existing;
-    return upsertResponsesOutputItem(state, {
-      id: itemId || `message-${outputIndex}`,
-      type: 'message',
-      role: 'assistant',
-      content: [],
-    }, outputIndex);
+    return upsertResponsesOutputItem(
+      state,
+      {
+        id: itemId || `message-${outputIndex}`,
+        type: 'message',
+        role: 'assistant',
+        content: [],
+      },
+      outputIndex
+    );
   }
 
-  const messageIndex = state.response.output.findIndex((item) => item?.type === 'message');
+  const messageIndex = state.response.output.findIndex(item => item?.type === 'message');
   if (messageIndex >= 0) return state.response.output[messageIndex];
 
   return upsertResponsesOutputItem(state, {
@@ -1625,11 +1704,15 @@ function appendResponsesTextChunk(state, { text = '', itemId = null, outputIndex
 function appendResponsesFunctionArguments(state, { delta = '', itemId = null, outputIndex = null } = {}) {
   if (!delta) return;
 
-  const target = upsertResponsesOutputItem(state, {
-    id: itemId || `function-call-${outputIndex ?? state.response.output.length}`,
-    type: 'function_call',
-    arguments: '',
-  }, outputIndex);
+  const target = upsertResponsesOutputItem(
+    state,
+    {
+      id: itemId || `function-call-${outputIndex ?? state.response.output.length}`,
+      type: 'function_call',
+      arguments: '',
+    },
+    outputIndex
+  );
 
   target.arguments = `${typeof target.arguments === 'string' ? target.arguments : ''}${delta}`;
 }
@@ -1656,7 +1739,9 @@ function mergeResponsesFinalObject(state, response = {}) {
 function buildResponsesStreamResult(state) {
   const hasOutputItems = Array.isArray(state.response.output) && state.response.output.length > 0;
   const hasOutputText = typeof state.response.output_text === 'string' && state.response.output_text.length > 0;
-  const hasMetadata = Boolean(state.response.id || state.response.model || state.response.status || state.response.usage);
+  const hasMetadata = Boolean(
+    state.response.id || state.response.model || state.response.status || state.response.usage
+  );
   if (!hasOutputItems && !hasOutputText && !hasMetadata) return null;
 
   return {
@@ -1672,20 +1757,27 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
     const data = JSON.stringify(body);
     headers['Content-Length'] = Buffer.byteLength(data);
 
-    const req = https.request({ hostname, port: 443, path, method: 'POST', headers }, (res) => {
+    const req = https.request({ hostname, port: 443, path, method: 'POST', headers }, res => {
       if (res.statusCode >= 400) {
         let raw = '';
-        res.on('data', c => { raw += c; });
+        res.on('data', c => {
+          raw += c;
+        });
         res.on('end', () => {
-          try { reject(new Error(`LLM HTTP ${res.statusCode}: ${raw}`)); }
-          catch { reject(new Error(`LLM HTTP ${res.statusCode}`)); }
+          try {
+            reject(new Error(`LLM HTTP ${res.statusCode}: ${raw}`));
+          } catch {
+            reject(new Error(`LLM HTTP ${res.statusCode}`));
+          }
         });
         return;
       }
 
       let raw = '';
       const streamState = createResponsesStreamAccumulator();
-      res.on('data', c => { raw += c; });
+      res.on('data', c => {
+        raw += c;
+      });
       res.on('end', () => {
         // Parse SSE events: collect the final response object plus any streamed deltas.
         const lines = raw.split('\n');
@@ -1699,9 +1791,15 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
                 mergeResponsesFinalObject(streamState, evt.response);
               } else if (evt.type === 'response.done' && evt.response) {
                 mergeResponsesFinalObject(streamState, evt.response);
-              } else if ((evt.type === 'response.output_item.added' || evt.type === 'response.output_item.done') && evt.item) {
+              } else if (
+                (evt.type === 'response.output_item.added' || evt.type === 'response.output_item.done') &&
+                evt.item
+              ) {
                 upsertResponsesOutputItem(streamState, evt.item, evt.output_index);
-              } else if ((evt.type === 'response.content_part.added' || evt.type === 'response.content_part.done') && evt.part) {
+              } else if (
+                (evt.type === 'response.content_part.added' || evt.type === 'response.content_part.done') &&
+                evt.part
+              ) {
                 const messageItem = ensureResponsesMessageItem(streamState, {
                   itemId: evt.item_id || evt.output_item_id || null,
                   outputIndex: evt.output_index,
@@ -1709,9 +1807,10 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
                 if (!Array.isArray(messageItem.content)) {
                   messageItem.content = [];
                 }
-                const partIndex = Number.isInteger(evt.content_index) && evt.content_index >= 0
-                  ? evt.content_index
-                  : messageItem.content.length;
+                const partIndex =
+                  Number.isInteger(evt.content_index) && evt.content_index >= 0
+                    ? evt.content_index
+                    : messageItem.content.length;
                 messageItem.content[partIndex] = cloneResponsesContentPart(evt.part);
               } else if (evt.type === 'response.output_text.delta') {
                 appendResponsesTextChunk(streamState, {
@@ -1734,11 +1833,15 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
                   outputIndex: evt.output_index,
                 });
               } else if (evt.type === 'response.function_call_arguments.done') {
-                upsertResponsesOutputItem(streamState, {
-                  id: evt.item_id || evt.output_item_id || null,
-                  type: 'function_call',
-                  arguments: evt.arguments || '',
-                }, evt.output_index);
+                upsertResponsesOutputItem(
+                  streamState,
+                  {
+                    id: evt.item_id || evt.output_item_id || null,
+                    type: 'function_call',
+                    arguments: evt.arguments || '',
+                  },
+                  evt.output_index
+                );
               } else if (evt.output_text !== undefined) {
                 mergeResponsesFinalObject(streamState, evt);
               }
@@ -1752,8 +1855,11 @@ function httpPostStream(hostname, path, headers, body, timeoutMs = 120000) {
           resolve(result);
         } else {
           // Fallback: try to parse the entire raw as JSON (non-streaming response)
-          try { resolve(JSON.parse(raw)); }
-          catch { reject(new Error('LLM stream parse error: no valid response event found')); }
+          try {
+            resolve(JSON.parse(raw));
+          } catch {
+            reject(new Error('LLM stream parse error: no valid response event found'));
+          }
         }
       });
     });
@@ -1776,42 +1882,49 @@ function extractResponsesTextFromPart(part) {
 
 function extractResponsesTextContent(outputItems = []) {
   return outputItems
-    .filter((item) => item?.type === 'message')
-    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
-    .map((part) => extractResponsesTextFromPart(part))
+    .filter(item => item?.type === 'message')
+    .flatMap(item => (Array.isArray(item.content) ? item.content : []))
+    .map(part => extractResponsesTextFromPart(part))
     .filter(Boolean)
     .join('');
 }
 
 function extractResponsesToolCalls(outputItems = []) {
   return outputItems
-    .filter((item) => item?.type === 'function_call' || item?.type === 'tool_call')
-    .map((item) => normalizeToolCall({
-      id: item.id || item.call_id,
-      call_id: item.call_id || item.id,
-      name: item.name || item.function?.name,
-      arguments: (() => {
-        const rawArguments = item.arguments ?? item.function?.arguments ?? '{}';
-        if (rawArguments && typeof rawArguments === 'object') {
-          return rawArguments;
-        }
-        try {
-          return JSON.parse(rawArguments || '{}');
-        } catch (_) {
-          return {};
-        }
-      })(),
-    }));
+    .filter(item => item?.type === 'function_call' || item?.type === 'tool_call')
+    .map(item =>
+      normalizeToolCall({
+        id: item.id || item.call_id,
+        call_id: item.call_id || item.id,
+        name: item.name || item.function?.name,
+        arguments: (() => {
+          const rawArguments = item.arguments ?? item.function?.arguments ?? '{}';
+          if (rawArguments && typeof rawArguments === 'object') {
+            return rawArguments;
+          }
+          try {
+            return JSON.parse(rawArguments || '{}');
+          } catch (_) {
+            return {};
+          }
+        })(),
+      })
+    );
 }
 
 function normalizeResponse(provider, model, result, latency_ms) {
   if (provider === 'anthropic') {
     // Anthropic: content is an array of blocks (text | tool_use)
     const contentBlocks = result.content || [];
-    const textContent = contentBlocks.filter(b => b.type === 'text').map(b => b.text).join('');
+    const textContent = contentBlocks
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('');
     const toolCalls = contentBlocks
       .filter(b => b.type === 'tool_use')
-      .map((block) => normalizeToolCall({ id: block.id, call_id: block.id, name: block.name, arguments: block.input || {} }));
+      .map(block =>
+        normalizeToolCall({ id: block.id, call_id: block.id, name: block.name, arguments: block.input || {} })
+      );
 
     return {
       content: textContent,
@@ -1852,14 +1965,20 @@ function normalizeResponse(provider, model, result, latency_ms) {
   const message = result.choices?.[0]?.message || {};
   const rawToolCalls = message.tool_calls || null;
   const toolCalls = rawToolCalls
-    ? rawToolCalls.map((tc) => normalizeToolCall({
-      id: tc.id,
-      call_id: tc.id,
-      name: tc.function?.name,
-      arguments: (() => {
-        try { return JSON.parse(tc.function?.arguments || '{}'); } catch { return {}; }
-      })(),
-    }))
+    ? rawToolCalls.map(tc =>
+        normalizeToolCall({
+          id: tc.id,
+          call_id: tc.id,
+          name: tc.function?.name,
+          arguments: (() => {
+            try {
+              return JSON.parse(tc.function?.arguments || '{}');
+            } catch {
+              return {};
+            }
+          })(),
+        })
+      )
     : null;
 
   return {
@@ -1878,21 +1997,24 @@ function normalizeResponse(provider, model, result, latency_ms) {
 }
 
 async function logUsage(db, workspaceId, agent, llmResult) {
-  console.log('[LLM_USAGE]', JSON.stringify({
-    workspace_id: workspaceId || null,
-    provider: llmResult.provider,
-    model: llmResult.model,
-    input_tokens: llmResult.usage?.input_tokens || 0,
-    output_tokens: llmResult.usage?.output_tokens || 0,
-    latency_ms: llmResult.latency_ms || 0,
-  }));
+  console.log(
+    '[LLM_USAGE]',
+    JSON.stringify({
+      workspace_id: workspaceId || null,
+      provider: llmResult.provider,
+      model: llmResult.model,
+      input_tokens: llmResult.usage?.input_tokens || 0,
+      output_tokens: llmResult.usage?.output_tokens || 0,
+      latency_ms: llmResult.latency_ms || 0,
+    })
+  );
 
   if (!db || !workspaceId) return;
   try {
     await db.query(
       `INSERT INTO tenant_vutler.llm_usage_logs
-       (workspace_id, agent_id, provider, model, tokens_input, tokens_output, latency_ms, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+       (workspace_id, agent_id, provider, model, tokens_input, tokens_output, latency_ms, provider_id, billing_source, billing_tier, credit_multiplier, credits_debited, grant_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())`,
       [
         workspaceId,
         agent?.id || null,
@@ -1901,6 +2023,12 @@ async function logUsage(db, workspaceId, agent, llmResult) {
         llmResult.usage?.input_tokens || 0,
         llmResult.usage?.output_tokens || 0,
         llmResult.latency_ms || 0,
+        llmResult.billing?.provider_id || null,
+        llmResult.billing?.source || null,
+        llmResult.billing?.tier || null,
+        llmResult.billing?.multiplier || null,
+        llmResult.billing?.credits_debited || null,
+        llmResult.billing?.grant_id || null,
       ]
     );
   } catch (_) {
@@ -1936,7 +2064,7 @@ async function runOnce(attempt, messages, tools) {
     tools: tools || null,
   });
   const cfg = PROVIDERS[attempt.provider];
-  const poster = (cfg && cfg.format === 'responses') ? httpPostStream : httpPost;
+  const poster = cfg && cfg.format === 'responses' ? httpPostStream : httpPost;
   const result = await poster(req.hostname, req.path, req.headers, req.body);
   return normalizeResponse(attempt.provider, attempt.model, result, Date.now() - start);
 }
@@ -1966,32 +2094,39 @@ async function chat(agent, messages, db, opts = {}) {
   const workspaceId = agent?.workspace_id || agent?.workspaceId || null;
   const workspaceDefaultProvider = await resolveWorkspaceDefaultProvider(db, workspaceId);
   const requestedModel = agent?.model || null;
-  const normalizedRequestedModel = requestedModel ? (MODEL_MAP[requestedModel] || requestedModel) : null;
+  const normalizedRequestedModel = requestedModel ? MODEL_MAP[requestedModel] || requestedModel : null;
   const inferredProvider = requestedModel ? detectProvider(normalizedRequestedModel) : null;
   const primaryProvider = agent?.provider || inferredProvider || workspaceDefaultProvider?.provider || 'anthropic';
-  const primaryProviderId = (!agent?.provider && !inferredProvider && workspaceDefaultProvider?.provider === primaryProvider)
-    ? workspaceDefaultProvider.id
-    : null;
+  const primaryProviderId =
+    !agent?.provider && !inferredProvider && workspaceDefaultProvider?.provider === primaryProvider
+      ? workspaceDefaultProvider.id
+      : null;
   const model = normalizedRequestedModel || PROVIDERS[primaryProvider]?.defaultModel || 'claude-sonnet-4-20250514';
   const fallbackProvider = agent?.fallback_provider || agent?.fallback?.provider || null;
   const fallbackModel = agent?.fallback_model || agent?.fallback?.model || null;
 
   // Determine memory scope — prefer snipara_instance_id, fall back to memory_scope,
   // then username (the Snipara scope used by sniparaClient), then null
-  const memoryScope = agent?.snipara_instance_id || agent?.memory_scope
-    || agent?.username
-    || (agent?.name ? agent.name.toLowerCase().replace(/\s+/g, '-') : null)
-    || null;
+  const memoryScope =
+    agent?.snipara_instance_id ||
+    agent?.memory_scope ||
+    agent?.username ||
+    (agent?.name ? agent.name.toLowerCase().replace(/\s+/g, '-') : null) ||
+    null;
 
   const memoryMode = memoryScope
     ? await resolveMemoryMode({ db, workspaceId, agent })
     : { mode: 'disabled', read: false, write: false, inject: false, source: 'none' };
   const memoryBindings = memoryScope
-    ? buildAgentMemoryBindings(agent || {
-      snipara_instance_id: memoryScope,
-      username: memoryScope,
-      role: agent?.role,
-    }, workspaceId, opts.humanContext || null)
+    ? buildAgentMemoryBindings(
+        agent || {
+          snipara_instance_id: memoryScope,
+          username: memoryScope,
+          role: agent?.role,
+        },
+        workspaceId,
+        opts.humanContext || null
+      )
     : null;
   const sniparaGateway = workspaceId ? createSniparaGateway({ db, workspaceId }) : null;
   const memoryGateway = memoryScope ? sniparaGateway : null;
@@ -2049,13 +2184,17 @@ async function chat(agent, messages, db, opts = {}) {
   const emailCapabilityEffective = emailWorkspaceAvailable && unavailableEmailProviders.length === 0;
   const emailCapabilityUnavailableReason = !emailWorkspaceAvailable
     ? runtimeCapabilityAvailability?.providerStates?.email?.reason || 'Email is not available for this workspace run.'
-    : (unavailableEmailProviders[0]?.reason || null);
+    : unavailableEmailProviders[0]?.reason || null;
   const overlaySkillKeys = Array.isArray(executionOverlay.skillKeys) ? executionOverlay.skillKeys : [];
-  const overlayProviders = Array.isArray(executionOverlay.integrationProviders) ? executionOverlay.integrationProviders : [];
-  const overlayToolCapabilities = Array.isArray(executionOverlay.toolCapabilities) ? executionOverlay.toolCapabilities : [];
+  const overlayProviders = Array.isArray(executionOverlay.integrationProviders)
+    ? executionOverlay.integrationProviders
+    : [];
+  const overlayToolCapabilities = Array.isArray(executionOverlay.toolCapabilities)
+    ? executionOverlay.toolCapabilities
+    : [];
   const workspaceAvailableOverlayProviders = filterAvailableProviders(overlayProviders, runtimeCapabilityAvailability);
-  const availableOverlayProviders = workspaceAvailableOverlayProviders.filter((provider) =>
-    getUnavailableAgentProviders([provider], { agent, emailProvisioning }).length === 0
+  const availableOverlayProviders = workspaceAvailableOverlayProviders.filter(
+    provider => getUnavailableAgentProviders([provider], { agent, emailProvisioning }).length === 0
   );
   const unavailableOverlayProviders = [
     ...getUnavailableProviders(overlayProviders, runtimeCapabilityAvailability),
@@ -2073,44 +2212,53 @@ async function chat(agent, messages, db, opts = {}) {
     ...overlayDerivedSkillKeys,
     ...(Array.isArray(integrationAccess?.derivedSkillKeys) ? integrationAccess.derivedSkillKeys : []),
   ]);
-  const hasNexusTerminalAccess = isSandboxEligibleAgentType(agent?.type)
-    && rawAgentSkillKeys.includes('code_execution');
+  const hasNexusTerminalAccess =
+    isSandboxEligibleAgentType(agent?.type) && rawAgentSkillKeys.includes('code_execution');
   const agentSkillKeys = normalizeCapabilities(
-    filterProvisionedSkillKeys(
-      filterAvailableSkillKeys(rawAgentSkillKeys, runtimeCapabilityAvailability),
-      { agent, emailProvisioning }
-    )
+    filterProvisionedSkillKeys(filterAvailableSkillKeys(rawAgentSkillKeys, runtimeCapabilityAvailability), {
+      agent,
+      emailProvisioning,
+    })
   );
   const blockedSkillReasonByKey = new Map();
   for (const skillKey of rawAgentSkillKeys) {
     if (agentSkillKeys.includes(skillKey)) continue;
     const provisioningReason = getProvisioningReasonForSkill(skillKey, { agent, emailProvisioning });
     const provider = inferProviderForSkill(skillKey);
-    const reason = provider
-      ? runtimeCapabilityAvailability?.providerStates?.[provider]?.reason
-      : null;
-    blockedSkillReasonByKey.set(skillKey, provisioningReason || reason || 'Skill is not available for this workspace run.');
+    const reason = provider ? runtimeCapabilityAvailability?.providerStates?.[provider]?.reason : null;
+    blockedSkillReasonByKey.set(
+      skillKey,
+      provisioningReason || reason || 'Skill is not available for this workspace run.'
+    );
   }
   const allowedSkillToolNames = new Set(
     agentSkillKeys
-      .filter((skillKey) => typeof skillKey === 'string' && skillKey.length > 0)
-      .map((skillKey) => `skill_${skillKey}`)
+      .filter(skillKey => typeof skillKey === 'string' && skillKey.length > 0)
+      .map(skillKey => `skill_${skillKey}`)
   );
-  const hasSocialSkill = agentSkillKeys.some((skillKey) =>
-    typeof skillKey === 'string' && (skillKey.includes('social') || skillKey.includes('posting') || skillKey.includes('content_scheduling') || skillKey.includes('multi_platform'))
+  const hasSocialSkill = agentSkillKeys.some(
+    skillKey =>
+      typeof skillKey === 'string' &&
+      (skillKey.includes('social') ||
+        skillKey.includes('posting') ||
+        skillKey.includes('content_scheduling') ||
+        skillKey.includes('multi_platform'))
   );
-  const hasCodeExecution = agentSkillKeys.includes('code_execution')
-    && isProviderAvailable(runtimeCapabilityAvailability, 'sandbox');
-  const hasLegacySocialAccess = !integrationAccess?.hasSocialAccessOverrides
-    && hasSocialSkill
-    && isProviderAvailable(runtimeCapabilityAvailability, 'social_media')
-    && Array.isArray(integrationAccess?.connectedSocialPlatforms)
-    && integrationAccess.connectedSocialPlatforms.length > 0;
-  const hasOverlaySocialAccess = availableOverlayProviders.includes('social_media')
-    && Array.isArray(integrationAccess?.connectedSocialPlatforms)
-    && integrationAccess.connectedSocialPlatforms.length > 0;
-  const hasSocialMediaAccess = isProviderAvailable(runtimeCapabilityAvailability, 'social_media')
-    && (Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess || hasOverlaySocialAccess);
+  const hasCodeExecution =
+    agentSkillKeys.includes('code_execution') && isProviderAvailable(runtimeCapabilityAvailability, 'sandbox');
+  const hasLegacySocialAccess =
+    !integrationAccess?.hasSocialAccessOverrides &&
+    hasSocialSkill &&
+    isProviderAvailable(runtimeCapabilityAvailability, 'social_media') &&
+    Array.isArray(integrationAccess?.connectedSocialPlatforms) &&
+    integrationAccess.connectedSocialPlatforms.length > 0;
+  const hasOverlaySocialAccess =
+    availableOverlayProviders.includes('social_media') &&
+    Array.isArray(integrationAccess?.connectedSocialPlatforms) &&
+    integrationAccess.connectedSocialPlatforms.length > 0;
+  const hasSocialMediaAccess =
+    isProviderAvailable(runtimeCapabilityAvailability, 'social_media') &&
+    (Boolean(integrationAccess?.hasSocialMediaAccess) || hasLegacySocialAccess || hasOverlaySocialAccess);
   const socialMediaTools = hasSocialMediaAccess ? [SOCIAL_MEDIA_TOOL] : [];
   const scheduleTools = [];
   if (workspaceId) {
@@ -2137,8 +2285,9 @@ async function chat(agent, messages, db, opts = {}) {
       } = require('./nexusTools');
       const onlineNexusNode = await getOnlineNexusNode(workspaceId, db);
       nexusNodeId = onlineNexusNode?.id || null;
-      const calendarCapabilityEffective = isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar')
-        || isProviderAvailable(runtimeCapabilityAvailability, 'google');
+      const calendarCapabilityEffective =
+        isProviderAvailable(runtimeCapabilityAvailability, 'vutler_calendar') ||
+        isProviderAvailable(runtimeCapabilityAvailability, 'google');
       nexusTools = await getNexusToolsForWorkspace(workspaceId, db, {
         allowTerminalSessions: hasNexusTerminalAccess,
         emailCapabilityEffective,
@@ -2160,21 +2309,26 @@ async function chat(agent, messages, db, opts = {}) {
       outboundEmailSourceOptions = [];
     }
   }
-  const allowedSocialPlatforms = hasSocialMediaAccess
-    && Array.isArray(integrationAccess?.allowedSocialPlatforms) && integrationAccess.allowedSocialPlatforms.length > 0
-    ? integrationAccess.allowedSocialPlatforms
-    : (hasLegacySocialAccess ? integrationAccess.connectedSocialPlatforms : []);
-  const allowedSocialAccountIds = hasSocialMediaAccess && Array.isArray(integrationAccess?.allowedSocialAccountIds)
-    ? integrationAccess.allowedSocialAccountIds
-    : [];
-  const allowedSocialBrandIds = hasSocialMediaAccess && Array.isArray(integrationAccess?.allowedSocialBrandIds)
-    ? integrationAccess.allowedSocialBrandIds
-    : [];
+  const allowedSocialPlatforms =
+    hasSocialMediaAccess &&
+    Array.isArray(integrationAccess?.allowedSocialPlatforms) &&
+    integrationAccess.allowedSocialPlatforms.length > 0
+      ? integrationAccess.allowedSocialPlatforms
+      : hasLegacySocialAccess
+        ? integrationAccess.connectedSocialPlatforms
+        : [];
+  const allowedSocialAccountIds =
+    hasSocialMediaAccess && Array.isArray(integrationAccess?.allowedSocialAccountIds)
+      ? integrationAccess.allowedSocialAccountIds
+      : [];
+  const allowedSocialBrandIds =
+    hasSocialMediaAccess && Array.isArray(integrationAccess?.allowedSocialBrandIds)
+      ? integrationAccess.allowedSocialBrandIds
+      : [];
   const effectiveDriveRoot =
-    agent?.workspaceToolPolicy?.agentDriveRoot
-    || agent?.workspaceToolPolicy?.driveRoot
-    || '/projects/Vutler';
-  const internalPlacementInstruction = agent?.workspaceToolPolicy?.placementInstruction || buildInternalPlacementInstruction();
+    agent?.workspaceToolPolicy?.agentDriveRoot || agent?.workspaceToolPolicy?.driveRoot || '/projects/Vutler';
+  const internalPlacementInstruction =
+    agent?.workspaceToolPolicy?.placementInstruction || buildInternalPlacementInstruction();
   const hasInternalCalendarCreate = agentSkillKeys.includes('vutler_calendar_create');
   const hasInternalCalendarUpdate = agentSkillKeys.includes('vutler_calendar_update');
   const hasGoogleCalendarCreate = agentSkillKeys.includes('google_calendar_create');
@@ -2190,87 +2344,113 @@ async function chat(agent, messages, db, opts = {}) {
   effectiveSystemPrompt += `\n\n${internalPlacementInstruction}`;
   if (hasInternalCalendarCreate || hasInternalCalendarUpdate) {
     if (hasGoogleCalendarCreate || hasGoogleCalendarUpdate) {
-      effectiveSystemPrompt += '\n\nBoth the internal Vutler calendar and Google Calendar are writable in this run. If the user asks to create or move an event and does not specify which calendar to use, ask one short clarification question before acting.';
+      effectiveSystemPrompt +=
+        '\n\nBoth the internal Vutler calendar and Google Calendar are writable in this run. If the user asks to create or move an event and does not specify which calendar to use, ask one short clarification question before acting.';
     } else {
-      effectiveSystemPrompt += '\n\nThe internal Vutler calendar is writable in this run. When the user asks to schedule, create, or update an internal event, use the Vutler calendar skill directly instead of saying that calendar writing is unavailable.';
+      effectiveSystemPrompt +=
+        '\n\nThe internal Vutler calendar is writable in this run. When the user asks to schedule, create, or update an internal event, use the Vutler calendar skill directly instead of saying that calendar writing is unavailable.';
     }
   }
   if (swarmTools.length > 0) {
-    effectiveSystemPrompt += '\n\nYou can inspect the live swarm backlog and recent coordination activity with vutler_list_swarm_tasks() and vutler_list_swarm_events(). Before assuming missing context, claiming work is unassigned, or taking an external/public action, check the queue for already-related tasks or recent swarm events.';
+    effectiveSystemPrompt +=
+      '\n\nYou can inspect the live swarm backlog and recent coordination activity with vutler_list_swarm_tasks() and vutler_list_swarm_events(). Before assuming missing context, claiming work is unassigned, or taking an external/public action, check the queue for already-related tasks or recent swarm events.';
   }
   if (hasSocialMediaAccess) {
-    const platformHint = allowedSocialPlatforms.length > 0
-      ? ` Limit social posting to these enabled platforms unless the user asks otherwise and you have access: ${allowedSocialPlatforms.join(', ')}.`
-      : '';
-    const accountHint = allowedSocialAccountIds.length > 0 || allowedSocialBrandIds.length > 0
-      ? ' Posts are automatically restricted to the social accounts assigned to this agent.'
-      : '';
-    const backlogHint = swarmTools.length > 0
-      ? ' Before publishing or scheduling social content, inspect the swarm backlog/events to avoid reposting or creating duplicate queue entries.'
-      : '';
+    const platformHint =
+      allowedSocialPlatforms.length > 0
+        ? ` Limit social posting to these enabled platforms unless the user asks otherwise and you have access: ${allowedSocialPlatforms.join(', ')}.`
+        : '';
+    const accountHint =
+      allowedSocialAccountIds.length > 0 || allowedSocialBrandIds.length > 0
+        ? ' Posts are automatically restricted to the social accounts assigned to this agent.'
+        : '';
+    const backlogHint =
+      swarmTools.length > 0
+        ? ' Before publishing or scheduling social content, inspect the swarm backlog/events to avoid reposting or creating duplicate queue entries.'
+        : '';
     effectiveSystemPrompt += `\n\nYou can post to social media using vutler_post_social_media(). Use this tool when asked to publish, share, or schedule content on social media.${platformHint}${accountHint}${backlogHint}`;
   }
   if (scheduleTools.length > 0) {
-    effectiveSystemPrompt += '\n\nYou can create follow-up execution with vutler_create_schedule(). Use it when the user asks for work to happen on future days or on a recurring cadence. For finite requests like "for the next 30 days", use occurrences to materialize dated tasks immediately instead of creating only an abstract recurring schedule. Do not merely promise future execution for multi-day sequences; create a schedule or dated tasks.';
+    effectiveSystemPrompt +=
+      '\n\nYou can create follow-up execution with vutler_create_schedule(). Use it when the user asks for work to happen on future days or on a recurring cadence. For finite requests like "for the next 30 days", use occurrences to materialize dated tasks immediately instead of creating only an abstract recurring schedule. Do not merely promise future execution for multi-day sequences; create a schedule or dated tasks.';
   }
   if (hasCodeExecution) {
-    effectiveSystemPrompt += '\n\nYou can execute short JavaScript or Python snippets with run_code_in_sandbox(). Use it when a result depends on actual code execution, computation, parsing, or validation. Prefer concise snippets, avoid unnecessary execution, and never assume shell or host access.';
+    effectiveSystemPrompt +=
+      '\n\nYou can execute short JavaScript or Python snippets with run_code_in_sandbox(). Use it when a result depends on actual code execution, computation, parsing, or validation. Prefer concise snippets, avoid unnecessary execution, and never assume shell or host access.';
   }
-  if (nexusTools.some((tool) => tool.name === 'open_terminal_session')) {
-    effectiveSystemPrompt += '\n\nYou can manage persistent terminal sessions on the connected Nexus node. Open one session, keep the returned session_id, reuse it across commands in the same cwd, read incremental output with the cursor, snapshot when you need cwd/closed state, and close the session when finished.';
+  if (nexusTools.some(tool => tool.name === 'open_terminal_session')) {
+    effectiveSystemPrompt +=
+      '\n\nYou can manage persistent terminal sessions on the connected Nexus node. Open one session, keep the returned session_id, reuse it across commands in the same cwd, read incremental output with the cursor, snapshot when you need cwd/closed state, and close the session when finished.';
   }
-  if (agentSkillKeys.some((skill) => typeof skill === 'string' && (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task')))) {
+  if (
+    agentSkillKeys.some(
+      skill =>
+        typeof skill === 'string' &&
+        (skill.includes('drive') || skill.includes('calendar') || skill.includes('email') || skill.includes('task'))
+    )
+  ) {
     effectiveSystemPrompt += `\n\nWhen you create or update a file, task, calendar event, or email draft, include a short final line with a clickable Markdown link to the result. Prefer exact app links such as [Open in Drive](/drive?path=/path/to/folder&file=<fileId>) for files, [Open task](/tasks?task=<taskId>) for tasks, [Open in Calendar](/calendar?date=YYYY-MM-DD&event=<eventId>) for events, and [Open email draft](/email?folder=drafts&uid=<uid>) for drafts. The canonical Vutler Drive root is ${effectiveDriveRoot}. When the file destination is not explicitly specified, place the file into the best matching Generated/ folder under ${effectiveDriveRoot} instead of asking the user for a path. Ask for a path only if the destination is genuinely ambiguous. If a direct webViewLink or external URL is available, include it too.`;
   }
-  const hasSendEmailTool = nexusTools.some((tool) => tool.name === 'send_email');
-  const hasDraftEmailTool = nexusTools.some((tool) => tool.name === 'draft_email');
+  const hasSendEmailTool = nexusTools.some(tool => tool.name === 'send_email');
+  const hasDraftEmailTool = nexusTools.some(tool => tool.name === 'draft_email');
   if (emailCapabilityEffective && emailProvisioning?.email) {
     effectiveSystemPrompt += `\n\nYour provisioned email sending identity for this run is ${emailProvisioning.email}.`;
   }
   if (emailCapabilityEffective && (hasSendEmailTool || hasDraftEmailTool)) {
-    effectiveSystemPrompt += '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, act directly through the available email tool. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
+    effectiveSystemPrompt +=
+      '\n\nWhen the user explicitly instructs you to send, reply, or forward an email and the recipient address is already present, act directly through the available email tool. Do not use contacts lookup when an explicit email address is already provided. Use draft mode only when the user asks for a draft or review first, or when the runtime explicitly reports that approval is required.';
     if (outboundEmailSourceOptions.length > 0) {
-      const personalSources = outboundEmailSourceOptions.filter((entry) => entry.key !== 'agent');
+      const personalSources = outboundEmailSourceOptions.filter(entry => entry.key !== 'agent');
       if (personalSources.length > 0) {
-        effectiveSystemPrompt += '\n\nUse send_email or draft_email without a source override for the provisioned agent mailbox. Use source=google or source=microsoft365 only when the user explicitly wants you to write from their own mailbox or says "on my behalf". Personal mailbox sends are approval-gated and must not silently fall back to the agent mailbox.';
+        effectiveSystemPrompt +=
+          '\n\nUse send_email or draft_email without a source override for the provisioned agent mailbox. Use source=google or source=microsoft365 only when the user explicitly wants you to write from their own mailbox or says "on my behalf". Personal mailbox sends are approval-gated and must not silently fall back to the agent mailbox.';
       }
       if (personalSources.length > 1) {
-        const labels = personalSources.map((entry) => entry.label).join(', ');
+        const labels = personalSources.map(entry => entry.label).join(', ');
         if (emailIntent.onBehalfRequested && !emailIntent.personalMailboxMentioned) {
           effectiveSystemPrompt += `\n\nMultiple personal mailbox sources are available in this run: ${labels}. The user asked for an on-behalf email but did not name the source. Ask one short clarification question before calling send_email or draft_email.`;
         } else {
           effectiveSystemPrompt += `\n\nIf the user asks for a personal mailbox send and does not specify whether they mean ${labels}, ask one short clarification question instead of guessing.`;
         }
-      } else if (personalSources.length === 1 && emailIntent.onBehalfRequested && !emailIntent.personalMailboxMentioned) {
+      } else if (
+        personalSources.length === 1 &&
+        emailIntent.onBehalfRequested &&
+        !emailIntent.personalMailboxMentioned
+      ) {
         effectiveSystemPrompt += `\n\nThe only available personal mailbox source in this run is ${personalSources[0].label}. If the user asks to write on their behalf, use source=${personalSources[0].key} and expect approval before delivery.`;
       }
     }
     if (emailIntent.directSend && emailIntent.hasExplicitRecipient && hasSendEmailTool) {
-      effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present. Do not inspect mailboxes or contacts first. Use send_email immediately.';
+      effectiveSystemPrompt +=
+        '\n\nFor this request, an explicit recipient address is already present. Do not inspect mailboxes or contacts first. Use send_email immediately.';
     } else if (emailIntent.draftOnly && emailIntent.hasExplicitRecipient && hasDraftEmailTool) {
-      effectiveSystemPrompt += '\n\nFor this request, an explicit recipient address is already present and the user asked for a draft. Use draft_email directly.';
+      effectiveSystemPrompt +=
+        '\n\nFor this request, an explicit recipient address is already present and the user asked for a draft. Use draft_email directly.';
     }
   } else if (emailCapabilityEffective) {
-    effectiveSystemPrompt += '\n\nEmail is provisioned for this agent in this run, but no direct email tool is exposed right now. Do not claim you sent, drafted, or inspected email unless a tool call confirms it.';
+    effectiveSystemPrompt +=
+      '\n\nEmail is provisioned for this agent in this run, but no direct email tool is exposed right now. Do not claim you sent, drafted, or inspected email unless a tool call confirms it.';
   } else if (emailCapabilityUnavailableReason) {
     effectiveSystemPrompt += `\n\nEmail is unavailable in this run: ${emailCapabilityUnavailableReason}. Do not claim you can inspect mailboxes, send email, or confirm an agent email identity unless a tool call explicitly confirms it.`;
   }
-  const hasReadEmailTool = nexusTools.some((tool) => tool.name === 'read_emails');
+  const hasReadEmailTool = nexusTools.some(tool => tool.name === 'read_emails');
   if (hasReadEmailTool && mailboxSourceOptions.length > 1) {
-    const mailboxLabels = mailboxSourceOptions.map((entry) => entry.label).join(', ');
-    const mailboxKeys = mailboxSourceOptions.map((entry) => entry.key).join(', ');
+    const mailboxLabels = mailboxSourceOptions.map(entry => entry.label).join(', ');
+    const mailboxKeys = mailboxSourceOptions.map(entry => entry.key).join(', ');
     effectiveSystemPrompt += `\n\nMultiple mailbox sources are available in this run: ${mailboxLabels}. For mailbox-reading requests such as "check email", "read my inbox", "search my mail", or "look at recent emails", do not guess the source. Ask one short clarifying question first unless the user explicitly names the mailbox source. After the user answers, pass read_emails.source using one of these values: ${mailboxKeys}.`;
   } else if (hasReadEmailTool && mailboxSourceOptions.length === 1) {
     effectiveSystemPrompt += `\n\nMailbox-reading requests in this run use ${mailboxSourceOptions[0].label}.`;
   }
   if (unavailableOverlayProviders.length > 0) {
-    const providerNames = unavailableOverlayProviders.map((entry) => entry.key).join(', ');
+    const providerNames = unavailableOverlayProviders.map(entry => entry.key).join(', ');
     effectiveSystemPrompt += `\n\nDo not assume access to unavailable workspace capabilities in this run. The following providers are unavailable: ${providerNames}.`;
   }
 
   const attempts = [
     { provider: primaryProvider, model, providerId: primaryProviderId },
-    ...(fallbackProvider ? [{ provider: fallbackProvider, model: fallbackModel || PROVIDERS[fallbackProvider]?.defaultModel }] : []),
+    ...(fallbackProvider
+      ? [{ provider: fallbackProvider, model: fallbackModel || PROVIDERS[fallbackProvider]?.defaultModel }]
+      : []),
   ];
 
   let lastErr;
@@ -2338,9 +2518,10 @@ async function chat(agent, messages, db, opts = {}) {
     }
 
     // For codex provider, strip the codex/ prefix to get the real OpenAI model ID
-    const resolvedModel = requestProvider === 'codex'
-      ? resolveCodexModel(a.model || effectiveProviderCfg.defaultModel)
-      : (a.model || effectiveProviderCfg.defaultModel);
+    const resolvedModel =
+      requestProvider === 'codex'
+        ? resolveCodexModel(a.model || effectiveProviderCfg.defaultModel)
+        : a.model || effectiveProviderCfg.defaultModel;
 
     const attempt = {
       ...agent,
@@ -2365,11 +2546,21 @@ async function chat(agent, messages, db, opts = {}) {
           try {
             const { getSkillRegistry } = require('./skills');
             skillTools = getSkillRegistry().getSkillTools(agentSkillKeys);
-          } catch (_) { /* skills not available — skip */ }
+          } catch (_) {
+            /* skills not available — skip */
+          }
         }
         const sandboxTools = hasCodeExecution ? [SANDBOX_CODE_EXECUTION_TOOL] : [];
         const allTools = applyContextualToolFiltering(
-          [...memoryTools, ...swarmTools, ...socialMediaTools, ...scheduleTools, ...sandboxTools, ...nexusTools, ...skillTools],
+          [
+            ...memoryTools,
+            ...swarmTools,
+            ...socialMediaTools,
+            ...scheduleTools,
+            ...sandboxTools,
+            ...nexusTools,
+            ...skillTools,
+          ],
           latestUserMessage
         );
         llmResult = await runOnce(attempt, currentMessages, allTools.length > 0 ? allTools : null);
@@ -2386,115 +2577,160 @@ async function chat(agent, messages, db, opts = {}) {
           if (toolCall.name === 'remember' && memoryScope && memoryMode.write && memoryGateway && memoryBindings) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'remember', 'memory', args);
             try {
-              const {
-                orchestrationDecision,
-                governance,
-                actionResults,
-                actionResult,
-                deferredRun,
-              } = await executeToolThroughOrchestration({
-                toolName: toolCall.name,
-                args,
-                adapter: 'memory',
-                agent,
-                workspaceId,
-                db,
-                wsConnections: opts.wsConnections,
-                chatActionContext,
-                chatActionRunId: actionRun?.id || null,
-                model: attempt.model,
-                provider: attempt.provider,
-                memoryBindings,
-                memoryMode,
-                latestUserMessage,
-                humanContext: opts.humanContext || null,
-              });
+              const { orchestrationDecision, governance, actionResults, actionResult, deferredRun } =
+                await executeToolThroughOrchestration({
+                  toolName: toolCall.name,
+                  args,
+                  adapter: 'memory',
+                  agent,
+                  workspaceId,
+                  db,
+                  wsConnections: opts.wsConnections,
+                  chatActionContext,
+                  chatActionRunId: actionRun?.id || null,
+                  model: attempt.model,
+                  provider: attempt.provider,
+                  memoryBindings,
+                  memoryMode,
+                  latestUserMessage,
+                  humanContext: opts.humanContext || null,
+                });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Memory remember failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
+              const orchestrationPayload = buildToolOrchestrationPayload(
+                orchestrationDecision,
+                governance,
+                actionResults,
+                deferredRun
+              );
               const memoryResult = buildMemoryToolResult(toolCall.name, actionResult, orchestrationPayload);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, memoryResult, null);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: formatToolResultContent(memoryResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'remember',
+                  content: formatToolResultContent(memoryResult),
+                },
               ];
             } catch (rememberErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, rememberErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'remember', content: `Error: ${rememberErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'remember',
+                  content: `Error: ${rememberErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
           } else if (toolCall.name === 'recall' && memoryScope && memoryMode.read && memoryGateway && memoryBindings) {
             const actionRun = await startToolActionRun(db, chatActionContext, agent, 'recall', 'memory', args);
             try {
-              const {
-                orchestrationDecision,
-                governance,
-                actionResults,
-                actionResult,
-                deferredRun,
-              } = await executeToolThroughOrchestration({
-                toolName: toolCall.name,
-                args,
-                adapter: 'memory',
-                agent,
-                workspaceId,
-                db,
-                wsConnections: opts.wsConnections,
-                chatActionContext,
-                chatActionRunId: actionRun?.id || null,
-                model: attempt.model,
-                provider: attempt.provider,
-                memoryBindings,
-                memoryMode,
-                latestUserMessage,
-                humanContext: opts.humanContext || null,
-              });
+              const { orchestrationDecision, governance, actionResults, actionResult, deferredRun } =
+                await executeToolThroughOrchestration({
+                  toolName: toolCall.name,
+                  args,
+                  adapter: 'memory',
+                  agent,
+                  workspaceId,
+                  db,
+                  wsConnections: opts.wsConnections,
+                  chatActionContext,
+                  chatActionRunId: actionRun?.id || null,
+                  model: attempt.model,
+                  provider: attempt.provider,
+                  memoryBindings,
+                  memoryMode,
+                  latestUserMessage,
+                  humanContext: opts.humanContext || null,
+                });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Memory recall failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
+              const orchestrationPayload = buildToolOrchestrationPayload(
+                orchestrationDecision,
+                governance,
+                actionResults,
+                deferredRun
+              );
               const memoryResult = buildMemoryToolResult(toolCall.name, actionResult, orchestrationPayload);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, memoryResult, null);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: formatToolResultContent(memoryResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'recall',
+                  content: formatToolResultContent(memoryResult),
+                },
               ];
             } catch (recallErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, recallErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'recall', content: `Error: ${recallErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'recall',
+                  content: `Error: ${recallErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
-          } else if (toolCall.name === 'vutler_list_swarm_tasks' && swarmConfig && sniparaGateway && typeof sniparaGateway.call === 'function') {
-            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_list_swarm_tasks', 'swarm', args);
+          } else if (
+            toolCall.name === 'vutler_list_swarm_tasks' &&
+            swarmConfig &&
+            sniparaGateway &&
+            typeof sniparaGateway.call === 'function'
+          ) {
+            const actionRun = await startToolActionRun(
+              db,
+              chatActionContext,
+              agent,
+              'vutler_list_swarm_tasks',
+              'swarm',
+              args
+            );
             try {
               const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
               const statusFilter = normalizeSwarmStatusFilter(args.status);
-              const agentFilter = String(args.agent_id || '').trim().toLowerCase();
+              const agentFilter = String(args.agent_id || '')
+                .trim()
+                .toLowerCase();
               const queryFilter = typeof args.query === 'string' ? args.query.trim() : '';
               const rawTaskResult = await sniparaGateway.call('rlm_tasks', {
                 swarm_id: swarmConfig.swarmId,
               });
               const filteredTasks = normalizeSwarmTaskList(rawTaskResult)
-                .filter((task) => statusFilter.length === 0 || statusFilter.includes(String(task?.status || '').trim().toLowerCase()))
-                .filter((task) => {
+                .filter(
+                  task =>
+                    statusFilter.length === 0 ||
+                    statusFilter.includes(
+                      String(task?.status || '')
+                        .trim()
+                        .toLowerCase()
+                    )
+                )
+                .filter(task => {
                   if (!agentFilter) return true;
                   const candidates = [task?.assigned_to, task?.for_agent_id, task?.agent_id, task?.owner];
-                  return candidates.some((value) => String(value || '').trim().toLowerCase() === agentFilter);
+                  return candidates.some(
+                    value =>
+                      String(value || '')
+                        .trim()
+                        .toLowerCase() === agentFilter
+                  );
                 })
-                .filter((task) => matchesSwarmQuery(task, queryFilter))
+                .filter(task => matchesSwarmQuery(task, queryFilter))
                 .slice(0, limit);
               const swarmResult = buildSwarmTasksToolResult(filteredTasks, {
                 status: statusFilter,
@@ -2506,24 +2742,49 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_tasks', content: formatToolResultContent(swarmResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_list_swarm_tasks',
+                  content: formatToolResultContent(swarmResult),
+                },
               ];
             } catch (swarmTaskErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, swarmTaskErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_tasks', content: `Error: ${swarmTaskErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_list_swarm_tasks',
+                  content: `Error: ${swarmTaskErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
-          } else if (toolCall.name === 'vutler_list_swarm_events' && swarmConfig && sniparaGateway && typeof sniparaGateway.call === 'function') {
-            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_list_swarm_events', 'swarm', args);
+          } else if (
+            toolCall.name === 'vutler_list_swarm_events' &&
+            swarmConfig &&
+            sniparaGateway &&
+            typeof sniparaGateway.call === 'function'
+          ) {
+            const actionRun = await startToolActionRun(
+              db,
+              chatActionContext,
+              agent,
+              'vutler_list_swarm_events',
+              'swarm',
+              args
+            );
             try {
               const limit = Math.max(1, Math.min(100, Number(args.limit) || 20));
-              const eventFilter = String(args.event || '').trim().toLowerCase();
-              const agentFilter = String(args.agent_id || '').trim().toLowerCase();
+              const eventFilter = String(args.event || '')
+                .trim()
+                .toLowerCase();
+              const agentFilter = String(args.agent_id || '')
+                .trim()
+                .toLowerCase();
               const rawEventResult = await sniparaGateway.call('rlm_swarm_events', {
                 swarm_id: swarmConfig.swarmId,
                 limit,
@@ -2531,8 +2792,20 @@ async function chat(agent, messages, db, opts = {}) {
                 ...(agentFilter ? { agent_id: args.agent_id } : {}),
               });
               const filteredEvents = normalizeSwarmEventList(rawEventResult)
-                .filter((event) => !eventFilter || String(event?.type || event?.event || '').trim().toLowerCase() === eventFilter)
-                .filter((event) => !agentFilter || String(event?.agent_id || event?.owner || '').trim().toLowerCase() === agentFilter)
+                .filter(
+                  event =>
+                    !eventFilter ||
+                    String(event?.type || event?.event || '')
+                      .trim()
+                      .toLowerCase() === eventFilter
+                )
+                .filter(
+                  event =>
+                    !agentFilter ||
+                    String(event?.agent_id || event?.owner || '')
+                      .trim()
+                      .toLowerCase() === agentFilter
+                )
                 .slice(0, limit);
               const swarmResult = buildSwarmEventsToolResult(filteredEvents, {
                 event: eventFilter || null,
@@ -2543,70 +2816,102 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_events', content: formatToolResultContent(swarmResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_list_swarm_events',
+                  content: formatToolResultContent(swarmResult),
+                },
               ];
             } catch (swarmEventErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, swarmEventErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_list_swarm_events', content: `Error: ${swarmEventErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_list_swarm_events',
+                  content: `Error: ${swarmEventErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
           } else if (toolCall.name === 'vutler_post_social_media' && hasSocialMediaAccess) {
-            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_post_social_media', 'social', args);
+            const actionRun = await startToolActionRun(
+              db,
+              chatActionContext,
+              agent,
+              'vutler_post_social_media',
+              'social',
+              args
+            );
             try {
-              const {
-                orchestrationDecision,
-                governance,
-                actionResults,
-                actionResult,
-                deferredRun,
-              } = await executeToolThroughOrchestration({
-                toolName: toolCall.name,
-                args,
-                adapter: 'social',
-                agent,
-                workspaceId,
-                db,
-                wsConnections: opts.wsConnections,
-                chatActionContext,
-                chatActionRunId: actionRun?.id || null,
-                model: attempt.model,
-                provider: attempt.provider,
-                allowedSocialPlatforms,
-                allowedSocialAccountIds,
-                allowedSocialBrandIds,
-                latestUserMessage,
-                originTaskId: opts.originTaskId || null,
-                humanContext: opts.humanContext || null,
-              });
+              const { orchestrationDecision, governance, actionResults, actionResult, deferredRun } =
+                await executeToolThroughOrchestration({
+                  toolName: toolCall.name,
+                  args,
+                  adapter: 'social',
+                  agent,
+                  workspaceId,
+                  db,
+                  wsConnections: opts.wsConnections,
+                  chatActionContext,
+                  chatActionRunId: actionRun?.id || null,
+                  model: attempt.model,
+                  provider: attempt.provider,
+                  allowedSocialPlatforms,
+                  allowedSocialAccountIds,
+                  allowedSocialBrandIds,
+                  latestUserMessage,
+                  originTaskId: opts.originTaskId || null,
+                  humanContext: opts.humanContext || null,
+                });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Social execution failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
+              const orchestrationPayload = buildToolOrchestrationPayload(
+                orchestrationDecision,
+                governance,
+                actionResults,
+                deferredRun
+              );
               const socialResult = buildSocialToolResult(actionResult, orchestrationPayload);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, socialResult, null);
               await storeToolObservation(db, workspaceId, agent, 'vutler_post_social_media', args, socialResult);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: formatToolResultContent(socialResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_post_social_media',
+                  content: formatToolResultContent(socialResult),
+                },
               ];
             } catch (socialErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, socialErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_post_social_media', content: `Error: ${socialErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_post_social_media',
+                  content: `Error: ${socialErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
           } else if (toolCall.name === 'vutler_create_schedule' && workspaceId) {
-            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'vutler_create_schedule', 'scheduler', args);
+            const actionRun = await startToolActionRun(
+              db,
+              chatActionContext,
+              agent,
+              'vutler_create_schedule',
+              'scheduler',
+              args
+            );
             try {
               const { handleScheduleTool } = require('./scheduler');
               const schedulePayload = await handleScheduleTool(args, {
@@ -2620,57 +2925,76 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_create_schedule', content: formatToolResultContent(scheduleResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_create_schedule',
+                  content: formatToolResultContent(scheduleResult),
+                },
               ];
             } catch (scheduleErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, scheduleErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'vutler_create_schedule', content: `Error: ${scheduleErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'vutler_create_schedule',
+                  content: `Error: ${scheduleErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
           } else if (toolCall.name === 'run_code_in_sandbox' && hasCodeExecution) {
-            const actionRun = await startToolActionRun(db, chatActionContext, agent, 'run_code_in_sandbox', 'sandbox', args);
+            const actionRun = await startToolActionRun(
+              db,
+              chatActionContext,
+              agent,
+              'run_code_in_sandbox',
+              'sandbox',
+              args
+            );
             try {
-              const {
-                orchestrationDecision,
-                governance,
-                actionResults,
-                actionResult,
-                deferredRun,
-              } = await executeToolThroughOrchestration({
-                toolName: toolCall.name,
-                args,
-                adapter: 'sandbox',
-                agent,
-                workspaceId,
-                db,
-                wsConnections: opts.wsConnections,
-                chatActionContext,
-                chatActionRunId: actionRun?.id || null,
-                model: attempt.model,
-                provider: attempt.provider,
-                latestUserMessage,
-                humanContext: opts.humanContext || null,
-              });
+              const { orchestrationDecision, governance, actionResults, actionResult, deferredRun } =
+                await executeToolThroughOrchestration({
+                  toolName: toolCall.name,
+                  args,
+                  adapter: 'sandbox',
+                  agent,
+                  workspaceId,
+                  db,
+                  wsConnections: opts.wsConnections,
+                  chatActionContext,
+                  chatActionRunId: actionRun?.id || null,
+                  model: attempt.model,
+                  provider: attempt.provider,
+                  latestUserMessage,
+                  humanContext: opts.humanContext || null,
+                });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Sandbox execution failed.');
               }
-              const sandboxToolPayload = actionResult?.status === 'completed'
-                ? buildSandboxToolPayload(actionResult.output_json || {})
-                : {
-                  ...(actionResult?.output_json && typeof actionResult.output_json === 'object' ? actionResult.output_json : {}),
-                  status: actionResult?.status || 'awaiting_approval',
-                  language: governance.decisionPayload.actions?.[0]?.params?.language || null,
-                  executor: governance.decisionPayload.actions?.[0]?.executor || null,
-                  requires_approval: actionResult?.status === 'awaiting_approval',
-                  timeout_ms: governance.decisionPayload.actions?.[0]?.timeout_ms ?? null,
-                  reason: governance.reason || null,
-                };
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
+              const sandboxToolPayload =
+                actionResult?.status === 'completed'
+                  ? buildSandboxToolPayload(actionResult.output_json || {})
+                  : {
+                      ...(actionResult?.output_json && typeof actionResult.output_json === 'object'
+                        ? actionResult.output_json
+                        : {}),
+                      status: actionResult?.status || 'awaiting_approval',
+                      language: governance.decisionPayload.actions?.[0]?.params?.language || null,
+                      executor: governance.decisionPayload.actions?.[0]?.executor || null,
+                      requires_approval: actionResult?.status === 'awaiting_approval',
+                      timeout_ms: governance.decisionPayload.actions?.[0]?.timeout_ms ?? null,
+                      reason: governance.reason || null,
+                    };
+              const orchestrationPayload = buildToolOrchestrationPayload(
+                orchestrationDecision,
+                governance,
+                actionResults,
+                deferredRun
+              );
               const sandboxResult = {
                 success: true,
                 data: sandboxToolPayload,
@@ -2686,60 +3010,77 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'run_code_in_sandbox', content: formatToolResultContent(sandboxResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'run_code_in_sandbox',
+                  content: formatToolResultContent(sandboxResult),
+                },
               ];
             } catch (sandboxErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, sandboxErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: 'run_code_in_sandbox', content: `Error: ${sandboxErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: 'run_code_in_sandbox',
+                  content: `Error: ${sandboxErr.message}`,
+                },
               ];
             }
             continueLoop = true;
-
           } else if (toolCall.name && toolCall.name.startsWith('skill_')) {
             const skillKey = toolCall.name.slice('skill_'.length);
             if (!allowedSkillToolNames.has(toolCall.name)) {
-              const deniedReason = blockedSkillReasonByKey.get(skillKey) || 'Skill is not available for this workspace run.';
+              const deniedReason =
+                blockedSkillReasonByKey.get(skillKey) || 'Skill is not available for this workspace run.';
               const actionRun = await startToolActionRun(db, chatActionContext, agent, skillKey, 'skill', args);
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, new Error(deniedReason));
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${deniedReason}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: toolCall.name,
+                  content: `Error: ${deniedReason}`,
+                },
               ];
               continueLoop = true;
               continue;
             }
-            console.log(`[Skills] Agent ${agentName} calling skill: ${skillKey}(${JSON.stringify(args).slice(0, 100)})`);
+            console.log(
+              `[Skills] Agent ${agentName} calling skill: ${skillKey}(${JSON.stringify(args).slice(0, 100)})`
+            );
             const actionRun = await startToolActionRun(db, chatActionContext, agent, skillKey, 'skill', args);
             try {
-              const {
-                orchestrationDecision,
-                governance,
-                actionResults,
-                actionResult,
-                deferredRun,
-              } = await executeToolThroughOrchestration({
-                toolName: toolCall.name,
-                args,
-                adapter: 'skill',
-                agent,
-                workspaceId,
-                db,
-                wsConnections: opts.wsConnections,
-                chatActionContext,
-                chatActionRunId: actionRun?.id || null,
-                model: attempt.model,
-                provider: attempt.provider,
-                latestUserMessage,
-                humanContext: opts.humanContext || null,
-              });
+              const { orchestrationDecision, governance, actionResults, actionResult, deferredRun } =
+                await executeToolThroughOrchestration({
+                  toolName: toolCall.name,
+                  args,
+                  adapter: 'skill',
+                  agent,
+                  workspaceId,
+                  db,
+                  wsConnections: opts.wsConnections,
+                  chatActionContext,
+                  chatActionRunId: actionRun?.id || null,
+                  model: attempt.model,
+                  provider: attempt.provider,
+                  latestUserMessage,
+                  humanContext: opts.humanContext || null,
+                });
               if (actionResult && actionResult.success === false) {
                 throw new Error(actionResult.error || 'Skill execution failed.');
               }
-              const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
+              const orchestrationPayload = buildToolOrchestrationPayload(
+                orchestrationDecision,
+                governance,
+                actionResults,
+                deferredRun
+              );
               const skillResult = buildOrchestratedToolResult(actionResult, orchestrationPayload);
 
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, skillResult, null);
@@ -2749,52 +3090,64 @@ async function chat(agent, messages, db, opts = {}) {
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: formatToolResultContent(skillResult) },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: toolCall.name,
+                  content: formatToolResultContent(skillResult),
+                },
               ];
             } catch (skillErr) {
               await finishToolActionRun(db, actionRun?.id, agent?.id || null, null, skillErr);
               currentMessages = [
                 ...currentMessages,
                 { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${skillErr.message}` },
+                {
+                  role: 'tool',
+                  tool_call_id: getToolCallId(toolCall),
+                  name: toolCall.name,
+                  content: `Error: ${skillErr.message}`,
+                },
               ];
             }
             continueLoop = true;
 
-          // ── Nexus tool execution (local node bridge) ──────────────────
+            // ── Nexus tool execution (local node bridge) ──────────────────
           } else {
             const { NEXUS_TOOL_NAMES } = require('./nexusTools');
             if (NEXUS_TOOL_NAMES.has(toolCall.name)) {
               const agentName = agent?.name || agent?.username || 'agent';
-              console.log(`[Nexus] Agent ${agentName} calling tool: ${toolCall.name}(${JSON.stringify(args).slice(0, 100)})`);
+              console.log(
+                `[Nexus] Agent ${agentName} calling tool: ${toolCall.name}(${JSON.stringify(args).slice(0, 100)})`
+              );
               const actionRun = await startToolActionRun(db, chatActionContext, agent, toolCall.name, 'nexus', args);
               try {
-                const {
-                  orchestrationDecision,
-                  governance,
-                  actionResults,
-                  actionResult,
-                  deferredRun,
-                } = await executeToolThroughOrchestration({
-                  toolName: toolCall.name,
-                  args,
-                  adapter: 'nexus',
-                  agent,
-                  workspaceId,
-                  db,
-                  wsConnections: opts.wsConnections,
-                  chatActionContext,
-                  chatActionRunId: actionRun?.id || null,
-                  model: attempt.model,
-                  provider: attempt.provider,
-                  nexusNodeId,
-                  latestUserMessage,
-                  humanContext: opts.humanContext || null,
-                });
+                const { orchestrationDecision, governance, actionResults, actionResult, deferredRun } =
+                  await executeToolThroughOrchestration({
+                    toolName: toolCall.name,
+                    args,
+                    adapter: 'nexus',
+                    agent,
+                    workspaceId,
+                    db,
+                    wsConnections: opts.wsConnections,
+                    chatActionContext,
+                    chatActionRunId: actionRun?.id || null,
+                    model: attempt.model,
+                    provider: attempt.provider,
+                    nexusNodeId,
+                    latestUserMessage,
+                    humanContext: opts.humanContext || null,
+                  });
                 if (actionResult && actionResult.success === false) {
                   throw new Error(actionResult.error || 'Nexus execution failed.');
                 }
-                const orchestrationPayload = buildToolOrchestrationPayload(orchestrationDecision, governance, actionResults, deferredRun);
+                const orchestrationPayload = buildToolOrchestrationPayload(
+                  orchestrationDecision,
+                  governance,
+                  actionResults,
+                  deferredRun
+                );
                 const toolResult = buildOrchestratedToolResult(actionResult, orchestrationPayload);
                 const content = formatToolResultContent(toolResult);
                 await finishToolActionRun(db, actionRun?.id, agent?.id || null, toolResult, null);
@@ -2809,7 +3162,12 @@ async function chat(agent, messages, db, opts = {}) {
                 currentMessages = [
                   ...currentMessages,
                   { role: 'assistant', content: llmResult.content || '', tool_calls: llmResult.tool_calls },
-                  { role: 'tool', tool_call_id: getToolCallId(toolCall), name: toolCall.name, content: `Error: ${nexusErr.message}` },
+                  {
+                    role: 'tool',
+                    tool_call_id: getToolCallId(toolCall),
+                    name: toolCall.name,
+                    content: `Error: ${nexusErr.message}`,
+                  },
                 ];
               }
               continueLoop = true;
@@ -2819,6 +3177,11 @@ async function chat(agent, messages, db, opts = {}) {
 
         if (!continueLoop) break;
       }
+
+      llmResult = {
+        ...llmResult,
+        billing: buildBillingContext(a.provider, llmResult, managedRuntime),
+      };
 
       await logUsage(db, workspaceId, agent, llmResult);
 
@@ -2840,8 +3203,19 @@ async function chat(agent, messages, db, opts = {}) {
             workspaceId,
             type: 'usage',
             amount: -totalTokens,
+            grantId: llmResult.billing?.grant_id || null,
+            billingSource: llmResult.billing?.source || null,
+            billingTier: llmResult.billing?.tier || null,
+            creditMultiplier: llmResult.billing?.multiplier || null,
+            creditsAmount: llmResult.billing?.credits_debited || 0,
+            providerId: llmResult.billing?.provider_id || null,
+            modelCanonical: llmResult.billing?.model_canonical || llmResult.model,
             metadata: {
               source: managedRuntime?.source || 'trial',
+              billing_source: llmResult.billing?.source || null,
+              billing_tier: llmResult.billing?.tier || null,
+              credit_multiplier: llmResult.billing?.multiplier || null,
+              credits_debited: llmResult.billing?.credits_debited || 0,
               provider: llmResult.provider,
               model: llmResult.model,
               agent_id: agent?.id || null,
