@@ -26,15 +26,23 @@ const {
 } = require('../../../services/runbooks');
 
 const router = express.Router();
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
 
 function getWorkspaceId(req) {
   const candidates = [
-    req.headers?.['x-workspace-id'],
     req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
   ];
   for (const candidate of candidates) {
-    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    const value = normalizeWorkspaceId(candidate);
     if (value) return value;
   }
   return null;
@@ -52,13 +60,17 @@ function ensureWorkspaceContext(req, res, next) {
   return next();
 }
 
-router.use(ensureWorkspaceContext);
+function actorIdOf(req) {
+  return req.userId || req.user?.id || req.agent?.id || null;
+}
+
+router.use(authenticateAgent, ensureWorkspaceContext);
 
 // ── POST /runbooks/parse ──────────────────────────────────────────────────────
 // Parse free text or raw JSON into a structured runbook for preview.
 // Body: { text: string } | { json: object }
 
-router.post('/runbooks/parse', authenticateAgent, async (req, res) => {
+router.post('/runbooks/parse', async (req, res) => {
   try {
     const { text, json } = req.body || {};
 
@@ -96,7 +108,7 @@ router.post('/runbooks/parse', authenticateAgent, async (req, res) => {
 // Launch execution of a runbook.
 // Body: { runbook: Runbook, agentId?: string, dryRun?: boolean }
 
-router.post('/runbooks/execute', authenticateAgent, async (req, res) => {
+router.post('/runbooks/execute', async (req, res) => {
   try {
     const { runbook: rawRunbook, agentId, dryRun = false } = req.body || {};
 
@@ -132,11 +144,7 @@ router.post('/runbooks/execute', authenticateAgent, async (req, res) => {
       });
     }
 
-    const createdBy =
-      req.agent?.id ||
-      req.headers['x-user-id'] ||
-      req.headers['x-agent-id'] ||
-      null;
+    const createdBy = actorIdOf(req);
 
     const result = await executeRunbook(runbook, { workspaceId, createdBy });
 
@@ -150,7 +158,7 @@ router.post('/runbooks/execute', authenticateAgent, async (req, res) => {
 // ── GET /runbooks ─────────────────────────────────────────────────────────────
 // List runbooks for the workspace.
 
-router.get('/runbooks', authenticateAgent, async (req, res) => {
+router.get('/runbooks', async (req, res) => {
   try {
     const workspaceId = getWorkspaceId(req);
     const limit = parseInt(req.query.limit) || 50;
@@ -166,9 +174,9 @@ router.get('/runbooks', authenticateAgent, async (req, res) => {
 
 // ── GET /runbooks/:id ─────────────────────────────────────────────────────────
 
-router.get('/runbooks/:id', authenticateAgent, async (req, res) => {
+router.get('/runbooks/:id', async (req, res) => {
   try {
-    const rb = await getRunbookStatus(req.params.id);
+    const rb = await getRunbookStatus(req.params.id, getWorkspaceId(req));
     if (!rb) return res.status(404).json({ success: false, error: 'Runbook not found' });
     res.json({ success: true, data: rb });
   } catch (err) {
@@ -179,9 +187,9 @@ router.get('/runbooks/:id', authenticateAgent, async (req, res) => {
 
 // ── POST /runbooks/:id/cancel ─────────────────────────────────────────────────
 
-router.post('/runbooks/:id/cancel', authenticateAgent, async (req, res) => {
+router.post('/runbooks/:id/cancel', async (req, res) => {
   try {
-    const found = await cancelRunbook(req.params.id);
+    const found = await cancelRunbook(req.params.id, getWorkspaceId(req));
     if (!found) return res.status(404).json({ success: false, error: 'Runbook not found or already finished' });
     res.json({ success: true, data: { cancelled: true } });
   } catch (err) {
@@ -192,7 +200,7 @@ router.post('/runbooks/:id/cancel', authenticateAgent, async (req, res) => {
 
 // ── POST /runbooks/:id/approve/:stepOrder ─────────────────────────────────────
 
-router.post('/runbooks/:id/approve/:stepOrder', authenticateAgent, async (req, res) => {
+router.post('/runbooks/:id/approve/:stepOrder', async (req, res) => {
   try {
     const runbookId = req.params.id;
     const stepOrder = parseInt(req.params.stepOrder);
@@ -202,7 +210,7 @@ router.post('/runbooks/:id/approve/:stepOrder', authenticateAgent, async (req, r
       return res.status(400).json({ success: false, error: 'stepOrder must be a number' });
     }
 
-    const delivered = approveStep(runbookId, stepOrder, approved);
+    const delivered = approveStep(runbookId, stepOrder, approved, getWorkspaceId(req));
     if (!delivered) {
       return res.status(404).json({
         success: false,
@@ -221,4 +229,5 @@ module.exports = router;
 module.exports._private = {
   getWorkspaceId,
   ensureWorkspaceContext,
+  actorIdOf,
 };

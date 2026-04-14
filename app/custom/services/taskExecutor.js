@@ -35,7 +35,9 @@ let consecutiveErrors = 0;
 const agentCache = new Map();
 
 function normalizeWorkspaceId(workspaceId) {
-  return workspaceId || '00000000-0000-0000-0000-000000000001';
+  const value = typeof workspaceId === 'string' ? workspaceId.trim() : workspaceId;
+  if (value) return value;
+  throw new Error('workspaceId is required for task execution');
 }
 
 async function hydrateAgent(agent, workspaceId) {

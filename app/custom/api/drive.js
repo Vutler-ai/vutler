@@ -66,6 +66,35 @@ function generateFileId() {
   return crypto.randomUUID();
 }
 
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function workspaceIdOf(req) {
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
+  for (const candidate of candidates) {
+    const value = normalizeWorkspaceId(candidate);
+    if (value) return value;
+  }
+  return null;
+}
+
+function actorIdOf(req) {
+  return req.userId || req.user?.id || req.agent?.id || null;
+}
+
+function actorNameOf(req) {
+  return req.user?.name || req.agent?.name || req.user?.email || req.agent?.email || 'User';
+}
+
 /**
  * Get storage bucket for workspace
  * @param {string} workspaceId - Workspace ID
@@ -126,10 +155,10 @@ router.get('/drive/files', authenticateAgent, requireCorePermission('drive.list'
     const { path: requestedPath = '/', limit = 500, skip = 0 } = req.query;
     const parsedLimit = Math.max(1, Math.min(parseInt(limit, 10) || 500, 2000));
     const parsedSkip = Math.max(0, parseInt(skip, 10) || 0);
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
     
     if (!workspaceId) {
-      return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required', {}, 'Provide x-workspace-id header');
+      return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required', {}, 'Authenticate with a workspace-scoped session or API key');
     }
     
     const normalized = normalizeVirtualPath(requestedPath);
@@ -182,10 +211,10 @@ router.get('/drive/files', authenticateAgent, requireCorePermission('drive.list'
 router.get('/drive/folders', authenticateAgent, requireCorePermission('drive.list'), async (req, res) => {
   try {
     const requestedPath = req.query.path || '/';
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
     
     if (!workspaceId) {
-      return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required', {}, 'Provide x-workspace-id header');
+      return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required', {}, 'Authenticate with a workspace-scoped session or API key');
     }
     
     const normalized = normalizeVirtualPath(requestedPath);
@@ -230,7 +259,7 @@ router.get('/drive/folders/tree', authenticateAgent, requireCorePermission('driv
   try {
     const requestedPath = req.query.path || '/';
     const maxDepth = Math.max(1, Math.min(parseInt(req.query.maxDepth, 10) || 6, 10));
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
     
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -295,8 +324,8 @@ router.post('/drive/folders', authenticateAgent, requireCorePermission('drive.cr
   try {
     const parentPath = req.body?.parentPath || req.body?.path || '/';
     const folderName = String(req.body?.name || '').trim();
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
-    const uploadedBy = req.userId || req.headers['x-user-id'];
+    const workspaceId = workspaceIdOf(req);
+    const uploadedBy = actorIdOf(req);
     
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -354,8 +383,8 @@ router.post('/drive/upload', authenticateAgent, requireCorePermission('drive.upl
       return sendDriveError(res, 400, 'FILE_REQUIRED', 'No file provided', {}, 'Attach a file in multipart field "file"');
     }
     
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
-    const uploadedBy = req.userId || req.headers['x-user-id'];
+    const workspaceId = workspaceIdOf(req);
+    const uploadedBy = actorIdOf(req);
     
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -386,7 +415,7 @@ router.post('/drive/upload', authenticateAgent, requireCorePermission('drive.upl
     
     console.log(`[DriveAPI] File uploaded: ${itemPath} (${req.file.size} bytes) to S3 bucket ${bucket}`);
 
-    const uploaderName = req.user?.name || req.agent?.name || req.headers['x-user-name'] || 'User';
+    const uploaderName = actorNameOf(req);
     findAssignedAgentForPath(pool, workspaceId, itemPath)
       .then((match) => {
         if (!match?.agent || !uploadedBy || String(match.agent.id) === String(uploadedBy)) return null;
@@ -468,7 +497,7 @@ router.get('/drive/download/:id', authenticateAgent, requireCorePermission('driv
     const fileId = req.params.id;
     const requestedPath = req.query.path;
     const forceInline = req.query.inline === 'true';
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
 
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -558,7 +587,7 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
     const fileId = req.params.id;
     const requestedPath = req.query.path;
     const wantsJson = req.query.format === 'json' || req.accepts(['json', 'html']) === 'json';
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
 
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -676,9 +705,9 @@ router.get('/drive/preview/:id', authenticateAgent, requireCorePermission('drive
  */
 router.post('/drive/move', authenticateAgent, requireCorePermission('drive.upload'), async (req, res) => {
   try {
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
-    const actorId = req.userId || req.headers['x-user-id'] || req.user?.id || req.agent?.id || null;
-    const actorName = req.user?.name || req.agent?.name || req.headers['x-user-name'] || 'User';
+    const workspaceId = workspaceIdOf(req);
+    const actorId = actorIdOf(req);
+    const actorName = actorNameOf(req);
 
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -766,13 +795,15 @@ router.post('/drive/move', authenticateAgent, requireCorePermission('drive.uploa
                parent_path = $4,
                s3_key = $5,
                updated_at = NOW()
-           WHERE id = $1`,
+           WHERE id = $1
+             AND workspace_id = $6`,
           [
             item.id,
             item.path === fromPath ? nextName : item.name,
             itemNextPath,
             itemNextParent,
             itemNextS3Key,
+            workspaceId,
           ]
         );
       }
@@ -828,8 +859,9 @@ router.post('/drive/move', authenticateAgent, requireCorePermission('drive.uploa
            parent_path = $3,
            s3_key = $4,
            updated_at = NOW()
-       WHERE id = $5`,
-      [nextName, nextPath, nextParent, nextS3Key, record.id]
+       WHERE id = $5
+         AND workspace_id = $6`,
+      [nextName, nextPath, nextParent, nextS3Key, record.id, workspaceId]
     );
 
     const previousMatch = await findAssignedAgentForPath(pool, workspaceId, fromPath).catch(() => null);
@@ -881,7 +913,7 @@ router.post('/drive/move', authenticateAgent, requireCorePermission('drive.uploa
 router.delete('/drive/files/:id', authenticateAgent, requireCorePermission('drive.delete'), async (req, res) => {
   try {
     const fileId = req.params.id;
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
     
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -911,8 +943,9 @@ router.delete('/drive/files/:id', authenticateAgent, requireCorePermission('driv
     await pool.query(
       `UPDATE tenant_vutler.drive_files 
        SET is_deleted = true, deleted_at = NOW()
-       WHERE id = $1`,
-      [fileId]
+       WHERE id = $1
+         AND workspace_id = $2`,
+      [fileId, workspaceId]
     );
     
     console.log(`[DriveAPI] File deleted: ${fileRecord.name}`);
@@ -934,7 +967,7 @@ router.delete('/drive/files/:id', authenticateAgent, requireCorePermission('driv
 router.delete('/files', authenticateAgent, requireCorePermission('drive.delete'), async (req, res) => {
   try {
     const requestedPath = req.query.path || req.body?.path;
-    const workspaceId = req.workspaceId || req.headers['x-workspace-id'];
+    const workspaceId = workspaceIdOf(req);
     
     if (!workspaceId) {
       return sendDriveError(res, 400, 'WORKSPACE_REQUIRED', 'Workspace ID is required');
@@ -970,8 +1003,9 @@ router.delete('/files', authenticateAgent, requireCorePermission('drive.delete')
     await pool.query(
       `UPDATE tenant_vutler.drive_files 
        SET is_deleted = true, deleted_at = NOW()
-       WHERE id = $1`,
-      [fileRecord.id]
+       WHERE id = $1
+         AND workspace_id = $2`,
+      [fileRecord.id, workspaceId]
     );
     
     console.log(`[DriveAPI] File deleted (legacy): ${fileRecord.name}`);
@@ -988,3 +1022,8 @@ router.delete('/files', authenticateAgent, requireCorePermission('drive.delete')
 });
 
 module.exports = router;
+module.exports._private = {
+  workspaceIdOf,
+  actorIdOf,
+  actorNameOf,
+};

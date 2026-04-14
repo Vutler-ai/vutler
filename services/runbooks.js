@@ -37,7 +37,6 @@ const pool = require('../lib/vaultbrix');
 const { chat: llmChat } = require('./llmRouter');
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 
 // Active runbook executions keyed by runbookId
 const _activeRunbooks = new Map();
@@ -284,6 +283,7 @@ async function executeRunbook(runbook, context = {}) {
 
   _activeRunbooks.set(runbookId, {
     runbook,
+    workspaceId,
     emitter,
     cancelled: false,
     approvalPromises,
@@ -508,14 +508,21 @@ async function _updateRunbook(runbookId, status, results, currentStep, completed
  * @param {string} runbookId
  * @returns {Promise<object|null>}
  */
-async function getRunbookStatus(runbookId) {
+async function getRunbookStatus(runbookId, workspaceId = null) {
   await ensureTable();
+  const params = [runbookId];
+  let where = 'id = $1';
+  if (workspaceId) {
+    params.push(resolveRequiredWorkspaceId(workspaceId));
+    where += ' AND workspace_id = $2';
+  }
   const row = await pool.query(
     `SELECT id, workspace_id, name, description, agent_id, status,
             definition, results, current_step, total_steps,
             created_by, started_at, completed_at, created_at
-     FROM ${SCHEMA}.runbooks WHERE id = $1`,
-    [runbookId]
+     FROM ${SCHEMA}.runbooks
+     WHERE ${where}`,
+    params
   );
   return row.rows[0] || null;
 }
@@ -560,21 +567,29 @@ async function listRunbooks(workspaceId, opts = {}) {
  * @param {string} runbookId
  * @returns {Promise<boolean>} true if the runbook was found and marked for cancellation
  */
-async function cancelRunbook(runbookId) {
+async function cancelRunbook(runbookId, workspaceId = null) {
   await ensureTable();
   const active = _activeRunbooks.get(runbookId);
-  if (active) {
+  const resolvedWorkspaceId = workspaceId ? resolveRequiredWorkspaceId(workspaceId) : null;
+  const workspaceMatches = !resolvedWorkspaceId || active?.workspaceId === resolvedWorkspaceId;
+  if (active && workspaceMatches) {
     active.cancelled = true;
   }
   // Also update DB in case the process was restarted
+  const params = [runbookId];
+  let where = `id = $1 AND status IN ('pending','running')`;
+  if (resolvedWorkspaceId) {
+    params.push(resolvedWorkspaceId);
+    where += ' AND workspace_id = $2';
+  }
   const upd = await pool.query(
     `UPDATE ${SCHEMA}.runbooks
      SET status = 'cancelled', completed_at = NOW()
-     WHERE id = $1 AND status IN ('pending','running')
+     WHERE ${where}
      RETURNING id`,
-    [runbookId]
+    params
   );
-  return (active !== undefined) || upd.rows.length > 0;
+  return (active !== undefined && workspaceMatches) || upd.rows.length > 0;
 }
 
 /**
@@ -585,9 +600,10 @@ async function cancelRunbook(runbookId) {
  * @param {boolean} [approved=true]
  * @returns {boolean} whether the approval was delivered
  */
-function approveStep(runbookId, stepOrder, approved = true) {
+function approveStep(runbookId, stepOrder, approved = true, workspaceId = null) {
   const active = _activeRunbooks.get(runbookId);
   if (!active) return false;
+  if (workspaceId && active.workspaceId !== resolveRequiredWorkspaceId(workspaceId)) return false;
   const pending = active.approvalPromises.get(stepOrder);
   if (!pending) return false;
   pending.resolve(approved);

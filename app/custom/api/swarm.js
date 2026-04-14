@@ -1,9 +1,45 @@
 "use strict";
 
 const express = require("express");
+const { authenticateAgent } = require("../lib/auth");
 const { getSwarmCoordinator } = require("../services/swarmCoordinator");
 
 const router = express.Router();
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function workspaceIdOf(req) {
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
+  for (const candidate of candidates) {
+    const value = normalizeWorkspaceId(candidate);
+    if (value) return value;
+  }
+  return null;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = workspaceIdOf(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+router.use(authenticateAgent, ensureWorkspaceContext);
 
 function coordinator(req) {
   return req.app.locals.swarmCoordinator || getSwarmCoordinator();
@@ -168,3 +204,7 @@ router.post("/broadcast", async (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  workspaceIdOf,
+  ensureWorkspaceContext,
+};

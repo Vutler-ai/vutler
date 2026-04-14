@@ -4,15 +4,51 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const crypto = require('crypto');
+const { authenticateAgent } = require('../lib/auth');
+const { requireCorePermission } = require('../lib/core-permissions');
 const uuidv4 = () => crypto.randomUUID();
 const s3 = require('../services/s3Driver');
 
 const upload_mw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function workspaceIdOf(req) {
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
+  for (const candidate of candidates) {
+    const value = normalizeWorkspaceId(candidate);
+    if (value) return value;
+  }
+  return null;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = workspaceIdOf(req);
+  if (!workspaceId) {
+    return res.status(400).json({ success: false, error: 'workspace context is required' });
+  }
+  req.workspaceId = workspaceId;
+  next();
+}
+
+function actorIdOf(req) {
+  return req.userId || req.user?.id || req.agent?.id || 'system';
+}
+
 // Helper: get workspace bucket
 async function _getWorkspaceBucket(req) {
   const pool = req.app.locals.pg;
-  const wsId = req.user?.workspace_id || '00000000-0000-0000-0000-000000000001';
+  const wsId = workspaceIdOf(req);
   const result = await pool.query(
     'SELECT storage_bucket, slug FROM tenant_vutler.workspaces WHERE id = $1',
     [wsId]
@@ -24,8 +60,10 @@ async function _getWorkspaceBucket(req) {
   return { bucket, wsId };
 }
 
+router.use(authenticateAgent, ensureWorkspaceContext);
+
 // GET /drive/files — list files (from PG metadata)
-router.get('/files', async (req, res) => {
+router.get('/files', requireCorePermission('drive.list'), async (req, res) => {
   try {
     const pool = req.app.locals.pg;
     const { bucket, wsId } = await _getWorkspaceBucket(req);
@@ -48,7 +86,7 @@ router.get('/files', async (req, res) => {
 });
 
 // POST /drive/upload — upload file to S3
-router.post('/upload', upload_mw.single('file'), async (req, res) => {
+router.post('/upload', requireCorePermission('drive.upload'), upload_mw.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, error: 'No file provided' });
 
@@ -71,7 +109,7 @@ router.post('/upload', upload_mw.single('file'), async (req, res) => {
        ON CONFLICT (workspace_id, path) DO UPDATE SET
          size_bytes = EXCLUDED.size_bytes, mime_type = EXCLUDED.mime_type,
          storage_backend = 's3', updated_at = NOW()`,
-      [fileId, wsId, fileName, filePath, parentPath, req.file.mimetype, req.file.size, req.user?.id || 'system']
+      [fileId, wsId, fileName, filePath, parentPath, req.file.mimetype, req.file.size, actorIdOf(req)]
     );
 
     console.log(`[DriveAPI] Uploaded: ${filePath} → s3://${bucket}/${s3Key}`);
@@ -83,7 +121,7 @@ router.post('/upload', upload_mw.single('file'), async (req, res) => {
 });
 
 // GET /drive/download/:id — download from S3
-router.get('/download/:id', async (req, res) => {
+router.get('/download/:id', requireCorePermission('drive.download'), async (req, res) => {
   try {
     const pool = req.app.locals.pg;
     const { bucket, wsId } = await _getWorkspaceBucket(req);
@@ -117,7 +155,7 @@ router.get('/download/:id', async (req, res) => {
 });
 
 // DELETE /drive/files/:id — delete from S3 + PG
-router.delete('/files/:id', async (req, res) => {
+router.delete('/files/:id', requireCorePermission('drive.delete'), async (req, res) => {
   try {
     const pool = req.app.locals.pg;
     const { bucket, wsId } = await _getWorkspaceBucket(req);
@@ -149,7 +187,7 @@ router.delete('/files/:id', async (req, res) => {
 });
 
 // POST /drive/folders — create folder (PG metadata only)
-router.post('/folders', async (req, res) => {
+router.post('/folders', requireCorePermission('drive.createFolder'), async (req, res) => {
   try {
     const pool = req.app.locals.pg;
     const { wsId } = await _getWorkspaceBucket(req);
@@ -164,7 +202,7 @@ router.post('/folders', async (req, res) => {
        (id, workspace_id, name, path, parent_path, type, size_bytes, storage_backend, uploaded_by, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, 'folder', 0, 's3', $6, NOW(), NOW())
        ON CONFLICT (workspace_id, path) DO NOTHING`,
-      [folderId, wsId, name, folderPath, parentPath || '/', req.user?.id || 'system']
+      [folderId, wsId, name, folderPath, parentPath || '/', actorIdOf(req)]
     );
 
     res.json({ success: true, data: { id: folderId, name, path: folderPath, type: 'folder' } });
@@ -175,12 +213,15 @@ router.post('/folders', async (req, res) => {
 });
 
 // POST /drive/presign/:id — get presigned download URL
-router.post('/presign/:id', async (req, res) => {
+router.post('/presign/:id', requireCorePermission('drive.download'), async (req, res) => {
   try {
     const pool = req.app.locals.pg;
-    const { bucket } = await _getWorkspaceBucket(req);
+    const { bucket, wsId } = await _getWorkspaceBucket(req);
 
-    const result = await pool.query('SELECT path, name FROM tenant_vutler.drive_files WHERE id = $1', [req.params.id]);
+    const result = await pool.query(
+      'SELECT path, name FROM tenant_vutler.drive_files WHERE id = $1 AND workspace_id = $2',
+      [req.params.id, wsId]
+    );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
 
     const s3Key = result.rows[0].path.startsWith('/') ? result.rows[0].path.slice(1) : result.rows[0].path;
@@ -194,13 +235,16 @@ router.post('/presign/:id', async (req, res) => {
 });
 
 // POST /drive/move — move/rename file
-router.post('/move', async (req, res) => {
+router.post('/move', requireCorePermission('drive.upload'), async (req, res) => {
   try {
     const pool = req.app.locals.pg;
-    const { bucket } = await _getWorkspaceBucket(req);
+    const { bucket, wsId } = await _getWorkspaceBucket(req);
     const { fileId, newPath, newName } = req.body;
 
-    const result = await pool.query('SELECT path, name, storage_backend FROM tenant_vutler.drive_files WHERE id = $1', [fileId]);
+    const result = await pool.query(
+      'SELECT path, name, storage_backend FROM tenant_vutler.drive_files WHERE id = $1 AND workspace_id = $2',
+      [fileId, wsId]
+    );
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
 
     const file = result.rows[0];
@@ -214,8 +258,8 @@ router.post('/move', async (req, res) => {
     }
 
     await pool.query(
-      'UPDATE tenant_vutler.drive_files SET name = $1, path = $2, parent_path = $3, updated_at = NOW() WHERE id = $4',
-      [finalName, finalPath, newPath || '/', fileId]
+      'UPDATE tenant_vutler.drive_files SET name = $1, path = $2, parent_path = $3, updated_at = NOW() WHERE id = $4 AND workspace_id = $5',
+      [finalName, finalPath, newPath || '/', fileId, wsId]
     );
 
     res.json({ success: true, data: { id: fileId, name: finalName, path: finalPath } });
@@ -226,3 +270,8 @@ router.post('/move', async (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  workspaceIdOf,
+  ensureWorkspaceContext,
+  actorIdOf,
+};

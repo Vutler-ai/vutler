@@ -21,7 +21,7 @@ const router = express.Router();
 const SCHEMA = 'tenant_vutler';
 const TABLE = `${SCHEMA}.users_auth`;
 
-// In-memory admin sessions (token -> { userId, email, expires })
+// In-memory admin sessions (token -> { userId, email, workspaceId, expires })
 const adminSessions = new Map();
 // Share admin sessions with auth middleware
 const { setAdminSessions } = require('../lib/auth');
@@ -55,7 +55,7 @@ router.post('/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      `SELECT id, email, password_hash, salt, role, name FROM ${TABLE} WHERE email = $1`,
+      `SELECT id, email, password_hash, salt, role, name, workspace_id FROM ${TABLE} WHERE email = $1`,
       [email.toLowerCase().trim()]
     );
 
@@ -100,7 +100,7 @@ router.post('/login', async (req, res) => {
       email: user.email,
       name: user.name || user.email,
       role: user.role || 'admin',
-      workspaceId: '00000000-0000-0000-0000-000000000001',
+      workspaceId: user.workspace_id || null,
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + 86400
     })).toString('base64url');
@@ -109,7 +109,13 @@ router.post('/login', async (req, res) => {
 
     console.log(`[Admin] Login successful: ${user.email}`);
     // Register JWT in adminSessions so authenticateAgent recognizes it
-    adminSessions.set(token, { userId: user.id, email: user.email, name: user.name || user.email, expires: Date.now() + 86400000 });
+    adminSessions.set(token, {
+      userId: user.id,
+      email: user.email,
+      name: user.name || user.email,
+      workspaceId: user.workspace_id || null,
+      expires: Date.now() + 86400000,
+    });
     res.json({
       success: true,
       data: { token, user: { id: user.id, email: user.email, name: user.name } }
@@ -593,7 +599,10 @@ router.get('/health/vps', async (req, res) => {
 
 router.post('/chat/maintenance/normalize-legacy-dms', async (req, res) => {
   try {
-    const workspaceId = req.body?.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = req.body?.workspaceId || req.adminUser?.workspaceId || null;
+    if (!workspaceId) {
+      return res.status(400).json({ success: false, error: 'workspace context is required' });
+    }
     const result = await normalizeLegacyDmChannels(pool, {
       workspaceId,
       schema: SCHEMA,
@@ -607,7 +616,10 @@ router.post('/chat/maintenance/normalize-legacy-dms', async (req, res) => {
 
 router.get('/chat/maintenance/status', async (req, res) => {
   try {
-    const workspaceId = req.query?.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = req.query?.workspaceId || req.adminUser?.workspaceId || null;
+    if (!workspaceId) {
+      return res.status(400).json({ success: false, error: 'workspace context is required' });
+    }
     const result = await getChatMaintenanceStatus(pool, {
       workspaceId,
       schema: SCHEMA,
@@ -621,7 +633,10 @@ router.get('/chat/maintenance/status', async (req, res) => {
 
 router.post('/chat/maintenance/archive-technical-dms', async (req, res) => {
   try {
-    const workspaceId = req.body?.workspaceId || '00000000-0000-0000-0000-000000000001';
+    const workspaceId = req.body?.workspaceId || req.adminUser?.workspaceId || null;
+    if (!workspaceId) {
+      return res.status(400).json({ success: false, error: 'workspace context is required' });
+    }
     const result = await archiveTechnicalDmChannels(pool, {
       workspaceId,
       schema: SCHEMA,

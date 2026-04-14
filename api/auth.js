@@ -87,7 +87,7 @@ function generateJWT(user) {
     email: user.email,
     name: user.name || user.email.split('@')[0],
     role: user.role || 'user',
-    workspaceId: user.workspace_id || DEFAULT_WORKSPACE,
+    workspaceId: user.workspace_id || null,
     exp: Math.floor(Date.now() / 1000) + (TOKEN_TTL_HOURS * 3600),
   })).toString('base64url');
   const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${header}.${payload}`).digest('base64url');

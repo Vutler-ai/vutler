@@ -12,6 +12,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { authenticateAgent } = require('../lib/auth');
 const { getAgentTemplates, getAgentSkills } = require('../../../seeds/loadTemplates');
 
 // ─── DB pool (optional — install endpoint needs it) ──────────────────────────
@@ -28,6 +29,39 @@ try {
 }
 
 const SCHEMA = 'tenant_vutler';
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function workspaceIdOf(req) {
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
+  for (const candidate of candidates) {
+    const value = normalizeWorkspaceId(candidate);
+    if (value) return value;
+  }
+  return null;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = workspaceIdOf(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
 
 // ─── In-memory template store (loaded at module init) ────────────────────────
 
@@ -155,7 +189,7 @@ router.get('/templates/:id', (req, res) => {
 
 // ─── POST /templates/:id/install ─────────────────────────────────────────────
 
-router.post('/templates/:id/install', async (req, res) => {
+router.post('/templates/:id/install', authenticateAgent, ensureWorkspaceContext, async (req, res) => {
   try {
     const { id } = req.params;
     const all = getTemplates().map(normalizeTemplate);
@@ -177,8 +211,8 @@ router.post('/templates/:id/install', async (req, res) => {
       });
     }
 
-    const ws = req.workspaceId || Number(req.headers['x-workspace-id']) || 1;
-    const userId = req.user && req.user.id;
+    const ws = workspaceIdOf(req);
+    const userId = req.user?.id || req.agent?.id || null;
 
     // Derive a unique username
     const baseUsername = template.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'agent';
@@ -262,3 +296,7 @@ router.get('/skills', (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  workspaceIdOf,
+  ensureWorkspaceContext,
+};

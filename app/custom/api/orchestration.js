@@ -14,12 +14,23 @@ const {
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
 
 function workspaceIdOf(req) {
-  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
   for (const candidate of candidates) {
-    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    const value = normalizeWorkspaceId(candidate);
     if (value) return value;
   }
   return null;
@@ -37,7 +48,7 @@ function ensureWorkspaceContext(req, res, next) {
   return next();
 }
 
-router.use(ensureWorkspaceContext);
+router.use(authenticateAgent, ensureWorkspaceContext);
 
 function asDate(value) {
   const date = value ? new Date(value) : null;
@@ -105,7 +116,7 @@ async function loadRunDetail(runId, workspaceId) {
   };
 }
 
-router.get('/metrics/autonomy', authenticateAgent, async (req, res) => {
+router.get('/metrics/autonomy', async (req, res) => {
   try {
     const windowDays = Number.parseInt(String(req.query?.windowDays || '14'), 10);
     const data = await getAutonomyMetrics(undefined, workspaceIdOf(req), {
@@ -125,7 +136,7 @@ router.get('/metrics/autonomy', authenticateAgent, async (req, res) => {
   }
 });
 
-router.get('/runs/:id', authenticateAgent, async (req, res) => {
+router.get('/runs/:id', async (req, res) => {
   try {
     const detail = await loadRunDetail(req.params.id, workspaceIdOf(req));
     if (!detail) {
@@ -141,7 +152,7 @@ router.get('/runs/:id', authenticateAgent, async (req, res) => {
   }
 });
 
-router.get('/runs/:id/timeline', authenticateAgent, async (req, res) => {
+router.get('/runs/:id/timeline', async (req, res) => {
   try {
     const detail = await loadRunDetail(req.params.id, workspaceIdOf(req));
     if (!detail) {
@@ -162,7 +173,7 @@ router.get('/runs/:id/timeline', authenticateAgent, async (req, res) => {
   }
 });
 
-router.post('/runs/:id/approve', authenticateAgent, async (req, res) => {
+router.post('/runs/:id/approve', async (req, res) => {
   try {
     const run = await getRunById(undefined, req.params.id);
     if (!run || run.workspace_id !== workspaceIdOf(req)) {
@@ -182,7 +193,7 @@ router.post('/runs/:id/approve', authenticateAgent, async (req, res) => {
   }
 });
 
-router.post('/runs/:id/resume', authenticateAgent, async (req, res) => {
+router.post('/runs/:id/resume', async (req, res) => {
   try {
     const run = await getRunById(undefined, req.params.id);
     if (!run || run.workspace_id !== workspaceIdOf(req)) {
@@ -201,7 +212,7 @@ router.post('/runs/:id/resume', authenticateAgent, async (req, res) => {
   }
 });
 
-router.post('/runs/:id/cancel', authenticateAgent, async (req, res) => {
+router.post('/runs/:id/cancel', async (req, res) => {
   try {
     const run = await getRunById(undefined, req.params.id);
     if (!run || run.workspace_id !== workspaceIdOf(req)) {

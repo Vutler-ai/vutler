@@ -33,8 +33,10 @@ describe('custom API workspace context enforcement', () => {
     }));
     jest.doMock('../services/memory/runtime', () => ({ createMemoryRuntimeService: jest.fn(() => ({ preparePromptContext: jest.fn() })) }));
     jest.doMock('../services/agentDriveService', () => ({ uploadFileToAgentDrive: jest.fn() }));
+    jest.doMock('../app/custom/lib/auth', () => ({ authenticateAgent: (_req, _res, next) => next() }));
     const router = require('../app/custom/api/chat');
     expect(router._private.wsId({ headers: {} })).toBeNull();
+    expect(router._private.wsId({ headers: { 'x-workspace-id': 'ws-header' } })).toBeNull();
     expectWorkspaceGuard(router);
   });
 
@@ -51,6 +53,7 @@ describe('custom API workspace context enforcement', () => {
     }));
     const router = require('../app/custom/api/orchestration');
     expect(router._private.workspaceIdOf({ headers: {} })).toBeNull();
+    expect(router._private.workspaceIdOf({ headers: { 'x-workspace-id': 'ws-header' } })).toBeNull();
     expectWorkspaceGuard(router);
   });
 
@@ -58,6 +61,7 @@ describe('custom API workspace context enforcement', () => {
     jest.doMock('../app/custom/lib/auth', () => ({ authenticateAgent: (_req, _res, next) => next() }));
     const router = require('../app/custom/api/nexus');
     expect(router._private.getWorkspaceId({ headers: {} })).toBeNull();
+    expect(router._private.getWorkspaceId({ headers: { 'x-workspace-id': 'ws-header' } })).toBeNull();
     expectWorkspaceGuard(router);
   });
 
@@ -70,6 +74,7 @@ describe('custom API workspace context enforcement', () => {
     jest.doMock('../services/taskHierarchyRollupService', () => ({ refreshTaskHierarchyRollups: jest.fn() }));
     const router = require('../app/custom/api/tasks-v2');
     expect(router.__test.wsId({ headers: {} })).toBeNull();
+    expect(router.__test.wsId({ headers: { 'x-workspace-id': 'ws-header' } })).toBeNull();
     expectWorkspaceGuard(router, '__test');
   });
 });

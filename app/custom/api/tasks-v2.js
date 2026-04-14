@@ -17,12 +17,23 @@ const { refreshTaskHierarchyRollups } = require('../../../services/taskHierarchy
 
 const router = express.Router();
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
 
 function wsId(req) {
-  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
   for (const candidate of candidates) {
-    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    const value = normalizeWorkspaceId(candidate);
     if (value) return value;
   }
   return null;
@@ -40,7 +51,7 @@ function ensureWorkspaceContext(req, res, next) {
   return next();
 }
 
-router.use(ensureWorkspaceContext);
+router.use(authenticateAgent, ensureWorkspaceContext);
 
 function resolveSwarmCoordinator(req, capability = null) {
   const candidate = req.app.locals.swarmCoordinator;
@@ -356,7 +367,7 @@ async function createHierarchicalRootTask({ body, workspaceId, swarmCoordinator 
   return refreshHierarchyProjection(inserted, workspaceId, 'hierarchical_root_rollup');
 }
 
-router.get('/tasks-v2', authenticateAgent, async (req, res) => {
+router.get('/tasks-v2', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit, 10) || 50;
     const status = req.query.status;
@@ -401,7 +412,7 @@ router.get('/tasks-v2', authenticateAgent, async (req, res) => {
   }
 });
 
-router.post('/tasks-v2', authenticateAgent, async (req, res) => {
+router.post('/tasks-v2', async (req, res) => {
   try {
     const { title, description, assignee, priority } = req.body;
     if (!title) {
@@ -446,7 +457,7 @@ router.post('/tasks-v2', authenticateAgent, async (req, res) => {
   }
 });
 
-router.get('/tasks-v2/:id', authenticateAgent, async (req, res) => {
+router.get('/tasks-v2/:id', async (req, res) => {
   try {
     const task = await getTaskWithCounts(req.params.id, wsId(req));
     if (!task) return res.status(404).json({ success: false, error: 'Task not found' });
@@ -457,7 +468,7 @@ router.get('/tasks-v2/:id', authenticateAgent, async (req, res) => {
   }
 });
 
-router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
+router.patch('/tasks-v2/:id', async (req, res) => {
   try {
     const workspaceId = wsId(req);
     const task = await resolveTask(req.params.id, workspaceId);
@@ -559,7 +570,7 @@ router.patch('/tasks-v2/:id', authenticateAgent, async (req, res) => {
   }
 });
 
-router.get('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
+router.get('/tasks-v2/:id/subtasks', async (req, res) => {
   try {
     const workspaceId = wsId(req);
     const parent = await resolveTask(req.params.id, workspaceId);
@@ -579,7 +590,7 @@ router.get('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
   }
 });
 
-router.post('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
+router.post('/tasks-v2/:id/subtasks', async (req, res) => {
   try {
     const workspaceId = wsId(req);
     const parent = await resolveTask(req.params.id, workspaceId);
@@ -629,7 +640,7 @@ router.post('/tasks-v2/:id/subtasks', authenticateAgent, async (req, res) => {
   }
 });
 
-router.delete('/tasks-v2/:id', authenticateAgent, async (req, res) => {
+router.delete('/tasks-v2/:id', async (req, res) => {
   try {
     const result = await pool.query(
       `DELETE FROM ${SCHEMA}.tasks
@@ -666,7 +677,7 @@ router.delete('/tasks-v2/:id', authenticateAgent, async (req, res) => {
   }
 });
 
-router.post('/tasks-v2/sync', authenticateAgent, async (req, res) => {
+router.post('/tasks-v2/sync', async (req, res) => {
   try {
     const swarmCoordinator = resolveSwarmCoordinator(req, 'syncFromSnipara');
     const result = await swarmCoordinator.syncFromSnipara(wsId(req));

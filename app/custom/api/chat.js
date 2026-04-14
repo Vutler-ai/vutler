@@ -10,6 +10,7 @@
 const express = require('express');
 const multer = require('multer');
 const router = express.Router();
+const { authenticateAgent } = require('../lib/auth');
 
 const { insertChatMessage, normalizeChatMessage } = require('../../../services/chatMessages');
 const {
@@ -22,7 +23,6 @@ const { createMemoryRuntimeService } = require('../../../services/memory/runtime
 const { uploadFileToAgentDrive } = require('../../../services/agentDriveService');
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
 const memoryRuntime = createMemoryRuntimeService();
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
@@ -32,14 +32,26 @@ const attachmentUpload = multer({
   },
 });
 
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
 function getPool(req) {
   return req.app.locals.pg;
 }
 
 function wsId(req) {
-  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
   for (const candidate of candidates) {
-    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    const value = normalizeWorkspaceId(candidate);
     if (value) return value;
   }
   return null;
@@ -57,7 +69,7 @@ function ensureWorkspaceContext(req, res, next) {
   return next();
 }
 
-router.use(ensureWorkspaceContext);
+router.use(authenticateAgent, ensureWorkspaceContext);
 
 function normaliseChannel(row) {
   return {
@@ -84,11 +96,11 @@ function normaliseChannel(row) {
 }
 
 function actorId(req) {
-  return req.headers['x-user-id'] || req.user?.id || req.agent?.id || null;
+  return req.userId || req.user?.id || req.agent?.id || null;
 }
 
 function actorName(req) {
-  return req.headers['x-user-name'] || req.user?.name || req.agent?.name || 'User';
+  return req.user?.name || req.agent?.name || req.user?.email || req.agent?.email || 'User';
 }
 
 async function resolveAttachmentAgentForChannel(pg, workspaceId, channelId, preferredAgentId = null) {
@@ -1038,4 +1050,6 @@ module.exports = router;
 module.exports._private = {
   wsId,
   ensureWorkspaceContext,
+  actorId,
+  actorName,
 };

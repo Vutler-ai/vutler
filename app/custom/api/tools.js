@@ -7,6 +7,45 @@ const express = require('express');
 const { authenticateAgent } = require('../lib/auth');
 const router = express.Router();
 
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function workspaceIdOf(req) {
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
+  for (const candidate of candidates) {
+    const value = normalizeWorkspaceId(candidate);
+    if (value) return value;
+  }
+  return null;
+}
+
+function ensureWorkspaceContext(req, res, next) {
+  const workspaceId = workspaceIdOf(req);
+  if (!workspaceId) {
+    return res.status(400).json({
+      success: false,
+      error: 'workspace context is required',
+    });
+  }
+  req.workspaceId = workspaceId;
+  return next();
+}
+
+function isAdminRequest(req) {
+  return req.user?.role === 'admin' || req.agent?.roles?.includes('admin');
+}
+
+router.use(authenticateAgent, ensureWorkspaceContext);
+
 // Built-in tools catalog
 const BUILT_IN_TOOLS = [
   {
@@ -64,7 +103,7 @@ const BUILT_IN_TOOLS = [
  * GET /api/v1/tools
  * List available tools
  */
-router.get('/', authenticateAgent, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const category = req.query.category;
     
@@ -96,7 +135,7 @@ router.get('/', authenticateAgent, async (req, res) => {
  * GET /api/v1/tools/:id
  * Get tool details
  */
-router.get('/:id', authenticateAgent, async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const tool = BUILT_IN_TOOLS.find(t => t.id === id);
@@ -126,7 +165,7 @@ router.get('/:id', authenticateAgent, async (req, res) => {
  * POST /api/v1/tools/:id/execute
  * Execute a tool (for testing)
  */
-router.post('/:id/execute', authenticateAgent, async (req, res) => {
+router.post('/:id/execute', async (req, res) => {
   try {
     const { id } = req.params;
     const { params = {} } = req.body;
@@ -154,10 +193,11 @@ router.post('/:id/execute', authenticateAgent, async (req, res) => {
       case 'drive': {
         const pool = (() => { try { return require('../../../lib/vaultbrix'); } catch(e) { return null; } })();
         if (pool && params.action === 'list') {
+          const workspaceId = workspaceIdOf(req);
           const r = await pool.query(
             `SELECT name, path, mime_type, size_bytes FROM tenant_vutler.drive_files
              WHERE workspace_id = $1 AND is_deleted = false AND path LIKE $2 ORDER BY path LIMIT 50`,
-            [req.workspaceId || '00000000-0000-0000-0000-000000000001', (params.path || '/') + '%']
+            [workspaceId, (params.path || '/') + '%']
           );
           result = { files: r.rows };
         } else {
@@ -170,7 +210,7 @@ router.post('/:id/execute', authenticateAgent, async (req, res) => {
         break;
       }
       case 'shell': {
-        if (req.role !== 'admin') {
+        if (!isAdminRequest(req)) {
           return res.status(403).json({ success: false, error: 'Shell tool requires admin role' });
         }
         result = { message: 'Use /api/v1/sandbox/execute to run code in the sandbox environment.' };
@@ -192,3 +232,8 @@ router.post('/:id/execute', authenticateAgent, async (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  workspaceIdOf,
+  ensureWorkspaceContext,
+  isAdminRequest,
+};

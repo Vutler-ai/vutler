@@ -8,12 +8,23 @@ const { authenticateAgent } = require('../lib/auth');
 const router = express.Router();
 
 const SCHEMA = 'tenant_vutler';
-const DEFAULT_WORKSPACE = '00000000-0000-0000-0000-000000000001';
+
+function normalizeWorkspaceId(value) {
+  if (typeof value !== 'string') return value || null;
+  const normalized = value.trim();
+  return normalized || null;
+}
 
 function getWorkspaceId(req) {
-  const candidates = [req.workspaceId, req.headers?.['x-workspace-id']];
+  const candidates = [
+    req.workspaceId,
+    req.user?.workspaceId,
+    req.user?.workspace_id,
+    req.agent?.workspaceId,
+    req.agent?.workspace_id,
+  ];
   for (const candidate of candidates) {
-    const value = typeof candidate === 'string' ? candidate.trim() : candidate;
+    const value = normalizeWorkspaceId(candidate);
     if (value) return value;
   }
   return null;
@@ -31,7 +42,7 @@ function ensureWorkspaceContext(req, res, next) {
   return next();
 }
 
-router.use(ensureWorkspaceContext);
+router.use(authenticateAgent, ensureWorkspaceContext);
 
 function mapNode(row) {
   return {
@@ -53,7 +64,7 @@ function mapNode(row) {
  * GET /api/v1/nexus
  * List Nexus nodes for workspace
  */
-router.get('/nexus', authenticateAgent, async (req, res) => {
+router.get('/nexus', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
     if (!pg) {
@@ -85,7 +96,7 @@ router.get('/nexus', authenticateAgent, async (req, res) => {
  * POST /api/v1/nexus
  * Register a new Nexus node
  */
-router.post('/nexus', authenticateAgent, async (req, res) => {
+router.post('/nexus', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
     if (!pg) {
@@ -127,7 +138,7 @@ router.post('/nexus', authenticateAgent, async (req, res) => {
  * GET /api/v1/nexus/:id
  * Get node details
  */
-router.get('/nexus/:id', authenticateAgent, async (req, res) => {
+router.get('/nexus/:id', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
     if (!pg) {
@@ -167,7 +178,7 @@ router.get('/nexus/:id', authenticateAgent, async (req, res) => {
  * PATCH /api/v1/nexus/:id
  * Update node configuration
  */
-router.patch('/nexus/:id', authenticateAgent, async (req, res) => {
+router.patch('/nexus/:id', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
     if (!pg) {
@@ -245,7 +256,7 @@ router.patch('/nexus/:id', authenticateAgent, async (req, res) => {
  * DELETE /api/v1/nexus/:id
  * Remove a Nexus node
  */
-router.delete('/nexus/:id', authenticateAgent, async (req, res) => {
+router.delete('/nexus/:id', async (req, res) => {
   try {
     const pg = req.app.locals.pg;
     if (!pg) {
