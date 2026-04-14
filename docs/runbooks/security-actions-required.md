@@ -21,22 +21,22 @@ URL:
 - [dashboard.stripe.com/apikeys](https://dashboard.stripe.com/apikeys)
 
 Required action:
-- rotate the current `STRIPE_WEBHOOK_SECRET`
+- rotate the current live Stripe secret key
 - update the rotated value in `/home/ubuntu/vutler/.env` on the VPS
 
-Exposed historical value:
-- `[REDACTED_WEBHOOK_SECRET]`
+Historical exposure note:
+- the exact leaked value was removed from tracked documentation and must stay out of Git history
 
 ### Google OAuth Credentials Rotation
 
 Legacy Rocket.Chat OAuth credentials:
-- exposed client ID: `[REDACTED_GOOGLE_CLIENT_ID]`
-- exposed secret: `[REDACTED_GOOGLE_CLIENT_SECRET]`
+- exposed client ID: removed from tracked documentation
+- exposed secret: removed from tracked documentation
 - action: rotate in Google Cloud Console and remove any remaining dependency on the legacy path
 
 OpenClaw extension OAuth credentials:
-- exposed client ID: `[REDACTED_GOOGLE_CLIENT_ID]`
-- exposed secret: `[REDACTED_GOOGLE_CLIENT_SECRET]`
+- exposed client ID: removed from tracked documentation
+- exposed secret: removed from tracked documentation
 - action: rotate in Google Cloud Console and update the corresponding `.env` value
 
 ## Completed Cleanup
@@ -44,7 +44,7 @@ OpenClaw extension OAuth credentials:
 Code already cleaned:
 - `sniparaWebhook.js` hardcoded secret removed
 - `index.ts` in OpenClaw moved base64 secrets to env variables
-- `docker-compose.yml` now uses `SNIPARA_WEBHOOK_SECRET`
+- `docker-compose.yml` now uses environment variables
 
 Security commits:
 - `0ca23474` remove hardcoded webhook secret from `sniparaWebhook.js`
